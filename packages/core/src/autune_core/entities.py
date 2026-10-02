@@ -210,7 +210,7 @@ class User(Base, TimestampMixin):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     sessions_valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    """When this person last signed out. A session token issued before it is
+    """When this person last signed out. A session token issued up to it is
     refused (``auth.current_user``); null means they never have, and every
     unexpired token of theirs is good. Written by ``auth.end_sessions`` only --
     core's sign-in already writes this row (``last_login_at``), and no module

@@ -3,6 +3,7 @@ nobody else's, and nobody's by accident. Without a Postgres or a Redis."""
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -15,11 +16,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from autune_core import SESSION_COOKIE, issue_token
-from autune_core.auth import ALGORITHM, end_sessions
+from autune_core.auth import ALGORITHM, current_user, end_sessions, user_for_token
 from autune_core.auth_router import router as auth_router
 from autune_core.db import Base, get_session
 from autune_core.entities import Team, TeamMember, User
-from autune_core.errors import AutuneError
+from autune_core.errors import AutuneError, NotFoundError, PermissionDeniedError
 from autune_core.settings import get_settings
 
 ME = "user_me"
@@ -105,12 +106,42 @@ def test_a_bearer_token_follows_the_same_rule(app: FastAPI) -> None:
     assert me(browser(app, cookie)) == 403
 
 
-def test_signing_in_again_right_after_works(app: FastAPI) -> None:
-    """Within the same second, too: ``iat`` is kept to the microsecond so the
-    new token is told from the ones just ended."""
+def later_token(user_id: str) -> str:
+    """A token from a later reading of the clock than whatever came before.
+    Back to back, two readings can be the same value on a coarse clock, and
+    a token issued at the instant of a sign-out is ended with it."""
+    time.sleep(0.05)
+    return issue_token(user_id)
+
+
+def token_issued_at(moment: datetime) -> str:
+    return jwt.encode(
+        {"sub": ME, "iat": moment.timestamp(), "exp": moment + timedelta(days=7)},
+        get_settings().secret_key,
+        algorithm=ALGORITHM,
+    )
+
+
+def test_signing_in_again_after_signing_out_works(app: FastAPI) -> None:
     browser(app, issue_token(ME)).post("/api/auth/logout")
 
-    assert me(browser(app, issue_token(ME))) == 200
+    assert me(browser(app, later_token(ME))) == 200
+
+
+def test_the_line_is_drawn_at_the_instant_of_the_sign_out(app: FastAPI, db: Session) -> None:
+    """Within the same second: ``iat`` is kept to the microsecond, so a token
+    from a millisecond later is good and one from a millisecond earlier is
+    not. One issued at the very instant is ended too -- it cannot be told
+    from one issued just before, and two readings of a coarse clock are
+    often the same value."""
+    moment = datetime.now(UTC).replace(microsecond=500_000) - timedelta(seconds=5)
+    end_sessions(db.get(User, ME), now=moment)
+    db.commit()
+    tick = timedelta(milliseconds=1)
+
+    assert me(browser(app, token_issued_at(moment - tick))) == 403
+    assert me(browser(app, token_issued_at(moment))) == 403
+    assert me(browser(app, token_issued_at(moment + tick))) == 200
 
 
 def test_nobody_else_is_signed_out(app: FastAPI) -> None:
@@ -124,8 +155,11 @@ def test_nobody_else_is_signed_out(app: FastAPI) -> None:
 def test_the_cookie_is_cleared_as_before(app: FastAPI) -> None:
     response = browser(app, issue_token(ME)).post("/api/auth/logout")
 
-    assert "autune_session=" in response.headers["set-cookie"]
-    assert "Max-Age=0" in response.headers["set-cookie"]
+    cleared = response.headers["set-cookie"]
+    assert "autune_session=" in cleared
+    assert "Max-Age=0" in cleared
+    # With the attributes it was set with (mkkim68, review of #727).
+    assert "HttpOnly" in cleared and "samesite=lax" in cleared.lower()
 
 
 @pytest.mark.parametrize("cookie", [None, "not-a-token"])
@@ -148,7 +182,7 @@ def test_a_token_already_signed_out_cannot_move_the_moment(app: FastAPI, db: Ses
     old = issue_token(ME)
     browser(app, old).post("/api/auth/logout")
     first = db.get(User, ME).sessions_valid_from
-    fresh = issue_token(ME)
+    fresh = later_token(ME)
 
     assert browser(app, old).post("/api/auth/logout").status_code == 204
 
@@ -182,6 +216,34 @@ def test_an_older_tokens_whole_second_errs_towards_signed_out(app: FastAPI, db: 
     db.commit()
 
     assert me(browser(app, old_style)) == 403
+
+
+def test_user_for_token_is_the_check_and_current_user_is_only_its_dependency(
+    db: Session,
+) -> None:
+    """Review of #727: the sign-out check lived in ``current_user`` alone, and
+    module A's live socket, which read the token itself, never made it. A
+    caller that cannot use the dependency calls this, and gets the same
+    answer the routes get."""
+    before, user = issue_token(ME), db.get(User, ME)
+    assert user_for_token(db, before).id == ME
+
+    end_sessions(user)
+    db.commit()
+
+    for check in (user_for_token, lambda s, t: current_user(t, s)):
+        with pytest.raises(PermissionDeniedError, match="signed out"):
+            check(db, before)
+    assert user_for_token(db, later_token(ME)).id == ME
+
+
+def test_a_token_whose_person_is_gone_is_the_one_not_found(db: Session) -> None:
+    """The only ``NotFoundError`` the helper raises, so a caller that must not
+    answer "not found" for it can catch exactly that."""
+    with pytest.raises(NotFoundError):
+        user_for_token(db, issue_token("user_nobody"))
+    with pytest.raises(PermissionDeniedError):
+        user_for_token(db, "not-a-token")
 
 
 def test_the_moment_never_moves_backwards(db: Session) -> None:

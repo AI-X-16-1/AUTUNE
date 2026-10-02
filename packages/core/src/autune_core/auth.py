@@ -20,8 +20,19 @@ is a signed token, and until 2026-10-02 signing out only cleared the
 browser's cookie: the token it held stayed good for the rest of its seven
 days, in that browser's history or anywhere it had leaked to. Now
 ``end_sessions`` writes the moment down on the person's row
-(``users.sessions_valid_from``) and ``current_user`` refuses any token issued
-before it -- cookie or bearer, a developer token included.
+(``users.sessions_valid_from``) and ``user_for_token`` refuses any token issued
+up to it -- cookie or bearer, a developer token included.
+
+**``user_for_token`` is the one place a session token becomes a person.**
+``current_user`` is that function as a FastAPI dependency, and anything that
+takes a token some other way -- module A's live WebSocket, whose handler
+cannot use a dependency -- calls it directly. The first version of the
+sign-out check lived in ``current_user`` alone, and the socket, which decoded
+the token itself, went on accepting signed-out and leaked tokens (review of
+#727). Do not decode a session token anywhere else.
+
+The check is made when a request or a connection arrives. A live socket
+opened before the sign-out stays open until it closes.
 
 Every device, not the one (decided with the user): one value per person
 and no session table. ``current_user`` already loads the person's row, so
@@ -82,7 +93,15 @@ def set_session_cookie(response: Response, token: str, ttl: timedelta = DEFAULT_
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    # The attributes the cookie was set with: a browser matches a deletion to
+    # the cookie by name and path, and the rest should not differ either.
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        secure=get_settings().session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def _session_token(
@@ -97,24 +116,41 @@ def _session_token(
     raise PermissionDeniedError("no session: send a bearer token or sign in")
 
 
-def _issued_before_sign_out(user: User, claims: dict[str, Any]) -> bool:
+def _ended_by_sign_out(user: User, claims: dict[str, Any]) -> bool:
+    """Whether the person signed out at or after the moment this token was
+    issued.
+
+    **At, as well as after.** Two readings of the clock can be the same
+    value -- on a clock with coarse ticks (Windows) a token issued and a
+    sign-out made back to back often are -- and a token that cannot be told
+    from one issued just before the sign-out is ended with it. The other
+    way round, the first rule this had (strictly before), let exactly that
+    token through; module A's tests caught it. The price is that a sign-in
+    completed within the same tick as a sign-out gets a token that is
+    already ended, and has to be made again."""
     cutoff = user.sessions_valid_from
     if cutoff is None:
         return False
     if cutoff.tzinfo is None:  # SQLite hands a timezone-aware column back naive
         cutoff = cutoff.replace(tzinfo=UTC)
     # A token with no ``iat`` cannot be placed after the sign-out, so it is
-    # before it. An older token's ``iat`` is a whole second, rounded down,
+    # not after it. An older token's ``iat`` is a whole second, rounded down,
     # which errs the same way.
     issued = claims.get("iat")
-    return not isinstance(issued, int | float) or issued < cutoff.timestamp()
+    return not isinstance(issued, int | float) or issued <= cutoff.timestamp()
 
 
-def current_user(
-    token: Annotated[str, Depends(_session_token)],
-    session: Annotated[Session, Depends(get_session)],
-) -> User:
-    """FastAPI dependency resolving the authenticated user."""
+def user_for_token(session: Session, token: str) -> User:
+    """The person a session token stands for, or the reason it stands for
+    nobody. Every check a session has to pass is here and nowhere else: the
+    signature and expiry, a subject, a person who still exists, and that the
+    token was issued after they last signed out.
+
+    ``PermissionDeniedError`` for a token that is not good. ``NotFoundError``
+    in exactly one case -- a well-signed token whose person's row is gone --
+    so a caller that must not say "not found" for that (the live socket,
+    where it would read as "no such meeting") can tell it apart and say
+    what it means there."""
     claims = decode_token(token)
     user_id = claims.get("sub")
     if not user_id:
@@ -122,13 +158,22 @@ def current_user(
     user = session.get(User, user_id)
     if user is None:
         raise NotFoundError("user", user_id)
-    if _issued_before_sign_out(user, claims):
+    if _ended_by_sign_out(user, claims):
         raise PermissionDeniedError("this session was signed out; sign in again")
     return user
 
 
+def current_user(
+    token: Annotated[str, Depends(_session_token)],
+    session: Annotated[Session, Depends(get_session)],
+) -> User:
+    """FastAPI dependency resolving the authenticated user: ``user_for_token``
+    for the token the request carried."""
+    return user_for_token(session, token)
+
+
 def end_sessions(user: User, *, now: datetime | None = None) -> None:
-    """Sign the person out everywhere: no token issued before this moment is
+    """Sign the person out everywhere: no token issued up to this moment is
     accepted again, whichever browser, device or script holds it. A token
     issued after it -- the next sign-in -- is unaffected.
 

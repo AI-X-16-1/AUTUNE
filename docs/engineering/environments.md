@@ -165,13 +165,20 @@ issued; the cookie is what proves to whom.
 **Signing out ends the person's sessions on the server, on every device.**
 `POST /logout` writes the moment on the person's row
 (`users.sessions_valid_from`) and clears the cookie; from then on
-`current_user` refuses every token of theirs issued before it — the browser
+`current_user` refuses every token of theirs issued up to it — the browser
 that signed out, another browser, a developer token, a copy that leaked. The
 next sign-in issues a token after that moment, which is good. It is one value
 per person, not a session per device: signing out in one place signs out
 everywhere, and there is no list of sessions to look at. Deploying this signed
 nobody out — a person who has never signed out has no moment to compare
 with. To end **everybody's** sessions at once, rotate `AUTUNE_SECRET_KEY`.
+
+Every door that takes a session token asks the same function
+(`autune_core.auth.user_for_token`): the HTTP routes through `current_user`,
+and module A's live WebSocket directly, because its handler cannot use a
+dependency. The check is made when a request or a connection arrives — **a
+live socket opened before the sign-out stays open until it closes**; it is
+not cut off mid-recording.
 
 ### Web (`apps/web`)
 
