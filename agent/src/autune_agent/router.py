@@ -1,6 +1,7 @@
 """The agent layer's HTTP surface, mounted at ``/api/agent``.
 
-- ``POST /chat`` -- one chat turn: route, delegate, answer, record.
+- ``POST /chat`` -- one chat turn: route, delegate or ask, answer, record; with the
+  proposals the caller may decide.
 - ``GET /runs`` -- a team's run timeline, newest first.
 - ``GET /research`` -- a meeting's research documents, by who may see which.
 - ``GET /pending`` -- L2 proposals waiting for a decision the caller may make.
@@ -21,7 +22,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from autune_core import CurrentUser, Meeting, TeamMember, User, get_session
@@ -36,13 +37,14 @@ from autune_core.errors import (
 from .config import get_agent_settings
 from .main.actions import collect_actions
 from .main.approvers import SCOPE_ORDER, can_manage, list_members, set_scopes
-from .main.gemini import GeminiRouter
+from .main.gemini import GeminiRouter, gemini_tools_from_settings
 from .main.own_tools import collect_own_actions, collect_own_tools
 from .main.pending import approve, approver_scopes, can_decide, reject
 from .main.preview import preview
 from .main.registry import collect_tools
 from .main.router import Router
 from .main.store import run_and_record
+from .main.toolcall import ToolModel
 from .models import AgentApprover, AgentPendingAction, AgentResearchDocument, AgentRun
 from .results import Finding
 
@@ -66,6 +68,11 @@ def get_chat_router() -> Router:
         base_url=settings.llm_base_url,
         timeout_sec=settings.llm_timeout_sec,
     )
+
+
+def get_chat_tool_model() -> ToolModel | None:
+    """The ask loop's model, or None when the layer is off or has no key. Overridden in tests."""
+    return gemini_tools_from_settings()
 
 
 def _is_member(session: Session, team_id: str, user_id: str) -> bool:
@@ -106,6 +113,57 @@ class ChatMeetingNotFoundError(NotFoundError):
         AutuneError.__init__(self, "meeting not found", resource="meeting")
 
 
+class PendingRead(BaseModel):
+    id: str
+    team_id: str
+    meeting_id: str | None
+    subagent: str
+    kind: str
+    tool: str
+    status: str
+    reject_reason: str | None
+    result_ok: bool | None
+    created_at: datetime
+    decided_at: datetime | None
+    title: str
+    body: str
+    needs_check: bool
+    """Approved, but the action's outcome was never recorded: something raised
+    after the claim. It is never re-run; a person checks what happened."""
+
+
+PREVIEW_FAILED = "미리보기를 만들지 못했습니다"
+PENDING_COLUMNS = (
+    "id",
+    "team_id",
+    "meeting_id",
+    "subagent",
+    "kind",
+    "tool",
+    "status",
+    "reject_reason",
+    "result_ok",
+    "created_at",
+    "decided_at",
+)
+
+
+def _read(session: Session, row: AgentPendingAction) -> PendingRead:
+    try:
+        shown = preview(session, row, tools={**collect_tools(), **collect_own_tools()})
+    except PrivacyViolationError:
+        raise
+    except Exception as exc:
+        # One unreadable row must not hide the others. Log the type only: the
+        # message may quote transcript text.
+        log.warning("pending preview failed: %s", type(exc).__name__)
+        shown = {"title": row.kind, "body": PREVIEW_FAILED}
+    fields: dict[str, Any] = {c: getattr(row, c) for c in PENDING_COLUMNS}
+    fields.update(shown)
+    fields["needs_check"] = row.status == "approved" and row.result_ok is None
+    return PendingRead(**fields)
+
+
 class ChatReply(BaseModel):
     run_id: str
     outcome: str
@@ -121,6 +179,9 @@ class ChatReply(BaseModel):
     queued: int = 0
     """How many proposals this run left waiting for an approver -- the rows,
     not ``proposed - executed``, which also counts failed and refused ones."""
+    pending: list[PendingRead] = Field(default_factory=list)
+    """L2 proposals this run queued that the caller may decide -- an approver
+    with the scope, or ``any`` (plan mode's rule). S34 draws 승인 / 거절 for these."""
 
 
 class RunRead(BaseModel):
@@ -152,6 +213,7 @@ def chat(
     user: CurrentUser,
     session: SessionDep,
     chat_router: Annotated[Router, Depends(get_chat_router)],
+    tool_model: Annotated[ToolModel | None, Depends(get_chat_tool_model)],
 ) -> ChatReply:
     team_id = body.team_id
     if body.meeting_id is not None:
@@ -172,7 +234,14 @@ def chat(
         meeting_id=body.meeting_id,
         requested_by=user.id,
         trigger={"kind": "chat"},
+        asker=tool_model,
     )
+    scopes = approver_scopes(session, team_id, user.id)
+    waiting = session.scalars(
+        select(AgentPendingAction).where(
+            AgentPendingAction.run_id == row.id, AgentPendingAction.status == "pending"
+        )
+    ).all()
     outcome = state.get("outcome")
     return ChatReply(
         run_id=row.id,
@@ -182,12 +251,8 @@ def chat(
         items=outcome.result.items if outcome else [],
         proposed=len(outcome.proposed) if outcome else 0,
         executed=sum(1 for a in row.actions if a.get("ok")),
-        queued=session.scalar(
-            select(func.count())
-            .select_from(AgentPendingAction)
-            .where(AgentPendingAction.run_id == row.id, AgentPendingAction.status == "pending")
-        )
-        or 0,
+        queued=len(waiting),
+        pending=[_read(session, r) for r in waiting if can_decide(scopes, r)],
     )
 
 
@@ -236,59 +301,8 @@ def list_research(
     )
 
 
-class PendingRead(BaseModel):
-    id: str
-    team_id: str
-    meeting_id: str | None
-    subagent: str
-    kind: str
-    tool: str
-    status: str
-    reject_reason: str | None
-    result_ok: bool | None
-    created_at: datetime
-    decided_at: datetime | None
-    title: str
-    body: str
-    needs_check: bool
-    """Approved, but the action's outcome was never recorded: something raised
-    after the claim. It is never re-run; a person checks what happened."""
-
-
 class RejectRequest(BaseModel):
     reason: Literal["wrong_evidence", "not_now", "handled_elsewhere", "other"]
-
-
-PREVIEW_FAILED = "미리보기를 만들지 못했습니다"
-PENDING_COLUMNS = (
-    "id",
-    "team_id",
-    "meeting_id",
-    "subagent",
-    "kind",
-    "tool",
-    "status",
-    "reject_reason",
-    "result_ok",
-    "created_at",
-    "decided_at",
-)
-
-
-def _read(session: Session, row: AgentPendingAction) -> PendingRead:
-    try:
-        shown = preview(session, row, tools={**collect_tools(), **collect_own_tools()})
-    except PrivacyViolationError:
-        raise
-    except Exception as exc:
-        # One unreadable row must not hide the others. Log the type only: the
-        # message may quote transcript text.
-        log.warning("pending preview failed: %s", type(exc).__name__)
-        shown = {"title": row.kind, "body": PREVIEW_FAILED}
-    fields: dict[str, Any] = {c: getattr(row, c) for c in PENDING_COLUMNS}
-    fields.update(shown)
-    fields["needs_check"] = row.status == "approved" and row.result_ok is None
-    return PendingRead(**fields)
 
 
 @router.get("/pending", response_model=list[PendingRead])

@@ -266,6 +266,14 @@ The LLM behind the graph is Gemini, through the same `check_outbound` /
 `assert_masked` path B's `classifier_impl=llm` already uses (#393; section 8
 rule 1). The model name is configuration, not code.
 
+**The chat's free questions, as built (spec 2026-10-02).** A chat turn no
+subagent fits goes to `main/ask.py`: a read-only loop on Gemini function
+calling, at most three rounds, over a tool set chosen by the run's scope. Every
+request goes through `check_outbound`, and the loop stops before a body passes
+3,800 characters. `main/toolcall.py` and `GeminiTools.step` are the seams a
+later `create_agent` takes. A chat reply also lists the L2 proposals its run
+queued that the asker may decide, and S34 lets them approve on the card.
+
 ## 4. Tools — how a module becomes callable
 
 A module owner adds one file and changes nothing else. **It imports nothing
