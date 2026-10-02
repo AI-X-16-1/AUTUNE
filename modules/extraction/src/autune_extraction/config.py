@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,7 +24,8 @@ class ExtractionSettings(BaseSettings):
     ``llm_checked``.
 
     ``llm`` sends utterance text as module A masked it -- nothing else -- to a
-    cloud LLM (``pipeline.llm``). A name said aloud is not masked, so it goes too.
+    cloud LLM (``pipeline.llm``), with the names on the meeting team's roster
+    replaced first (#411). A name that is not on the roster goes as it was said.
     It is never the default: where a meeting's text may go is a privacy
     decision, and the team signs it off before it is enabled outside a demo --
     see ``pipeline.base``.
@@ -59,13 +60,42 @@ class ExtractionSettings(BaseSettings):
     classifier_endpoint: str = ""
     """Our own inference server, required when ``classifier_impl=hosted``."""
 
-    llm_api_key: str = ""
+    llm_api_key: SecretStr = SecretStr("")
     """Provider API key for ``classifier_impl=llm``. Sent as a header, never in a
-    body or URL. Blank makes the registry refuse ``llm`` by name.
+    body or URL. Blank here, the deployment's shared key below is used; blank
+    in both makes the registry refuse ``llm`` by name.
+
+    A ``SecretStr``, like module D's: a settings object that is printed,
+    logged or dumped shows ``**********`` and not the key (review of #701).
+    ``pipeline.registry`` is the one place that takes the value out, to hand
+    it to the client that sends it.
 
     The code cannot tell a free-tier key from a paid one. A free tier may let the
     provider keep what it is sent, so a free key is for dummy meetings only
     (#392)."""
+
+    shared_llm_api_key: SecretStr = Field(
+        default=SecretStr(""), validation_alias="AUTUNE_LLM_API_KEY"
+    )
+    """``AUTUNE_LLM_API_KEY``: a provider key under a name with no module in it,
+    which is the name the team's deployment secret has. Read only when
+    ``AUTUNE_EXTRACTION_LLM_API_KEY`` is blank -- blank, not just unset, since
+    ``.env.example`` ships that line empty -- so a key given to B alone still
+    wins. ``llm_api_key`` is what the rest of B reads; this only fills it.
+
+    **A key selects nothing.** Whether B calls a provider at all is still
+    ``classifier_impl`` and ``resolver_impl``, never the default, so a
+    deployment that sets this for another module does not send B's speech
+    anywhere. The free-tier rule above holds for this key too (#392).
+
+    B is the only module that reads this name today: C, D and the agent read
+    their own (``AUTUNE_GAP_VERIFIER_API_KEY``, ``AUTUNE_CONTEXT_LLM_API_KEY``,
+    ``AUTUNE_AGENT_LLM_API_KEY``), and each is its owner's to change.
+
+    **It has to be a key for the provider ``llm_base_url`` points at** --
+    Google's Generative Language API by default. The URL picks where the
+    text goes, not the key: another provider's key under this name sends the
+    masked text to Google first and fails authentication there."""
 
     llm_model: str = "gemini-3.8-flash"
     """The model ``classifier_impl=llm`` calls; every classification records
@@ -169,7 +199,9 @@ class ExtractionSettings(BaseSettings):
         return value
 
     resolver_impl: str = "fake"
-    """Which reference resolver to run: ``local``, ``hosted`` or ``fake`` (#175).
+    """Which reference resolver to run: ``local``, ``hosted``, ``llm`` or ``fake``
+    (#175). ``llm`` is a cloud model, opt-in the way ``classifier_impl=llm`` is,
+    and replaces the team's roster names before it sends (#530).
 
     Defaults to ``fake`` rather than ``local``, unlike the classifier: #175's own
     model choice (``Qwen/Qwen3-4B-Instruct-2507``, a candidate) is not yet
@@ -254,6 +286,12 @@ class ExtractionSettings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @model_validator(mode="after")
+    def _own_key_then_the_shared_one(self) -> ExtractionSettings:
+        if not self.llm_api_key:
+            self.llm_api_key = self.shared_llm_api_key
+        return self
 
     @model_validator(mode="after")
     def _device_is_known(self) -> ExtractionSettings:

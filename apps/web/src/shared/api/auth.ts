@@ -120,16 +120,24 @@ export function googleCalendarConnectUrl(redirectTo = "/"): string {
   );
 }
 
-/** Whether the signed-in person has connected their own calendar. */
+/**
+ * Whether the signed-in person has connected their own calendar, and whether
+ * that connection was made with a Google client this server no longer uses --
+ * in which case nothing reaches the calendar until they connect again.
+ */
 export async function getCalendarConnection(): Promise<{
   connected: boolean;
+  needs_reconnect?: boolean;
 } | null> {
   try {
     const response = await fetch(authUrl("/google/calendar"), {
       credentials: "include",
     });
     if (!response.ok) return null;
-    return (await response.json()) as { connected: boolean };
+    return (await response.json()) as {
+      connected: boolean;
+      needs_reconnect?: boolean;
+    };
   } catch {
     return null;
   }
@@ -159,6 +167,8 @@ export interface JiraConnection {
   connected: boolean;
   needs_reconnect?: boolean;
   site_name?: string | null;
+  /** The team's Jira site, `https://` or absent. */
+  site_url?: string | null;
   project_key?: string | null;
   /** The key of a chosen project that has since been deleted in Jira. */
   project_missing?: string | null;
@@ -278,6 +288,8 @@ export interface SlackConnection {
   connected: boolean;
   workspace_name?: string | null;
   channel_name?: string | null;
+  /** The alert channel in the team's workspace; absent on an old install. */
+  channel_url?: string | null;
 }
 
 /**

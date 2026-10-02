@@ -1015,9 +1015,11 @@ def test_a_trash_that_fails_leaves_the_page_to_the_next_sync(session: Session) -
     assert ref is not None and ref.external_id is None
 
 
-def test_a_page_a_person_already_archived_is_left_to_them(session: Session) -> None:
-    """Notion refuses to edit an archived page, so its title cannot be
-    rewritten; it stays the person's, as it does for a confirmed decision."""
+def test_a_page_a_person_already_archived_is_left_as_it_is_and_forgotten(session: Session) -> None:
+    """Notion refuses to edit a page in its trash, so the title cannot be
+    rewritten: the page stays as the person put it. The row forgets it (#683)
+    -- kept, the id made every sweep ask Notion again about a page nothing
+    more can be done to."""
     notion = FakeNotion()
     first = confirmed_with_a_page(session, notion)
     notion.archived.add("page_1")
@@ -1026,7 +1028,8 @@ def test_a_page_a_person_already_archived_is_left_to_them(session: Session) -> N
     ref = resync(session, notion, first.id)
 
     assert notion.updates == []
-    assert ref is not None and ref.external_id == "page_1"
+    assert ref is not None and (ref.external_id, ref.url) == (None, None)
+    assert service.decision_has_page(session, first.id) is False
 
 
 def test_a_page_already_deleted_in_notion_has_nothing_to_retire(session: Session) -> None:

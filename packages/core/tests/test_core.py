@@ -69,6 +69,90 @@ def test_an_unset_env_is_production_and_refuses_the_default_secret(
         Settings(_env_file=None)
 
 
+def _google(**values: str) -> Settings:
+    given = {
+        "google_client_id": "",
+        "google_client_secret": "",
+        "google_integration_client_id": "",
+        "google_integration_client_secret": "",
+        "google_redirect_uri": "http://localhost:3000/api/auth/google/callback",
+    } | values
+    return Settings(_env_file=None, env="local", **given)
+
+
+def test_a_persons_google_grant_uses_the_integration_client_when_it_is_set() -> None:
+    settings = _google(
+        google_client_id="login-id",
+        google_client_secret="login-secret",
+        google_integration_client_id="cal-id",
+        google_integration_client_secret="cal-secret",
+    )
+    assert settings.google_integration_configured
+    assert settings.google_integration_credentials == ("cal-id", "cal-secret")
+
+
+def test_an_integration_client_without_the_redirect_uri_is_refused() -> None:
+    """PARK, review of #700: the second client has no redirect URI of its own.
+    Left unset, the connect started and then failed with a message about
+    sign-in; now the server says which variable is missing, at start-up."""
+    with pytest.raises(ValueError, match="AUTUNE_GOOGLE_REDIRECT_URI"):
+        _google(
+            google_integration_client_id="cal-id",
+            google_integration_client_secret="cal-secret",
+            google_redirect_uri="",
+        )
+
+
+def test_without_an_integration_client_no_redirect_uri_is_still_just_sign_in_off() -> None:
+    settings = _google(google_client_id="login-id", google_redirect_uri="")
+    assert not settings.google_sign_in_configured
+
+
+def test_without_an_integration_client_the_sign_in_client_does_both() -> None:
+    """A deployment that was never given the second client keeps working."""
+    settings = _google(google_client_id="login-id", google_client_secret="login-secret")
+    assert not settings.google_integration_configured
+    assert settings.google_integration_credentials == ("login-id", "login-secret")
+
+
+def test_no_google_client_at_all_is_two_blanks() -> None:
+    assert _google().google_integration_credentials == ("", "")
+
+
+@pytest.mark.parametrize(
+    "only", ["google_integration_client_id", "google_integration_client_secret"]
+)
+def test_half_an_integration_client_is_refused_and_the_value_is_not_repeated(only: str) -> None:
+    """Falling back here would connect calendars with the sign-in client while
+    the operator believes the other is in use. The message names the two
+    variables and carries neither value."""
+    with pytest.raises(ValueError, match="AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET") as caught:
+        _google(
+            google_client_id="login-id",
+            google_client_secret="login-secret",
+            **{only: "half-a-client"},
+        )
+    assert "half-a-client" not in str(caught.value)
+
+
+def test_a_refused_start_up_does_not_print_the_settings_it_was_given() -> None:
+    """pydantic appends ``input_value={...}`` to a validation error: the head
+    and tail of every setting the process was started with, whichever
+    validator refused. A deployment log is not where a key belongs, so the
+    refusal names the variable and stops there."""
+    with pytest.raises(ValueError, match="AUTUNE_ENCRYPTION_KEY") as caught:
+        Settings(
+            _env_file=None,
+            env="staging",
+            encryption_key="",
+            secret_key="a-signing-key-nobody-should-read",
+            slack_client_secret="a-client-secret-nobody-should-read",
+        )
+    printed = str(caught.value)
+    assert "nobody-should-read" not in printed
+    assert "input_value" not in printed
+
+
 def test_local_tolerates_the_default_secret() -> None:
     assert Settings(env="local").secret_key.startswith("local-development-only")
 

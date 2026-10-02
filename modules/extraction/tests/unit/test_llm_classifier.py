@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import pytest
 
@@ -203,8 +204,20 @@ def test_without_a_fallback_a_busy_model_fails_the_call(slept) -> None:
 # --- how it is chosen -------------------------------------------------------------
 
 
+SHARED_KEY = "AUTUNE_LLM_API_KEY"
+"""The shared key's name in the environment, which is also how a test passes it:
+the field takes its alias, not its own name."""
+
+
+def key_of(configured_settings: ExtractionSettings) -> str:
+    return configured_settings.llm_api_key.get_secret_value()
+
+
 def settings(**overrides: str) -> ExtractionSettings:
-    return ExtractionSettings(_env_file=None, **overrides)  # type: ignore[call-arg]
+    # Both key names blank unless a test gives one: a key exported in the shell
+    # that runs the suite must not decide what "no key" means.
+    given = {"llm_api_key": "", SHARED_KEY: ""} | overrides
+    return ExtractionSettings(_env_file=None, **given)  # type: ignore[arg-type]
 
 
 @pytest.fixture
@@ -226,6 +239,82 @@ def test_llm_without_a_key_is_refused_by_name(configured) -> None:
     configured(classifier_impl="llm")
     with pytest.raises(ValueError, match="LLM_API_KEY"):
         registry.get_classifier()
+
+
+def test_llm_without_its_own_key_uses_the_deployments_shared_one(configured) -> None:
+    """``AUTUNE_LLM_API_KEY`` is the name the deployment's secret has. B's own
+    name ships blank in ``.env.example``, and blank has to fall through."""
+    configured(classifier_impl="llm", **{SHARED_KEY: "shared"})
+
+    assert isinstance(registry.get_classifier(), LlmClassifier)
+    assert settings(**{SHARED_KEY: "shared"}).llm_api_key.get_secret_value() == "shared"
+
+
+def test_a_key_given_to_b_alone_wins_over_the_shared_one() -> None:
+    both = settings(llm_api_key="mine", **{SHARED_KEY: "shared"})
+
+    assert both.llm_api_key.get_secret_value() == "mine"
+
+
+def test_the_shared_key_alone_does_not_turn_the_llm_on() -> None:
+    """A deployment sets it for another module; B still classifies locally
+    until ``classifier_impl`` or ``resolver_impl`` says otherwise (#392)."""
+    only_a_key = settings(**{SHARED_KEY: "shared"})
+
+    assert not only_a_key.classifier_impl.startswith("llm")
+    assert only_a_key.resolver_impl != "llm"
+
+
+def test_both_names_are_read_from_the_environment_and_a_blank_own_name_falls_through(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """From real variables and from a ``.env``, the two places a key comes from."""
+    monkeypatch.setenv("AUTUNE_EXTRACTION_LLM_API_KEY", "")
+    monkeypatch.setenv("AUTUNE_LLM_API_KEY", "from-the-environment")
+    assert key_of(ExtractionSettings(_env_file=None)) == "from-the-environment"  # type: ignore[call-arg]
+
+    monkeypatch.delenv("AUTUNE_EXTRACTION_LLM_API_KEY")
+    monkeypatch.delenv("AUTUNE_LLM_API_KEY")
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "AUTUNE_EXTRACTION_LLM_API_KEY=\nAUTUNE_LLM_API_KEY=from-the-file\n", encoding="utf-8"
+    )
+    assert key_of(ExtractionSettings(_env_file=env_file)) == "from-the-file"  # type: ignore[call-arg]
+
+    monkeypatch.setenv("AUTUNE_EXTRACTION_LLM_API_KEY", "mine")
+    assert key_of(ExtractionSettings(_env_file=env_file)) == "mine"  # type: ignore[call-arg]
+
+
+def test_printing_or_dumping_the_settings_does_not_show_either_key() -> None:
+    """mkkim68 and mminjae97, review of #701: as plain strings both keys were
+    in ``repr(settings)`` and in ``model_dump()``, which is what a debug log
+    line or an error report prints."""
+    configured_ = settings(llm_api_key="own-key-value", **{SHARED_KEY: "shared-key-value"})
+
+    shown = repr(configured_) + str(configured_) + str(configured_.model_dump())
+    shown += configured_.model_dump_json()
+
+    assert "own-key-value" not in shown
+    assert "shared-key-value" not in shown
+
+
+def test_the_client_is_given_the_key_itself_not_its_mask(
+    configured, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other side of hiding it: what goes in the request header has to
+    be the key, and ``str(SecretStr)`` is the asterisks."""
+    given: dict[str, object] = {}
+
+    class Recording:
+        def __init__(self, **kwargs: object) -> None:
+            given.update(kwargs)
+
+    monkeypatch.setattr(llm_module, "LlmClassifier", Recording)
+    configured(classifier_impl="llm", **{SHARED_KEY: "shared-key-value"})
+
+    registry.get_classifier()
+
+    assert given["api_key"] == "shared-key-value"
 
 
 def test_llm_with_a_key_is_the_llm_classifier(configured) -> None:

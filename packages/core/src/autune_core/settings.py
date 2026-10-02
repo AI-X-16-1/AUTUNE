@@ -20,7 +20,16 @@ _LOCAL_HINT = " If this is a local checkout, set AUTUNE_ENV=local (see .env.exam
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTUNE_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="AUTUNE_",
+        env_file=".env",
+        extra="ignore",
+        # A refused start-up is printed, and pydantic appends the input it was
+        # given -- every setting, secrets included, cut to its head and tail.
+        # The message a validator here raises names the variable; that is all
+        # a deployment log gets.
+        hide_input_in_errors=True,
+    )
 
     env: Environment = "production"
     """Unset means production, deliberately (#408). A deployment that forgets
@@ -63,6 +72,24 @@ class Settings(BaseSettings):
     google_redirect_uri: str = ""
     """The /api/auth/google/callback URL, per environment. Must match a redirect
     URI registered in the Google Cloud console exactly."""
+
+    google_integration_client_id: str = ""
+    google_integration_client_secret: str = ""
+    """A second Google OAuth client, for what a person connects after signing in
+    -- their own calendar today (#435), mail when it exists. Sign-in keeps
+    ``google_client_id``: an identity-only client and one that asks for
+    someone's calendar are reviewed by Google on different terms, and need not
+    share a consent screen.
+
+    Set together or not at all. Left blank, the sign-in client does both, as
+    it did before these existed, so a local run and a deployment that has not
+    been given them work unchanged (``google_integration_credentials``). There
+    is no second redirect URI: the same callback finishes both flows, so
+    ``google_redirect_uri`` has to be registered on this client as well.
+
+    Giving a deployment these strands the calendars already connected there. A
+    refresh token is bound to the client that issued it, so each is refused at
+    its next refresh and the person is asked to connect again."""
 
     jira_client_id: str = ""
     jira_client_secret: str = ""
@@ -153,6 +180,43 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.env == "production"
+
+    @model_validator(mode="after")
+    def _google_integration_client_is_a_pair(self) -> Settings:
+        """Half a client is a misconfiguration, not a reason to fall back: with
+        only one of the two set, falling back would connect calendars with the
+        sign-in client while the operator believes the other one is in use."""
+        if bool(self.google_integration_client_id) != bool(self.google_integration_client_secret):
+            raise ValueError(
+                "AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID and "
+                "AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET are set together or not at "
+                "all; one of them is blank."
+            )
+        # The second client has no redirect URI of its own (one callback finishes
+        # both flows). Without this the connect starts, and the client refuses
+        # to be built with a message about sign-in (PARK, review of #700).
+        if self.google_integration_client_id and not self.google_redirect_uri:
+            raise ValueError(
+                "AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID is set and AUTUNE_GOOGLE_REDIRECT_URI "
+                "is not: the integration client uses that callback, and it has to be "
+                "registered on it."
+            )
+        return self
+
+    @property
+    def google_integration_configured(self) -> bool:
+        """Whether the second client is set. ``False`` means the sign-in client
+        is the one a person's Google grant is issued to."""
+        return bool(self.google_integration_client_id and self.google_integration_client_secret)
+
+    @property
+    def google_integration_credentials(self) -> tuple[str, str]:
+        """The client id and secret a person's Google grant is issued to and
+        refreshed with: the integration client when it is set, the sign-in
+        client otherwise. Both blank when neither is."""
+        if self.google_integration_configured:
+            return self.google_integration_client_id, self.google_integration_client_secret
+        return self.google_client_id, self.google_client_secret
 
     @property
     def google_sign_in_configured(self) -> bool:

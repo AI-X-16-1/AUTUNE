@@ -375,6 +375,7 @@ def test_status_and_disconnect_revoke_the_token(world: dict[str, Any]) -> None:
         "connected": True,
         "workspace_name": "Acme",
         "channel_name": "autune",
+        "channel_url": "https://app.slack.com/client/T1/C1",
     }
     body = client.post(f"/api/auth/slack/disconnect?meeting_id={MEETING}").json()
 

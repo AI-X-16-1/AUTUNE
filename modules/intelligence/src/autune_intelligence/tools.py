@@ -1,6 +1,6 @@
 """Module E as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Four reads (``TOOLS``) over E's existing service functions, and one action
+Reads (``TOOLS``) over E's existing service functions, and one action
 (``ACTIONS``) the main agent runs to carry out a Report subagent's proposal.
 Each returns a dict in the shape agent-layer.md calls ``ToolResult``::
 
@@ -263,7 +263,77 @@ def meeting_report_draft(
     )
 
 
-TOOLS = [meeting_quality, team_trend, recurring_gaps, misalignment_risk, meeting_report_draft]
+def meeting_report_awaiting_approval(
+    session: Session, team_id: str, meeting_id: str
+) -> dict[str, Any]:
+    """Use this when a person changed a meeting's report and its post must be
+    proposed for approval. Do not use it to read the report's text -- that is
+    ``meeting_report_draft`` or ``meeting_report_correction``.
+
+    Returns what waits as one item: ``kind`` is ``"draft"`` with the
+    ``draft_id`` of an edited draft before the report is posted, or
+    ``"correction"`` with the ``correction_id`` of a correction to a posted
+    report (#674). ``ok=False`` with reason ``already posted`` when the report
+    is posted and no correction waits: nothing about this meeting's report is
+    to be proposed, a new draft least of all. No item when no report is stored.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+    awaiting = service.meeting_report_awaiting_approval(session, meeting_id)
+    if awaiting is None:
+        if service.meeting_report_posted(session, meeting_id):
+            return _refused("already posted", "이미 게시된 리포트입니다.")
+        return _result(summary="승인을 기다리는 리포트가 없습니다.", items=[])
+    key = "draft_id" if awaiting.kind == "draft" else "correction_id"
+    title = "리포트 초안" if awaiting.kind == "draft" else "리포트 수정본"
+    return _result(
+        summary=f"승인을 기다리는 {title}이 있습니다.",
+        items=[
+            {
+                "title": title,
+                "body": "",
+                "score": 1.0,
+                "id": meeting_id,
+                "kind": awaiting.kind,
+                key: awaiting.id,
+            }
+        ],
+    )
+
+
+def meeting_report_correction(
+    session: Session, team_id: str, meeting_id: str, correction_id: str
+) -> dict[str, Any]:
+    """Use this to show the person approving a correction's post the text it
+    would post. Do not use it to write or change a correction.
+
+    Returns the correction as one item -- ``title`` its header line, ``body``
+    the text -- when ``correction_id`` names the one stored now. No item when a
+    later correction replaced it (#674).
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+    text = service.meeting_report_correction(session, meeting_id, correction_id)
+    if text is None:
+        return _result(summary="이 승인에 해당하는 수정본이 더 이상 없습니다.", items=[])
+    header, _, body = text.partition("\n\n")
+    return _result(
+        summary="게시될 리포트 수정본입니다.",
+        items=[{"title": header, "body": body, "score": 1.0, "id": meeting_id}],
+    )
+
+
+TOOLS = [
+    meeting_quality,
+    team_trend,
+    recurring_gaps,
+    misalignment_risk,
+    meeting_report_draft,
+    meeting_report_awaiting_approval,
+    meeting_report_correction,
+]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
 RUN_SCOPE = ("team_id",)
@@ -391,7 +461,41 @@ def publish_meeting_report(
     return _acted("리포트 게시를 예약했습니다.", meeting_id)
 
 
-ACTIONS = [draft_meeting_report, publish_meeting_report]
+def publish_meeting_report_correction(
+    team_id: str, meeting_id: str, correction_id: str
+) -> dict[str, Any]:
+    """Post a member's correction under the meeting's posted report.
+
+    L2 -- runs only after a person approves (#674). Posts the correction
+    ``correction_id`` names, once, as a reply under the original post (or a new
+    message when that thread is out of reach). When a later correction replaced
+    it, the approval posts nothing. Refused for another team's meeting and for
+    a report with no such correction waiting.
+    """
+    with session_scope() as session:
+        meeting = session.get(Meeting, meeting_id)
+        if meeting is None or meeting.team_id != team_id:
+            return _not_found()
+        awaiting = service.meeting_report_awaiting_approval(session, meeting_id)
+        if awaiting is None or awaiting.kind != "correction" or awaiting.id != correction_id:
+            return _refused(
+                "correction not current",
+                "승인한 수정본이 지금 기다리는 수정본이 아닙니다. "
+                "새 수정본으로 바뀌었거나 이미 보냈습니다.",
+            )
+    try:
+        # The correction can still be replaced before the task claims it; the claim checks again.
+        tasks.deliver_meeting_report_correction.apply_async((meeting_id, correction_id))
+    except Exception as exc:  # the correction is stored; the caller must not see a failure
+        log.warning(
+            "intelligence_meeting_report_correction_enqueue_failed",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
+    return _acted("리포트 수정본 게시를 예약했습니다.", meeting_id)
+
+
+ACTIONS = [draft_meeting_report, publish_meeting_report, publish_meeting_report_correction]
 """E's writes. Kept out of ``TOOLS`` on purpose: the registry offers ``TOOLS`` to
 models, and the main agent's executor alone runs these."""
 

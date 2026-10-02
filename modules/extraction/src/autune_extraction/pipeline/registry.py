@@ -101,12 +101,13 @@ def _llm_classifier(impl: str) -> Classifier:
     settings = get_settings()
     if not settings.llm_api_key:
         raise ValueError(
-            f"AUTUNE_EXTRACTION_CLASSIFIER_IMPL={impl} needs AUTUNE_EXTRACTION_LLM_API_KEY"
+            f"AUTUNE_EXTRACTION_CLASSIFIER_IMPL={impl} needs AUTUNE_EXTRACTION_LLM_API_KEY "
+            "(or the shared AUTUNE_LLM_API_KEY)"
         )
     from .llm import LlmClassifier  # noqa: PLC0415 - only a worker that opted in pays for it
 
     return LlmClassifier(
-        api_key=settings.llm_api_key,
+        api_key=settings.llm_api_key.get_secret_value(),
         model=settings.llm_model,
         base_url=settings.llm_base_url,
         timeout_sec=settings.llm_timeout_sec,
@@ -180,10 +181,11 @@ def get_resolver() -> ReferenceResolver:
     if impl == "llm":
         if not settings.llm_api_key:
             raise ValueError(
-                "AUTUNE_EXTRACTION_RESOLVER_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY"
+                "AUTUNE_EXTRACTION_RESOLVER_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY "
+                "(or the shared AUTUNE_LLM_API_KEY)"
             )
         return LlmResolver(
-            api_key=settings.llm_api_key,
+            api_key=settings.llm_api_key.get_secret_value(),
             model=settings.resolver_model,
             base_url=settings.llm_base_url,
             timeout_sec=settings.llm_timeout_sec,

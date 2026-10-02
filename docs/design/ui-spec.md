@@ -1,8 +1,8 @@
 # AUTUNE UI Spec v2
 
-Based on product plan v2. Screen IDs (S01–S33) map 1:1 to the design files.
+Based on product plan v2. Screen IDs (S01–S34) map 1:1 to the design files.
 Tokens: [`design-tokens.json`](design-tokens.json).
-Design source: `AUTUNE Spec 00~04 *.dc.html`, `AUTUNE 실시간 전사.dc.html`.
+Design source: `AUTUNE Spec 00~05 *.dc.html`, `AUTUNE 실시간 전사.dc.html`.
 
 > The design files are the source of truth for pixels. This document is the
 > source of truth for rules. When they disagree, the design file wins on
@@ -92,6 +92,11 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S31 | Meeting-needed proposal DM | P2 | 3 trigger-rationale rows · proposal block (time · attendees · room · congestion avoided) · "이대로 예약" (accent) / "시간 바꾸기" / "필요 없음" |
 | S32 | Room booking | P2 | Date chips · attendee-overlap and congestion heat rows · recommended-slot radio (selected = selection background) · Teams Rooms / in-house API |
 | S33 | Desktop mini window | P2 | 380 wide · dark · timer · waveform · 3 rows of recent decisions/commitments/materials · full screen / pause / stop |
+
+### Agent assistant (Spec 05 · variant 1a adopted)
+| ID | Screen | Stage | Key elements and states |
+|---|---|---|---|
+| S34 | Assistant — floating launcher and panel, bottom right | MVP | On every page except S01, S13 and onboarding · launcher → 400×600 panel · the current page attached as context · evidence rows · action proposal block · suggested-question chips · details and what is still open against the agent layer: [`agent-assistant.md`](agent-assistant.md) |
 
 ## 2. Shared components
 

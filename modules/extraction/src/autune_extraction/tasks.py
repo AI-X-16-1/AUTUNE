@@ -49,6 +49,7 @@ from autune_integrations import (
     JiraClient,
     NotionClient,
     PermanentIntegrationError,
+    ReconnectRequiredError,
     SlackClient,
     TransientIntegrationError,
     refresh_access_token,
@@ -611,14 +612,19 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
     opened closed on the way out.
 
     Each person's own grant (``user_integrations``, #444) is refreshed with the
-    deployment's Google client (core's ``google_client_id``/``google_client_secret``,
-    #425); a deployment without them has nobody connected as far as this is
-    concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
+    Google client it was issued to -- core's ``google_integration_credentials``:
+    the deployment's integration client when it has one, the sign-in client
+    otherwise (#425). A deployment with neither has nobody connected as far as
+    this is concerned. A refused refresh token raises ``ReconnectRequiredError`` -- an
     ``IntegrationError`` -- for the caller to handle.
+
+    A grant recorded as issued to another client (core keeps ``client_id``
+    beside it since the review of #700) raises the same error **without**
+    asking Google: the answer is known, and a refresh with the wrong client
+    is one refused call per sync for as long as the person stays connected.
+    A grant from before the client was recorded is tried as it always was.
     """
-    core = get_core_settings()
-    client_id = core.google_client_id
-    client_secret = core.google_client_secret
+    client_id, client_secret = get_core_settings().google_integration_credentials
     opened: dict[str, tuple[calendar_sync.CalendarEvents, str]] = {}
     clients: list[CalendarClient] = []
 
@@ -628,6 +634,11 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
         config = load_user_integration(session, user_id, calendar_sync.CALENDAR)
         if config is None or not config.secret or not client_id or not client_secret:
             return None
+        issued_to = config.config.get("client_id")
+        if issued_to and issued_to != client_id:
+            raise ReconnectRequiredError(
+                "the calendar grant was issued to another Google client; connect again"
+            )
         token = refresh_access_token(
             client_id=client_id, client_secret=client_secret, refresh_token=config.secret
         )
@@ -912,6 +923,56 @@ def backfill_notion(team_id: str) -> None:
     )
 
 
+@shared_task(name="autune.extraction.periodic.retire_decision_pages")
+@periodic(timedelta(minutes=10))
+def retire_decision_pages() -> int:
+    """Take out of Notion the decision pages that should no longer be there,
+    on a timer (#683). Returns how many were retired.
+
+    A decision's page is retired once, right after the decision stops being
+    confirmed, is deleted, or is dropped by a rerun (#669), and a failure of
+    that one call is only logged. A decision that still exists is tried
+    again at its next change; one that is gone has no next change, and its
+    page stayed live with the statement until somebody ran the Notion
+    backfill. This is that second try with nobody doing anything: the same
+    list (``notion_backfill._decision_pages_to_retire``, every team) through
+    the same sync, so a decision whose id came back unconfirmed is covered
+    too.
+
+    A tick with nothing to retire reads the database and calls Notion not
+    at all. A page whose team has no Notion connection cannot be reached and
+    is counted, not failed; it is listed again next time, which costs one
+    read. One row's failure costs that row when it is an ``IntegrationError``
+    or a ``PrivacyViolationError``, the two ``backfill_decisions`` catches; any
+    other exception ends this tick, and the next one starts the list over.
+    Ids and counts only in the log, and ``retired`` counts only what this run
+    retitled and trashed -- a page found archived or deleted is counted as
+    that.
+
+    Not covered, because nothing records them: a *changed* page whose update
+    failed (retried at the row's next change or by the backfill), and the
+    page or issue of an action item a person deleted when
+    ``trash_notion_page`` / ``close_jira_issue`` could not get through --
+    the item's row is gone by then. Both need a record of what is owed,
+    which is a table, not this task.
+    """
+    rows = notion_backfill._decision_pages_to_retire(None)
+    if not rows:
+        return 0
+    stats = notion_backfill.Stats()
+    notion_backfill.backfill_decisions(rows, stats)
+    log.info(
+        "extraction_decision_pages_retired",
+        listed=len(rows),
+        retired=stats.retired,
+        archived=stats.archived,
+        gone=stats.gone,
+        failed=stats.failed,
+        not_connected=stats.not_connected,
+    )
+    return stats.retired
+
+
 def trash_notion_page(action_item_id: str) -> None:
     """Before the board deletes an item: its Notion page to the workspace's
     trash, restorable there for 30 days (decided with the user, #467). Runs in
@@ -1041,8 +1102,7 @@ def forget_user_calendar_events(user_id: str) -> None:
 
 def _google_client_configured() -> bool:
     """Whether this deployment can refresh anyone's Google grant at all."""
-    core = get_core_settings()
-    return bool(core.google_client_id and core.google_client_secret)
+    return all(get_core_settings().google_integration_credentials)
 
 
 def _remove_events(

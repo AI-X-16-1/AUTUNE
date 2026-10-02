@@ -31,3 +31,30 @@ export type Approvers = {
   scopes: ApproverScope[];
   members: { user_id: string; name: string; scopes: ApproverScope[] }[];
 };
+
+/** One ranked item an answer rests on (`Finding` in `autune_agent.results`). */
+export type ChatFinding = {
+  title: string;
+  body: string;
+  score: number;
+  /** Extra keys a module adds; `meeting_id` makes the row a link. */
+  id?: string;
+  meeting_id?: string;
+};
+
+/** One chat turn's reply (`POST /api/agent/chat`). */
+export type ChatReply = {
+  run_id: string;
+  outcome: "answered" | "unrouted" | string;
+  route: string | null;
+  answer: string;
+  items: ChatFinding[];
+  /** Actions the subagent proposed, at any level. */
+  proposed: number;
+  /** L1 actions that ran and worked. */
+  executed: number;
+  /** Proposals this run left waiting for an approver, counted on the server. */
+  queued: number;
+  /** L2 proposals this run queued that the caller may decide (plan mode's rule). */
+  pending: PendingAction[];
+};

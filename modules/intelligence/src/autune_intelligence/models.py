@@ -167,6 +167,35 @@ class IntelMeetingReport(Base, TimestampMixin):
     draft_id: Mapped[str | None] = mapped_column(String(64))
     """The Report run that wrote this draft. A post approved for one draft id
     is refused once a later run has replaced the draft (review of #508)."""
+    edited_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    """The team member who last edited the draft on the dashboard, if anyone.
+    A per-person record, so it goes with the person; the report stays."""
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    correction_body: Mapped[str | None] = mapped_column(Text)
+    """The latest correction a member wrote after the report was posted. It goes
+    out as a reply under the post once approved (#674); the post itself is never
+    changed."""
+    correction_id: Mapped[str | None] = mapped_column(String(64))
+    """Names this correction, as ``draft_id`` names a draft: the approval pins it,
+    so a correction written after the approval is not posted under it."""
+    corrected_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    correction_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set when a task claims the correction, before it posts: at most once."""
+    correction_slack_ts: Mapped[str | None] = mapped_column(String(64))
+    correction_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Set when an approved correction could not be posted at all -- the team's
+    Slack was disconnected after the report went out (#698). It reads as failed
+    at once, and the next correction clears it."""
+    announced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """The person's change (``edited_at``, or ``corrected_at`` after the post)
+    that the last announcement covered. A later change not covered by it is
+    announced again by the sweep, so a lost enqueue does not lose the approval
+    request (#698)."""
 
 
 class IntelReport(Base, TimestampMixin):

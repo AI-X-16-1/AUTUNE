@@ -3,6 +3,7 @@
 import { ActionCompletionRate } from "./ActionCompletionRate";
 import { AlignmentHeatmap } from "./AlignmentHeatmap";
 import { GapDistributionBars } from "./GapDistributionBars";
+import { MeetingReportsCard } from "./MeetingReportsCard";
 import { PredictionCard } from "./PredictionCard";
 import { QualityScoreCard } from "./QualityScoreCard";
 import { useDashboard } from "../hooks/useDashboard";
@@ -51,6 +52,10 @@ export function Dashboard({ teamId }: { teamId: string }) {
       </div>
 
       <PredictionCard predictions={predictions} />
+
+      <div style={{ gridColumn: "1 / -1" }}>
+        <MeetingReportsCard teamId={teamId} />
+      </div>
     </div>
   );
 }
