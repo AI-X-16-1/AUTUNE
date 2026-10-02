@@ -371,3 +371,26 @@ def test_two_tools_share_the_five_items() -> None:
 def test_the_team_set_quotes_no_other_meeting_and_names_no_person_it_cannot_resolve() -> None:
     assert "audio.search_team_meetings" not in TEAM_TOOLS
     assert "extraction.person_action_items" not in TEAM_TOOLS
+
+
+def test_the_meeting_overview_sends_speakers_by_number_not_name() -> None:
+    # #677 review: meeting_overview lists speakers by name and carries no utt_ id.
+    overview = {
+        "ok": True,
+        "summary": "「주간 회의」 · 화자 2명.",
+        "items": [
+            {"title": "김민경", "body": "이름 확인됨 · 동의함"},
+            {"title": "박재경", "body": "이름 미확인 · 동의함"},
+        ],
+        "evidence": ["mtg_1"],
+    }
+    box = _box({"audio.meeting_overview": mock_tool("audio.meeting_overview", overview)})
+    decl = [
+        Declaration("audio__meeting_overview", "Use this.", {"type": "OBJECT", "properties": {}})
+    ]
+    model = ScriptedToolModel([[FunctionCall("audio__meeting_overview", {})], "DONE"])
+
+    result = ask("누가 참석했어?", model=model, toolbox=box, declarations=decl)
+
+    assert [i["title"] for i in _sent_items(model, 1)] == ["화자 1", "화자 2"]
+    assert [i.title for i in result.items] == ["화자 1", "화자 2"]
