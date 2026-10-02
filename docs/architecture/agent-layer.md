@@ -366,7 +366,7 @@ says.
 | B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
 | C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form |
 | D | this meeting's links; a decision thread; the team's decisions; the earlier meeting an upcoming meeting follows; the Jira issues it should take up | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, and `brief_recap`, `brief_agenda` over the pre-meeting brief's own rows (Briefing's reads), named by D's owner |
-| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate) | E's aggregate reads. No speaking-ratio tool (invariant 11). Two actions for the Report subagent: `draft_meeting_report` (L1) and `publish_meeting_report` (L2) |
+| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate); a meeting report's stored draft, by `draft_id`, for the approval card | E's aggregate reads. No speaking-ratio tool (invariant 11). Two actions for the Report subagent: `draft_meeting_report` (L1) and `publish_meeting_report` (L2) |
 
 - **C — the charter reaching gap detection is a proposal, to be agreed with
   C.** An earlier draft said `detect_gaps` would take a `checklist: list[str]`
@@ -1256,30 +1256,29 @@ and dropped, and #82 is reopened with 강민구 owning it (3LO, B's sync, and
 Briefing's reads). Briefing's issue links and any Jira read by Workload wait on
 #82, and neither subagent depends on them.
 
-### 13.7 A republished event does not rerun a subagent
+### 13.7 A republished event reruns the subagents it wakes
 
 `autune.intelligence.completed` is published more than once for a meeting: E
 re-aggregates when a late module reports, and again when C republishes its
 `GapReport` after a dismissal, a template switch (#498) or a rescoring (#506).
-The trigger skips a subagent that already has a finished run for that event and
-meeting (`_already_ran`, `main/triggers.py`), which is what makes a redelivered
-event safe — and also means the second, corrected result is never read.
 
-Two proposals can then go stale while they wait for approval: the Report's
-draft, written before a late B arrived or still quoting a gap the team has
-since dismissed, and Follow-up's proposal, holding the dismissed gap as its
-evidence (reviews of #509 and #531). The choice is between re-reading the
-evidence when a person approves and treating E's republish as a new run. It is
-to be settled with plan mode (section 8). Until then a draft is whatever the
-first run wrote.
+Settled with plan mode (#556, confirmed on #571): `_already_ran`
+(`main/triggers.py`) skips a run by its **Celery task id**, not by the event.
+A redelivered message carries the same task id and is skipped; E's republish
+is a new task, so every subagent woken by the event -- Report, Research,
+Follow-up -- runs again on the corrected result. When a new run queues its
+proposals, `pending.queue_l2` marks the same team's, meeting's and subagent's
+earlier `pending` rows `superseded`, so a stale card leaves the queue
+(`test_triggers.py::test_the_same_task_is_skipped_and_a_new_task_runs_again`).
 
-The Report's half of the precondition is in place: its post is pinned to its
-own run's draft (review of #508). Both proposals carry one `draft_id`, E
-stores it with the draft, and `publish_meeting_report` and the delivery task
-post only that draft -- approving a proposal whose draft a later run has
-replaced posts nothing (`draft not current`). A rerun therefore cannot change
-what an earlier approval posts. The approval card still does not show the
-draft's text.
+The Report's post is pinned to its own run's draft (review of #508). Both
+proposals carry one `draft_id`, E stores it with the draft, and
+`publish_meeting_report` and the delivery task post only that draft --
+approving a proposal whose draft a later run has replaced posts nothing
+(`draft not current`). A rerun therefore cannot change what an earlier approval
+posts. The approval card reads the draft through E's
+`intelligence.meeting_report_draft(team_id, meeting_id, draft_id)`, which
+returns the text only while that draft is the stored one (#571).
 
 ## 14. Build plan — from 2026-09-29 to 2026-10-12
 
