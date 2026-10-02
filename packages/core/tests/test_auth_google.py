@@ -24,9 +24,14 @@ from autune_core.auth_router import STATE_COOKIE
 from autune_core.auth_router import router as auth_router
 from autune_core.auth_service import upsert_user_from_google
 from autune_core.db import Base, get_session
-from autune_core.entities import User
+from autune_core.entities import Team, TeamMember, User
 from autune_core.errors import AutuneError, PermissionDeniedError
-from autune_core.oauth.google import GoogleIdentity, GoogleOAuthClient, get_google_client
+from autune_core.oauth.google import (
+    CLOCK_SKEW_SECONDS,
+    GoogleIdentity,
+    GoogleOAuthClient,
+    get_google_client,
+)
 from autune_core.oauth.state import (
     InMemoryStateStore,
     OAuthTransaction,
@@ -175,9 +180,33 @@ def test_verify_rejects_a_foreign_issuer(rsa_key: rsa.RSAPrivateKey) -> None:
 
 
 def test_verify_rejects_an_expired_token(rsa_key: rsa.RSAPrivateKey) -> None:
-    stale = _id_token(rsa_key, exp=int(time.time()) - 10)
+    stale = _id_token(rsa_key, exp=int(time.time()) - CLOCK_SKEW_SECONDS - 60)
     with pytest.raises(PermissionDeniedError):
         _client(rsa_key).verify(stale, nonce="the-nonce")
+
+
+def test_verify_accepts_a_token_issued_just_ahead_of_this_clock(
+    rsa_key: rsa.RSAPrivateKey,
+) -> None:
+    """#618: a PC 0.9 s behind Google read a fresh token's ``iat`` as in the
+    future and refused every sign-in."""
+    fresh = _id_token(rsa_key, iat=int(time.time()) + 5)
+
+    identity = _client(rsa_key).verify(fresh, nonce="the-nonce")
+
+    assert identity.sub == "google-sub-1"
+
+
+def test_verify_rejects_a_token_issued_beyond_the_skew(rsa_key: rsa.RSAPrivateKey) -> None:
+    ahead = _id_token(rsa_key, iat=int(time.time()) + CLOCK_SKEW_SECONDS + 60)
+
+    with capture_logs() as logs, pytest.raises(PermissionDeniedError):
+        _client(rsa_key).verify(ahead, nonce="the-nonce")
+
+    (entry,) = [e for e in logs if e["event"] == "auth_google_id_token_rejected"]
+    assert entry["reason"] == "ImmatureSignatureError", "the log names which check refused it"
+    assert "dev@example.com" not in repr(logs)
+    assert ahead not in repr(logs)
 
 
 def test_exchange_code_returns_the_id_token(rsa_key: rsa.RSAPrivateKey) -> None:
@@ -248,7 +277,7 @@ def db() -> Session:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    Base.metadata.create_all(engine, tables=[User.__table__])
+    Base.metadata.create_all(engine, tables=[User.__table__, Team.__table__, TeamMember.__table__])
     with sessionmaker(bind=engine)() as session:
         yield session
 
@@ -601,6 +630,35 @@ def test_me_accepts_the_session_cookie(
     user = upsert_user_from_google(db, _identity())
     client.cookies.set(SESSION_COOKIE, issue_token(user.id))
     assert client.get("/api/auth/me").status_code == 200
+
+
+def test_me_lists_the_teams_the_person_belongs_to(
+    api: tuple[TestClient, dict[str, object]], db: Session
+) -> None:
+    """S28 settings (#496) picks a team's integrations from these -- there is no
+    meeting to name the team there."""
+    client, _ = api
+    user = upsert_user_from_google(db, _identity())
+    db.add_all(
+        [
+            Team(id="team_b", name="B팀"),
+            Team(id="team_a", name="A팀"),
+            Team(id="team_x", name="남의 팀"),
+        ]
+    )
+    db.flush()
+    db.add_all(
+        [
+            TeamMember(team_id="team_b", user_id=user.id),
+            TeamMember(team_id="team_a", user_id=user.id),
+        ]
+    )
+    db.commit()
+    client.cookies.set(SESSION_COOKIE, issue_token(user.id))
+
+    teams = client.get("/api/auth/me").json()["teams"]
+
+    assert teams == [{"id": "team_a", "name": "A팀"}, {"id": "team_b", "name": "B팀"}]
 
 
 def test_providers_reports_whether_google_is_configured(

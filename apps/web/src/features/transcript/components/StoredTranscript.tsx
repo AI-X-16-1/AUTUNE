@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { timecode } from "../format";
 import { useSpeakers } from "../hooks/useSpeakers";
 import { useTranscript } from "../hooks/useTranscript";
+import { useUtteranceAnchor } from "../hooks/useUtteranceAnchor";
 import type { SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
 import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
 import { TranscriptRow } from "./TranscriptRow";
@@ -49,6 +50,11 @@ import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
  * **Selecting text offers S30.** A selection inside one line shows a floating
  * "개인정보 신고"; reporting masks the span on the server, and the transcript
  * is read again so the line shows the redaction it now stores.
+ *
+ * **A link can name a line.** `/meetings/{id}#{utterance_id}` — S20's evidence
+ * links — scrolls to that row once the transcript is in and tints it briefly
+ * (`useUtteranceAnchor`). Each row is wrapped rather than given the id itself,
+ * so `TranscriptRow`, shared with the live screen, stays as it is.
  */
 export function StoredTranscript({
   meetingId,
@@ -86,6 +92,11 @@ export function StoredTranscript({
   } = useSpeakers(meetingId, teamId);
   const unidentified = speakers.filter((entry) => entry.user_id === null);
   const nameOf = speakerNames(speakers, members);
+  const ids = useMemo(
+    () => (state.status === "ready" ? state.utterances.map((utterance) => utterance.id) : null),
+    [state],
+  );
+  const anchored = useUtteranceAnchor(ids);
 
   if (state.status === "loading") {
     return (
@@ -159,11 +170,20 @@ export function StoredTranscript({
       )}
 
       {state.utterances.map((utterance) => (
-        <TranscriptRow
+        <div
           key={utterance.id}
-          row={{ utterance, kind: kinds[utterance.id] }}
-          name={nameOf(utterance.speaker, utterance.speaker_id)}
-        />
+          id={utterance.id}
+          // No fade: there is no motion token for one, and a literal would be
+          // a token change (this folder's CLAUDE.md).
+          style={{
+            background: anchored === utterance.id ? "var(--color-accent-selection)" : undefined,
+          }}
+        >
+          <TranscriptRow
+            row={{ utterance, kind: kinds[utterance.id] }}
+            name={nameOf(utterance.speaker, utterance.speaker_id)}
+          />
+        </div>
       ))}
 
       {selected && !reporting && <ReportButton selected={selected} onOpen={() => setReporting(true)} />}
@@ -248,7 +268,8 @@ function ReportModal({
       onReported={(result) =>
         onReported(
           `${result.occurrences}곳을 마스킹했습니다.` +
-            (result.republished ? " 요약·액션·갭 분석에 다시 반영됩니다." : ""),
+            (result.republished ? " 요약·액션·갭 분석에 다시 반영됩니다." : "") +
+            (result.rule ? ` 앞으로 ${result.rule} 형태는 자동으로 가립니다.` : ""),
         )
       }
     />

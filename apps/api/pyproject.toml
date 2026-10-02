@@ -8,6 +8,7 @@ dependencies = [
     "autune-audio", "autune-extraction", "autune-gap",
     "autune-context", "autune-intelligence",
     "autune-agent",
+    "autune-bot",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
 ]

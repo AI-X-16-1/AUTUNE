@@ -115,16 +115,24 @@ class JiraClient(HttpClient):
         due_date: date | None,
         assignee_account_id: str | None,
         keep_assignee: bool = False,
+        description: str | None = None,
     ) -> bool:
         """Rewrite the fields Autune owns. ``False`` when the issue is gone --
         deleted in Jira -- so the caller can make a new one.
 
         ``keep_assignee`` leaves Jira's assignee as it is: for a person Autune
-        could not find in Jira, whom someone may have assigned by hand there."""
+        could not find in Jira, whom someone may have assigned by hand there.
+
+        ``description`` rewrites the description ``create_task`` wrote, ``""``
+        clearing it; ``None`` leaves it. Without it an item whose text changed --
+        a person deleting their own speech (#587, #601) -- kept the old text in
+        Jira whenever it had been too long or multi-line for the summary."""
         fields: dict[str, Any] = {
             "summary": summary,
             "duedate": due_date.isoformat() if due_date else None,
         }
+        if description is not None:
+            fields["description"] = _doc(description) if description else None
         if not keep_assignee:
             fields["assignee"] = {"accountId": assignee_account_id} if assignee_account_id else None
         try:

@@ -398,6 +398,10 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    # Nothing leaves: with another module's tasks imported (their suite run
+    # first), ``autune.extraction.completed`` has subscribers and the real
+    # ``publish`` would reach for a broker this test has none of.
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: [])
     return session
 
 

@@ -31,7 +31,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, PrivacyViolationError, get_logger, load_integration, session_scope
@@ -64,10 +64,20 @@ class Stats:
 
 
 def _confirmed_action_items(team_id: str | None) -> list[tuple[str, str]]:
-    """``(action_item_id, meeting_id)`` for every item past ``needs_confirmation``."""
+    """``(action_item_id, meeting_id)`` for every item past ``needs_confirmation``,
+    and every one moved back to it that has a page -- its page shows 확인 필요
+    (#622), and a page written before #622 still shows a status code."""
     with session_scope() as session:
+        has_page = (
+            select(ExtExternalRef.action_item_id)
+            .where(
+                ExtExternalRef.action_item_id == ExtActionItem.id,
+                ExtExternalRef.system == "notion",
+            )
+            .exists()
+        )
         stmt = select(ExtActionItem.id, ExtActionItem.meeting_id).where(
-            ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
+            or_(ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value, has_page)
         )
         if team_id is not None:
             stmt = stmt.join(Meeting, Meeting.id == ExtActionItem.meeting_id).where(

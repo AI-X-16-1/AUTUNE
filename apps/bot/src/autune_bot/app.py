@@ -13,17 +13,29 @@ See docs/architecture/monorepo.md.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from importlib import import_module
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from autune_contracts import MODULES
-from autune_core import configure_logging, get_logger, get_settings
+from autune_core import (
+    configure_logging,
+    get_logger,
+    get_settings,
+    load_integration,
+    session_scope,
+)
+from autune_core.integrations_config import teams_with
 
 if TYPE_CHECKING:
     from slack_bolt import App
+    from slack_bolt.authorization import AuthorizeResult
 
 configure_logging()
 log = get_logger(__name__)
+
+SLACK = "slack"
 
 
 def register_all(app: App) -> list[str]:
@@ -36,6 +48,49 @@ def register_all(app: App) -> list[str]:
     return registered
 
 
+def authorize_team(
+    enterprise_id: str | None = None, team_id: str | None = None, logger: Any = None
+) -> AuthorizeResult | None:
+    """The bot token for the Slack workspace a request came from: the one an
+    Autune team stored when it installed the app (``team_integrations``, #428).
+    Several Autune teams on one workspace hold the same token, so the first
+    answers. ``None`` for a workspace no team installed -- Bolt then refuses
+    the request.
+    """
+    from slack_bolt.authorization import AuthorizeResult
+
+    if not team_id:
+        return None
+    with session_scope() as session:
+        for autune_team in teams_with(session, SLACK, "workspace_id", team_id):
+            config = load_integration(session, autune_team, SLACK)
+            if config is not None and config.secret:
+                return AuthorizeResult(
+                    enterprise_id=enterprise_id,
+                    team_id=team_id,
+                    bot_token=config.secret,
+                    bot_user_id=str(config.config.get("bot_user_id") or "") or None,
+                )
+    log.info("slack_request_from_unknown_workspace")
+    return None
+
+
+def bolt_logger() -> logging.Logger:
+    """Bolt's logger, at WARNING.
+
+    Bolt gives each of its loggers the root's level unless the app is handed
+    one, and at INFO it logs a request that failed the signature check with its
+    raw body (``RequestVerification._debug_log_error``). A forged copy of a
+    real click carries the DM's blocks, which quote a person's line (privacy
+    rule 11, #610 review). Setting the level on ``slack_bolt`` alone is not
+    enough: each Bolt logger copies its level once, from the logger it is
+    given, so the app must be given this one.
+    """
+    logger = logging.getLogger("slack_bolt")
+    logger.setLevel(logging.WARNING)
+    return logger
+
+
 def build_app() -> App:
     """Construct the Bolt app from configured credentials.
 
@@ -45,13 +100,36 @@ def build_app() -> App:
     from slack_bolt import App
 
     settings = get_settings()
-    if not settings.slack_bot_token or not settings.slack_signing_secret:
+    if not settings.slack_signing_secret:
         raise RuntimeError(
-            "Slack is not configured. Set AUTUNE_SLACK_BOT_TOKEN and "
-            "AUTUNE_SLACK_SIGNING_SECRET in .env — see docs/engineering/environments.md."
+            "Slack is not configured. Set AUTUNE_SLACK_SIGNING_SECRET in .env "
+            "(and AUTUNE_SLACK_BOT_TOKEN for socket mode) — see "
+            "docs/engineering/environments.md."
         )
 
-    app = App(token=settings.slack_bot_token, signing_secret=settings.slack_signing_secret)
+    if settings.slack_bot_token:
+        # One workspace, one token: local development in socket mode.
+        if settings.env != "local":
+            # Every workspace would be answered with this one token, and a
+            # team's own installation would be ignored (#610 review).
+            log.warning("slack_global_bot_token_outside_local", env=settings.env)
+        app = App(
+            token=settings.slack_bot_token,
+            signing_secret=settings.slack_signing_secret,
+            logger=bolt_logger(),
+        )
+    else:
+        # Every team installs Autune into its own workspace (#428) and stores
+        # its own bot token; a request is answered with the token of the
+        # workspace it came from (#585).
+        # Bolt types ``authorize`` as always answering, but returns a ``None``
+        # result as "not authorized" (``CallableAuthorize``) -- what an unknown
+        # workspace must get.
+        app = App(
+            signing_secret=settings.slack_signing_secret,
+            authorize=cast("Callable[..., AuthorizeResult]", authorize_team),
+            logger=bolt_logger(),
+        )
 
     @app.event("app_mention")
     def _acknowledge_mention(body: dict, logger) -> None:  # noqa: ANN001

@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from autune_audio.embedding import EMBEDDING_DIM
 from autune_audio.live.speakers import unit
 from autune_audio.schemas import Waveform
 
@@ -38,6 +39,21 @@ class EmbedderUnavailable(RuntimeError):  # noqa: N818 - name fixed by the desig
     def __init__(self, kind: str) -> None:
         super().__init__(kind)
         self.kind = kind
+
+
+class EmbedderDimensionMismatch(EmbedderUnavailable):  # noqa: N818 - one of EmbedderUnavailable
+    """The checkpoint's vectors are not ``EMBEDDING_DIM`` wide (#363 item 3).
+
+    ``aud_speaker_embeddings.vector`` is ``Vector(EMBEDDING_DIM)``; a model of
+    another width makes every INSERT fail, and the stored path swallows that
+    per row so a meeting never loses its transcript over a vector. Checked
+    once at load instead, so the mismatch is one loud line at warm-up rather
+    than candidates that quietly never appear.
+    """
+
+    def __init__(self, width: int) -> None:
+        super().__init__("dimension_mismatch")
+        self.width = width
 
 
 class Embedder:
@@ -67,6 +83,10 @@ class Embedder:
             model = Model.from_pretrained(self._checkpoint, token=self._token or None)
             if model is None:
                 raise RuntimeError(f"failed to load {self._checkpoint}")
+            # Not every model says; pyannote's embedding models do.
+            width = getattr(model, "dimension", None)
+            if isinstance(width, int) and width != EMBEDDING_DIM:
+                raise EmbedderDimensionMismatch(width)
             self._inference = Inference(model, window="whole")
         except Exception as exc:
             # Remembered per process: a machine with no extra, no token or

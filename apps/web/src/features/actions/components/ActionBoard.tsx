@@ -32,11 +32,14 @@ export function ActionBoard({
   selectedId,
   onSelect,
   add,
+  showMeeting = false,
 }: {
   items: ActionItemRead[];
   selectedId?: string;
   onSelect?: (id: string) => void;
   add?: { meetingId: string; onAdd: (draft: ActionItemDraft) => Promise<unknown> };
+  /** Each card names its meeting -- the board across meetings. */
+  showMeeting?: boolean;
 }) {
   const { candidates, byColumn } = useMemo(() => group(items), [items]);
 
@@ -67,6 +70,7 @@ export function ActionBoard({
                   item={item}
                   selected={item.id === selectedId}
                   onSelect={onSelect}
+                  showMeeting={showMeeting}
                 />
               ))}
             </div>
@@ -74,7 +78,12 @@ export function ActionBoard({
         ))}
       </div>
 
-      <CandidateBand items={candidates} selectedId={selectedId} onSelect={onSelect} />
+      <CandidateBand
+        items={candidates}
+        selectedId={selectedId}
+        onSelect={onSelect}
+        showMeeting={showMeeting}
+      />
     </div>
   );
 }

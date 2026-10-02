@@ -106,13 +106,16 @@ for name in MODULES:
 Celery does the same: `include=[f"autune_{m}.tasks" for m in MODULES]`, and
 `apps/bot` calls `autune_{m}.slack.register(app)` for each module.
 
-Two routers are mounted by name next to the loop, and only two:
+Three routes are mounted by name next to the loop, and only three:
 
 - `/api/auth` (`autune_core.auth_router`) — sign-in is cross-cutting, owned by
   the whole team, and belongs to no module.
 - `/api/agent` (`autune_agent.router`) — the agent layer is not a module and is
   not in `MODULES` (ADR 0010). Its subagents are collected inside the layer, so
   adding one never touches `main.py`.
+- `/api/slack/events` — Slack's Request URL (#585). It mounts the Bolt app
+  `apps/bot` builds, whose handlers are still each module's `slack.register`;
+  only where a signing secret is set.
 
 The worker has the same one exception: `apps/worker` passes
 `autune_agent.tasks` to `make_celery_app(extra_include=...)` beside the module

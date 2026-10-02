@@ -1,0 +1,390 @@
+{
+ "version": 1,
+ "_about": "Probes for the replacement cue in pipeline.change (marks_replacement), not a KPI set: run with --dataset decision_lineage_cue_probes_v2.json. Twelve swaps that must read as reversed, and twelve uses of the same verbs where a value or an owner moves, which must stay modified. Written by the author of the rule, after the rule, with its guards in mind: the negatives mirror the guards. It shows the rule does what it was written to do; it says nothing about how well it generalises. For that, a new held-out set.",
+ "cases": [
+  {
+   "id": "cp2_log_saas",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "로그 수집은 자체 서버에서 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "로그 수집을 외부 SaaS로 이전한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_messenger",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "사내 메신저는 카카오워크를 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사내 메신저를 슬랙으로 교체한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_delivery",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "배송은 직영 차량으로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "배송을 외부 택배사로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_inquiry_bot",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "고객 문의는 이메일로만 받는다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객 문의를 챗봇으로 대체한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_office_move",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "사무실은 판교에 둔다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "사무실을 판교에서 성수로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_mobile_stack",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "모바일 앱은 네이티브로 만든다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "모바일 앱을 리액트 네이티브로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_doc_store",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "문서 저장소는 위키를 쓴다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "문서 저장소를 노션으로 이관한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_onprem_cloud",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "서버는 온프레미스에서 운영한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "서버 운영을 온프레미스에서 클라우드로 갈아탄다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_video_tool",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "원격 회의는 줌으로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "원격 회의를 구글 미트로 통일한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_payroll",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "급여 계산은 엑셀로 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "급여 계산을 전용 소프트웨어로 대체한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_night_watch",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "야간 모니터링은 사내 인력이 직접 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "야간 모니터링을 외부 관제 업체로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_paperless",
+   "category": "reversed_alternative",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "신규 입사자 서류는 종이로 받는다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 입사자 서류를 전자 서명으로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "reversed"
+  },
+  {
+   "id": "cp2_weekday",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "회의실 청소는 매주 월요일에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "회의실 청소를 매주 수요일로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_sprint_unit",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "스프린트는 2주 단위다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "스프린트를 3주 단위로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_report_unit",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "보고 주기는 월 단위다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "보고 주기를 주 단위로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_owner_damdang",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "점검 담당은 박서연이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "점검 담당을 최하준으로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_time_of_day",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "신규 입사자 교육은 오전에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "신규 입사자 교육을 오후로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_price",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "월 요금은 9천 원이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "월 요금을 1만 원으로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_release_cycle",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "릴리스는 분기마다 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "릴리스 주기를 월 1회로 전환한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_owner_chaegim",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "고객 응대 책임은 1팀에 있다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "고객 응대 책임을 2팀으로 이관한다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_deploy_slot",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "배포는 금요일 오후에 한다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "배포를 수요일 오전으로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_owner_jugwan",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "행사 주관은 홍보팀이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "행사 주관을 마케팅팀으로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_leave_notice",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "휴가 신청 기한은 3일 전이다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "휴가 신청 기한을 5일 전으로 바꾼다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  },
+  {
+   "id": "cp2_lunch_time",
+   "category": "modified_param",
+   "past_meetings": [
+    {
+     "days_ago": 14,
+     "decision": "점심시간은 열두 시부터다."
+    }
+   ],
+   "current_meeting": {
+    "days_ago": 0,
+    "decision": "점심시간을 열한 시 반으로 옮긴다."
+   },
+   "expected_thread_source": 0,
+   "expected_change_type": "modified"
+  }
+ ]
+}

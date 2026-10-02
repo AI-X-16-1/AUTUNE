@@ -19,3 +19,15 @@ export type PendingAction = {
 
 export type RejectReason =
   "wrong_evidence" | "not_now" | "handled_elsewhere" | "other";
+
+/** A scope an approver decides for; `any` also lets them change the approvers. */
+export type ApproverScope =
+  "any" | "report" | "research" | "followup" | "workload";
+
+/** A team's members and who decides what (`GET /api/agent/approvers`). */
+export type Approvers = {
+  /** Nobody is an approver yet, or the caller holds `any`. */
+  can_manage: boolean;
+  scopes: ApproverScope[];
+  members: { user_id: string; name: string; scopes: ApproverScope[] }[];
+};

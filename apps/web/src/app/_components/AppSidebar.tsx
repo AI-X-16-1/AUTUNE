@@ -90,7 +90,7 @@ export function AppSidebar() {
 
       <div className="flex-1" />
 
-      {/* The only settings screen so far is S29; S28 (연동, #496) joins it under /settings. */}
+      {/* Settings opens on S29; its tabs (settings/layout.tsx) lead to the others. */}
       <NavEntry
         item={{ label: "설정", href: "/settings/privacy" }}
         current={pathname.startsWith("/settings")}

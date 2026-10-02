@@ -11,7 +11,9 @@ See docs/modules/context.md, "Model abstraction layer".
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,8 +26,32 @@ class ContextSettings(BaseSettings):
     embedder_impl: str = "kure_v1_http"
     reranker_impl: str = "bge_reranker_v2_m3_ko_http"
     nli_impl: str = "klue_kornli_http"
-    # LLM (agenda generation) has no impl yet — see base.LlmClient. The
-    # pre-meeting brief is a template over D's own rows and uses none.
+    # LLM (agenda generation) has no impl of its own yet; ``llm_impl`` below is the
+    # client ``engine_mode`` "llm" / "hybrid" judge with. The pre-meeting brief is a
+    # template over D's own rows and uses none.
+    llm_impl: str = ""
+    """Only used when ``engine_mode="llm"``: ``openai`` | ``gemini`` | ``anthropic``
+    (``fake`` for tests). No default: which provider the team uses is a decision,
+    and a silent default would send meeting excerpts to whichever one it named."""
+
+    engine_mode: Literal["classic", "llm", "hybrid"] = "classic"
+    """Who makes the three judgements that decide a link or a lineage.
+
+    ``classic`` — the trained stack: re-ranker + similarity thresholds for a topic
+    link, embedding cosine for which thread a decision joins, NLI + lexical cues
+    for how it changed.
+
+    ``llm`` — an external LLM makes those three judgements (``pipeline.llm_judge``).
+    ``hybrid`` — ``classic``, except that a topic link the trained stack is about
+    to *assert* is first put to the LLM, which can veto it (drop it, or demote it
+    to ``pending``). The LLM is asked about nothing else, so it costs a fraction
+    of ``llm`` mode's calls. Decision lineage runs ``classic``.
+
+    Segmentation and candidate retrieval still run on the embedder in every mode: a
+    transcript is never sent out whole (docs/architecture/privacy.md, section 6).
+    Exists to compare them on the evaluation set
+    (``python -m autune_context.eval --mode both``); ``classic`` stays the default
+    until that comparison says otherwise."""
 
     # --- embedding (KURE-v1) ---
     embedding_dim: int = 1024
@@ -46,6 +72,58 @@ class ContextSettings(BaseSettings):
     nli_timeout_s: float = 10.0
     nli_local_model: str = ""
     """Path or hub id of the in-house checkpoint. Set for ``klue_kornli_local``."""
+
+    # --- llm (engine_mode="llm") ---
+    llm_api_key: SecretStr = SecretStr("")
+    """The active provider's key. Never logged: a ``SecretStr``."""
+    llm_endpoint: str = ""
+    """Empty means the provider's own (``LLM_DEFAULTS``). Set it for a proxy, an
+    Azure OpenAI deployment or any OpenAI-compatible server."""
+    llm_model: str = ""
+    """Empty means the provider's default where there is one. ``openai`` and
+    ``gemini`` have none: model names turn over faster than this file, so the
+    operator names the model and it is recorded in every row's version column."""
+    llm_effort: str = ""
+    """How hard a reasoning model thinks about a verdict; empty sends nothing.
+    ``anthropic``: ``output_config.effort``. ``openai``: ``reasoning_effort`` (a
+    model that is not a reasoning model rejects it, hence no default). ``gemini``:
+    not sent. No provider is sent a ``temperature``: the reasoning models reject
+    one, so it is not part of the interface."""
+    llm_max_tokens: int = 4096
+    """Covers a reasoning model's thinking as well as the one-line JSON answer:
+    all three providers count it against this limit, and a reply cut off by it is
+    an unusable one."""
+    llm_timeout_s: float = 60.0
+    llm_concurrency: int = 4
+    """Verdicts in flight at once for one batch of pairs."""
+    llm_snippet_chars: int = 1200
+    """Longest excerpt sent out, in characters, per side of a pair.
+    ``check_outbound`` refuses a request whose strings total more than 4000
+    (``privacy.MAX_OUTBOUND_CHARS``), prompt included; two excerpts of this size
+    plus the prompt stay under it. A longer excerpt is cut, not refused."""
+    llm_topic_candidates: int = 5
+    """Past meetings, best hybrid-retrieval score first, the LLM is asked about
+    per topic. ``classic`` re-ranks ``retrieve_top_k`` and keeps ``rerank_top_k``;
+    one LLM call per candidate is what bounds this."""
+    llm_thread_candidates: int = 3
+    """Existing decision threads, most similar head first, the LLM is asked
+    about per new decision."""
+    llm_link_threshold: float = 0.5
+    """Probability that a topic pair is the same topic, at or above which the
+    link is asserted (below: ``pending``, unless under ``llm_pending_floor``)."""
+    llm_pending_floor: float = 0.25
+    """Below this the LLM is fairly sure it is a different topic, and asking the
+    user would only be noise: no link row is written at all. In ``hybrid`` mode
+    this is what a veto is: a link the trained stack would have asserted, dropped."""
+    llm_match_threshold: float = 0.5
+    """Confidence at or above which "same decision" threads a decision into an
+    existing lineage."""
+
+    @property
+    def llm_model_name(self) -> str:
+        """``llm_model``, or the provider's default. For reports; the client
+        itself refuses to start without one."""
+        return self.llm_model or LLM_DEFAULTS.get(self.llm_impl, ("", ""))[1]
 
     # --- topic segmentation (TextTiling) ---
     topic_window: int = 3
@@ -126,6 +204,14 @@ class ContextSettings(BaseSettings):
     worker process regardless of ``-Q`` — including ``gpu`` and ``default``
     workers that never run a context task and cannot reach the context model
     endpoints."""
+
+
+LLM_DEFAULTS: dict[str, tuple[str, str]] = {
+    # provider -> (endpoint, model); an empty model means the operator must name one.
+    "anthropic": ("https://api.anthropic.com", "claude-opus-5-5"),
+    "openai": ("https://api.openai.com", ""),
+    "gemini": ("https://generativelanguage.googleapis.com", ""),
+}
 
 
 @lru_cache
