@@ -93,7 +93,8 @@ class MeetingReportRead(BaseModel):
     title: str
     body: str
     footer: str
-    """E's last line: "자동 생성된 리포트입니다." or, after an edit, who edited it."""
+    """E's last line: "자동 생성된 리포트입니다 · M/D HH:MM 기준." (#604), or after an
+    edit, who edited it."""
     status: Literal["draft", "posted"]
     posted_at: datetime | None
     pending_review: bool

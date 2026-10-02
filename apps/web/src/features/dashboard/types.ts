@@ -79,7 +79,7 @@ export interface MeetingReport {
   meeting_id: string;
   title: string;
   body: string;
-  /** E's last line: "자동 생성된 리포트입니다." or, after an edit, who edited it. */
+  /** E's last line: "자동 생성된 리포트입니다 · M/D HH:MM 기준." or, after an edit, who edited it. */
   footer: string;
   status: "draft" | "posted";
   posted_at: string | null;
