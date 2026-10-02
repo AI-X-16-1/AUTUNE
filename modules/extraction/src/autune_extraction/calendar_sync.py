@@ -52,7 +52,7 @@ from autune_core import Meeting, TeamMember, get_logger
 from autune_integrations import CalendarEvent, IntegrationError
 
 from . import service
-from .models import ExtActionItem, ExtCalendarEvent, ExtCalendarPoll
+from .models import ExtActionItem, ExtCalendarCleanup, ExtCalendarEvent, ExtCalendarPoll
 from .schemas import ActionItemUpdate
 from .service import _insert_if_absent_into
 
@@ -123,6 +123,22 @@ def _calendar_owner(session: Session, item: ExtActionItem | None) -> str | None:
     return item.assignee_id if member is not None else None
 
 
+def _queue_for_cleanup(session: Session, row: ExtCalendarEvent) -> None:
+    """Hand an event Google would not delete just now to
+    ``ext_calendar_cleanup``, where ``tasks.drain_calendar_cleanup`` tries
+    again with its owner's grant (#672). The row it came from is about to go
+    -- with the item, or to make room for the next assignee's event -- and
+    after that nothing else knows the event's id. Its title is the item's
+    description, so an event left behind is a sentence left behind."""
+    if not row.event_id:
+        return
+    session.execute(
+        _insert_if_absent_into(session, ExtCalendarCleanup)
+        .values(user_id=row.user_id, event_id=row.event_id)
+        .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
+    )
+
+
 def sync_due_date_to_calendar(
     session: Session, calendar_for: CalendarFor, *, action_item_id: str
 ) -> ExtCalendarEvent | None:
@@ -139,8 +155,9 @@ def sync_due_date_to_calendar(
     owner = _calendar_owner(session, item)
 
     if row is not None and row.user_id != owner:
-        # Reassigned, undated, or its assignee left: off the old calendar, if
-        # it can still be reached. Either way the row goes and the item moves on.
+        # Reassigned, undated, moved back, or its assignee left: off the old
+        # calendar, if it can be reached now -- and queued for another try if
+        # not (#672). Either way the row goes and the item moves on.
         try:
             previous = calendar_for(row.user_id)
             if previous is not None and row.event_id:
@@ -148,6 +165,7 @@ def sync_due_date_to_calendar(
                 client.delete_event(calendar_id, row.event_id)
         except IntegrationError:
             log.warning("extraction_calendar_previous_unreachable", action_item_id=action_item_id)
+            _queue_for_cleanup(session, row)
         session.delete(row)
         session.flush()
         log.info("extraction_calendar_removed", action_item_id=action_item_id)
@@ -242,8 +260,9 @@ def remove_event(session: Session, calendar_for: CalendarFor, *, action_item_id:
     """Take an item's event off its assignee's calendar before the item itself is
     deleted -- a person asking Autune to delete an item is asking for it to be
     gone (invariant 11), and once the row cascades away the event can no longer
-    be found (PARKJAEKYUNG0525, review of #441). Best effort: an unreachable
-    calendar leaves the event and does not block the deletion.
+    be found (PARKJAEKYUNG0525, review of #441). An unreachable calendar does
+    not block the deletion: the event is queued for
+    ``tasks.drain_calendar_cleanup`` to remove later (#672).
     """
     row = session.get(ExtCalendarEvent, action_item_id)
     if row is None or not row.event_id:
@@ -256,6 +275,7 @@ def remove_event(session: Session, calendar_for: CalendarFor, *, action_item_id:
             log.info("extraction_calendar_removed_with_item", action_item_id=action_item_id)
     except IntegrationError:
         log.warning("extraction_calendar_previous_unreachable", action_item_id=action_item_id)
+        _queue_for_cleanup(session, row)
 
 
 def forget_calendar_cursor(session: Session, user_id: str) -> None:

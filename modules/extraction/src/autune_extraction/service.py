@@ -75,6 +75,7 @@ from .models import (
     ExtActionItem,
     ExtActionItemRelated,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
@@ -3628,6 +3629,22 @@ def _update_or_replace_page(
     The caller holds the ref row's lock throughout, so a refused update costs
     up to three Notion calls under it (PATCH, GET, POST) instead of one.
     """
+    state = _update_page(notion, ref, update)
+    if state != "deleted":
+        return state
+    page_id = notion.create_page(database_id, create)
+    ref.external_id = page_id
+    ref.url = notion_url(page_id)
+    return "replaced"
+
+
+def _update_page(
+    notion: NotionPages, ref: ExtExternalRef | ExtDecisionRef, update: dict[str, Any]
+) -> Literal["updated", "archived", "deleted"]:
+    """Update the page ``ref`` points at, or say why Notion refused: the page
+    is ``"archived"`` or ``"deleted"``. A refusal for a page that is still live
+    is raised. The first half of ``_update_or_replace_page``, for a caller
+    that does not make a deleted page again."""
     assert ref.external_id is not None
     try:
         notion.update_page(ref.external_id, update)
@@ -3637,21 +3654,77 @@ def _update_or_replace_page(
             return "archived"
         if state != "deleted":
             raise
-        page_id = notion.create_page(database_id, create)
-        ref.external_id = page_id
-        ref.url = notion_url(page_id)
-        return "replaced"
+        return "deleted"
     return "updated"
 
 
+def _follow_item_page(
+    session: Session,
+    notion: NotionPages,
+    ref: ExtExternalRef,
+    item: ExtActionItem,
+    *,
+    database_id: str,
+    names: Mapping[str, str],
+) -> PageOutcome | None:
+    """Bring the page an item already has in step with the item, and say what
+    became of it.
+
+    A confirmed item whose page was deleted in Notion gets a new one (#403).
+    **An item moved back to 확인 필요 does not** (#672): no page is made for a
+    draft, and the team deleted that one. Its ref row goes instead, and
+    ``None`` is returned -- with nothing left outside, the item is a draft
+    like any other, and ``has_copy_outside`` stops counting it.
+    """
+    meeting = session.get(Meeting, item.meeting_id)
+    title = meeting.title if meeting else None
+    update = notion_properties(item, title, names, clear_missing=True)
+    if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+        return _update_or_replace_page(
+            notion,
+            ref,
+            database_id=database_id,
+            update=update,
+            create=notion_properties(item, title, names),
+        )
+    state = _update_page(notion, ref, update)
+    if state == "deleted":
+        session.delete(ref)
+        session.flush()
+        return None
+    return state
+
+
 def has_copy_outside(session: Session, action_item_id: str) -> bool:
-    """Whether the item was ever sent out -- a Notion page or a Jira issue, made
-    when it was confirmed -- whatever its status is now."""
-    return (
+    """Whether the item has something outside that its confirmation made -- a
+    Notion page, a Jira issue, an event on its assignee's calendar -- whatever
+    its status is now.
+
+    It counts B's own rows, not what Notion, Jira or Google hold. That stands
+    for "was confirmed once" only because **a ref or an event row is never
+    made for an item that has not been confirmed**: every sync returns before
+    creating anything for a draft. A kind of ref made before confirmation
+    would change what this function, and ``copies_follow``, mean (#672).
+
+    A calendar event counts (#672): an item moved back to 확인 필요 with only
+    an event was not one whose copies follow, so the event stayed on the
+    calendar, and a deleted speech then took the draft and the event's row
+    with it while the event kept the line in its title."""
+    if (
         session.scalar(
             select(ExtExternalRef.action_item_id)
             .where(ExtExternalRef.action_item_id == action_item_id)
             .limit(1)
+        )
+        is not None
+    ):
+        return True
+    return (
+        session.scalar(
+            select(ExtCalendarEvent.action_item_id).where(
+                ExtCalendarEvent.action_item_id == action_item_id,
+                ExtCalendarEvent.event_id.is_not(None),
+            )
         )
         is not None
     )
@@ -3662,7 +3735,8 @@ def copies_follow(session: Session, item: ExtActionItem) -> bool:
 
     A confirmed item, and one that was confirmed once: moved back to 확인 필요
     it keeps its Notion page and its Jira issue (decided with the user,
-    2026-10-01), so it is a draft on the board and a record outside. Asking
+    2026-10-01), and its calendar event until the sync this queues takes it
+    off, so it is a draft on the board and a record outside. Asking
     only for the status left such an item's page holding a line that had been
     deleted or corrected here (#657). One rule for the board's edits, a
     deleted speech and a corrected line."""
@@ -3769,7 +3843,9 @@ def sync_action_item_to_notion(
 
     **A page someone removed in Notion** (#403): deleted, it is made again;
     archived, it is left alone -- ``_update_or_replace_page``. ``on_page``
-    hears which, for a caller that counts (``notion_backfill``).
+    hears which, for a caller that counts (``notion_backfill``). For an item
+    moved back to 확인 필요 a deleted page is not made again: its ref row
+    goes and ``None`` is returned (``_follow_item_page``, #672).
     """
     names = property_names or NOTION_PROPERTIES
 
@@ -3781,21 +3857,17 @@ def sync_action_item_to_notion(
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
         if item is None:
             return existing
-        meeting = session.get(Meeting, item.meeting_id)
-        title = meeting.title if meeting else None
-        outcome = _update_or_replace_page(
-            notion,
-            existing,
-            database_id=database_id,
-            update=notion_properties(item, title, names, clear_missing=True),
-            create=notion_properties(item, title, names),
+        outcome = _follow_item_page(
+            session, notion, existing, item, database_id=database_id, names=names
         )
         log.info(
             "extraction_notion_updated",
             action_item_id=item.id,
             meeting_id=item.meeting_id,
-            page=outcome,
+            page=outcome or "gone",
         )
+        if outcome is None:
+            return None
         if on_page is not None:
             on_page(outcome)
         return existing
@@ -3822,20 +3894,16 @@ def sync_action_item_to_notion(
         item = session.get(ExtActionItem, action_item_id, populate_existing=True)
         if item is None:
             return existing
-        meeting = session.get(Meeting, item.meeting_id)
-        title = meeting.title if meeting else None
-        outcome = _update_or_replace_page(
-            notion,
-            existing,
-            database_id=database_id,
-            update=notion_properties(item, title, names, clear_missing=True),
-            create=notion_properties(item, title, names),
+        outcome = _follow_item_page(
+            session, notion, existing, item, database_id=database_id, names=names
         )
         log.info(
             "extraction_notion_updated_after_claim_race",
             action_item_id=item.id,
-            page=outcome,
+            page=outcome or "gone",
         )
+        if outcome is None:
+            return None
         if on_page is not None:
             on_page(outcome)
         return existing
