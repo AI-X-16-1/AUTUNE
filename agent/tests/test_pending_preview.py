@@ -6,7 +6,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from autune_agent.main.preview import FOLLOWUP_GAPS_CLOSED, GONE, preview
+from autune_agent.main.preview import (
+    FOLLOWUP_GAPS_CLOSED,
+    GONE,
+    REPORT_ALREADY_POSTED,
+    REPORT_ON_DASHBOARD,
+    preview,
+)
 from autune_agent.main.registry import Tool
 from autune_agent.models import AgentPendingAction, AgentResearchDocument
 from autune_core import Meeting, User
@@ -90,10 +96,75 @@ def test_a_reassignment_shows_the_item_and_the_new_assignee(
     assert "API 문서" in shown["body"] and new.display_name in shown["body"]
 
 
-def test_a_report_publish_points_at_the_dashboard(session: Session, team: dict[str, str]) -> None:
+def test_a_report_publish_points_at_the_dashboard_until_e_can_be_read(
+    session: Session, team: dict[str, str]
+) -> None:
     shown = preview(session, _row(team, "intelligence.publish_meeting_report", {}), tools={})
 
-    assert shown == {"title": "리포트 게시", "body": "리포트 초안 — 회의 대시보드에서 보기"}
+    assert shown == {"title": "리포트 게시", "body": REPORT_ON_DASHBOARD}
+
+
+def _report_draft(
+    *, current: str | None, posted: bool = False
+) -> tuple[Tool, list[dict[str, Any]]]:
+    """E's ``meeting_report_draft``: the stored draft when ``draft_id`` is ``current``."""
+    asked: list[dict[str, Any]] = []
+
+    def read(_s: Session, team_id: str, meeting_id: str, draft_id: str) -> dict[str, Any]:
+        asked.append({"team_id": team_id, "meeting_id": meeting_id, "draft_id": draft_id})
+        items = (
+            [{"title": "주간 회의 · 10/2", "body": "## 결정\n· 출시일 확정", "posted": posted}]
+            if draft_id == current
+            else []
+        )
+        return {"ok": True, "summary": "초안", "items": items}
+
+    return Tool(name="intelligence.meeting_report_draft", description="Use this.", fn=read), asked
+
+
+def _publish(team: dict[str, str], draft_id: str = "rdr_1") -> AgentPendingAction:
+    return _row(
+        team,
+        "intelligence.publish_meeting_report",
+        {"meeting_id": team["meeting"], "draft_id": draft_id},
+    )
+
+
+def test_a_report_publish_shows_the_draft_it_would_post(
+    session: Session, team: dict[str, str]
+) -> None:
+    tool, asked = _report_draft(current="rdr_1")
+
+    shown = preview(session, _publish(team), tools={"intelligence.meeting_report_draft": tool})
+
+    assert shown == {"title": "리포트 게시", "body": "주간 회의 · 10/2\n\n## 결정\n· 출시일 확정"}
+    assert asked == [{"team_id": team["team"], "meeting_id": team["meeting"], "draft_id": "rdr_1"}]
+
+
+def test_a_replaced_draft_reads_as_gone(session: Session, team: dict[str, str]) -> None:
+    """A later run replaced the draft; approving this one would post nothing."""
+    tool, _ = _report_draft(current="rdr_2")
+
+    shown = preview(session, _publish(team), tools={"intelligence.meeting_report_draft": tool})
+
+    assert shown["body"] == GONE
+
+
+def test_a_report_already_posted_says_so(session: Session, team: dict[str, str]) -> None:
+    tool, _ = _report_draft(current="rdr_1", posted=True)
+
+    shown = preview(session, _publish(team), tools={"intelligence.meeting_report_draft": tool})
+
+    assert shown["body"].startswith(REPORT_ALREADY_POSTED)
+
+
+def test_a_publish_without_a_draft_id_is_gone(session: Session, team: dict[str, str]) -> None:
+    tool, asked = _report_draft(current="rdr_1")
+    row = _row(team, "intelligence.publish_meeting_report", {"meeting_id": team["meeting"]})
+
+    shown = preview(session, row, tools={"intelligence.meeting_report_draft": tool})
+
+    assert (shown["body"], asked) == (GONE, [])
 
 
 def test_anything_else_shows_kind_and_ids(session: Session, team: dict[str, str]) -> None:
