@@ -340,3 +340,55 @@ def test_one_row_whose_preview_raises_still_lists_beside_a_good_row(
 
     assert {p["body"] for p in got} == {"본문", "미리보기를 만들지 못했습니다"}
     assert {p["title"] for p in got} == {"리서치 문서 공유", "reassign"}
+
+
+def test_a_meeting_alone_names_the_team(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    # #651 review: a person in two teams asks on the second team's meeting page;
+    # the shell cannot know which team that is, the meeting does.
+    reply = member.post(
+        "/api/agent/chat", json={"meeting_id": team["meeting"], "message": "이 회의"}
+    )
+
+    assert reply.status_code == 200
+    run = session.get(AgentRun, reply.json()["run_id"])
+    assert run is not None
+    assert (run.team_id, run.meeting_id) == (team["team"], team["meeting"])
+
+
+def test_a_meeting_of_a_team_the_caller_is_not_in_reads_as_missing(
+    session: Session, team: dict[str, str]
+) -> None:
+    outsider = _client(session, team["outsider"], chat_router=FakeRouter())
+
+    reply = outsider.post("/api/agent/chat", json={"meeting_id": team["meeting"], "message": "x"})
+
+    assert reply.status_code == 404
+    assert team["meeting"] not in reply.text
+    assert session.query(AgentRun).count() == 0
+
+
+def test_neither_a_team_nor_a_meeting_is_422(member: TestClient) -> None:
+    assert member.post("/api/agent/chat", json={"message": "x"}).status_code == 422
+
+
+def test_queued_counts_what_the_run_actually_left_waiting(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #651 review: proposed - executed also counted failed L1 and refused L2.
+    real = routes.run_and_record
+
+    def queueing(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        waiting = _queue(session, team)
+        waiting.run_id = row.id
+        session.commit()
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", queueing)
+    client = _client(session, team["member"], chat_router=FakeRouter())
+
+    body = client.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
+
+    assert body["queued"] == 1

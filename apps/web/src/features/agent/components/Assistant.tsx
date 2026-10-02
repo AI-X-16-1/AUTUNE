@@ -42,17 +42,21 @@ const UNROUTED =
 const OFF = "에이전트가 꺼져 있어 답할 수 없습니다.";
 const FAILED = "답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const NOT_FOUND = "이 회의를 찾을 수 없습니다.";
+const PRIVATE =
+  "연락처나 계좌번호 같은 개인정보가 들어간 질문은 보낼 수 없습니다. 그 값을 빼고 다시 물어봐 주세요.";
 
 const META = {
   fontSize: "var(--text-metaSmall)",
   color: "var(--color-ink-muted)",
 } as const;
 
-function failure(e: unknown): string {
+function failure(e: unknown, onMeeting: boolean): string {
   // The layer answers 500 with `configuration_error` when it is off or has no
   // model key (autune_core.errors.ConfigurationError).
   if (e instanceof ApiError && e.code === "configuration_error") return OFF;
-  if (e instanceof ApiError && e.status === 404) return NOT_FOUND;
+  // The outbound guard refused the message itself: retrying cannot help.
+  if (e instanceof ApiError && e.code === "privacy_violation") return PRIVATE;
+  if (e instanceof ApiError && e.status === 404 && onMeeting) return NOT_FOUND;
   return FAILED;
 }
 
@@ -83,7 +87,8 @@ export function Assistant({
     const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        setOpen((was) => !was);
+        if (open) close();
+        else setOpen(true);
       } else if (e.key === "Escape" && open) {
         close();
       }
@@ -107,10 +112,16 @@ export function Assistant({
     setDraft("");
     setWaiting(true);
     try {
-      const reply = await sendChat(teamId, message, context.meetingId);
+      // On a meeting page the meeting names its team (a person may be in two).
+      const reply = context.meetingId
+        ? await sendChat({ meetingId: context.meetingId }, message)
+        : await sendChat({ teamId }, message);
       setTurns((t) => [...t, { role: "assistant", reply }]);
     } catch (e) {
-      setTurns((t) => [...t, { role: "system", text: failure(e) }]);
+      setTurns((t) => [
+        ...t,
+        { role: "system", text: failure(e, Boolean(context.meetingId)) },
+      ]);
     } finally {
       setWaiting(false);
     }
@@ -320,7 +331,7 @@ function TurnView({ turn }: { turn: Turn }) {
 
 function AssistantReply({ reply }: { reply: ChatReply }) {
   const unrouted = reply.outcome === "unrouted";
-  const queued = Math.max(reply.proposed - reply.executed, 0);
+  const queued = reply.queued;
   return (
     <div>
       <p
@@ -413,7 +424,7 @@ function Waiting() {
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="animate-pulse rounded-full bg-[var(--color-ink-muted)]"
+          className="animate-pulse rounded-full motion-reduce:animate-none bg-[var(--color-ink-muted)]"
           style={{
             width: 6,
             height: 6,

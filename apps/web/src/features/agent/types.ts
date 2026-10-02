@@ -51,6 +51,8 @@ export type ChatReply = {
   items: ChatFinding[];
   /** Actions the subagent proposed, at any level. */
   proposed: number;
-  /** L1 actions that ran and worked; the rest of `proposed` waits for approval. */
+  /** L1 actions that ran and worked. */
   executed: number;
+  /** Proposals this run left waiting for an approver, counted on the server. */
+  queued: number;
 };

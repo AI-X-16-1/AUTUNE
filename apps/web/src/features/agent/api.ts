@@ -38,12 +38,16 @@ export const setApproverScopes = (
     { method: "PUT", body: JSON.stringify({ scopes }) },
   );
 
-export const sendChat = (teamId: string, message: string, meetingId?: string) =>
+export const sendChat = (
+  scope: { teamId: string } | { meetingId: string },
+  message: string,
+) =>
   api.agent<ChatReply>("/chat", {
     method: "POST",
     body: JSON.stringify({
-      team_id: teamId,
+      ...("meetingId" in scope
+        ? { meeting_id: scope.meetingId }
+        : { team_id: scope.teamId }),
       message,
-      ...(meetingId ? { meeting_id: meetingId } : {}),
     }),
   });

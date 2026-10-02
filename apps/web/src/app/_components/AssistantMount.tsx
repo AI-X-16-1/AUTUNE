@@ -12,7 +12,8 @@ import { useSessionUser } from "./SessionGate";
  * Assembly only: who is signed in and which page is open come from the shell,
  * and the screen is the agent feature's. Nothing is drawn without a session or
  * a team — a developer token has neither, and a turn needs a team. With
- * several teams the first is used, as S28 does until a team switcher exists.
+ * several teams the first is used for team questions, as S28 does until a
+ * team switcher exists; on a meeting page the meeting names its own team.
  */
 export function AssistantMount() {
   const pathname = usePathname();

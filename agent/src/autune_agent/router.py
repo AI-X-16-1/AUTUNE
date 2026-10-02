@@ -20,8 +20,8 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select
+from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from autune_core import CurrentUser, Meeting, TeamMember, User, get_session
@@ -68,20 +68,36 @@ def get_chat_router() -> Router:
     )
 
 
-def _require_member(session: Session, team_id: str, user_id: str) -> None:
-    member = session.scalar(
-        select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+def _is_member(session: Session, team_id: str, user_id: str) -> bool:
+    return (
+        session.scalar(
+            select(TeamMember.id).where(
+                TeamMember.team_id == team_id, TeamMember.user_id == user_id
+            )
+        )
+        is not None
     )
-    if member is None:
+
+
+def _require_member(session: Session, team_id: str, user_id: str) -> None:
+    if not _is_member(session, team_id, user_id):
         raise PermissionDeniedError("not a member of this team")
 
 
 class ChatRequest(BaseModel):
-    team_id: str
+    team_id: str | None = None
+    """The team asked about. May be left out when ``meeting_id`` is given: the
+    meeting names its team, which the shell cannot know for a person in two."""
     meeting_id: str | None = None
     """The meeting the person is looking at (S34), if any. The run is bound to
     it, the way a triggered run is bound to its event's meeting."""
     message: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+
+    @model_validator(mode="after")
+    def _names_a_team(self) -> ChatRequest:
+        if self.team_id is None and self.meeting_id is None:
+            raise ValueError("team_id or meeting_id is required")
+        return self
 
 
 class ChatMeetingNotFoundError(NotFoundError):
@@ -102,6 +118,9 @@ class ChatReply(BaseModel):
     """How many L1 actions ran and worked -- the "notify after" of section 8.
     An L2 proposal, or one marked L1 whose module declared it L2, is queued for
     approval (``GET /pending``) and not counted here."""
+    queued: int = 0
+    """How many proposals this run left waiting for an approver -- the rows,
+    not ``proposed - executed``, which also counts failed and refused ones."""
 
 
 class RunRead(BaseModel):
@@ -134,16 +153,22 @@ def chat(
     session: SessionDep,
     chat_router: Annotated[Router, Depends(get_chat_router)],
 ) -> ChatReply:
-    _require_member(session, body.team_id, user.id)
+    team_id = body.team_id
     if body.meeting_id is not None:
         meeting = session.get(Meeting, body.meeting_id)
-        if meeting is None or meeting.team_id != body.team_id:
+        # Another team's meeting reads as missing, named team or not.
+        if meeting is None or (team_id is not None and meeting.team_id != team_id):
             raise ChatMeetingNotFoundError()
+        if team_id is None and not _is_member(session, meeting.team_id, user.id):
+            raise ChatMeetingNotFoundError()
+        team_id = meeting.team_id
+    assert team_id is not None  # ChatRequest requires one of the two
+    _require_member(session, team_id, user.id)
     row, state = run_and_record(
         body.message,
         session=session,
         router=chat_router,
-        team_id=body.team_id,
+        team_id=team_id,
         meeting_id=body.meeting_id,
         requested_by=user.id,
         trigger={"kind": "chat"},
@@ -157,6 +182,12 @@ def chat(
         items=outcome.result.items if outcome else [],
         proposed=len(outcome.proposed) if outcome else 0,
         executed=sum(1 for a in row.actions if a.get("ok")),
+        queued=session.scalar(
+            select(func.count())
+            .select_from(AgentPendingAction)
+            .where(AgentPendingAction.run_id == row.id, AgentPendingAction.status == "pending")
+        )
+        or 0,
     )
 
 

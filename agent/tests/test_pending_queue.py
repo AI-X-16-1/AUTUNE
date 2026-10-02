@@ -19,11 +19,17 @@ from autune_agent.testing import FakeRouter
 from autune_core import Meeting
 
 
-def _run(session: Session, team: dict[str, str], route: str, meeting: str | None) -> AgentRun:
+def _run(
+    session: Session,
+    team: dict[str, str],
+    route: str,
+    meeting: str | None,
+    trigger: dict[str, Any] | None = None,
+) -> AgentRun:
     row = AgentRun(
         team_id=team["team"],
         meeting_id=meeting,
-        trigger={"kind": "chat"},
+        trigger=trigger or {"kind": "event", "event": "autune.intelligence.completed"},
         outcome="answered",
         route=route,
     )
@@ -135,6 +141,21 @@ def test_a_newer_run_supersedes_the_same_subagents_pending_proposal(
     ]
     assert sorted(s for _, s in statuses) == ["pending", "superseded"]
     assert dict(statuses)[second.id] == "pending"
+
+
+def test_a_chat_turn_never_supersedes_a_waiting_proposal(
+    session: Session, team: dict[str, str]
+) -> None:
+    # #651 review: a chat on a meeting page is bound to that meeting, and must
+    # not retire the proposal the pipeline left waiting for an approver.
+    event = _run(session, team, "report", team["meeting"])
+    queue_l2(session, actions={}, run=event, proposed=[_l2("intelligence.publish_meeting_report")])
+    chat = _run(session, team, "report", team["meeting"], trigger={"kind": "chat"})
+
+    queue_l2(session, actions={}, run=chat, proposed=[_l2("intelligence.publish_meeting_report")])
+
+    statuses = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert statuses == {event.id: "pending", chat.id: "pending"}
 
 
 def test_another_subagent_or_a_decided_row_is_not_superseded(

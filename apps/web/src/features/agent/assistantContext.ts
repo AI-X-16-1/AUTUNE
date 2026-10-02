@@ -5,7 +5,9 @@
  *
  * The suggestions differ from the design's table on purpose. Today a chat
  * turn goes to one subagent or to none (agent-assistant.md section 9, item 2),
- * so every chip here is a question a subagent answers. A chip that always
+ * so every chip here is a question a subagent answers. None of them writes:
+ * a chip runs on one click, and asking Report for a draft is an L1 write
+ * (#651 review), so that one is typed, not offered. A chip that always
  * came back "답할 수 없습니다" would teach people the assistant does not work.
  */
 
@@ -33,7 +35,6 @@ export function contextFor(pathname: string): AssistantContext {
       label: "회의",
       meetingId: meeting[1],
       suggestions: [
-        "이 회의 리포트 초안 써 줘",
         "후속 회의가 필요할까?",
         "이 회의에서 확인 못 한 것 조사해 줘",
       ],
