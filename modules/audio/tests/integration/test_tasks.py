@@ -13,7 +13,7 @@ checkpoint would not run in CI.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from autune_audio import service, tasks
 from autune_audio.config import AudioSettings
 from autune_audio.diarization import FakeDiarizer
+from autune_audio.job_guard import JobGuard, beat_with
 from autune_audio.models import (
     EMBEDDING_DIM,
     AudConsentAttestation,
@@ -258,6 +259,18 @@ def pipeline(
             state["order"].append("commit")
 
     monkeypatch.setattr(tasks, "session_scope", Scope)
+
+    guards: list[JobGuard] = []
+
+    def guard_on_test_session(job_id: str, *, interval_s: float) -> JobGuard:
+        # Interval far beyond the test: only the beat on entry and the
+        # explicit ``poll()`` calls below happen, all on this thread.
+        guard = JobGuard(job_id, interval_s=3600, beat=lambda: beat_with(db_session, job_id))
+        guards.append(guard)
+        return guard
+
+    monkeypatch.setattr(tasks, "JobGuard", guard_on_test_session)
+    state["guards"] = guards
     yield state
 
 
@@ -1260,7 +1273,7 @@ def test_the_steps_are_reported_in_the_order_they_run(
     reported: list[tuple[str, bool]] = []
 
     class Recorder:
-        def __init__(self, job_id: str) -> None:
+        def __init__(self, job_id: str, *, check: Callable[[], None] | None = None) -> None:
             assert job_id == job
 
         def stage(self, name: str) -> None:
@@ -1305,3 +1318,112 @@ def test_a_teams_own_masking_shape_is_masked_before_the_write(
     ).all()
     assert not any("77812" in text for text in stored)
     assert "77812" not in str(published)
+
+
+def _cancel_during(pipeline: dict, db_session: Session, job: str, status: str) -> None:
+    """Make the fake recogniser flip the job, then hear it, mid-pass."""
+    original = pipeline["transcription"]
+
+    def transcribe(waveform: Waveform, *, on_progress=None, **kw: object) -> Transcription:
+        pipeline["steps"].append("transcribe")
+        db_session.get(TranscriptionJob, job).status = status
+        db_session.flush()
+        pipeline["guards"][0].poll()
+        if on_progress is not None:
+            on_progress(0.5)
+        return original
+
+    pipeline["transcribe"] = transcribe
+
+
+@pytest.fixture
+def interruptible(monkeypatch: pytest.MonkeyPatch, pipeline: dict) -> dict:
+    """``transcribe`` that defers to ``pipeline["transcribe"]`` when set."""
+
+    def transcribe(waveform: Waveform, **kw: object) -> Transcription:
+        if "transcribe" in pipeline:
+            return pipeline["transcribe"](waveform, **kw)
+        pipeline["steps"].append("transcribe")
+        return pipeline["transcription"]
+
+    monkeypatch.setattr(tasks, "transcribe", transcribe)
+    return pipeline
+
+
+def test_the_worker_writes_a_heartbeat_when_it_claims_the_job(
+    pipeline: dict, db_session: Session, job: str
+) -> None:
+    tasks.process_recording(job)
+
+    assert db_session.get(TranscriptionJob, job).heartbeat_at is not None
+
+
+def test_a_cancel_during_recognition_stops_before_anything_is_written(
+    interruptible: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    recording: Path,
+    published: list[tuple[str, dict]],
+) -> None:
+    # The cancel route sets the meeting failed in the same transaction.
+    db_session.get(Meeting, meeting).status = "failed"
+    _cancel_during(interruptible, db_session, job, "cancelled")
+
+    tasks.process_recording(job)
+
+    assert published == []
+    assert not recording.exists()
+    assert (
+        db_session.scalars(sa.select(Utterance).where(Utterance.meeting_id == meeting)).all() == []
+    )
+    assert db_session.get(TranscriptionJob, job).status == "cancelled"
+    assert db_session.get(Meeting, meeting).status == "failed"
+
+
+def test_a_superseded_run_leaves_the_restarted_meeting_analyzing(
+    interruptible: dict,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    published: list[tuple[str, dict]],
+) -> None:
+    """A restart supersedes the old attempt while the meeting stays
+    ``analyzing`` for the new one. The old run must not fail it."""
+    _cancel_during(interruptible, db_session, job, "superseded")
+
+    tasks.process_recording(job)
+
+    assert published == []
+    assert db_session.get(Meeting, meeting).status == "analyzing"
+    assert db_session.get(TranscriptionJob, job).status == "superseded"
+
+
+def test_a_cancel_after_the_last_check_is_stopped_by_the_fence(
+    pipeline: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    job: str,
+    meeting: str,
+    published: list[tuple[str, dict]],
+) -> None:
+    """The cancel commits between ``stage("saving")`` and the write. The
+    fence's own read under lock is what stops it."""
+    real_stage = tasks.ProgressReporter.stage
+
+    def stage(self, name: str) -> None:
+        real_stage(self, name)
+        if name == "saving":
+            db_session.get(TranscriptionJob, job).status = "cancelled"
+            db_session.get(Meeting, meeting).status = "failed"
+            db_session.flush()
+
+    monkeypatch.setattr(tasks.ProgressReporter, "stage", stage)
+
+    tasks.process_recording(job)
+
+    assert published == []
+    assert (
+        db_session.scalars(sa.select(Utterance).where(Utterance.meeting_id == meeting)).all() == []
+    )
+    assert db_session.get(Meeting, meeting).status == "failed"
