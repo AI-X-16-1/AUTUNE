@@ -328,14 +328,127 @@ def test_an_upload_past_its_six_hours_cannot_restart(
 def test_a_second_restart_is_refused(
     db_session: Session, analyzing: str, member: User, settings: AudioSettings
 ) -> None:
-    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    """A double click: the first restart's new job is queued and live, so the
+    second must find it (not the superseded one) and refuse."""
+    old = _job(
+        db_session,
+        analyzing,
+        "running",
+        age=timedelta(minutes=10),
+        heartbeat_age=timedelta(minutes=10),
+    )
     _upload(settings, old.id)
-    service.restart_transcription(db_session, meeting_id=analyzing, user=member, settings=settings)
+    new = service.restart_transcription(
+        db_session, meeting_id=analyzing, user=member, settings=settings
+    )
+    assert service.latest_job(db_session, meeting_id=analyzing) is new
 
     with pytest.raises(service.NotStalledError):
         service.restart_transcription(
             db_session, meeting_id=analyzing, user=member, settings=settings
         )
+
+
+def test_a_live_job_older_than_a_dead_one_is_still_the_latest(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    """created_at is the transaction's start, which can precede a wait on the
+    meeting lock, so two uploads seconds apart can be stamped out of order."""
+    live = _job(
+        db_session, analyzing, "running", age=timedelta(seconds=30), heartbeat_age=timedelta()
+    )
+    _job(db_session, analyzing, "cancelled", age=timedelta(seconds=5))
+    _job(db_session, analyzing, "failed", age=timedelta(seconds=1))
+
+    assert service.latest_job(db_session, meeting_id=analyzing) is live
+    assert _detail(client, analyzing)["cancellable"] is True
+
+
+def test_a_recording_that_vanishes_between_the_checks_is_not_restartable(
+    settings: AudioSettings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = Path(settings.temp_dir) / "job.upload"
+    path.write_bytes(b"x")  # exists() would say yes; the stat then loses the race
+
+    def vanished(_self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        raise FileNotFoundError(str(path))
+
+    monkeypatch.setattr("autune_audio.service.storage.upload_path", lambda *_a, **_k: path)
+    monkeypatch.setattr(Path, "stat", vanished)
+
+    assert not service.recording_restartable("job", settings=settings, now=datetime.now(tz=UTC))
+
+
+def test_a_recording_that_vanishes_before_the_rename_is_gone_without_its_path(
+    db_session: Session,
+    analyzing: str,
+    member: User,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, old.id)
+    monkeypatch.setattr("autune_audio.service.recording_restartable", lambda *_a, **_k: True)
+    # the file is deleted after the check passed: a stalled job's cancel, or the sweep
+    (Path(settings.temp_dir) / f"{old.id}.upload").unlink()
+
+    with pytest.raises(service.RecordingGoneError) as raised:
+        service.restart_transcription(
+            db_session, meeting_id=analyzing, user=member, settings=settings
+        )
+
+    assert settings.temp_dir not in str(raised.value)
+
+
+def test_an_upload_near_the_end_of_its_six_hours_is_not_offered_a_restart(
+    db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    """A restart picked at the last second would be swept before it ran."""
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    upload = _upload(settings, job.id)
+    then = (
+        datetime.now(tz=UTC) - timedelta(hours=settings.orphan_after_hours) + timedelta(minutes=5)
+    ).timestamp()
+    os.utime(upload, (then, then))
+
+    assert not service.recording_restartable(job.id, settings=settings, now=datetime.now(tz=UTC))
+
+
+def test_a_restart_of_a_live_job_is_a_409_not_stalled(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(seconds=5))
+    _upload(settings, job.id)
+
+    response = client.post(f"/api/audio/meetings/{analyzing}/transcription/restart")
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "not_stalled"
+
+
+@pytest.mark.parametrize("action", ["cancel", "restart"])
+def test_a_non_member_is_refused_by_both_routes(
+    db_session: Session,
+    analyzing: str,
+    outsider: User,
+    settings: AudioSettings,
+    action: str,
+) -> None:
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, job.id)
+    app = FastAPI()
+
+    @app.exception_handler(AutuneError)
+    async def _render(_: Request, exc: AutuneError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    app.include_router(router, prefix="/api/audio")
+    app.dependency_overrides[get_session] = lambda: db_session
+    app.dependency_overrides[current_user] = lambda: outsider
+
+    response = TestClient(app).post(f"/api/audio/meetings/{analyzing}/transcription/{action}")
+
+    assert response.status_code == 403
 
 
 def test_the_restart_route_queues_the_new_job(
