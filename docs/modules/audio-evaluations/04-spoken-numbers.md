@@ -44,4 +44,4 @@ Separately, while checking: a correctly written account with a seven-digit last 
 
 ## Where the effort should go
 
-Not #160's shapes. The leak is **numbers whose grouping Whisper invents**, which a length-keyed pattern cannot follow. The candidate is a catch-all for a run of digit groups joined by hyphens or spaces whose *total* is long enough to be an identifier, regardless of how it is split — the shape `digits` already covers for runs with no separator. Its cost is the false-positive question #125 and #148 already met (`2024-2025-2026` is twelve digits), so it needs the corpus run before and after, and a decision. Filed separately.
+Not #160's shapes. The leak is **numbers whose grouping Whisper invents**, which a length-keyed pattern cannot follow. The candidate is a catch-all for a run of digit groups joined by hyphens or spaces whose *total* is long enough to be an identifier, regardless of how it is split — the shape `digits` already covers for runs with no separator. Its cost is the false-positive question #125 and #148 already met (`2024-2025-2026` is twelve digits), so it needs the corpus run before and after, and a decision. Filed as #696.
