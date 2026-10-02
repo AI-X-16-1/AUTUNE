@@ -667,3 +667,29 @@ def test_figures_on_adjacent_lines_are_not_joined_into_a_phone() -> None:
     joining unrelated figures -- the hazard `_HSPACE` exists for."""
     assert "phone" not in {cat for _, _, cat in find_pii("회의 3\n2024\n10월")}
     assert "phone" not in {cat for _, _, cat in find_pii("예산\n150000\n200000")}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2012-34-56-78-90-1",  # month 34: not a date, whatever the widths
+        "2001-01-31-23-45-6",  # a date, a time, and a sixth group
+        "2001-01-3-12-34-56",
+        "97-12-27-83-76-57-3",  # seven groups: the seventh stood after the old cap
+        "450-80-930-97-82-1-2",
+        "9-7-1-2-2-7-8-3-7-6-5-7-3",  # read one digit at a time
+    ],
+)
+def test_the_shapes_716_found_are_grouped_digits(text: str) -> None:
+    """#716: what the grouped rule still missed after #702. Not seen from
+    Whisper in evaluation 04 -- closed because it costs nothing safe to close."""
+    spans = [(start, end) for start, end, cat in find_pii(text) if cat == "digits"]
+    assert spans == [(0, len(text))]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["2026-10-05-15-30에", "2026-10-02-2026-10-05", "2026-1-5까지", "1-2-3차 스프린트"],
+)
+def test_real_dates_and_short_lists_stay_out_of_grouped_digits(text: str) -> None:
+    assert "digits" not in {cat for _, _, cat in find_pii(text)}
