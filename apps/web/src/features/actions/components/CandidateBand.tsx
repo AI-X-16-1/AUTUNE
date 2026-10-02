@@ -1,5 +1,5 @@
 import { ActionCard } from "./ActionCard";
-import type { ActionItemRead } from "../types";
+import type { ActionItemRead, SourceUtterance } from "../types";
 
 /**
  * Items the model was not confident enough to assert (ADR 0006).
@@ -17,11 +17,14 @@ export function CandidateBand({
   selectedId,
   onSelect,
   showMeeting = false,
+  context,
 }: {
   items: ActionItemRead[];
   selectedId?: string;
   onSelect?: (id: string) => void;
   showMeeting?: boolean;
+  /** The lines said before a card's sentence, by item id (`useCardContext`). */
+  context?: Record<string, SourceUtterance[]>;
 }) {
   if (items.length === 0) return null;
 
@@ -62,6 +65,7 @@ export function CandidateBand({
             selected={item.id === selectedId}
             onSelect={onSelect}
             showMeeting={showMeeting}
+            context={context?.[item.id]}
           />
         ))}
       </div>
