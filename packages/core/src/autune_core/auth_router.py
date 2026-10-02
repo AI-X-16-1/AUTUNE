@@ -528,12 +528,14 @@ def google_calendar_status(
     grant = load_user_integration(session, user.id, "calendar")
     connected = grant is not None and bool(grant.secret)
     issued_to = grant.config.get("client_id") if grant is not None else None
-    current = get_settings().google_integration_credentials[0]
+    # "Configured" as module B reads it (``tasks._google_client_configured``):
+    # an id and a secret. Half a client refreshes nothing, so it is not a
+    # client to reconnect to either (review of #718).
+    current, secret = get_settings().google_integration_credentials
+    configured = bool(current and secret)
     return {
         "connected": connected,
-        "needs_reconnect": (
-            connected and bool(current) and bool(issued_to) and issued_to != current
-        ),
+        "needs_reconnect": (connected and configured and bool(issued_to) and issued_to != current),
     }
 
 
