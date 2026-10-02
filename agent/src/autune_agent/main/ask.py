@@ -10,13 +10,13 @@ compacted, and stops before a request would pass ``SIZE_LIMIT``.
 from __future__ import annotations
 
 import inspect
-import logging
 import types
 import typing
 from collections.abc import Mapping
 from typing import Any
 
 from autune_agent.results import Finding, ToolResult
+from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
 
 from .gemini import ADDRESSING
@@ -31,7 +31,7 @@ from .toolcall import (
     tools_body,
 )
 
-log = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 MEETING_TOOLS = (
     "audio.meeting_overview",
@@ -91,7 +91,7 @@ def declare(tools: Mapping[str, Tool], scope: RunScope) -> list[Declaration]:
         try:
             hints = typing.get_type_hints(tool.fn)
         except Exception:  # noqa: BLE001 - an unresolvable annotation drops the tool, not the turn
-            log.warning("ask: %s has annotations that do not resolve", name)
+            log.warning(f"ask: {name} has annotations that do not resolve")
             continue
         params = list(inspect.signature(tool.fn).parameters.values())[1:]
         properties: dict[str, Any] = {}
@@ -104,7 +104,7 @@ def declare(tools: Mapping[str, Tool], scope: RunScope) -> list[Declaration]:
                 continue
             schema = _schema(hints.get(p.name, str))
             if schema is None:
-                log.warning("ask: %s has a parameter the model cannot fill", name)
+                log.warning(f"ask: {name} has a parameter the model cannot fill")
                 usable = False
                 break
             properties[p.name] = schema
@@ -184,9 +184,9 @@ def ask(
         try:
             step = model.step(ASK_INSTRUCTIONS, turns, declarations)
         except PrivacyViolationError:
-            raise  # someone typed personal data into the chat: the turn fails, as today
+            raise  # message or unmasked tool result: turn fails closed either way
         except Exception as exc:  # noqa: BLE001 - a model error ends the loop, not the turn
-            log.warning("ask: model step failed: %s", type(exc).__name__)
+            log.warning(f"ask: model step failed: {type(exc).__name__}")
             break
         if not isinstance(step, list) or not step:
             break
