@@ -385,3 +385,81 @@ def test_the_restart_route_says_the_recording_is_gone(
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "recording_gone"
+
+
+# --- flags --------------------------------------------------------------------
+
+
+def _detail(client: TestClient, meeting_id: str) -> dict:
+    response = client.get(f"/api/audio/meetings/{meeting_id}")
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_a_healthy_run_can_be_cancelled_but_not_restarted(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(seconds=5))
+    _upload(settings, job.id)
+
+    body = _detail(client, analyzing)
+
+    assert (body["cancellable"], body["stalled"], body["restartable"], body["cancelled"]) == (
+        True,
+        False,
+        False,
+        False,
+    )
+
+
+def test_a_stalled_run_with_its_upload_is_restartable(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    _upload(settings, job.id)
+
+    body = _detail(client, analyzing)
+
+    assert (body["stalled"], body["restartable"], body["cancellable"]) == (True, True, True)
+
+
+def test_a_stalled_run_without_its_upload_is_stalled_but_not_restartable(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+
+    body = _detail(client, analyzing)
+
+    assert (body["stalled"], body["restartable"]) == (True, False)
+
+
+def test_a_cancelled_meeting_says_so(
+    client: TestClient, db_session: Session, meeting: str, settings: AudioSettings
+) -> None:
+    db_session.get(Meeting, meeting).status = "failed"
+    _job(db_session, meeting, "cancelled")
+
+    body = _detail(client, meeting)
+
+    assert body["cancelled"] is True
+    assert body["cancellable"] is False
+
+
+def test_a_meeting_that_failed_on_its_own_is_not_called_cancelled(
+    client: TestClient, db_session: Session, meeting: str, settings: AudioSettings
+) -> None:
+    db_session.get(Meeting, meeting).status = "failed"
+    _job(db_session, meeting, "failed")
+
+    assert _detail(client, meeting)["cancelled"] is False
+
+
+def test_a_queued_job_is_never_stalled(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    """A long queue and a lost message look the same from here."""
+    _job(db_session, analyzing, "queued", age=timedelta(hours=1))
+
+    body = _detail(client, analyzing)
+
+    assert (body["stalled"], body["cancellable"]) == (False, True)
