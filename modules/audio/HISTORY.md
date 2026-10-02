@@ -909,7 +909,11 @@ phone pattern does not cross a line. A second phone pattern on the card's
 narrow separator closes it. The leading zero and the 2-3 / 3-4 / 4 layout
 are what keep it from joining figures on adjacent lines; the corpus scores
 the same, and `예산\n150000\n200000` is matched exactly as before (by
-`account`, a known over-mask).
+`account`, a known over-mask). What it newly over-masks, found in review and
+accepted as the safe direction: a short zero-led figure at a line end
+followed by a three-to-four and a four-digit line -- `Q1 05\n300\n2500원`,
+`목표 01\n300\n2024`. If a false positive is reported, look at this pattern
+first.
 
 **Numbers read aloud, 2026-10-02 (#160, evaluation 04).** #160 asked for a
 count of comma-split and one-syllable-at-a-time numbers before widening a
