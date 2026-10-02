@@ -220,9 +220,10 @@ class ExtractionSettings(BaseSettings):
 
     **It turns nothing on.** Set alone, it changes nothing.
 
-    **Not keyed on ``AUTUNE_ENV``.** ``local`` is that variable's default
-    (#408), so a deployment that forgot to set it would be the one let
-    through.
+    **Not keyed on ``AUTUNE_ENV``.** ``.env.example`` ships
+    ``AUTUNE_ENV=local``, so a deployment made from that file would be the
+    one let through. (The variable's own default has been ``production``
+    since #446; an earlier version of this text said ``local``.)
 
     **Deleting this flag is the migration** once #392 is decided: every place
     that set it is a ``grep`` away."""
@@ -331,6 +332,9 @@ class ExtractionSettings(BaseSettings):
         speech out unacknowledged -- not the worker's first meeting, and not
         a route that only wanted a threshold. It names the variable to set and
         nothing else; the message carries no value from the environment.
+
+        Settings load lazily, so by itself this refuses at B's first use.
+        ``require_loadable`` is what makes it a refusal to start.
         """
         if self.llm_acknowledged_392:
             return self
@@ -363,3 +367,21 @@ class ExtractionSettings(BaseSettings):
 @lru_cache
 def get_settings() -> ExtractionSettings:
     return ExtractionSettings()
+
+
+def require_loadable() -> None:
+    """Raise now if module B's settings would refuse to load.
+
+    Called when ``tasks`` is imported -- by the worker directly, by the API
+    through ``router``, which imports ``tasks`` -- so a worker or an API
+    given a configuration B refuses does not start, rather than starting and
+    failing on the first meeting or the first request (review of #744). The
+    API imports every module's router, so **a bad module B configuration
+    stops the whole API**, the other modules with it -- intended: a process
+    that would send speech out unacknowledged should not be half up.
+
+    Builds the settings and throws them away. ``get_settings`` is cached,
+    and priming that cache at import would pin whatever the environment held
+    at that moment for every later caller.
+    """
+    ExtractionSettings()
