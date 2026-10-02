@@ -60,7 +60,8 @@ documents cover how it is built.
 ### design/
 | Document | Contents |
 | --- | --- |
-| `ui-spec.md` | Rules at a glance, all 33 screens (S01–S33), shared components, data and state mapping, UI-visible privacy constraints |
+| `ui-spec.md` | Rules at a glance, all 34 screens (S01–S34), shared components, data and state mapping, UI-visible privacy constraints |
+| `agent-assistant.md` | S34, the assistant's floating launcher and chat panel: layout, states, behaviour rules, and what is still open against the agent layer |
 | `design-tokens.json` | Color, typography, spacing, layout, shape, control, border and motion tokens, light and dark |
 | `AUTUNE Spec 00~04 *.dc.html` | Design source. Spec 00 is the design system; 01–04 are the screens |
 | `AUTUNE 실시간 전사.dc.html` | S13 live transcript, drawn at full size (1440×936) |

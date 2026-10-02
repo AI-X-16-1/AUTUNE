@@ -886,6 +886,19 @@ one argument at each of the two call sites, and the reason it is two and not one
 is the same as the row above: the guard checks what the masker promises, so it
 has to see everything the masker sees.
 
+**Numbers read aloud, 2026-10-02 (#160, evaluation 04).** #160 asked for a
+count of comma-split and one-syllable-at-a-time numbers before widening a
+pattern. There was nothing to count -- 218 stored utterances and HiKE's 1,121
+references hold one number between them -- so 96 synthetic clips were made
+(TTS, one voice, two rates). Whisper wrote **every** number in Arabic digits:
+#160's shapes and the recogniser's `공일공` never appeared. What leaked instead
+was grouping: Whisper hyphenates by guess, and an account or resident number
+grouped wrongly matches no length-keyed pattern -- 15/32 accounts and 13/32
+resident numbers leaked, 0/32 phones. The decision this drives: don't fix
+#160's shapes; measure a total-length catch-all for hyphen-joined digit runs
+against the corpus (the `2024-2025-2026` false positive is its known cost).
+TTS is not a meeting, so the rates are not field rates.
+
 **Retention and deletion, 2026-10-01 (#581–#584, then #363).** Four rows that
 were document-only became code: an hourly sweep deletes meetings past
 `expires_at` (`retention.py`); a person can export, delete their speech, or
