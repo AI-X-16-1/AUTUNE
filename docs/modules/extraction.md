@@ -623,9 +623,12 @@ versions.
   smallest window that resolves the reference.
 - A failed copy to an outside tool is remembered by its kind and its time
   only (`ext_sync_failures`, #680): the service's own message may echo what
-  was sent and is not stored or logged. The detail says why an item has no
-  calendar event, and that the assignee has not connected a calendar is said
-  to the assignee alone.
+  was sent and is not stored or logged. Notion and Jira are the team's
+  connections and their failures are shown to the team. A calendar is one
+  person's: what an item lacks (not confirmed, no date, no account for an
+  assignee) is said to anybody, and everything past that -- an event being
+  there, none being there, a failed calendar copy -- only to the assignee,
+  since each says whether that person connected a calendar.
 - Confirmation DMs go to the speaker, never to a channel.
 - Due-date reminders go to the item's assignee, never to a channel, a manager
   or the person who made the item, and nothing counts or ranks what a person

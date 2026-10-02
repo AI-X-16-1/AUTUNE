@@ -332,7 +332,7 @@ def test_only_the_meetings_team_can_retry(
 # --- why there is no calendar event ----------------------------------------------
 
 
-def calendar(client: TestClient) -> dict:
+def calendar(client: TestClient) -> dict | None:
     return client.get(f"{PREFIX}/action-items/act_1").json()["calendar"]
 
 
@@ -353,8 +353,7 @@ def test_the_detail_names_the_first_thing_missing(
     assert calendar(client) == {"state": "none", "reason": reason}
 
 
-def test_an_item_with_an_event_is_on_the_calendar(client: TestClient, session: Session) -> None:
-    item(session)
+def event(session: Session) -> None:
     session.add(
         ExtCalendarEvent(
             action_item_id="act_1",
@@ -366,22 +365,99 @@ def test_an_item_with_an_event_is_on_the_calendar(client: TestClient, session: S
     )
     session.commit()
 
-    assert calendar(client) == {"state": "sent", "reason": None}
+
+def make_reader_the_assignee(session: Session) -> None:
+    session.add(User(id=READER, email="reader@example.com", display_name="읽는 사람"))
+    session.get(ExtActionItem, "act_1").assignee_id = READER
+    session.commit()
 
 
-def test_that_the_assignee_has_not_connected_is_said_only_to_the_assignee(
+# --- a calendar is one person's (review of this change) --------------------------
+#
+# Whether an event is there, that none is, that they have not connected, and a
+# failed calendar copy each say whether a person connected their own calendar.
+# A first version withheld only "not connected" from a teammate and told them
+# the rest, which gives the same fact away by elimination.
+
+
+def test_a_teammate_is_told_nothing_about_the_assignees_calendar(
     client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Whether somebody connected their calendar is a fact about their own
-    account. A teammate is told only that there is no event."""
-    monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [])
+    """The item lacks nothing; the reader is not its assignee. Connected or not,
+    event or none, the answer is the same: no ``calendar`` at all."""
     item(session)  # assigned to KIM; the reader is somebody else
-    assert calendar(client) == {"state": "none", "reason": None}
 
-    session.get(ExtActionItem, "act_1").assignee_id = READER
-    session.add(User(id=READER, email="reader@example.com", display_name="읽는 사람"))
-    session.commit()
+    monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [])
+    not_connected = calendar(client)
+    monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [KIM])
+    connected_no_event = calendar(client)
+    event(session)
+    on_the_calendar = calendar(client)
+
+    assert not_connected is None
+    assert connected_no_event is None
+    assert on_the_calendar is None
+
+
+def test_the_assignee_is_told_where_their_own_calendar_stands(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item(session)
+    make_reader_the_assignee(session)
+
+    monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [])
     assert calendar(client) == {"state": "none", "reason": "not_connected"}
 
     monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [READER])
     assert calendar(client) == {"state": "none", "reason": None}
+
+    event(session)
+    assert calendar(client) == {"state": "sent", "reason": None}
+
+
+def test_what_the_item_lacks_is_said_before_anything_about_a_calendar(
+    client: TestClient, session: Session
+) -> None:
+    """An item moved back to 확인 필요 keeps its event until the sync takes it
+    off. The reader is told about the item, not that the event is still there."""
+    item(session, status="needs_confirmation")
+    make_reader_the_assignee(session)
+    event(session)
+
+    assert calendar(client) == {"state": "none", "reason": "not_confirmed"}
+
+
+def test_a_failed_calendar_copy_is_shown_to_the_assignee_and_to_nobody_else(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``calendar`` + ``reconnect`` on a card says "this person's Google grant
+    was refused". Notion and Jira are the team's connections and stay visible."""
+    monkeypatch.setattr(sync_state, "users_with_integration", lambda _session, _service: [])
+    item(session)
+    failure(session, system="calendar", kind="reconnect")
+    failure(session, system="jira", kind="unreachable")
+
+    def systems() -> tuple[list[str], list[str]]:
+        (listed,) = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+        detail = client.get(f"{PREFIX}/action-items/act_1").json()
+        return (
+            [f["system"] for f in listed["sync_failures"]],
+            [f["system"] for f in detail["sync_failures"]],
+        )
+
+    assert systems() == (["jira"], ["jira"])
+
+    make_reader_the_assignee(session)
+    assert systems() == (["calendar", "jira"], ["calendar", "jira"])
+
+
+def test_a_caller_with_no_reader_gets_no_calendar_failure(session: Session) -> None:
+    """Module B's own callers -- the agent's tools -- list items for a team,
+    not for a person."""
+    row = item(session)
+    failure(session, system="calendar", kind="reconnect")
+    failure(session, system="notion", kind="rejected")
+
+    found = sync_state.failures_for(session, [row], reader_id=None)
+
+    assert [f.system for f in found["act_1"]] == ["notion"]

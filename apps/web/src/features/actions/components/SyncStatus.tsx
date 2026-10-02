@@ -20,8 +20,13 @@ import type { ActionItemRead, CalendarState, SyncFailure } from "../types";
  * **No event is usually not a failure.** An item with no date, or with a typed
  * name for an assignee, was never going to have one. The window names the
  * first thing missing, so somebody who added an item by hand is not left
- * asking why nothing appeared. That the assignee has not connected a calendar
- * is said only to the assignee: the server sends that reason to nobody else.
+ * asking why nothing appeared.
+ *
+ * **Past what the item lacks, the calendar is the assignee's own.** Whether an
+ * event is there, that none is, a failed calendar copy -- each says whether
+ * that person connected a calendar, so the server sends them to the assignee
+ * and to nobody else, and this draws only what it was sent. Hence "내 캘린더"
+ * in those lines: whoever reads them is the assignee.
  *
  * "다시 시도" queues the same sync an edit does. It answers before the sync
  * runs, so the window says it was sent again and does not claim it worked.
@@ -52,8 +57,8 @@ const NO_EVENT: Record<NonNullable<CalendarState["reason"]>, string> = {
 };
 
 export function calendarLine(calendar: CalendarState): string {
-  if (calendar.state === "sent") return "담당자의 캘린더에 올라가 있습니다.";
-  return calendar.reason ? NO_EVENT[calendar.reason] : "담당자의 캘린더에 아직 일정이 없습니다.";
+  if (calendar.state === "sent") return "내 캘린더에 올라가 있습니다.";
+  return calendar.reason ? NO_EVENT[calendar.reason] : "내 캘린더에 아직 일정이 없습니다.";
 }
 
 const meta = { fontSize: "var(--text-metaSmall)" } as const;

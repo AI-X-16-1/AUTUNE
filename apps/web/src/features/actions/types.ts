@@ -74,8 +74,9 @@ export interface SyncFailure {
 }
 
 /**
- * Whether the item is on its assignee's calendar and, if not, the first thing
- * missing. `not_connected` is sent only when the reader is the assignee.
+ * What this reader may be told about the item and its assignee's calendar.
+ * The four reasons about the item go to any reader; `sent`, a bare `none` and
+ * `not_connected` are about one person's calendar and go only to the assignee.
  */
 export interface CalendarState {
   state: "sent" | "none";
@@ -117,7 +118,10 @@ export interface ActionItemRead extends ActionItem {
    * this stricter one.
    */
   sync_refs: ExternalRefRead[];
-  /** Systems whose last copy of this item failed (#680). Empty when none did. */
+  /**
+   * Systems whose last copy of this item failed (#680). A `calendar` failure
+   * is sent only to the item's assignee. Empty when none did.
+   */
   sync_failures?: SyncFailure[];
   /**
    * A one-line preview of the item's sources beyond `description` itself.

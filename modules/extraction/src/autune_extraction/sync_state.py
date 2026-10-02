@@ -12,8 +12,12 @@ what was being sent. The next attempt that succeeds removes the row.
 **That there was nothing to copy.** An item with no calendar event is usually
 not a failure: it has no date, or no account behind its assignee, or is not
 confirmed. ``calendar_state`` names the first thing missing, so somebody who
-added an item by hand is not left asking why nothing appeared. Whether the
-*assignee* has connected a calendar is said only to the assignee.
+added an item by hand is not left asking why nothing appeared.
+
+**Notion and Jira are the team's; a calendar is one person's.** What is missing
+from the item is said to everybody. Anything that says whether the *assignee*
+has connected a calendar -- an event being there, none being there, a failed
+calendar copy -- is said to the assignee and to nobody else.
 """
 
 from __future__ import annotations
@@ -83,18 +87,30 @@ def clear_failure(session: Session, action_item_id: str, system: str) -> None:
 
 
 def failures_for(
-    session: Session, action_item_ids: Collection[str]
+    session: Session, items: Collection[ExtActionItem], *, reader_id: str | None
 ) -> dict[str, list[SyncFailureRead]]:
-    """The failures standing for each item, in one query for the whole list."""
-    if not action_item_ids:
+    """The failures standing for each item that ``reader_id`` may be told
+    about, in one query for the whole list.
+
+    Notion and Jira are the team's connections, and a failure of either is the
+    team's to see. **A calendar is one person's**: its failure -- a refused
+    grant above all -- is a fact about that person's own account, so it is
+    returned only when the reader is the item's assignee (review of this
+    change). A caller with no reader gets none of them.
+    """
+    if not items:
         return {}
+    assignee = {item.id: item.assignee_id for item in items}
     rows = session.scalars(
         select(ExtSyncFailure)
-        .where(ExtSyncFailure.action_item_id.in_(action_item_ids))
+        .where(ExtSyncFailure.action_item_id.in_(assignee))
         .order_by(ExtSyncFailure.system)
     )
     by_item: dict[str, list[SyncFailureRead]] = {}
     for row in rows:
+        mine = reader_id is not None and assignee[row.action_item_id] == reader_id
+        if row.system == CALENDAR and not mine:
+            continue
         by_item.setdefault(row.action_item_id, []).append(
             SyncFailureRead(system=row.system, kind=row.kind, failed_at=row.failed_at)  # type: ignore[arg-type]
         )
@@ -103,22 +119,23 @@ def failures_for(
 
 def calendar_state(
     session: Session, item: ExtActionItem, *, reader_id: str | None
-) -> CalendarState:
-    """Whether the item is on its assignee's calendar, and the first thing
-    missing if it is not -- the conditions ``calendar_sync._calendar_owner``
-    applies, in its order, said out loud.
+) -> CalendarState | None:
+    """What ``reader_id`` may be told about the item and its assignee's calendar.
 
-    ``not_connected`` is answered only when ``reader_id`` is the assignee:
-    that somebody has not connected their calendar is a fact about their own
-    account, and a teammate is told only that there is no event.
+    **What is missing from the item is said to everybody** -- it is not
+    confirmed, has no date, has a typed name or nobody for an assignee, or an
+    assignee who is not on the team. Those are facts about the item, on the
+    board already, and they are the conditions ``calendar_sync._calendar_owner``
+    applies, in its order.
+
+    **Past those, the answer is about one person's calendar, and only that
+    person gets one.** Whether an event is there, that none is, and that they
+    have not connected a calendar each say whether somebody has connected
+    theirs -- "it is on their calendar" as plainly as "they have not
+    connected". A first version withheld only the last and told a teammate the
+    rest, which gave the same fact away by elimination. So a reader who is not
+    the assignee gets ``None``: nothing about the calendar at all.
     """
-    event = session.scalar(
-        select(ExtCalendarEvent.event_id).where(
-            ExtCalendarEvent.action_item_id == item.id, ExtCalendarEvent.event_id.is_not(None)
-        )
-    )
-    if event:
-        return CalendarState(state="sent")
     if item.status == ActionStatus.NEEDS_CONFIRMATION.value:
         return CalendarState(state="none", reason="not_confirmed")
     if item.due_date is None:
@@ -132,8 +149,15 @@ def calendar_state(
     )
     if on_team is None:
         return CalendarState(state="none", reason="not_on_team")
-    if reader_id == item.assignee_id and item.assignee_id not in users_with_integration(
-        session, CALENDAR
-    ):
+    if reader_id is None or reader_id != item.assignee_id:
+        return None
+    event = session.scalar(
+        select(ExtCalendarEvent.event_id).where(
+            ExtCalendarEvent.action_item_id == item.id, ExtCalendarEvent.event_id.is_not(None)
+        )
+    )
+    if event:
+        return CalendarState(state="sent")
+    if item.assignee_id not in users_with_integration(session, CALENDAR):
         return CalendarState(state="none", reason="not_connected")
     return CalendarState(state="none")

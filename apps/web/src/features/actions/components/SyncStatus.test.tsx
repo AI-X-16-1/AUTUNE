@@ -87,12 +87,19 @@ describe("SyncStatus", () => {
 
 describe("the calendar line", () => {
   it.each([
-    [{ state: "sent", reason: null }, "담당자의 캘린더에 올라가 있습니다."],
+    [{ state: "sent", reason: null }, "내 캘린더에 올라가 있습니다."],
     [{ state: "none", reason: "not_confirmed" }, "확정되면 담당자의 캘린더에 올라갑니다."],
     [{ state: "none", reason: "no_due_date" }, "기한이 없어 캘린더에 올리지 않았습니다."],
-    [{ state: "none", reason: null }, "담당자의 캘린더에 아직 일정이 없습니다."],
+    [{ state: "none", reason: null }, "내 캘린더에 아직 일정이 없습니다."],
   ] as [CalendarState, string][])("%j", (calendar, words) => {
     expect(calendarLine(calendar)).toBe(words);
+  });
+
+  it("draws no calendar line for a reader the server sent none to", () => {
+    // A teammate: the detail carries no `calendar` once the item lacks nothing.
+    const { container } = render(<SyncStatus item={item([])} calendar={null} />);
+
+    expect(container.textContent).not.toContain("캘린더");
   });
 
   it("tells somebody with a typed name for an assignee what to do about it", () => {
@@ -101,9 +108,12 @@ describe("the calendar line", () => {
     expect(screen.getByText(/담당자를 팀 구성원으로 지정해 주세요/)).toBeTruthy();
   });
 
-  it("speaks of my own calendar only in the reason the server sends to me alone", () => {
+  it("speaks of my own calendar in the lines only the assignee is sent", () => {
+    // `sent`, a bare `none` and `not_connected` reach the assignee and nobody
+    // else, so whoever reads them is reading about their own calendar.
     expect(calendarLine({ state: "none", reason: "not_connected" })).toContain("내 Google 캘린더");
-    expect(calendarLine({ state: "none", reason: null })).not.toContain("연결");
+    expect(calendarLine({ state: "sent", reason: null })).toContain("내 캘린더");
+    expect(calendarLine({ state: "none", reason: null })).toContain("내 캘린더");
   });
 });
 

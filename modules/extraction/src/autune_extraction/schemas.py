@@ -108,12 +108,15 @@ class CalendarState(BaseModel):
     An item with no event is usually not a failure: it is not something a
     calendar event is made for. The board could not say which, and somebody
     who had added an item by hand was left asking why nothing appeared
-    (2026-10-02). ``reason`` names the first thing missing:
+    (2026-10-02). ``reason`` names the first thing missing.
+
     ``not_confirmed``, ``no_due_date``, ``no_account`` (the assignee is a
-    typed name or nobody), ``not_on_team``, and ``not_connected`` -- the
-    last one **only when the reader is the assignee**: whether somebody else
-    has connected their calendar is theirs to know. ``None`` with ``none``
-    means nothing is missing that this reader may be told about."""
+    typed name or nobody) and ``not_on_team`` are about the item and are sent
+    to any reader. ``sent``, ``none`` with no reason, and ``not_connected``
+    are about the assignee's own calendar -- each says whether that person
+    has connected one -- and are sent **only when the reader is the
+    assignee**. For anybody else the detail carries no ``calendar`` at all
+    once the item itself lacks nothing."""
 
     state: Literal["sent", "none"]
     reason: (
@@ -238,7 +241,9 @@ class ActionItemRead(BaseModel):
     sync_failures: list[SyncFailureRead] = Field(default_factory=list)
     """Systems whose last copy of this item failed (#680). A kind and a time;
     on the list for the reason ``sync_refs`` is -- it is not meeting content.
-    Empty for an item nothing has failed for."""
+    Notion and Jira are the team's connections and their failures go to any
+    reader; a ``calendar`` failure is one person's and is sent only to the
+    item's assignee. Empty for an item nothing has failed for."""
     sync_refs: list[ExternalRefRead]
     """One entry per system this item has been claimed for -- today, at most
     ``notion`` (#30). ``jira`` was designed (ui-spec S18, S28) but dropped
@@ -371,8 +376,9 @@ class ActionItemDetail(ActionItemRead):
     """
 
     calendar: CalendarState | None = None
-    """The item's place on its assignee's calendar, and why it has none.
-    ``None`` only from a caller that did not ask."""
+    """What this reader may be told about the item and its assignee's
+    calendar (``CalendarState``). ``None`` when the item lacks nothing and the
+    reader is not the assignee -- the rest is the assignee's to know."""
 
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence
