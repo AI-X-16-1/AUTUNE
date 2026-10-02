@@ -156,6 +156,21 @@ def compact(result: ToolResult) -> dict[str, Any]:
     return out
 
 
+def _echo(parts: list[dict[str, Any]] | None, calls: list[FunctionCall]) -> list[dict[str, Any]]:
+    """The model's own parts, cut to the calls that ran, so every call has a response."""
+    if not parts:
+        return [{"functionCall": {"name": c.name, "args": c.args}} for c in calls]
+    kept: list[dict[str, Any]] = []
+    seen = 0
+    for part in parts:
+        if "functionCall" in part:
+            if seen >= MAX_CALLS_PER_ROUND:
+                continue
+            seen += 1
+        kept.append(part)
+    return kept
+
+
 def ask(
     request: str, *, model: ToolModel, toolbox: Toolbox, declarations: list[Declaration]
 ) -> ToolResult:
@@ -177,9 +192,7 @@ def ask(
         calls = step[:MAX_CALLS_PER_ROUND]
         results = [call_tool(toolbox, call) for call in calls]
         gathered.extend(results)
-        echoed = getattr(model, "last_parts", None) or [
-            {"functionCall": {"name": c.name, "args": c.args}} for c in calls
-        ]
+        echoed = _echo(getattr(model, "last_parts", None), calls)
         turns.append({"role": "model", "parts": echoed})
         turns.append(
             {
