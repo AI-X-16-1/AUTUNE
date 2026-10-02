@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button, ChipToggle } from "@/shared/ui";
 
 import { createTeam } from "../api";
+import { TeamInvite } from "./TeamInvite";
 
 /**
  * S02 — make a workspace: its name, my job role, and who else is on it.
@@ -15,10 +16,12 @@ import { createTeam } from "../api";
  * `team_id`). The home screen sends them here; this is the step that makes the
  * rest of the product reachable.
  *
- * **No invitations yet.** S02 draws an invite field; it is left out until an
- * invitation is something the invitee accepts. Adding people as members on
- * the spot let anyone be put on any team (review of #539), and team
- * membership is what every module's team-level data is read through.
+ * **Invitations come after the workspace exists, and add nobody by
+ * themselves** (#552). S02 draws an invite field beside the name; the first
+ * version made those addresses members on the spot, which let anyone be put
+ * on any team (review of #539). Now the workspace is made with its creator
+ * alone, and the next step offers links the invited people open and accept
+ * (`TeamInvite`). It can be skipped; the same control is under 설정 › 구성원.
  *
  * Roles are the S02 chips plus a free entry. The role feeds role-level
  * analytics only (the gap heatmap, role summaries), never anything per person.
@@ -47,6 +50,8 @@ export function WorkspaceScreen() {
   const [customRole, setCustomRole] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The workspace just made: the invite step is about it.
+  const [created, setCreated] = useState<{ teamId: string; name: string } | null>(null);
 
   const trimmed = name.trim();
   const nameProblem =
@@ -57,8 +62,8 @@ export function WorkspaceScreen() {
     setSubmitting(true);
     setError(null);
     try {
-      await createTeam({ name: trimmed, ...(chosenRole ? { role: chosenRole } : {}) });
-      router.replace("/");
+      const team = await createTeam({ name: trimmed, ...(chosenRole ? { role: chosenRole } : {}) });
+      setCreated({ teamId: team.team_id, name: team.name });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "워크스페이스를 만들지 못했습니다.");
       setSubmitting(false);
@@ -66,6 +71,47 @@ export function WorkspaceScreen() {
   };
 
   const canSubmit = trimmed.length >= 2 && trimmed.length <= 40 && !submitting;
+
+  if (created !== null) {
+    return (
+      <main
+        className="grid min-h-screen place-items-center bg-[var(--color-surface-paper)]"
+        style={{ padding: "var(--space-24)" }}
+      >
+        <div
+          className="flex w-full max-w-[560px] flex-col rounded-[var(--radius)] bg-[var(--color-surface-panel)]"
+          style={{ padding: "var(--space-32)", gap: 20, boxShadow: "var(--shadow-overlay)" }}
+        >
+          <div>
+            <h1
+              className="text-[var(--color-ink-strong)]"
+              style={{
+                fontSize: "var(--text-title)",
+                fontWeight: "var(--text-title-weight)",
+                letterSpacing: "var(--text-title-tracking)",
+              }}
+            >
+              팀원 초대
+            </h1>
+            <p className="mt-1.5 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--control-text-default)" }}>
+              {created.name} 워크스페이스를 만들었습니다. 지금은 나만 들어가 있습니다.
+            </p>
+          </div>
+
+          <TeamInvite teamId={created.teamId} />
+
+          <div className="mt-1 flex items-center justify-between gap-4">
+            <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-meta)" }}>
+              나중에 설정 › 구성원에서도 초대할 수 있습니다.
+            </span>
+            <Button tone="primary" type="button" onClick={() => router.replace("/")}>
+              시작하기
+            </Button>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main
@@ -173,7 +219,7 @@ export function WorkspaceScreen() {
 
         <div className="mt-1 flex items-center justify-between gap-4">
           <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-meta)" }}>
-            팀원 초대는 준비 중입니다. 지금은 나만 들어간 워크스페이스가 만들어집니다.
+            나만 들어간 워크스페이스가 만들어집니다. 팀원은 다음 단계에서 초대합니다.
           </span>
           <Button tone="primary" type="submit" disabled={!canSubmit} loading={submitting}>
             만들기
