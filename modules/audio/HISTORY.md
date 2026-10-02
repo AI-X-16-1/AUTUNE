@@ -886,6 +886,22 @@ one argument at each of the two call sites, and the reason it is two and not one
 is the same as the row above: the guard checks what the masker promises, so it
 has to see everything the masker sees.
 
+**Separators, derived instead of copied, 2026-10-02 (#324).** The masker kept
+its own list of the characters `privacy._SEP` accepts between digit groups,
+and the two drifted a third time: a thin space the pattern took made a phone
+number "mixed script" and all of it went, and a card read across lines lost
+its last four. Over-masking, not a leak, but the documented shape broke. The
+masker now treats any whitespace and the punctuation `privacy` exports as
+layout, so the list exists once. The first version also stopped `_HSPACE`
+counting `\v`, `\f`, U+0085, U+2028 and U+2029 as space, to keep a phone
+match from bridging two lines; review showed it left a nine-digit `02`
+number split by one of them matched by nothing, through the outbound guard,
+so it was reverted -- detection stays wide, and only the masker's layout
+changed. A newline-split `02` number is missed on `main` too (#688). The masking corpus scored the same before
+and after (recall 1.000, precision 1.000, 32/35 exact, the 3 declared rows
+unchanged) -- it has no row with any of these characters, which is itself
+the gap: the regressions are pinned in unit tests, not in the corpus.
+
 **Numbers read aloud, 2026-10-02 (#160, evaluation 04).** #160 asked for a
 count of comma-split and one-syllable-at-a-time numbers before widening a
 pattern. There was nothing to count -- 218 stored utterances and HiKE's 1,121

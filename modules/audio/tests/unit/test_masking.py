@@ -508,3 +508,15 @@ def test_a_misgrouped_resident_number_keeps_nothing() -> None:
 def test_a_phone_number_keeps_its_shape() -> None:
     """Ten or eleven digits in the phone shape stay `phone`, prefix and last four."""
     assert mask("제 번호는 010-1234-5678").text == "제 번호는 010-****-5678"
+
+
+def test_a_thin_space_between_groups_is_layout_not_content() -> None:
+    """#324 item 2: `find_pii` accepts any horizontal space as a separator; the
+    masker's copy of that list lacked U+2009, so the whole phone number went."""
+    assert mask("010 1234 5678").text == "010 **** 5678"
+
+
+def test_a_card_read_across_lines_keeps_its_last_four() -> None:
+    """#324 item 3: same digits, same shape, whether or not a line broke."""
+    assert mask("1234\n5678\n9012\n3456").text == "****\n****\n****\n3456"
+    assert mask("1234-5678-9012-3456").text == "****-****-****-3456"

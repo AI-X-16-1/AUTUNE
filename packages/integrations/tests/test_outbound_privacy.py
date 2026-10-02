@@ -589,6 +589,14 @@ def test_a_match_does_not_run_across_a_line_break() -> None:
     assert {cat for _, _, cat in find_pii("예산\n150000\n200000")} == {"account"}
 
 
+@pytest.mark.parametrize("brk", ["\u2028", "\v"])
+def test_a_nine_digit_number_split_by_a_vertical_separator_is_still_found(brk: str) -> None:
+    """Review of #687: narrowing `_HSPACE` to exclude these left `02` + 123 +
+    4567 matched by nothing -- `account` needs ten digits -- and the outbound
+    guard let it through. Detection stays wide."""
+    assert "phone" in find_unmasked(f"02{brk}123{brk}4567")
+
+
 def test_a_card_number_split_across_lines_is_still_one_card() -> None:
     """The one shape allowed to cross a line break, and why: without it the
     text below matched `account` (0, 14) and left `9012` *and* `3456` in the

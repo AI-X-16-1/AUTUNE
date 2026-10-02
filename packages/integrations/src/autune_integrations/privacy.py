@@ -85,8 +85,17 @@ _R: Final = rf"(?![{_EDGE}])"
 # `+82 (10) 1234-5678` -- and that form is not caught; it is pinned as a known
 # miss rather than widened here, because `(` between groups is also what
 # `(1) 2024-2025` looks like.
+#
+# `\v`, `\f`, U+0085, U+2028 and U+2029 still count as space here, though they
+# break a line: narrowing them out (#324, first version of #687) left a
+# nine-digit `02` number split by one of them matched by nothing, and this is
+# the detector `check_outbound` relies on. Detection stays wide; how the masker
+# lays out what it hides is ``masking._layout``'s business.
 _HSPACE: Final = r"[^\S\r\n]"
-_SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
+SEPARATOR_PUNCTUATION: Final = "-.–—)"
+"""The punctuation `_SEP` accepts between digit groups. Exported so module A's
+masker keeps exactly these as layout instead of a hand-made copy (#324)."""
+_SEP: Final = rf"{_HSPACE}*(?:[{re.escape(SEPARATOR_PUNCTUATION)}]{_HSPACE}*)?"
 
 # The card pattern alone may cross a line break. Four groups of four is a
 # shape nothing else in a transcript has, and a card number read aloud
