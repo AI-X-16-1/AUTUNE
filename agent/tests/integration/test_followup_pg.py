@@ -15,7 +15,7 @@ meetings and ``agent_`` rows with it.
 
 from __future__ import annotations
 
-import json
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -34,7 +34,7 @@ from autune_agent.main.pending import arguments_ok
 from autune_agent.main.triggers import on_event
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentRun
 from autune_agent.subagents.followup import SUBAGENT
-from autune_agent.subagents.followup.graph import WRITE
+from autune_agent.subagents.followup.graph import OPEN_ITEM, WRITE
 from autune_contracts import INTELLIGENCE_COMPLETED
 from autune_core import (
     Meeting,
@@ -59,6 +59,10 @@ meeting is left open on ``risk``, ``dependency`` and ``next_step`` -- the same
 seed C's own tool tests use."""
 
 T0 = datetime(2026, 9, 1, 10, tzinfo=UTC)
+MEMBER_APPROVE = 404
+"""A member who approves nothing in the team: the row reads as missing (``pending._load``)."""
+SECOND_APPROVE = 409
+"""An already decided proposal (``PendingDecidedError``)."""
 ONLY_FOLLOWUP = {"followup": SUBAGENT}
 """Research and Report also wake on this event; they are not under test here."""
 
@@ -82,9 +86,12 @@ def session(db_engine: sa.Engine) -> Iterator[Session]:
 def team(db_engine: sa.Engine) -> Iterator[dict[str, str]]:
     """A team with a lead (approver, scope ``followup``) and a member who is not."""
     with session_scope() as s:
+        # A suffix per run: a run killed before teardown leaves its users behind,
+        # and fixed addresses would collide with the next one.
+        suffix = uuid.uuid4().hex[:8]
         row = Team(name="followup-e2e")
-        lead = User(email="lead@followup-e2e.example", display_name="팀장")
-        member = User(email="member@followup-e2e.example", display_name="팀원")
+        lead = User(email=f"lead-{suffix}@followup-e2e.example", display_name="팀장")
+        member = User(email=f"member-{suffix}@followup-e2e.example", display_name="팀원")
         s.add_all([row, lead, member])
         s.flush()
         s.add_all(
@@ -173,6 +180,22 @@ def followup_items(session: Session, team_id: str) -> list[ExtActionItem]:
     )
 
 
+def calls(run: AgentRun) -> list[tuple[str, bool]]:
+    """The run's tool calls in order, and whether each answered.
+
+    A failed read also ends Follow-up with nothing proposed, so "proposes
+    nothing" means something only next to the reads that decided it."""
+    return [(step["tool"], step["ok"]) for step in run.steps]
+
+
+def assert_decided_on_reads(run: AgentRun) -> None:
+    """Every read answered and the rule did not fire: ``OPEN_ITEM`` is read only
+    when it does."""
+    assert calls(run), "the run made no call"
+    assert all(ok for _, ok in calls(run)), calls(run)
+    assert OPEN_ITEM not in [tool for tool, _ in calls(run)], calls(run)
+
+
 def gap_ids(session: Session, meeting_id: str) -> set[str]:
     return set(session.scalars(select(GapGap.id).where(GapGap.meeting_id == meeting_id)))
 
@@ -185,6 +208,7 @@ def test_a_first_meeting_proposes_nothing(session: Session, team: dict[str, str]
     # Three open gaps, none high enough twice over and nothing carried: no rule fires.
     assert run.outcome == "answered", run.outcome
     assert run.proposed == []
+    assert_decided_on_reads(run)
     assert pending(session, team["team"]) == []
 
 
@@ -202,8 +226,7 @@ def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str
     cited = set(row.evidence)
     assert cited & gap_ids(session, second)
     assert cited <= gap_ids(session, first) | gap_ids(session, second)
-    stored = json.dumps([run.steps, run.proposed, run.actions], ensure_ascii=False)
-    assert "후속 회의 잡기" not in stored, "the run keeps no text B will write"
+    assert (OPEN_ITEM, True) in calls(run), "the rule fired and no item was open"
     assert followup_items(session, team["team"]) == [], "nothing runs before approval"
 
     # Only the lead sees it and can approve it.
@@ -211,7 +234,7 @@ def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str
     assert [p["id"] for p in lead.get("/api/agent/pending").json()] == [row.id]
     member = client(session, team["member"])
     assert member.get("/api/agent/pending").json() == []
-    assert member.post(f"/api/agent/pending/{row.id}/approve").status_code in (403, 404)
+    assert member.post(f"/api/agent/pending/{row.id}/approve").status_code == MEMBER_APPROVE
     assert followup_items(session, team["team"]) == []
 
     reply = lead.post(f"/api/agent/pending/{row.id}/approve")
@@ -223,6 +246,10 @@ def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str
     assert item.description == "후속 회의 잡기"
     assert item.status == "needs_confirmation", "it reaches nobody until confirmed"
     assert item.assignee_id is None and item.due_date is None
+
+    # A second approval writes nothing more.
+    assert lead.post(f"/api/agent/pending/{row.id}/approve").status_code == SECOND_APPROVE
+    assert len(followup_items(session, team["team"])) == 1
 
 
 def test_a_republished_event_proposes_nothing_while_the_item_is_open(
@@ -238,6 +265,8 @@ def test_a_republished_event_proposes_nothing_while_the_item_is_open(
     (again,) = wake(session, second, "task-4")
 
     assert again.proposed == []
+    # It got as far as B's read and stopped on the open item, not on a failed read.
+    assert calls(again)[-1] == (OPEN_ITEM, True), calls(again)
     assert [p.status for p in pending(session, team["team"])] == ["approved"]
     assert len(followup_items(session, team["team"])) == 1
 
@@ -254,4 +283,5 @@ def test_a_gap_dismissed_before_the_event_is_not_carried(
     (run,) = wake(session, second, "task-5")
 
     assert run.proposed == []
+    assert_decided_on_reads(run)
     assert pending(session, team["team"]) == []
