@@ -814,6 +814,41 @@ class ExtCalendarCleanup(Base):
     )
 
 
+class ExtExternalCleanup(Base):
+    """A deleted item's Notion page or Jira issue still owed its cleanup (#692).
+
+    Deleting an item trashes its page and closes its issue in the deleting
+    request, best effort (``tasks.trash_notion_page``, ``tasks.close_jira_issue``).
+    When that call cannot get through, the item and its ``ext_external_refs``
+    row go regardless, so the request records here what it could not do and
+    ``tasks.drain_external_cleanup`` retries it. Ids only -- never what the item
+    said. Keyed to the team, which cascades: a deleted team has nothing left to
+    reach the page with.
+    """
+
+    __tablename__ = "ext_external_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "system", "external_id", name="uq_ext_external_cleanup"),
+        CheckConstraint("system IN ('notion','jira')", name="ck_ext_external_cleanup_system"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("teams.id", ondelete="CASCADE", name="fk_ext_external_cleanup_team"),
+        nullable=False,
+        index=True,
+    )
+    system: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """Jira's cloud id the key is from; a key on another site is someone else's issue."""
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtCalendarPoll(Base):
     """When B last read a person's calendar back (#435) -- the ``updatedMin`` of
     the next read. B's own sync state, kept here rather than in
