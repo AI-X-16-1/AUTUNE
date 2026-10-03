@@ -59,7 +59,7 @@ from autune_integrations import (
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
-from .config import require_loadable
+from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
     ExtActionItem,
@@ -444,6 +444,93 @@ def ask_confirmations() -> list[str]:
             f"unmasked value in {len(violations)} confirmation DM(s): {', '.join(violations)}"
         )
     return asked
+
+
+@shared_task(name="autune.extraction.periodic.remind_due_items")
+@periodic(timedelta(minutes=10))
+def remind_due_items() -> list[str]:
+    """Tell each assignee, once, that an item of theirs is due tomorrow or has
+    passed its date (``reminders``). Returns the item ids a message went for.
+
+    A direct message to the assignee alone, through the Slack bot of the
+    team that held the meeting, to the account they linked. Nobody else is
+    told. Each reminder is claimed and sent in its own transaction
+    (``send_due_reminder``): a failed send takes the claim back and the next
+    run tries again, and a claim another run holds sends nothing. A team
+    with no Slack connection and an assignee who has not linked a Slack
+    account are skipped and looked at again next time, while the reminder
+    is still owed. **A privacy violation is never swallowed, and never
+    buried**: the others are still sent, then it is raised with the item
+    ids -- whatever else a later reminder runs into. An error this loop did
+    not expect (a database error, an item deleted under the claim) is that
+    one reminder's: logged by type, and the loop goes on, so it cannot end
+    the run before the violations already collected are raised.
+
+    Every ten minutes, in Korea's daytime only: the first run after nine
+    sends the day's reminders and the rest find nothing owed.
+    """
+    if not get_settings().due_reminders:
+        return []
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = service.due_reminders_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({r.team_id for r in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent: list[str] = []
+    violations: list[str] = []
+    not_linked = 0
+    for reminder in owed:
+        secret = secrets[reminder.team_id]
+        if secret is None:
+            continue
+        try:
+            with session_scope() as session:
+                went = service.send_due_reminder(session, SlackClient(secret), reminder, now=now)
+        except PrivacyViolationError:
+            violations.append(reminder.action_item_id)
+            continue
+        except SlackRecipientNotLinkedError:
+            # Counted, not logged one by one: it is the same person every run
+            # until they link an account or the reminder stops being owed.
+            not_linked += 1
+            continue
+        except IntegrationError as exc:
+            log.warning(
+                "extraction_due_reminder_send_failed",
+                action_item_id=reminder.action_item_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one reminder's, see the docstring
+            # The type only: a database error carries its parameters.
+            # No soft time limit is set on this task today; one added later
+            # would raise ``SoftTimeLimitExceeded`` into this clause, and would
+            # have to be let through.
+            log.warning(
+                "extraction_due_reminder_failed",
+                action_item_id=reminder.action_item_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent.append(reminder.action_item_id)
+
+    if owed:
+        log.info(
+            "extraction_due_reminders_sent",
+            owed=len(owed),
+            sent=len(sent),
+            not_linked=not_linked,
+            violations=len(violations),
+        )
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value in {len(violations)} due reminder(s): {', '.join(violations)}"
+        )
+    return sent
 
 
 @shared_task(name="autune.extraction.summarise_confirmed_draft", acks_late=True)
