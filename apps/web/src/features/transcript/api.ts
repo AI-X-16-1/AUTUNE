@@ -67,6 +67,29 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
+/** The token for an invitation link, shown once, and when the link lapses. */
+export type InvitationIssued = { token: string; expires_at: string };
+
+/**
+ * Invite an address to a team the caller is on (#552). Nobody is added: the
+ * answer is a token for a link, the same shape whatever the address.
+ */
+export const inviteToTeam = (teamId: string, email: string) =>
+  api.audio<InvitationIssued>(`/teams/${encodeURIComponent(teamId)}/invitations`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+
+/**
+ * Join the team an invitation link names, as the signed-in owner of the
+ * invited address. Every refusal is the same 404; show one sentence for it.
+ */
+export const acceptInvitation = (token: string) =>
+  api.audio<TeamSummary>("/invitations/accept", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+
 /** S02: make a workspace with this person on it, and nobody else. */
 export const createTeam = (body: { name: string; role?: string }) =>
   api.audio<TeamSummary>("/teams", { method: "POST", body: JSON.stringify(body) });
