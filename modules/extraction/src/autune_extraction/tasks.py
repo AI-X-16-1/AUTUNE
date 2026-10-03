@@ -453,7 +453,9 @@ def remind_due_items() -> list[str]:
     team that held the meeting, to the account they linked. Nobody else is
     told. Each reminder is claimed and sent in its own transaction
     (``send_due_reminder``): a failed send takes the claim back and the next
-    run tries again, and a claim another run holds sends nothing. A team
+    run tries again, and a claim another run holds sends nothing. A send the
+    outbound check refused keeps its claim (``settle_refused_due_reminder``),
+    so the refusal is reported once rather than every run. A team
     with no Slack connection and an assignee who has not linked a Slack
     account are skipped and looked at again next time, while the reminder
     is still owed. **A privacy violation is never swallowed, and never
@@ -488,6 +490,17 @@ def remind_due_items() -> list[str]:
                 went = service.send_due_reminder(session, SlackClient(secret), reminder, now=now)
         except PrivacyViolationError:
             violations.append(reminder.action_item_id)
+            # Reported once: the claim is kept, in its own transaction, so the
+            # next run does not refuse the same text again (review of #751).
+            try:
+                with session_scope() as session:
+                    service.settle_refused_due_reminder(session, reminder, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_due_reminder_refusal_not_kept",
+                    action_item_id=reminder.action_item_id,
+                    reason=type(exc).__name__,
+                )
             continue
         except SlackRecipientNotLinkedError:
             # Counted, not logged one by one: it is the same person every run
