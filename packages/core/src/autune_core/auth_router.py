@@ -56,7 +56,13 @@ from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
 from .db import get_session
 from .entities import Meeting, Team, TeamMember
-from .errors import AutuneError, NotFoundError, PermissionDeniedError, ValidationError
+from .errors import (
+    AutuneError,
+    ConfigurationError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from .integrations_config import (
     IntegrationConfig,
     disconnect_integration,
@@ -413,6 +419,8 @@ def google_calendar_start(
     in the transaction from *this* request's session. The callback therefore
     stores the grant for whoever started, never for whoever finishes.
     """
+    if (refused := _cannot_store(redirect_to, "calendar=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
     verifier, challenge = pkce_pair()
@@ -474,6 +482,22 @@ def _finish_calendar_connect(
 
 def _with_query(path: str, pair: str) -> str:
     return path + ("&" if "?" in path else "?") + pair
+
+
+def _cannot_store(redirect_to: str, pair: str) -> RedirectResponse | None:
+    """Back to the screen with ``pair`` when this deploy could not store the
+    token a connect would bring back, else ``None`` -- checked at start, so
+    nobody goes through a consent screen that cannot succeed (mkkim68, review
+    of #765). The callback checks again before it spends the code: the key
+    can go between the two."""
+    try:
+        ensure_configured()
+    except ConfigurationError as exc:
+        log.info("auth_connect_not_started", reason=exc.code)
+        return RedirectResponse(
+            _web_url(_with_query(_safe_redirect_target(redirect_to), pair)), status_code=303
+        )
+    return None
 
 
 def _https_link(stored: object) -> str | None:
@@ -677,6 +701,8 @@ def jira_start(
     the connection says who made it (``connected_by``). Same browser-bound
     ``state`` as Google sign-in, cookie scoped to the Jira callback."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (refused := _cannot_store(redirect_to, "jira=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -888,6 +914,8 @@ def notion_start(
     screen they also pick the pages Autune may see -- one of those becomes the
     parent of Autune's databases (module B)."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (refused := _cannot_store(redirect_to, "notion=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -1046,6 +1074,10 @@ def slack_start(
     """Send a team member to Slack to install Autune's bot in the team's
     workspace. Same browser-bound ``state`` as the other connects."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (
+        refused := _cannot_store(redirect_to, "slack=failed&reason=configuration_error")
+    ) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,

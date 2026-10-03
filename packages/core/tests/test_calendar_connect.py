@@ -213,13 +213,32 @@ def test_a_deploy_that_cannot_store_the_grant_fails_before_the_code_is_spent(
     def unset() -> None:
         raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
 
-    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
     client = signed_in(world)
-    response = callback(client, start(client))
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = callback(client, state)
 
     assert _failed_back_to_the_screen(response)
     assert world["google"].exchanged == [], "Google was not asked"
     assert world["grants"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_grant_sends_nobody_to_google(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #765: no consent screen that cannot succeed."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = signed_in(world).get(
+        "/api/auth/google/calendar/start?redirect_to=/meetings/m1/actions"
+    )
+
+    assert _failed_back_to_the_screen(response)
+    assert world["store"]._entries == {}
 
 
 # --- the callback ---------------------------------------------------------------------

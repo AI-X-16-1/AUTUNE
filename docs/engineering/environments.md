@@ -175,7 +175,8 @@ and until then `state` with the cookie above binds their callbacks.
 the code** (#593, #704). Calendar, Jira, Notion and Slack callbacks all fail
 on a missing or broken `AUTUNE_ENCRYPTION_KEY` before the provider is asked,
 so no grant is issued that nothing keeps; the screen shows the connect as
-failed.
+failed. Their start endpoints check it too, so nobody is sent through a
+consent screen that cannot succeed.
 
 **Signing out ends the person's sessions on the server, on every device.**
 `POST /logout` writes the moment on the person's row
