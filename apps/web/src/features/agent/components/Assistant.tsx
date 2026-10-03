@@ -12,7 +12,7 @@ import {
 import { ApiError } from "@/shared/api/client";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
-import { sendChat } from "../api";
+import { getMeetingLabel, sendChat } from "../api";
 import { contextFor } from "../assistantContext";
 import type { ChatFinding, ChatReply } from "../types";
 import { ChatProposal } from "./ChatProposal";
@@ -78,6 +78,11 @@ export function Assistant({
   const input = useRef<HTMLTextAreaElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const context = contextFor(pathname);
+  const meetingId = context.meetingId;
+  // The meeting's own title for the header, once read; the page's name until then.
+  const [titled, setTitled] = useState<{ id: string; title: string } | null>(
+    null,
+  );
 
   const close = useCallback(() => {
     setOpen(false);
@@ -101,6 +106,24 @@ export function Assistant({
   useEffect(() => {
     if (open) input.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !meetingId || titled?.id === meetingId) return;
+    let current = true;
+    getMeetingLabel(meetingId)
+      .then(({ title }) => {
+        if (current) setTitled({ id: meetingId, title });
+      })
+      .catch(() => {
+        // Keep the page's name: the header is a courtesy, not a check.
+      });
+    return () => {
+      current = false;
+    };
+  }, [open, meetingId, titled?.id]);
+
+  const label =
+    meetingId && titled?.id === meetingId ? titled.title : context.label;
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -169,7 +192,7 @@ export function Assistant({
                 className="ml-2 truncate"
                 style={{ fontSize: 12, color: "var(--color-ink-muted)" }}
               >
-                {context.label} 보고 있음
+                {label} 보고 있음
               </span>
             </div>
             <button
