@@ -40,6 +40,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtSyncFailure,
 )
 from autune_extraction.router import router
 from autune_integrations import PermanentIntegrationError
@@ -62,6 +63,8 @@ TABLES = [
     ExtNotionTarget.__table__,
     # ``has_copy_outside`` counts a calendar event as a copy (#672).
     ExtCalendarEvent.__table__,
+    # An edit's answer carries the item's standing failures (review of #754).
+    ExtSyncFailure.__table__,
 ]
 
 
