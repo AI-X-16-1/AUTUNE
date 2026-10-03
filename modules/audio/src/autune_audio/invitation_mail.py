@@ -36,6 +36,8 @@ from autune_core.settings import get_settings as get_core_settings
 from autune_core.user_integrations import load_user_integration
 from autune_integrations import GmailClient, IntegrationError, refresh_access_token
 
+from .invitations import normalise
+
 log = get_logger(__name__)
 
 GMAIL_SEND = "gmail_send"
@@ -70,8 +72,19 @@ def compose(*, inviter: str, team: str, link: str, expires_at: datetime) -> tupl
 def send(
     session: Session, *, team_id: str, email: str, token: str, expires_at: datetime, by: User
 ) -> bool:
-    """Mail the invitation link from ``by``'s own Gmail; whether Gmail took it."""
-    reason = _send(session, team_id=team_id, email=email, token=token, expires_at=expires_at, by=by)
+    """Mail the invitation link from ``by``'s own Gmail; whether Gmail took it.
+
+    Never raises. The invitation is already committed when this runs, so an
+    error here would turn a made invitation into a 500 whose link nobody
+    received (mkkim68, review of #760); anything unexpected is a mail that did
+    not go, logged by the exception's type alone -- its message could carry the
+    address or the link."""
+    try:
+        reason = _send(
+            session, team_id=team_id, email=email, token=token, expires_at=expires_at, by=by
+        )
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        reason = f"unexpected:{type(exc).__name__}"
     if reason is None:
         log.info("team_invitation_mailed", team_id=team_id, invited_by=by.id)
         return True
@@ -90,9 +103,10 @@ def _send(
     if not (client_id and client_secret):
         return "no_google_client"
     issued_to = grant.config.get("client_id")
-    if issued_to and issued_to != client_id:
+    if grant.config.get("grant_revoked") or (issued_to and issued_to != client_id):
         # Known without asking Google: a refresh with another client's token is
-        # refused (``autune_extraction.tasks._calendars``, review of #700).
+        # refused (``autune_extraction.tasks._calendars``, review of #700), and
+        # a grant that went with a revoke of the calendar's is gone (#760).
         return "reconnect_required"
     team = session.get(Team, team_id)
     if team is None:
@@ -108,7 +122,9 @@ def _send(
         )
         client = GmailClient(access)
         try:
-            client.send(to=email, subject=subject, body=body, unchecked=[link])
+            # The stored, normalised address: exactly the one the invitation
+            # names and the one ``accept`` compares (mkkim68, review of #760).
+            client.send(to=normalise(email), subject=subject, body=body, unchecked=[link])
         finally:
             client.close()
     except IntegrationError as exc:

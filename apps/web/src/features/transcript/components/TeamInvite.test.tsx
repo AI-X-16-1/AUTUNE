@@ -25,8 +25,10 @@ const gmail = vi.fn<() => Promise<{ connected: boolean; needs_reconnect?: boolea
   Promise.resolve(null),
 );
 const assign = vi.fn();
+const disconnect = vi.fn<() => Promise<{ revoked: boolean }>>();
 vi.mock("@/shared/api/auth", () => ({
   getGmailConnection: () => gmail(),
+  disconnectGmail: () => disconnect(),
   googleGmailConnectUrl: (to: string) => `/api/auth/google/gmail/start?redirect_to=${to}`,
 }));
 
@@ -43,6 +45,7 @@ afterEach(() => {
   gmail.mockReset();
   gmail.mockImplementation(() => Promise.resolve(null));
   assign.mockReset();
+  disconnect.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -183,6 +186,27 @@ describe("TeamInvite", () => {
       expect(assign).toHaveBeenCalledExactlyOnceWith(
         "/api/auth/google/gmail/start?redirect_to=/settings/members",
       );
+    });
+
+    it("can withdraw the Gmail grant from where it was given", async () => {
+      gmail.mockResolvedValue({ connected: true });
+      disconnect.mockResolvedValue({ revoked: true });
+      render(<TeamInvite teamId="team_1" canConnectMail />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "Gmail 연결 해제" }));
+
+      await screen.findByText(/Gmail 연결을 해제했습니다/);
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(screen.queryByLabelText("내 Gmail로 초대 메일 보내기")).toBeNull();
+      expect(screen.getByRole("button", { name: "Gmail 연결하고 초대 메일 보내기" })).toBeTruthy();
+    });
+
+    it("offers no disconnect where it offers no connect", async () => {
+      gmail.mockResolvedValue({ connected: true });
+      render(<TeamInvite teamId="team_1" />);
+      await screen.findByLabelText("내 Gmail로 초대 메일 보내기");
+
+      expect(screen.queryByRole("button", { name: "Gmail 연결 해제" })).toBeNull();
     });
   });
 });

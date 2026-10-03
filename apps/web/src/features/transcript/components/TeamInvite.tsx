@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
-import { getGmailConnection, googleGmailConnectUrl } from "@/shared/api/auth";
+import { disconnectGmail, getGmailConnection, googleGmailConnectUrl } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
 import { inviteToTeam } from "../api";
@@ -55,6 +55,7 @@ export function TeamInvite({
   const [gmail, setGmail] = useState<Gmail | null>(null);
   const [sendMail, setSendMail] = useState(true);
   const [mailNote, setMailNote] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [email, setEmail] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +97,37 @@ export function TeamInvite({
     const here = window.location.pathname + window.location.search;
     window.location.assign(googleGmailConnectUrl(here));
   };
+
+  // Withdrawing what was granted is as close as granting it (mkkim68, review of #760).
+  const disconnect = async () => {
+    setDisconnecting(true);
+    try {
+      const { revoked } = await disconnectGmail();
+      setGmail({ connected: false });
+      setMailNote(
+        revoked
+          ? "Gmail 연결을 해제했습니다. 같은 Google 계정의 캘린더 연결도 다시 해야 할 수 있습니다."
+          : "연결을 해제했습니다. Google 계정 설정에서 Autune 접근도 확인해 주세요.",
+      );
+    } catch {
+      setMailNote("연결을 해제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const disconnectButton =
+    gmail?.connected && canConnectMail ? (
+      <Button
+        tone="quiet"
+        size="compact"
+        type="button"
+        loading={disconnecting}
+        onClick={() => void disconnect()}
+      >
+        Gmail 연결 해제
+      </Button>
+    ) : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -142,14 +174,17 @@ export function TeamInvite({
       </p>
 
       {canMail ? (
-        <label className="flex items-center gap-2 text-[var(--color-ink-body)]" style={META}>
-          <input
-            type="checkbox"
-            checked={sendMail}
-            onChange={(event) => setSendMail(event.target.checked)}
-          />
-          내 Gmail로 초대 메일 보내기
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-[var(--color-ink-body)]" style={META}>
+            <input
+              type="checkbox"
+              checked={sendMail}
+              onChange={(event) => setSendMail(event.target.checked)}
+            />
+            내 Gmail로 초대 메일 보내기
+          </label>
+          {disconnectButton}
+        </div>
       ) : gmail !== null && canConnectMail ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button tone="text" size="compact" type="button" onClick={connectGmail}>
@@ -158,6 +193,7 @@ export function TeamInvite({
           <span className="text-[var(--color-ink-muted)]" style={META}>
             메일 보내기 권한만 받고, 메일함은 읽지 않습니다.
           </span>
+          {disconnectButton}
         </div>
       ) : null}
 

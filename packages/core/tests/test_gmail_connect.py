@@ -178,3 +178,59 @@ def test_status_and_disconnect_are_the_persons_own(world: dict[str, Any]) -> Non
     assert answer == {"connected": False, "revoked": True}
     assert world["google"].revoked == ["1//gmail"]
     assert world["rows"] == {}
+
+
+def _calendar_row(world: dict[str, Any], *, account: str, client: str) -> None:
+    world["rows"][(ME, "calendar")] = UserIntegrationConfig(
+        "calendar",
+        ME,
+        "1//calendar",
+        {"calendar_id": "primary", "google_sub": account, "client_id": client},
+    )
+
+
+def test_a_revoke_that_may_end_the_calendar_says_so_on_the_calendar(
+    world: dict[str, Any],
+) -> None:
+    """Google's revoke can end everything one account gave this client; the
+    calendar must not go on looking connected (#760 review)."""
+    client = signed_in(world)
+    callback(client, start(client))
+    _calendar_row(world, account="google-account", client="sign-in-client")
+
+    client.post("/api/auth/google/gmail/disconnect")
+
+    assert world["rows"][(ME, "calendar")].config["grant_revoked"] is True
+    assert client.get("/api/auth/google/calendar").json() == {
+        "connected": True,
+        "needs_reconnect": True,
+    }
+
+
+def test_a_calendar_on_another_account_is_left_alone(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+    callback(client, start(client))
+    _calendar_row(world, account="another-google-account", client="sign-in-client")
+
+    client.post("/api/auth/google/gmail/disconnect")
+
+    assert "grant_revoked" not in world["rows"][(ME, "calendar")].config
+    assert client.get("/api/auth/google/calendar").json()["needs_reconnect"] is False
+
+
+def test_connecting_again_clears_the_mark(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+    world["rows"][(ME, "gmail_send")] = UserIntegrationConfig(
+        "gmail_send",
+        ME,
+        "1//old",
+        {"google_sub": "google-account", "client_id": "sign-in-client", "grant_revoked": True},
+    )
+    assert client.get("/api/auth/google/gmail").json()["needs_reconnect"] is True
+
+    callback(client, start(client))
+
+    assert client.get("/api/auth/google/gmail").json() == {
+        "connected": True,
+        "needs_reconnect": False,
+    }

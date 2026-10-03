@@ -393,9 +393,15 @@ def agree(
 @dataclass(frozen=True)
 class _PersonalGoogle:
     """One thing a signed-in person can let Autune do with their own Google
-    account. Each is its own consent and its own ``user_integrations`` row, so
-    connecting one never widens what another was granted, and disconnecting
-    one leaves the other alone."""
+    account. Each is its own consent, its own refresh token carrying only its
+    own scope (no ``include_granted_scopes``), and its own ``user_integrations``
+    row, so connecting one never widens what another can do.
+
+    **Revoking is not that separate.** Google's revoke can end everything one
+    account gave this OAuth client, so revoking one kind's token may end the
+    other's too. When that happens the other row is marked ``grant_revoked``
+    (``_mark_shared_grants``) and reported as needing a reconnect, rather than
+    left looking connected while nothing works (lsh2217, review of #760)."""
 
     service: str
     """The ``user_integrations`` service, and the transaction's ``purpose``."""
@@ -413,6 +419,34 @@ CALENDAR = _PersonalGoogle(
 )
 GMAIL_SEND = _PersonalGoogle("gmail_send", GMAIL_SEND_SCOPE, "Gmail", "gmail")
 _PERSONAL = {kind.service: kind for kind in (CALENDAR, GMAIL_SEND)}
+
+
+def _mark_shared_grants(
+    session: Session, user_id: str, *, revoked: _PersonalGoogle, account: object, client: str
+) -> None:
+    """After a revoke of ``revoked``'s token for Google account ``account`` at
+    ``client``: mark the person's other grants from the same account and client
+    as gone with it (class docstring). A grant recorded without its account or
+    client is left as it is -- nothing says it shared anything."""
+    for kind in _PERSONAL.values():
+        if kind is revoked:
+            continue
+        other = load_user_integration(session, user_id, kind.service)
+        if (
+            other is None
+            or not other.secret
+            or other.config.get("google_sub") != account
+            or other.config.get("client_id") != client
+        ):
+            continue
+        save_user_integration(
+            session,
+            user_id,
+            kind.service,
+            secret=other.secret,
+            config={**other.config, "grant_revoked": True},
+        )
+        log.info(f"auth_google_{kind.service}_revoked_with_another", user_id=user_id)
 
 
 def _start_personal_connect(
@@ -561,20 +595,27 @@ def _complete_personal_connect(
         raise PermissionDeniedError("Google granted no offline access; connect again")
     previous = load_user_integration(session, transaction.user_id, kind.service)
     previous_account = previous.config.get("google_sub") if previous is not None else None
+    # Moved to another Google account: end the grant it replaces rather than
+    # leave it valid and unknown to us. Never for the same account -- Google's
+    # revoke ends everything that account granted Autune, the refresh token
+    # just received included, and ``prompt=consent`` hands out a new token on
+    # every connect, so comparing tokens cannot tell the two apart (#452
+    # review). A grant saved before the account was recorded is left alone for
+    # the same reason.
     if (
         previous is not None
         and previous.secret
         and previous_account is not None
         and previous_account != account
+        and google.revoke(previous.secret)
     ):
-        # Moved to another Google account: end the grant it replaces rather
-        # than leave it valid and unknown to us. Never for the same account --
-        # Google's revoke ends everything that account granted Autune, the
-        # refresh token just received included, and ``prompt=consent`` hands
-        # out a new token on every connect, so comparing tokens cannot tell the
-        # two apart (#452 review). A grant saved before the account was
-        # recorded is left alone for the same reason.
-        google.revoke(previous.secret)
+        _mark_shared_grants(
+            session,
+            transaction.user_id,
+            revoked=kind,
+            account=previous_account,
+            client=str(previous.config.get("client_id") or ""),
+        )
     save_user_integration(
         session,
         transaction.user_id,
@@ -604,7 +645,9 @@ def _personal_status(kind: _PersonalGoogle, session: Session, user: User) -> dic
     ``needs_reconnect`` is true for a grant recorded as issued to another
     Google client than the one this deployment refreshes with now: its
     refresh token cannot work. A grant from before the client was recorded
-    says nothing either way, and is reported as it always was.
+    says nothing either way, and is reported as it always was. It is also
+    true for a grant that went with a revoke of the person's other one
+    (``grant_revoked``, ``_mark_shared_grants``).
 
     With no Google client configured at all there is nothing to compare
     with: nobody's grant can be refreshed in that state and the modules say
@@ -619,9 +662,11 @@ def _personal_status(kind: _PersonalGoogle, session: Session, user: User) -> dic
     # client to reconnect to either (review of #718).
     current, secret = get_settings().google_integration_credentials
     configured = bool(current and secret)
+    revoked = grant is not None and bool(grant.config.get("grant_revoked"))
     return {
         "connected": connected,
-        "needs_reconnect": (connected and configured and bool(issued_to) and issued_to != current),
+        "needs_reconnect": connected
+        and (revoked or (configured and bool(issued_to) and issued_to != current)),
     }
 
 
@@ -632,15 +677,23 @@ def _personal_disconnect(
     goes even when Google cannot be reached; ``revoked`` says whether Google
     confirmed, so a person knows to check their Google account otherwise.
 
-    The consent used ``include_granted_scopes``, so revoking this token can
-    end the whole grant that Google account gave this OAuth client -- the
-    person's other connection through it, and sign-in's scopes where it is
-    the **sign-in client** (a deployment with no integration client). The next
-    sign-in with that account then shows Google's consent screen again, and a
-    connection whose grant went with it asks to be connected again (mkkim68,
-    review of #700)."""
+    Google's revoke can end everything that account gave this OAuth client:
+    the person's other personal grant through it, and sign-in's consent where
+    it is the **sign-in client** (a deployment with no integration client) --
+    the next sign-in then shows Google's consent screen again. A confirmed
+    revoke therefore marks the other grant from the same account and client as
+    needing a reconnect (``_mark_shared_grants``), so its card says so instead
+    of looking connected while nothing works (lsh2217, review of #760)."""
     grant = load_user_integration(session, user.id, kind.service)
     revoked = bool(grant and grant.secret and google.revoke(grant.secret))
+    if revoked and grant is not None:
+        _mark_shared_grants(
+            session,
+            user.id,
+            revoked=kind,
+            account=grant.config.get("google_sub"),
+            client=str(grant.config.get("client_id") or ""),
+        )
     disconnect_user_integration(session, user.id, kind.service)
     log.info(f"auth_google_{kind.service}_disconnected", user_id=user.id, revoked=revoked)
     return {"connected": False, "revoked": revoked}

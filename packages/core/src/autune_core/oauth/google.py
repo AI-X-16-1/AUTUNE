@@ -124,9 +124,14 @@ class GoogleOAuthClient:
         self, *, state: str, nonce: str, scope: str = SCOPE, offline: bool = False
     ) -> str:
         """Sign-in by default. ``offline`` asks for a refresh token as well:
-        ``prompt=consent`` because Google hands one out only on a consent screen,
-        and ``include_granted_scopes`` so connecting a calendar keeps sign-in's
-        scopes rather than replacing them."""
+        ``prompt=consent`` because Google hands one out only on a consent screen.
+
+        **No ``include_granted_scopes``.** With it, a refresh token carries every
+        scope the account ever gave this client, so a calendar token could send
+        mail and a mail token could write the calendar (mkkim68, review of
+        #760). Without it each token carries what its own consent asked for.
+        Earlier grants are not taken away by a later consent either way, and
+        sign-in keeps no token, so nothing relied on the merge."""
         params = {
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
@@ -137,8 +142,6 @@ class GoogleOAuthClient:
             "access_type": "offline" if offline else "online",
             "prompt": "consent" if offline else "select_account",
         }
-        if offline:
-            params["include_granted_scopes"] = "true"
         return f"{AUTHORIZE_ENDPOINT}?{urlencode(params)}"
 
     def exchange_code(self, code: str) -> str:

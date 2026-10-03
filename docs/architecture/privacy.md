@@ -393,6 +393,14 @@ the feature needs.
     grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
     is left to reach the calendar with. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
+  - **A person's Google grants themselves (#760 review):** a deleted
+    account's rows go, but the refresh tokens are not revoked at Google, for
+    the calendar or for `gmail_send`. Autune holds no copy any more, so
+    nothing can use them, and the person still sees Autune under their Google
+    account's third-party access until they remove it there. Revoking on
+    deletion is the follow-up. Disconnecting in Autune does revoke, and a
+    revoke can end the person's other grant from the same Google account,
+    which is then shown as needing a reconnect.
 
 ## 7. Review checklist
 

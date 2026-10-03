@@ -152,7 +152,7 @@ def test_the_link_is_mailed_from_the_inviters_own_grant(
     assert FakeGmail.tokens == [f"access-for-1//{inviter.id}"]
     (mail,) = FakeGmail.sent
     link = f"https://autune.example/invite#{body['token']}"
-    assert mail["to"] == INVITED
+    assert mail["to"] == INVITED.lower()  # as stored, as ``accept`` compares
     assert link in mail["body"]
     assert mail["unchecked"] == [link]
     assert "초대한 사람" in mail["subject"] and "Test Team" in mail["subject"]
@@ -213,3 +213,34 @@ def test_the_answer_is_the_same_shape_whatever_the_address(
 
     assert {frozenset(a) for a in answers} == {frozenset({"token", "expires_at", "emailed"})}
     assert {a["emailed"] for a in answers} == {True}
+
+
+def test_a_grant_that_went_with_the_calendars_revoke_is_not_tried(
+    client: TestClient, grants: dict[str, Any], inviter: User, team: str
+) -> None:
+    grants[inviter.id] = UserIntegrationConfig(
+        "gmail_send", inviter.id, "1//x", {"client_id": CLIENT, "grant_revoked": True}
+    )
+
+    assert invite(client, team, send_email=True).json()["emailed"] is False
+    assert grants["__refreshed__"] == []
+
+
+def test_something_unexpected_after_the_commit_is_a_mail_that_did_not_go(
+    db_session: Session, client: TestClient, grants: dict[str, Any], inviter: User, team: str
+) -> None:
+    """The invitation is committed before the mail; a surprise there must not
+    turn it into a 500 whose link nobody received (#760 review)."""
+    connect(grants, inviter)
+    FakeGmail.fail = RuntimeError(f"boom {INVITED}")
+
+    with capture_logs() as logs:
+        response = invite(client, team, send_email=True)
+
+    assert response.status_code == 201
+    assert response.json()["emailed"] is False
+    assert response.json()["token"]
+    assert pending(db_session, team) == 1
+    (entry,) = [e for e in logs if e["event"] == "team_invitation_not_mailed"]
+    assert entry["reason"] == "unexpected:RuntimeError"
+    assert INVITED.lower() not in repr(logs).lower()
