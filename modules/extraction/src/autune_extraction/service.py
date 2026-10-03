@@ -3311,11 +3311,17 @@ def set_due_reminders(session: Session, user_id: str, *, on: bool, now: datetime
     """Turn this person's own reminders on or off; what they are now. Only the
     caller's own -- the route passes the signed-in person, and there is no way
     to name another."""
-    row = session.get(ExtDueReminderOptOut, user_id)
-    if on and row is not None:
-        session.delete(row)
-    elif not on and row is None:
-        session.add(ExtDueReminderOptOut(user_id=user_id, created_at=now))
+    if on:
+        session.execute(delete(ExtDueReminderOptOut).where(ExtDueReminderOptOut.user_id == user_id))
+    else:
+        # Insert-if-absent, not get-then-add: two requests at once (two tabs, a
+        # double click) would otherwise both add and the second hit the primary
+        # key (lsh2217, review of #771).
+        session.execute(
+            _insert_if_absent_into(session, ExtDueReminderOptOut)
+            .values(user_id=user_id, created_at=now)
+            .on_conflict_do_nothing(index_elements=["user_id"])
+        )
     session.flush()
     return on
 
