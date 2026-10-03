@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
@@ -62,5 +68,52 @@ describe("Assistant when the model is busy", () => {
     expect(
       await screen.findByText(/1분쯤 뒤에 다시 물어봐 주세요/),
     ).toBeTruthy();
+  });
+
+describe("Assistant launcher alert", () => {
+  // agent-assistant.md section 2: a 6px signal.critical dot when the assistant
+  // has something to say first; the nearest signal is the approvals queue (9.7).
+  const WAITING = {
+    id: "pend_1",
+    team_id: "team_1",
+    meeting_id: null,
+    subagent: "workload",
+    kind: "reassign",
+    tool: "extraction.reassign_action_item",
+    status: "pending" as const,
+    reject_reason: null,
+    result_ok: null,
+    created_at: "2026-10-03T00:00:00Z",
+    decided_at: null,
+    title: "재배정",
+    body: "",
+    needs_check: false,
+  };
+
+  it("shows a dot while a proposal waits for this person", async () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([WAITING]);
+
+    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
+
+    expect(
+      await screen.findByLabelText("승인을 기다리는 제안이 있습니다"),
+    ).toBeTruthy();
+  });
+
+  it("shows nothing when nothing waits, or the queue cannot be read", async () => {
+    const listed = vi.spyOn(api, "listPending").mockResolvedValueOnce([]);
+    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
+    await waitFor(() => expect(listed).toHaveBeenCalled());
+    expect(
+      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
+    ).toBeNull();
+    cleanup();
+
+    listed.mockRejectedValueOnce(new Error("offline"));
+    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
+    await waitFor(() => expect(listed).toHaveBeenCalledTimes(2));
+    expect(
+      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
+    ).toBeNull();
   });
 });

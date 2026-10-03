@@ -12,7 +12,7 @@ import {
 import { ApiError } from "@/shared/api/client";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
-import { getMeetingLabel, sendChat } from "../api";
+import { getMeetingLabel, listPending, sendChat } from "../api";
 import { contextFor } from "../assistantContext";
 import type { ChatFinding, ChatReply } from "../types";
 import { ChatProposal } from "./ChatProposal";
@@ -84,6 +84,8 @@ export function Assistant({
   const context = contextFor(pathname);
   const meetingId = context.meetingId;
   // The meeting's own title for the header, once read; the page's name until then.
+  // Proposals waiting for this person: the launcher's dot (spec section 2, 9.7).
+  const [queued, setQueued] = useState(0);
   const [titled, setTitled] = useState<{ id: string; title: string } | null>(
     null,
   );
@@ -110,6 +112,22 @@ export function Assistant({
   useEffect(() => {
     if (open) input.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    // Read on every page and after every turn: a turn can queue a proposal,
+    // and deciding one on 승인 대기 is a navigation away and back.
+    let current = true;
+    listPending()
+      .then((rows) => {
+        if (current) setQueued(rows.length);
+      })
+      .catch(() => {
+        if (current) setQueued(0);
+      });
+    return () => {
+      current = false;
+    };
+  }, [pathname, turns.length]);
 
   useEffect(() => {
     if (!open || !meetingId || titled?.id === meetingId) return;
@@ -310,6 +328,14 @@ export function Assistant({
         >
           AT
         </span>
+        {queued > 0 && (
+          <span
+            role="status"
+            aria-label="승인을 기다리는 제안이 있습니다"
+            className="absolute rounded-full bg-[var(--color-signal-critical)]"
+            style={{ width: 6, height: 6, left: 32, top: 12 }}
+          />
+        )}
         비서
         <span
           aria-hidden
