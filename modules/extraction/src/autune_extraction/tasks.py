@@ -42,6 +42,7 @@ from autune_core import (
     users_with_integration,
 )
 from autune_core.deletion import on_meeting_deleted, on_speech_deleted, on_user_deleted
+from autune_core.integrations_config import IntegrationConfig
 from autune_core.jira_connection import JiraAccess
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_core.settings import get_settings as get_core_settings
@@ -1096,7 +1097,7 @@ def trash_notion_page(action_item_id: str) -> None:
                 return
             client = NotionClient(config.secret)
             try:
-                client.trash_page(owed[1])
+                service.trash_item_page(client, owed[1], config.config.get("action_properties"))
             finally:
                 client.close()
             log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
@@ -1388,13 +1389,13 @@ def drain_external_cleanup() -> int:
     done = 0
     tried = 0
     jira_for: dict[str, JiraAccess | None] = {}
-    notion_for: dict[str, str | None] = {}
+    notion_for: dict[str, IntegrationConfig | None] = {}
     with session_scope() as session:
 
-        def notion_token(team_id: str) -> str | None:
+        def notion_config(team_id: str) -> IntegrationConfig | None:
             if team_id not in notion_for:
                 config = load_integration(session, team_id, "notion")
-                notion_for[team_id] = config.secret if config is not None else None
+                notion_for[team_id] = config if config is not None and config.secret else None
             return notion_for[team_id]
 
         def jira(team_id: str) -> JiraAccess | None:
@@ -1427,18 +1428,18 @@ def drain_external_cleanup() -> int:
             for row in rows:
                 if tried >= CLEANUP_BATCH:
                     break
-                token: str | None = None
+                notion: IntegrationConfig | None = None
                 access: JiraAccess | None = None
                 if row.system == "notion":
-                    token = notion_token(row.team_id)
-                    if not token:
+                    notion = notion_config(row.team_id)
+                    if notion is None:
                         continue
                 else:
                     access = jira(row.team_id)
                     if access is None:
                         continue
                 tried += 1
-                done += _clean_up_one(session, row, token, access)
+                done += _clean_up_one(session, row, notion, access)
     log.info("extraction_external_cleanup_drained", tried=tried, done=done)
     return done
 
@@ -1446,7 +1447,7 @@ def drain_external_cleanup() -> int:
 def _clean_up_one(
     session: Session,
     row: ExtExternalCleanup,
-    notion_token: str | None,
+    notion_config: IntegrationConfig | None,
     access: JiraAccess | None,
 ) -> int:
     """One owed page or issue, with the team's connection already in hand; 1
@@ -1454,10 +1455,13 @@ def _clean_up_one(
     ids = {"team_id": row.team_id, "system": row.system, "external_id": row.external_id}
     try:
         if row.system == "notion":
-            assert notion_token is not None
-            notion = NotionClient(notion_token)
+            assert notion_config is not None and notion_config.secret
+            notion = NotionClient(notion_config.secret)
             try:
-                notion.trash_page(row.external_id)
+                # Retitled first, as at deletion (#768).
+                service.trash_item_page(
+                    notion, row.external_id, notion_config.config.get("action_properties")
+                )
             finally:
                 notion.close()
         else:

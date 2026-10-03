@@ -725,6 +725,10 @@ def test_deleting_an_item_moves_its_page_to_notions_trash(
     tasks.trash_notion_page(row.id)
 
     assert notion.page_state(str(ref.external_id)) == "archived"  # in the trash, restorable
+    # Retitled first, so the trash does not keep the item's sentence (#768).
+    page_id, properties = notion.updates[-1]
+    assert page_id == ref.external_id
+    assert service.ITEM_DELETED_TEXT in repr(properties)
 
 
 def test_an_unreachable_notion_never_blocks_a_deletion(
