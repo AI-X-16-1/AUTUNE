@@ -34,7 +34,12 @@
  *   keeps is the hosting environment's, and nobody has checked its retention
  *   (제2조 says exactly that much).
  * - deleting one's own speech does not yet reach the decision statements kept
- *   for meeting linking or the report text (privacy 제4조 ④).
+ *   for meeting linking (D has no hook). The report and its corrections no
+ *   longer quote it (#725); a copy already posted outside stays there
+ *   (privacy 제4조 ④).
+ * - a pending invitation keeps the address of someone who has agreed to
+ *   nothing (#739), and each sign-in keeps which document version was agreed
+ *   to (#715): both are in 제2조 and 제3조.
  * - a per-participant spoke/did-not-speak value per topic IS stored and shown
  *   to the team; what is not stored is a per-person speech volume (제2조).
  * - voice data is stored only where the operator turned it on (제10조 ④).
@@ -179,6 +184,16 @@ const PRIVACY: LegalDocument = {
           ],
           ["동의 확인 기록", "회의별 동의 확인자, 확인 일시", "이용자의 입력"],
           [
+            "약관 동의 기록",
+            "동의한 문서(이용약관, 개인정보 처리방침), 문서의 판, 동의 일시",
+            "이용자의 동의",
+          ],
+          [
+            "초대 대상자 정보",
+            "팀 구성원이 팀에 초대하기 위하여 입력한 전자우편 주소(아직 가입하지 않은 사람의 주소를 포함)",
+            "팀 구성원의 입력",
+          ],
+          [
             "연동 정보",
             "Slack, Notion, Jira, Google Calendar의 접근 토큰 및 연동 설정",
             "이용자가 외부 서비스를 연결할 때 해당 서비스로부터 제공받음",
@@ -226,7 +241,11 @@ const PRIVACY: LegalDocument = {
             "본인 확인을 거친 음성 프로필",
             "해당 이용자가 참석한 회의가 보유되는 동안. 마지막 회의의 보유 기간이 만료되면 파기합니다.",
           ],
-          ["회원 정보, 연동 정보", "회원 탈퇴 시까지"],
+          ["회원 정보, 연동 정보, 약관 동의 기록", "회원 탈퇴 시까지"],
+          [
+            "초대 대상자의 전자우편 주소",
+            "초대가 수락되거나, 7일이 지나 만료되거나, 같은 주소로 다시 초대하여 교체되거나, 팀 또는 초대한 회원이 삭제되거나, 해당 주소의 회원이 탈퇴하는 때 중 먼저 오는 때까지",
+          ],
         ),
         p(
           "③ 과거에 진행된 회의의 음성을 나중에 업로드하는 경우 보유 기간은 업로드한 날부터 기산합니다.",
@@ -249,7 +268,7 @@ const PRIVACY: LegalDocument = {
           "③ 회사는 삭제 표시만 하고 정보를 남겨 두는 방식을 사용하지 않으며, 전자적 파일 형태로 기록·저장된 개인정보를 데이터베이스에서 삭제합니다.",
         ),
         p(
-          "④ 이용자가 자신의 발화를 삭제한 경우, 그 발화에서 생성된 액션 아이템, 결정 사항 및 논의 누락 분석에서는 해당 이용자의 발화 내용을 삭제하고, 팀의 업무 항목은 삭제된 발화에서 생성된 항목임을 표시하여 유지합니다. 다만, 회의 간 연결을 위하여 보관하는 결정 문장과 팀 리포트의 본문에는 삭제가 아직 반영되지 않아 해당 내용이 남을 수 있습니다.",
+          "④ 이용자가 자신의 발화를 삭제한 경우, 그 발화에서 생성된 액션 아이템, 결정 사항 및 논의 누락 분석에서는 해당 이용자의 발화 내용을 삭제하고, 팀의 업무 항목은 삭제된 발화에서 생성된 항목임을 표시하여 유지합니다. 다만, 회의 간 연결을 위하여 보관하는 결정 문장에는 삭제가 아직 반영되지 않아 해당 내용이 남을 수 있으며, 이미 Slack 등 외부 도구에 게시된 리포트 사본은 해당 도구에 남습니다.",
         ),
         p(
           "⑤ 이용자 또는 팀이 연결한 외부 서비스에 전달된 사본의 처리는 다음과 같습니다.",
@@ -327,7 +346,12 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Google LLC (Gemini API)",
-            "언어 모델을 이용한 발화 분류, 발화의 맥락 해석, 논의 누락 확인 및 회의 간 연결 판단",
+            "언어 모델을 이용한 발화 분류, 발화의 맥락 해석 및 논의 누락 확인",
+            "가림 처리된 회의 문장(해당 발화와 그 전후 문장)",
+          ],
+          [
+            blank("회의 간 연결 판단에 쓰는 언어 모델 제공자"),
+            "언어 모델을 이용한 회의 간 연결 판단",
             "가림 처리된 회의 문장(해당 발화와 그 전후 문장)",
           ],
           [

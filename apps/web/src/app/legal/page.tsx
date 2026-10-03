@@ -238,16 +238,9 @@ export default function LegalPage() {
                     {section.chapter}
                   </h2>
                 ) : null}
-                <h2
-                  className="text-ink-strong"
-                  style={{
-                    fontSize: "var(--text-rowTitle)",
-                    fontWeight: "var(--text-rowTitle-weight)",
-                    lineHeight: "var(--text-rowTitle-leading)",
-                  }}
-                >
+                <ArticleHeading chaptered={doc.sections.some((s) => s.chapter)}>
                   {section.heading}
-                </h2>
+                </ArticleHeading>
                 {section.blocks.map((block, index) => (
                   <BlockView key={index} block={block} />
                 ))}
@@ -257,5 +250,26 @@ export default function LegalPage() {
         ))}
       </main>
     </div>
+  );
+}
+
+/**
+ * An article's title. Under a document split into chapters (장) it is an
+ * `h3` below the chapter's `h2`, so a screen reader's outline has the same
+ * levels the text does; elsewhere it is the `h2`.
+ */
+function ArticleHeading({ chaptered, children }: { chaptered: boolean; children: string }) {
+  const Tag = chaptered ? "h3" : "h2";
+  return (
+    <Tag
+      className="text-ink-strong"
+      style={{
+        fontSize: "var(--text-rowTitle)",
+        fontWeight: "var(--text-rowTitle-weight)",
+        lineHeight: "var(--text-rowTitle-leading)",
+      }}
+    >
+      {children}
+    </Tag>
   );
 }

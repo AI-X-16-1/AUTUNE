@@ -99,7 +99,7 @@ export default function LoginPage() {
         <span>Slack · Notion · Jira · Google Calendar 연동</span>
         <span>
           <Link href="/legal#security" className="underline underline-offset-2">
-            보안
+            정보보호 정책
           </Link>
           {" · "}
           <Link href="/legal#privacy" className="underline underline-offset-2">
