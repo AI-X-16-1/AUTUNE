@@ -401,8 +401,8 @@ other module's tables.
   passes (`reminders.py`, `autune.extraction.periodic.remind_due_items`, every
   ten minutes, 09:00–20:00 Korea time). To the assignee's own linked account
   and to nobody else; only for a confirmed, unfinished item whose assignee is
-  an account on the meeting's team. `AUTUNE_EXTRACTION_DUE_REMINDERS=false`
-  sends none
+  an account on the meeting's team. Off by default:
+  `AUTUNE_EXTRACTION_DUE_REMINDERS=true` turns it on
 - Role-specific reports (Phase 2)
 
 ## AI stack
