@@ -374,8 +374,9 @@ the conversation is #392. Until #392 is settled:
 - **It has to be switched on twice.** With `AUTUNE_EXTRACTION_CLASSIFIER_IMPL`
   set to `llm` or `llm_checked`, or `AUTUNE_EXTRACTION_RESOLVER_IMPL` set to
   `llm`, module B's settings refuse to load unless
-  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — every B route
-  and task refuses, not only the model call, and the error names the variable.
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — the worker and
+  the API do not start (the API with every other module, since it imports each
+  router), and the error names the variable.
   "Dummy meetings only" and "a paid key" are rules the code cannot check; the
   flag makes sending speech to a provider something a deployment says twice.
   It turns nothing on by itself, and deleting it is the migration once #392 is
