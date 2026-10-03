@@ -39,9 +39,7 @@ afterEach(() => {
 
 describe("SyncStatus", () => {
   it("draws nothing when nothing failed and nothing is known about the calendar", () => {
-    const { container } = render(
-      <SyncStatus item={item([])} calendar={null} />,
-    );
+    const { container } = render(<SyncStatus item={item([])} calendar={null} />);
 
     expect(container.textContent).toBe("");
   });
@@ -52,9 +50,7 @@ describe("SyncStatus", () => {
     ["unreachable", /응답이 없었습니다/],
     ["rejected", /요청이 거절되었습니다/],
   ] as const)("says what kind of failure it was: %s", (kind, words) => {
-    render(
-      <SyncStatus item={item([{ ...JIRA_DOWN, kind }])} calendar={null} />,
-    );
+    render(<SyncStatus item={item([{ ...JIRA_DOWN, kind }])} calendar={null} />);
 
     const line = screen.getByText(words);
     expect(line.textContent).toContain("Jira 연동 실패");
@@ -65,23 +61,14 @@ describe("SyncStatus", () => {
     ["notion", "Notion에서 먼저 확인"],
     ["jira", "Jira에서 먼저 확인"],
     ["calendar", "캘린더에서 먼저 확인"],
-  ] as const)(
-    "asks to look in %s first after no answer, since the copy may already be there",
-    (system, words) => {
-      // A create that timed out may have arrived; a retry would make a second
-      // (review of #754).
-      render(
-        <SyncStatus
-          item={item([{ ...JIRA_DOWN, system, kind: "unreachable" }])}
-          calendar={null}
-        />,
-      );
+  ] as const)("after no answer, asks to look in %s first: the copy may be there", (system, words) => {
+    // A create that timed out may have arrived; a retry would make a second
+    // (review of #754).
+    const failure: SyncFailure = { ...JIRA_DOWN, system, kind: "unreachable" };
+    render(<SyncStatus item={item([failure])} calendar={null} />);
 
-      expect(screen.getByText(/응답이 없었습니다/).textContent).toContain(
-        words,
-      );
-    },
-  );
+    expect(screen.getByText(/응답이 없었습니다/).textContent).toContain(words);
+  });
 
   it("queues the sync again and says only that it was sent", async () => {
     retry.mockResolvedValue({ queued: true });
@@ -89,9 +76,7 @@ describe("SyncStatus", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
 
-    expect((await screen.findByRole("status")).textContent).toContain(
-      "다시 보냈습니다",
-    );
+    expect((await screen.findByRole("status")).textContent).toContain("다시 보냈습니다");
     expect(retry).toHaveBeenCalledExactlyOnceWith("act_1");
     // The failure line stays: nothing here knows yet whether it went through.
     expect(screen.getByText(/Jira 연동 실패/)).toBeTruthy();
@@ -115,18 +100,11 @@ describe("SyncStatus", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
 
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "다시 보내지 못했습니다",
-    );
+    expect((await screen.findByRole("alert")).textContent).toContain("다시 보내지 못했습니다");
   });
 
   it("offers no retry where nothing failed", () => {
-    render(
-      <SyncStatus
-        item={item([])}
-        calendar={{ state: "none", reason: "no_due_date" }}
-      />,
-    );
+    render(<SyncStatus item={item([])} calendar={{ state: "none", reason: "no_due_date" }} />);
 
     expect(screen.queryByRole("button", { name: "다시 시도" })).toBeNull();
   });
@@ -135,14 +113,8 @@ describe("SyncStatus", () => {
 describe("the calendar line", () => {
   it.each([
     [{ state: "sent", reason: null }, "내 캘린더에 올라가 있습니다."],
-    [
-      { state: "none", reason: "not_confirmed" },
-      "확정되면 담당자의 캘린더에 올라갑니다.",
-    ],
-    [
-      { state: "none", reason: "no_due_date" },
-      "기한이 없어 캘린더에 올리지 않았습니다.",
-    ],
+    [{ state: "none", reason: "not_confirmed" }, "확정되면 담당자의 캘린더에 올라갑니다."],
+    [{ state: "none", reason: "no_due_date" }, "기한이 없어 캘린더에 올리지 않았습니다."],
     [{ state: "none", reason: null }, "내 캘린더에 아직 일정이 없습니다."],
   ] as [CalendarState, string][])("%j", (calendar, words) => {
     expect(calendarLine(calendar)).toBe(words);
@@ -150,38 +122,23 @@ describe("the calendar line", () => {
 
   it("draws no calendar line for a reader the server sent none to", () => {
     // A teammate: the detail carries no `calendar` once the item lacks nothing.
-    const { container } = render(
-      <SyncStatus item={item([])} calendar={null} />,
-    );
+    const { container } = render(<SyncStatus item={item([])} calendar={null} />);
 
     expect(container.textContent).not.toContain("캘린더");
   });
 
   it("tells somebody with a typed name for an assignee what to do about it", () => {
-    render(
-      <SyncStatus
-        item={item([])}
-        calendar={{ state: "none", reason: "no_account" }}
-      />,
-    );
+    render(<SyncStatus item={item([])} calendar={{ state: "none", reason: "no_account" }} />);
 
-    expect(
-      screen.getByText(/담당자를 팀 구성원으로 지정해 주세요/),
-    ).toBeTruthy();
+    expect(screen.getByText(/담당자를 팀 구성원으로 지정해 주세요/)).toBeTruthy();
   });
 
   it("speaks of my own calendar in the lines only the assignee is sent", () => {
     // `sent`, a bare `none` and `not_connected` reach the assignee and nobody
     // else, so whoever reads them is reading about their own calendar.
-    expect(calendarLine({ state: "none", reason: "not_connected" })).toContain(
-      "내 Google 캘린더",
-    );
-    expect(calendarLine({ state: "sent", reason: null })).toContain(
-      "내 캘린더",
-    );
-    expect(calendarLine({ state: "none", reason: null })).toContain(
-      "내 캘린더",
-    );
+    expect(calendarLine({ state: "none", reason: "not_connected" })).toContain("내 Google 캘린더");
+    expect(calendarLine({ state: "sent", reason: null })).toContain("내 캘린더");
+    expect(calendarLine({ state: "none", reason: null })).toContain("내 캘린더");
   });
 });
 
@@ -189,10 +146,7 @@ describe("a card", () => {
   it("says in red text which copies failed", () => {
     render(
       <ActionCard
-        item={item([
-          JIRA_DOWN,
-          { system: "calendar", kind: "unreachable", failed_at: "x" },
-        ])}
+        item={item([JIRA_DOWN, { system: "calendar", kind: "unreachable", failed_at: "x" }])}
       />,
     );
 

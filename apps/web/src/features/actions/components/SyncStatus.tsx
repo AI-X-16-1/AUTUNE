@@ -38,10 +38,7 @@ export const SYSTEM_LABEL: Record<SyncFailure["system"], string> = {
   calendar: "캘린더",
 };
 
-const WHAT_FAILED: Record<
-  Exclude<SyncFailure["kind"], "unreachable">,
-  string
-> = {
+const WHAT_FAILED: Record<Exclude<SyncFailure["kind"], "unreachable">, string> = {
   privacy:
     "개인정보로 보이는 값이 있어 보내지 않았습니다. 설명을 고친 뒤 다시 시도해 주세요.",
   reconnect: "연결이 끊어졌습니다. 다시 연결한 뒤 다시 시도해 주세요.",
@@ -55,7 +52,8 @@ const WHAT_FAILED: Record<
  */
 export function whatFailed(failure: SyncFailure): string {
   if (failure.kind === "unreachable") {
-    return `응답이 없었습니다. 이미 만들어졌을 수 있으니, 다시 시도하기 전에 ${SYSTEM_LABEL[failure.system]}에서 먼저 확인해 주세요.`;
+    const where = SYSTEM_LABEL[failure.system];
+    return `응답이 없었습니다. 이미 만들어졌을 수 있으니, 다시 시도하기 전에 ${where}에서 먼저 확인해 주세요.`;
   }
   return WHAT_FAILED[failure.kind];
 }
@@ -72,9 +70,7 @@ const NO_EVENT: Record<NonNullable<CalendarState["reason"]>, string> = {
 
 export function calendarLine(calendar: CalendarState): string {
   if (calendar.state === "sent") return "내 캘린더에 올라가 있습니다.";
-  return calendar.reason
-    ? NO_EVENT[calendar.reason]
-    : "내 캘린더에 아직 일정이 없습니다.";
+  return calendar.reason ? NO_EVENT[calendar.reason] : "내 캘린더에 아직 일정이 없습니다.";
 }
 
 const meta = { fontSize: "var(--text-metaSmall)" } as const;
@@ -87,9 +83,9 @@ export function SyncStatus({
   calendar: CalendarState | null;
 }) {
   const failures = item.sync_failures ?? [];
-  const [retry, setRetry] = useState<
-    "idle" | "sending" | "sent" | "nothing" | "failed"
-  >("idle");
+  const [retry, setRetry] = useState<"idle" | "sending" | "sent" | "nothing" | "failed">(
+    "idle",
+  );
 
   if (failures.length === 0 && calendar === null) return null;
 
@@ -112,13 +108,9 @@ export function SyncStatus({
           className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
           style={meta}
         >
-          <StatusDot
-            variant={calendar.state === "sent" ? "confirmed" : "progress"}
-          />
+          <StatusDot variant={calendar.state === "sent" ? "confirmed" : "progress"} />
           <span className="text-[var(--color-ink-body)]">캘린더</span>
-          <span className="text-[var(--color-ink-muted)]">
-            {calendarLine(calendar)}
-          </span>
+          <span className="text-[var(--color-ink-muted)]">{calendarLine(calendar)}</span>
         </div>
       ) : null}
 
@@ -144,29 +136,17 @@ export function SyncStatus({
             다시 시도
           </Button>
           {retry === "sent" ? (
-            <span
-              role="status"
-              className="text-[var(--color-ink-muted)]"
-              style={meta}
-            >
+            <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
               다시 보냈습니다. 잠시 뒤 목록을 새로 열면 결과가 보입니다.
             </span>
           ) : null}
           {retry === "nothing" ? (
-            <span
-              role="status"
-              className="text-[var(--color-ink-muted)]"
-              style={meta}
-            >
+            <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
               보낼 것이 없습니다. 항목을 확정하면 다시 보냅니다.
             </span>
           ) : null}
           {retry === "failed" ? (
-            <span
-              role="alert"
-              className="text-[var(--color-signal-critical)]"
-              style={meta}
-            >
+            <span role="alert" className="text-[var(--color-signal-critical)]" style={meta}>
               다시 보내지 못했습니다. 잠시 후 다시 시도해 주세요.
             </span>
           ) : null}
