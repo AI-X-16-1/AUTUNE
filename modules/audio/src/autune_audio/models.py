@@ -216,6 +216,41 @@ class AudSpeakerEmbedding(Base, TimestampMixin):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AudTeamInvitation(Base):
+    """A pending invitation to a team: an address, not a member (#552).
+
+    Nothing reads this as a membership; ``invitations.accept`` is the one
+    place a row here becomes a ``team_members`` row, and the row goes when it
+    does. ``token_hash`` is the SHA-256 of the link's token -- the token is
+    shown once and never stored. ``email`` is lower-cased, and is a third
+    party's address held before they agreed to anything: it goes with the
+    team, with the inviter's account, when it lapses, and when the invited
+    person deletes their own account (``invitations``).
+    """
+
+    __tablename__ = "aud_team_invitations"
+    __table_args__ = (
+        UniqueConstraint("team_id", "email", name="uq_aud_team_invitations_team_email"),
+        UniqueConstraint("token_hash", name="uq_aud_team_invitations_token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    invited_by: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class AudMaskingRule(Base):
     """A shape one team masks in every transcript, learned from a report (S30).
 

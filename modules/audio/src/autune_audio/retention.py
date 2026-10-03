@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from autune_core import Meeting, Participant, Team, get_logger
 from autune_core.deletion import run_meeting_hooks
 
+from . import invitations
 from .models import AudSpeakerEmbedding
 
 log = get_logger(__name__)
@@ -48,6 +49,7 @@ class SweepResult:
     meetings: tuple[str, ...]
     hooks_failed: tuple[str, ...]
     profiles: int
+    invitations: int = 0
 
 
 def backfill_expiry(session: Session) -> int:
@@ -151,10 +153,14 @@ def sweep(session: Session, *, now: datetime, batch: int = 200) -> SweepResult:
         deleted.append(meeting_id)
 
     profiles = forget_idle_profiles(session)
+    # An invitation holds a third party's address; a lapsed one is of no use
+    # to anybody and goes here (#552).
+    lapsed = invitations.forget_expired(session, now=now)
     session.flush()
     return SweepResult(
         backfilled=backfilled,
         meetings=tuple(deleted),
         hooks_failed=tuple(failed),
         profiles=profiles,
+        invitations=lapsed,
     )

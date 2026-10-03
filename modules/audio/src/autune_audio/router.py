@@ -21,7 +21,7 @@ from autune_core.errors import AutuneError
 from autune_core.events import publish
 from autune_core.settings import get_settings as get_core_settings
 
-from . import account, masking_rules, pii_report, service
+from . import account, invitations, masking_rules, pii_report, service
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
@@ -31,6 +31,9 @@ from .schemas import (
     AccountDeleted,
     ConsentAttestation,
     ConsentState,
+    InvitationAccept,
+    InvitationCreate,
+    InvitationIssued,
     MaskingRule,
     MeetingCreate,
     MeetingDetail,
@@ -127,6 +130,37 @@ def create_team(body: TeamCreate, user: CurrentUser, session: SessionDep) -> Tea
         name=body.name,
         role=body.role,
     )
+    return TeamSummary(team_id=team.id, name=team.name)
+
+
+@router.post(
+    "/teams/{team_id}/invitations",
+    response_model=InvitationIssued,
+    status_code=status.HTTP_201_CREATED,
+)
+def invite_to_team(
+    team_id: str,
+    body: InvitationCreate,
+    user: CurrentUser,
+    session: SessionDep,
+    response: Response,
+) -> InvitationIssued:
+    """Invite an address to a team the caller is on (#552). Answers with the
+    link's token, once -- only its hash is kept -- and the same shape whatever
+    the address. See ``invitations``."""
+    token, expires_at = invitations.invite(session, team_id=team_id, email=body.email, by=user)
+    # The token is a credential and this is its only appearance.
+    response.headers["Cache-Control"] = "no-store"
+    return InvitationIssued(token=token, expires_at=expires_at)
+
+
+@router.post("/invitations/accept", response_model=TeamSummary)
+def accept_invitation(
+    body: InvitationAccept, user: CurrentUser, session: SessionDep
+) -> TeamSummary:
+    """Join the team an invitation link names, as the signed-in owner of the
+    invited address. Every refusal is the same 404 (``InvitationUnusableError``)."""
+    team = invitations.accept(session, token=body.token, user=user)
     return TeamSummary(team_id=team.id, name=team.name)
 
 
