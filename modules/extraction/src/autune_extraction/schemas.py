@@ -366,6 +366,39 @@ class Assignable(BaseModel):
     name: str
 
 
+class JiraIssueRead(BaseModel):
+    """One open issue of the team's Jira project, as the list shows it.
+
+    Passed through from Jira and stored nowhere (``jira_issues``).
+    ``from_autune`` marks an issue Autune made from an action item, so the
+    list does not read as a second copy of the board above it."""
+
+    key: str
+    summary: str
+    status: str | None
+    status_category: str | None
+    assignee: str | None
+    due_date: date | None
+    url: str | None
+    from_autune: bool
+
+
+class JiraProjectIssues(BaseModel):
+    """One team's Jira project and its open issues.
+
+    ``state`` says why a list is empty when it is not simply empty: the
+    team chose no project, its connection needs a person to reconnect, or
+    Jira did not answer. ``more`` is true when Jira has more open issues
+    than were read."""
+
+    team_id: str
+    team_name: str
+    project_key: str | None
+    state: Literal["ok", "no_project", "needs_reconnect", "unavailable"]
+    issues: list[JiraIssueRead] = Field(default_factory=list)
+    more: bool = False
+
+
 class CarriedOverItem(ActionItemRead):
     """An open item from an earlier meeting of the same team, with the meeting
     it was made in -- the popup says where each one came from."""
