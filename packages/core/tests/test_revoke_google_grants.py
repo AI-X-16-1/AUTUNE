@@ -143,8 +143,54 @@ def test_an_unreadable_grant_is_logged_and_does_not_raise(
     with capture_logs() as logs:
         ui.revoke_google_grants(USER)
 
-    assert [e["event"] for e in logs] == ["user_google_grants_unreadable"]
+    assert [e["event"] for e in logs] == ["user_google_grant_unreadable"]
     assert world["revoked"] == []
+
+
+def test_one_unreadable_grant_does_not_skip_the_others(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autune_core.errors import ConfigurationError
+
+    monkeypatch.setattr(ui, "GOOGLE_SERVICES", ("broken", "calendar"))
+    world["grants"]["calendar"] = calendar()
+    real = ui.load_user_integration
+
+    def load(session: object, user_id: str, service: str) -> UserIntegrationConfig | None:
+        if service == "broken":
+            raise ConfigurationError("could not decrypt")
+        return real(session, user_id, service)
+
+    monkeypatch.setattr(ui, "load_user_integration", load)
+
+    ui.revoke_google_grants(USER)
+
+    assert world["revoked"] == ["1//refresh"]
+
+
+def test_anything_a_revoke_raises_does_not_stop_the_deletion(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #766: not only ``httpx.HTTPError``."""
+    monkeypatch.setattr(ui, "GOOGLE_SERVICES", ("calendar", "other"))
+    world["grants"]["calendar"] = calendar("1//a")
+    world["grants"]["other"] = UserIntegrationConfig("other", USER, "1//b", {})
+    tried: list[str] = []
+
+    def explode(token: str, **_: Any) -> bool:
+        tried.append(token)
+        if token == "1//a":
+            raise RuntimeError("something nobody expected")
+        return True
+
+    monkeypatch.setattr(google_module, "revoke_token", explode)
+
+    with capture_logs() as logs:
+        ui.revoke_google_grants(USER)
+
+    assert tried == ["1//a", "1//b"]
+    assert "1//a" not in repr(logs)
+    assert "something nobody expected" not in repr(logs)
 
 
 def test_the_revoke_runs_after_every_module_hook(world: dict[str, Any]) -> None:

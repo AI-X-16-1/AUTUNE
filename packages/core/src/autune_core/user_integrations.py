@@ -142,21 +142,32 @@ def revoke_google_grants(user_id: str) -> None:
     service and outcome, never with the token, and the deletion goes on, as
     the calendar cleanup does (privacy.md section 4). Safe to run twice: a
     second run finds the grant already revoked, logs it, and changes nothing.
+
+    **Before the account's own ``DELETE`` commits.** If that delete then
+    fails, the account stays with its grants revoked at Google; the person's
+    connections then ask to be connected again, and deleting again finishes
+    the job.
     """
     from .db import session_scope
     from .oauth.google import revoke_token
 
-    try:
-        with session_scope() as session:
-            grants = [
-                grant
-                for service in GOOGLE_SERVICES
-                if (grant := load_user_integration(session, user_id, service)) is not None
-                and grant.secret
-            ]
-    except Exception as exc:  # noqa: BLE001 -- see the docstring
-        log.warning("user_google_grants_unreadable", user_id=user_id, error=type(exc).__name__)
-        return
+    grants: list[UserIntegrationConfig] = []
+    for service in GOOGLE_SERVICES:
+        # One try per service: a row that will not decrypt must not keep the
+        # others from being revoked (mkkim68, review of #766).
+        try:
+            with session_scope() as session:
+                grant = load_user_integration(session, user_id, service)
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            log.warning(
+                "user_google_grant_unreadable",
+                user_id=user_id,
+                service=service,
+                error=type(exc).__name__,
+            )
+            continue
+        if grant is not None and grant.secret:
+            grants.append(grant)
 
     done: set[tuple[str, str]] = set()
     for grant in grants:
@@ -168,7 +179,16 @@ def revoke_google_grants(user_id: str) -> None:
             )
             continue
         assert grant.secret is not None
-        revoked = revoke_token(grant.secret)
+        try:
+            revoked = revoke_token(grant.secret)
+        except Exception as exc:  # noqa: BLE001 -- the right to delete comes first
+            log.warning(
+                "user_google_grant_not_revoked",
+                user_id=user_id,
+                service=grant.service,
+                error=type(exc).__name__,
+            )
+            continue
         if key is not None and revoked:
             done.add(key)
         log.info(
