@@ -31,11 +31,13 @@ ME, OUTSIDER, TEAM, MEETING = "user_me", "user_out", "team_1", "mtg_1"
 class FakeNotion:
     def __init__(self) -> None:
         self.answer: NotionGrant | Exception = NotionGrant("ntn_token", "ws-1", "Acme", "bot-1")
+        self.exchanged = 0
 
     def authorization_url(self, *, state: str) -> str:
         return f"https://api.notion.com/v1/oauth/authorize?state={state}"
 
     def exchange_code(self, code: str) -> NotionGrant:
+        self.exchanged += 1
         if isinstance(self.answer, Exception):
             raise self.answer
         return self.answer
@@ -74,6 +76,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(auth_router_module, "save_integration", save)
     monkeypatch.setattr(auth_router_module, "load_integration", load)
+    # This test stores no encrypted secret; the check is its own test.
+    monkeypatch.setattr(auth_router_module, "ensure_configured", lambda: None)
     monkeypatch.setattr(
         auth_router_module, "disconnect_integration", lambda _s, t, _svc: saved.pop(t)
     )
@@ -144,6 +148,41 @@ def test_a_callback_from_another_browser_stores_nothing(world: dict[str, Any]) -
     other = signed_in(world)  # no state cookie
     assert other.get(f"/api/auth/notion/callback?state={state}&code=c").status_code == 403
     assert world["saved"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_token_fails_before_the_code_is_spent(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#704: the key is checked before Notion issues a token nothing keeps."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    client = signed_in(world)
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = client.get(f"/api/auth/notion/callback?state={state}&code=c")
+
+    assert response.headers["location"].endswith("?notion=failed")
+    assert world["notion"].exchanged == 0, "Notion was not asked"
+    assert world["saved"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_token_sends_nobody_to_notion(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = signed_in(world).get(f"/api/auth/notion/start?meeting_id={MEETING}")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?notion=failed")
+    assert world["store"]._entries == {}
 
 
 def test_status_and_disconnect_are_for_members_only(world: dict[str, Any]) -> None:
