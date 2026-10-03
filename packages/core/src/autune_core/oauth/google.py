@@ -184,11 +184,7 @@ class GoogleOAuthClient:
     def revoke(self, token: str) -> bool:
         """Revoke a grant at Google. ``False`` when Google could not be reached or
         refused -- a disconnect removes our copy either way, and says so."""
-        try:
-            response = self._http.post(REVOKE_ENDPOINT, data={"token": token})
-        except httpx.HTTPError:
-            return False
-        return response.status_code == httpx.codes.OK
+        return revoke_token(token, http=self._http)
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
         """Who signed in: a verified ID token that also names an email -- the
@@ -233,6 +229,22 @@ class GoogleOAuthClient:
         if claims.get("nonce") != nonce:
             raise PermissionDeniedError("Google ID token nonce does not match the request")
         return claims
+
+
+def revoke_token(token: str, *, http: httpx.Client | None = None) -> bool:
+    """Revoke a grant at Google by one of its tokens. The endpoint takes the
+    token alone, no client credentials, so this needs no configured client --
+    which an account deletion may not have (#763). Revoking a refresh token
+    ends the whole grant: every scope that account gave that client."""
+    client = http or httpx.Client(timeout=10.0)
+    try:
+        response = client.post(REVOKE_ENDPOINT, data={"token": token})
+    except httpx.HTTPError:
+        return False
+    finally:
+        if http is None:
+            client.close()
+    return response.status_code == httpx.codes.OK
 
 
 def _oauth_error(response: httpx.Response) -> str:

@@ -380,9 +380,12 @@ the feature needs.
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
     yet: its rows cascade in the database with no call to each person's
-    calendar (a deletion hook is the follow-up). A deleted account cannot: its
-    grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
-    is left to reach the calendar with. Each event is only the item's
+    calendar (a deletion hook is the follow-up). A deleted account has its
+    events removed first, by B's user hook, with the person's own grant; then
+    the grant is revoked at Google (#763), and the row goes with the account
+    (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
+    unreachable Google leaves the events on the calendar and the grant listed
+    under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
 
 ## 7. Review checklist
