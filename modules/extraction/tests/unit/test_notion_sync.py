@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
+from typing import Any
 
 import pytest
 from fastapi import FastAPI, Request
@@ -40,6 +41,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtSyncFailure,
 )
 from autune_extraction.router import router
 from autune_integrations import PermanentIntegrationError
@@ -62,6 +64,8 @@ TABLES = [
     ExtNotionTarget.__table__,
     # ``has_copy_outside`` counts a calendar event as a copy (#672).
     ExtCalendarEvent.__table__,
+    # A create that timed out is looked for before a second one (#754 review).
+    ExtSyncFailure.__table__,
 ]
 
 
@@ -147,6 +151,110 @@ def test_a_confirmed_item_becomes_one_page_with_the_item_and_no_transcript(
     assert stored is not None
     assert stored.external_id == "page_1"
     assert stored.url == "https://www.notion.so/page_1"
+
+
+# --- a create that timed out may have arrived (#754 review) ---------------------------
+
+
+class Counting(FakeNotion):
+    def __init__(self) -> None:
+        super().__init__()
+        self.looked = 0
+
+    def find_pages(self, database_id: str, **kw: Any) -> list[str]:
+        self.looked += 1
+        return super().find_pages(database_id, **kw)
+
+
+def lost_create(session: Session, item_id: str, kind: str = "unreachable") -> None:
+    session.add(
+        ExtSyncFailure(
+            action_item_id=item_id,
+            system="notion",
+            kind=kind,
+            failed_at=datetime(2026, 10, 3, 1, 0, tzinfo=UTC),
+        )
+    )
+    session.flush()
+
+
+def test_a_page_a_timed_out_create_made_is_kept_not_made_twice(session: Session) -> None:
+    """mkkim68 and lsh2217, reviews of #754: "다시 시도" after no answer made a
+    second page when the first create had in fact arrived."""
+    notion = Counting()
+    row = item(session)
+    # The first create reached Notion; our side saw a timeout.
+    notion.create_page(
+        DATABASE, {"작업": {"title": [{"type": "text", "text": {"content": "릴리스 노트 정리"}}]}}
+    )
+    lost_create(session, row.id)
+
+    ref = sync(session, notion, row.id)
+
+    assert len(notion.pages) == 1, "no second page"
+    assert ref is not None and ref.external_id == "page_1"
+    assert notion.updates and notion.updates[-1][0] == "page_1", "brought up to date"
+
+
+def test_a_page_another_item_holds_is_never_taken(session: Session) -> None:
+    """mkkim68, review of #777: sentences repeat ("회의록 공유"). Another item's
+    page with the same title, made in the window, is that item's -- taken, the
+    two would share one page and overwrite each other."""
+    notion = Counting()
+    other = item(session)
+    sync(session, notion, other.id)  # page_1, held by the other item
+    row = item(session)  # same sentence; its own create never arrived
+    lost_create(session, row.id)
+
+    ref = sync(session, notion, row.id)
+
+    assert notion.looked == 1
+    assert len(notion.pages) == 2, "a page of its own"
+    assert ref is not None and ref.external_id == "page_2"
+    held = session.get(ExtExternalRef, (other.id, "notion"))
+    assert held is not None and held.external_id == "page_1"
+
+
+def test_with_nothing_found_the_page_is_made(session: Session) -> None:
+    notion = Counting()
+    row = item(session)
+    lost_create(session, row.id)
+
+    sync(session, notion, row.id)
+
+    assert notion.looked == 1
+    assert len(notion.pages) == 1
+
+
+def test_with_two_found_none_is_taken_and_a_page_is_made(session: Session) -> None:
+    """Two pages with the same title: nothing here can tell which is this item's."""
+    notion = Counting()
+    row = item(session)
+    title = {"작업": {"title": [{"type": "text", "text": {"content": "릴리스 노트 정리"}}]}}
+    notion.create_page(DATABASE, title)
+    notion.create_page(DATABASE, title)
+    lost_create(session, row.id)
+
+    ref = sync(session, notion, row.id)
+
+    assert len(notion.pages) == 3
+    assert ref is not None and ref.external_id == "page_3"
+
+
+@pytest.mark.parametrize("kind", [None, "rejected", "privacy", "reconnect"])
+def test_only_a_create_that_may_have_arrived_is_looked_for(
+    session: Session, kind: str | None
+) -> None:
+    """Any other failure, or none, means nothing reached Notion: no query."""
+    notion = Counting()
+    row = item(session)
+    if kind is not None:
+        lost_create(session, row.id, kind)
+
+    sync(session, notion, row.id)
+
+    assert notion.looked == 0
+    assert len(notion.pages) == 1
 
 
 def test_a_field_the_item_does_not_have_is_left_off_the_page(session: Session) -> None:
