@@ -36,6 +36,7 @@ from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance,
 from autune_core.deletion import run_speech_hooks, run_user_hooks
 from autune_core.errors import ConflictError, NotFoundError
 
+from . import invitations
 from .models import AudConsentAttestation, AudSpeakerEmbedding
 from .schemas import AccountDeleted, MyData, SpeechDeleted, TeamPrivacy
 from .service import delete_voice_profile, require_team_member
@@ -281,6 +282,9 @@ def delete_account(session: Session, *, user: User) -> AccountDeleted:
     _tell_modules(session, user_id, participant_ids)
     run_user_hooks(user_id)
     utterances = _delete_utterances(session, participant_ids)
+    # Invitations addressed to them hold their address and nothing else finds
+    # those rows by it; the ones they sent cascade with the row below (#552).
+    invitations.forget_address(session, email=user.email)
     session.execute(sa.delete(User).where(User.id == user_id))
     session.flush()
     log.info("audio_account_deleted", user_id=user_id, utterances=utterances)

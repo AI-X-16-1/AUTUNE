@@ -37,6 +37,27 @@ export function columnOf(
  * its way somewhere: a second drop would race the first, the way a second pick
  * in the detail window's select would (review of #292). Not its own column.
  */
+/** Letters, not counting spaces. "다음 주 화요일까지 볼게요" is eleven. */
+export const SHORT_SENTENCE = 16;
+
+/**
+ * Whether a card's sentence is the kind that says nothing by itself: one the
+ * pipeline took from an utterance and nobody -- no model, no person --
+ * rewrote, short enough to be an answer ("그럴게") or a pointer ("그건 제가
+ * 볼게요"). Such a card is shown with the line said just before it
+ * (`useCardContext`).
+ *
+ * Length is a rule of thumb, not a reading of the sentence: a short sentence
+ * that is complete gets a hint it did not need, which costs a line; a long
+ * one that still points at nothing gets none, and the detail window has it.
+ */
+export function pointsAtNothing(item: ActionItemRead): boolean {
+  if (item.origin !== "model") return false;
+  if (item.description_resolved) return false;
+  if ((item.source_utterance_ids?.length ?? 0) === 0) return false;
+  return [...item.description.replace(/\s/g, "")].length <= SHORT_SENTENCE;
+}
+
 export function canDrop(
   item: ActionItemRead | undefined,
   target: ActionStatus,

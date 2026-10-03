@@ -294,6 +294,18 @@ person's, those counts are that person's completion record. So:
 A test proving that your module's data is fully removed when a meeting is
 deleted is part of shipping a table, not an extra.
 
+**A pending team invitation** (#552) is the one place Autune holds the
+address of somebody who has agreed to nothing yet. It is kept in
+`aud_team_invitations` only -- no `users` row is made for an address that
+has not signed up -- and it does not wait for the analysis window: the row
+is deleted when the invitation is accepted, when it lapses (seven days; the
+retention sweep, and the next invitation made for that team), when a new
+invitation to the same address replaces it, when the team or the inviter's
+account is deleted, and when the invited person deletes their own account.
+The link's token is stored as a hash, and log lines about invitations carry
+ids, never the address. Until it is accepted an invitation changes nothing
+about what the invited person, or the team, can read.
+
 **Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
 and deletion apply to what Autune holds. An item or decision a team sent to its
 own Notion or Jira, through an integration the team connected, is the team's

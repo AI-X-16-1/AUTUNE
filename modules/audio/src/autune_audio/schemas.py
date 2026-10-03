@@ -215,6 +215,44 @@ class TeamCreate(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
+class InvitationCreate(BaseModel):
+    """An address to invite to the team (#552). Its shape is all that is
+    checked: whether anybody holds an account under it is never looked up."""
+
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _an_address(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        local, at, domain = value.partition("@")
+        if not at or not local or "." not in domain or any(c.isspace() for c in value):
+            raise ValueError("not an email address")
+        if "@" in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("not an email address")
+        return value
+
+
+class InvitationIssued(BaseModel):
+    """The token for the invitation's link, this once, and when it lapses.
+
+    The same two fields whatever the address was. Nothing here says whether
+    it has an account, a name, or a place on the team already."""
+
+    token: str
+    expires_at: datetime
+
+
+class InvitationAccept(BaseModel):
+    """The token from an invitation link. Any string is taken and looked up:
+    one that is not a token is simply one that names no invitation, and gets
+    the same answer as every other refusal."""
+
+    token: str = Field(min_length=1, max_length=512)
+
+
 class TeamSummary(BaseModel):
     """A team the caller may open a meeting for. Id and name; nothing else a
     browser needs to fill ``MeetingCreate.team_id``."""

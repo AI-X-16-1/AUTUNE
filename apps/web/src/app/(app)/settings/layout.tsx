@@ -8,6 +8,7 @@ import { TabLinks } from "@/shared/ui";
  */
 const TABS = [
   { href: "/settings/privacy", label: "개인정보 · 보관" },
+  { href: "/settings/members", label: "구성원" },
   { href: "/settings/integrations", label: "연동" },
   { href: "/settings/approvers", label: "승인자" },
 ] as const;

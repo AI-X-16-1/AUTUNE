@@ -185,18 +185,24 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
 
 
 def teams_for(session: Session, *, member: User) -> list[Team]:
-    """The teams ``member`` belongs to, by name.
+    """The teams ``member`` belongs to, in the order they joined them.
 
     ``MeetingCreate`` takes a ``team_id`` and a browser holding only a token has
     no way to learn one; this is that way. Read-only over shared entities,
     which invariant 4 allows every module.
+
+    **Joined first, listed first** (#552). The screens take the first team as
+    the default -- S06 opens a new meeting for it. Sorted by name, accepting an
+    invitation to a team whose name sorts earlier silently made that team the
+    default, so a person's next meeting went to the team they had just joined
+    rather than their own. Joining a team now adds it to the end.
     """
     return list(
         session.scalars(
             sa.select(Team)
             .join(TeamMember, TeamMember.team_id == Team.id)
             .where(TeamMember.user_id == member.id)
-            .order_by(Team.name)
+            .order_by(TeamMember.id)
         )
     )
 
