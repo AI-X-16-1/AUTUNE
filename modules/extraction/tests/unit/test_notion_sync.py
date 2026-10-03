@@ -196,6 +196,25 @@ def test_a_page_a_timed_out_create_made_is_kept_not_made_twice(session: Session)
     assert notion.updates and notion.updates[-1][0] == "page_1", "brought up to date"
 
 
+def test_a_page_another_item_holds_is_never_taken(session: Session) -> None:
+    """mkkim68, review of #777: sentences repeat ("회의록 공유"). Another item's
+    page with the same title, made in the window, is that item's -- taken, the
+    two would share one page and overwrite each other."""
+    notion = Counting()
+    other = item(session)
+    sync(session, notion, other.id)  # page_1, held by the other item
+    row = item(session)  # same sentence; its own create never arrived
+    lost_create(session, row.id)
+
+    ref = sync(session, notion, row.id)
+
+    assert notion.looked == 1
+    assert len(notion.pages) == 2, "a page of its own"
+    assert ref is not None and ref.external_id == "page_2"
+    held = session.get(ExtExternalRef, (other.id, "notion"))
+    assert held is not None and held.external_id == "page_1"
+
+
 def test_with_nothing_found_the_page_is_made(session: Session) -> None:
     notion = Counting()
     row = item(session)

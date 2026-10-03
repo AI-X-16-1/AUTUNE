@@ -4172,14 +4172,17 @@ def _page_a_lost_create_made(
 
     Asked only when the item's last Notion copy failed as ``unreachable`` --
     the one failure that may have arrived -- and only for pages with exactly
-    the item's title made from shortly before that failure on. None found:
+    the item's title made from shortly before that failure on, leaving out
+    any page another item's ref already holds. None found:
     the create did not arrive, make the page. More than one: nothing here can
     tell which is this item's, so none is taken and a page is made, as before.
     A team map with no title has nothing to look for."""
     failure = session.get(ExtSyncFailure, (item.id, NOTION))
     if failure is None or failure.kind != sync_state.UNREACHABLE or "title" not in names:
         return None
-    title = item.description[:2000]
+    # The very title the create sends, read back from the properties it is
+    # built from, so the two cannot drift apart (mkkim68, review of #777).
+    title = properties[names["title"]]["title"][0]["text"]["content"]
     failed_at = failure.failed_at
     if failed_at.tzinfo is None:
         failed_at = failed_at.replace(tzinfo=UTC)
@@ -4189,6 +4192,20 @@ def _page_a_lost_create_made(
         title=title,
         created_after=failed_at - LOST_CREATE_WINDOW,
     )
+    # Items share sentences ("회의록 공유"): a page another item already holds
+    # is that item's, never this one's lost create. Taken, the two would share
+    # one page and overwrite each other (mkkim68, review of #777).
+    if found:
+        held = set(
+            session.scalars(
+                select(ExtExternalRef.external_id).where(
+                    ExtExternalRef.system == NOTION,
+                    ExtExternalRef.external_id.in_(found),
+                    ExtExternalRef.action_item_id != item.id,
+                )
+            )
+        )
+        found = [page_id for page_id in found if page_id not in held]
     if len(found) != 1:
         log.info(
             "extraction_notion_lost_create_not_found", action_item_id=item.id, found=len(found)
