@@ -29,7 +29,7 @@ from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import notion_connect, service, tasks
+from . import jira_issues, notion_connect, service, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -43,6 +43,7 @@ from .schemas import (
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
+    JiraProjectIssues,
     MeetingNoteUpdate,
     MeetingReview,
     MeetingSummary,
@@ -386,6 +387,26 @@ def backfill_jira(
     replaces a deleted one holds everything the old one did (#458). Members of
     the team only: anyone else gets the 404 an unknown meeting gets (#189)."""
     return tasks.backfill_jira(_member_team(session, reader, meeting_id, team_id))
+
+
+@router.get("/jira/issues", response_model=list[JiraProjectIssues])
+def jira_open_issues(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> list[JiraProjectIssues]:
+    """The open issues of a Jira project a team connected, read from Jira now
+    and shown -- never stored (decided with the user, 2026-10-02). Named by a
+    meeting or a team, it answers for that team, members only (#189);
+    without either, for every team the caller is on, which is what the
+    board across meetings needs. A team that never connected Jira is left out."""
+    if meeting_id or team_id:
+        teams = [_member_team(session, reader, meeting_id, team_id)]
+    else:
+        teams = service.team_ids_of(session, reader.id)
+    found = (jira_issues.project_issues(session, team) for team in teams)
+    return [project for project in found if project is not None]
 
 
 @router.get("/notion/setup")

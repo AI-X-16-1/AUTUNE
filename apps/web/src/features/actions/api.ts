@@ -215,6 +215,37 @@ export const backfillJira = (scope: IntegrationScope) =>
     { method: "POST" },
   );
 
+export interface JiraIssue {
+  key: string;
+  summary: string;
+  status: string | null;
+  status_category: string | null;
+  assignee: string | null;
+  due_date: string | null;
+  /** The issue in the team's Jira, or null when the server could not build a safe link. */
+  url: string | null;
+  /** True for an issue Autune made from an action item. */
+  from_autune: boolean;
+}
+
+export interface JiraProjectIssues {
+  team_id: string;
+  team_name: string;
+  project_key: string | null;
+  state: "ok" | "no_project" | "needs_reconnect" | "unavailable";
+  issues: JiraIssue[];
+  /** Jira has more open issues than were read. */
+  more: boolean;
+}
+
+/**
+ * The open issues of the Jira projects the caller's teams connected, read from
+ * Jira by the server at this moment and stored nowhere. A team that never
+ * connected Jira is not in the answer.
+ */
+export const listJiraOpenIssues = () =>
+  api.extraction<JiraProjectIssues[]>("/jira/issues");
+
 export interface NotionPage {
   id: string;
   title: string;

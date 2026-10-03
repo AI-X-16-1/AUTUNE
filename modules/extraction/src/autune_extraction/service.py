@@ -1269,6 +1269,17 @@ def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
     return NotFoundError(kind, ident)
 
 
+def team_ids_of(session: Session, user_id: str) -> list[str]:
+    """The teams this person is a member of, in a fixed order."""
+    return list(
+        session.scalars(
+            select(TeamMember.team_id)
+            .where(TeamMember.user_id == user_id)
+            .order_by(TeamMember.team_id)
+        )
+    )
+
+
 def _require_member_of_meeting(
     session: Session, meeting_id: str, reader: User, *, kind: str, ident: str
 ) -> None:

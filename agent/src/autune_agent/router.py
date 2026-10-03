@@ -8,6 +8,7 @@
 - ``POST /pending/{id}/approve`` -- approve one; the action runs.
 - ``POST /pending/{id}/reject`` -- reject one, with a reason from a fixed list.
 - ``GET /approvers`` -- a team's members and the approver scopes each holds.
+- ``GET /meeting-label`` -- the title of a meeting the caller may read, for S34's header.
 - ``PUT /approvers/{user_id}`` -- replace one member's scopes (``main/approvers``).
 
 Every route needs a signed-in member of the team it names. The layer answers on
@@ -254,6 +255,21 @@ def chat(
         queued=len(waiting),
         pending=[_read(session, r) for r in waiting if can_decide(scopes, r)],
     )
+
+
+class MeetingLabel(BaseModel):
+    title: str
+
+
+@router.get("/meeting-label", response_model=MeetingLabel)
+def meeting_label(user: CurrentUser, session: SessionDep, meeting_id: str) -> MeetingLabel:
+    """S34's header names the meeting on screen ("{title} 보고 있음"). The title
+    is module A's; the agent feature calls ``/api/agent`` only, so the layer
+    reads it here. Missing and not-a-member read the same, as in ``/chat``."""
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or not _is_member(session, meeting.team_id, user.id):
+        raise ChatMeetingNotFoundError()
+    return MeetingLabel(title=meeting.title)
 
 
 @router.get("/runs", response_model=list[RunRead])

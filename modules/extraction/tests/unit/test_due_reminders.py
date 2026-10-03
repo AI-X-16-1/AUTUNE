@@ -98,7 +98,7 @@ def slack(session: Session, monkeypatch: pytest.MonkeyPatch) -> FakeSlack:
     monkeypatch.setattr(
         tasks,
         "get_settings",
-        lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
+        lambda: ExtractionSettings(_env_file=None, due_reminders=True),  # type: ignore[call-arg]
     )
     _Clock.moment = NOW
     return fake
@@ -327,16 +327,17 @@ def test_nothing_is_sent_outside_koreas_daytime(
     assert slack.sent == []
 
 
-def test_a_deployment_can_switch_them_off(
+def test_they_are_off_unless_a_deployment_turns_them_on(
     session: Session, slack: FakeSlack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The default is off (the user's decision on #751): settings built from
+    nothing send no reminder, though one is owed."""
     item(session, "act_1")
-    monkeypatch.setattr(
-        tasks,
-        "get_settings",
-        lambda: ExtractionSettings(_env_file=None, due_reminders=False),  # type: ignore[call-arg]
-    )
+    monkeypatch.delenv("AUTUNE_EXTRACTION_DUE_REMINDERS", raising=False)
+    default = ExtractionSettings(_env_file=None)  # type: ignore[call-arg]
+    monkeypatch.setattr(tasks, "get_settings", lambda: default)
 
+    assert default.due_reminders is False
     assert tasks.remind_due_items() == []
     assert slack.sent == []
 
