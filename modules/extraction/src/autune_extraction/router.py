@@ -16,7 +16,7 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -43,6 +43,8 @@ from .schemas import (
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
+    DueReminderSetting,
+    DueReminderSettingIn,
     JiraProjectIssues,
     MeetingNoteUpdate,
     MeetingReview,
@@ -354,6 +356,25 @@ def answer_confirmation(
     if payload.answer == "commitment":
         background.add_task(tasks.summarise_confirmed_draft.delay, utterance_id)
     return response
+
+
+@router.get("/me/due-reminders", response_model=DueReminderSetting)
+def my_due_reminders(session: SessionDep, reader: CurrentUser) -> DueReminderSetting:
+    """Whether the caller gets due-date reminders by Slack DM. Their own only:
+    there is no parameter naming anybody else."""
+    return DueReminderSetting(
+        on=service.due_reminders_on(session, reader.id), sent_here=get_settings().due_reminders
+    )
+
+
+@router.put("/me/due-reminders", response_model=DueReminderSetting)
+def set_my_due_reminders(
+    payload: DueReminderSettingIn, session: SessionDep, reader: CurrentUser
+) -> DueReminderSetting:
+    """Turn the caller's own due-date reminders on or off (review of #751)."""
+    on = service.set_due_reminders(session, reader.id, on=payload.on, now=datetime.now(tz=UTC))
+    session.commit()
+    return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
 
 
 @router.post("/jira/backfill")
