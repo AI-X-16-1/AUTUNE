@@ -636,7 +636,12 @@ def test_me_lists_the_teams_the_person_belongs_to(
     api: tuple[TestClient, dict[str, object]], db: Session
 ) -> None:
     """S28 settings (#496) picks a team's integrations from these -- there is no
-    meeting to name the team there."""
+    meeting to name the team there.
+
+    **First joined, first listed** (#742). The person made ``B팀`` and later
+    accepted an invitation to ``A팀``, whose name sorts earlier. The screens
+    that take ``teams[0]`` as the default must still get the team the person
+    started in, not the one that invited them."""
     client, _ = api
     user = upsert_user_from_google(db, _identity())
     db.add_all(
@@ -647,18 +652,16 @@ def test_me_lists_the_teams_the_person_belongs_to(
         ]
     )
     db.flush()
-    db.add_all(
-        [
-            TeamMember(team_id="team_b", user_id=user.id),
-            TeamMember(team_id="team_a", user_id=user.id),
-        ]
-    )
+    # One at a time: the order of the rows is the order of joining.
+    db.add(TeamMember(team_id="team_b", user_id=user.id))
+    db.flush()
+    db.add(TeamMember(team_id="team_a", user_id=user.id))
     db.commit()
     client.cookies.set(SESSION_COOKIE, issue_token(user.id))
 
     teams = client.get("/api/auth/me").json()["teams"]
 
-    assert teams == [{"id": "team_a", "name": "A팀"}, {"id": "team_b", "name": "B팀"}]
+    assert teams == [{"id": "team_b", "name": "B팀"}, {"id": "team_a", "name": "A팀"}]
 
 
 def test_providers_reports_whether_google_is_configured(
