@@ -49,7 +49,14 @@ from autune_integrations import (
     TransientIntegrationError,
 )
 
-from .conftest import READER, RECORD_FAILURE, SYNC_FAILED, SYNC_WENT, sign_in
+from .conftest import (
+    READER,
+    RECORD_FAILURE,
+    SYNC_ACTION_ITEM_JIRA,
+    SYNC_FAILED,
+    SYNC_WENT,
+    sign_in,
+)
 
 MEETING = "mtg_1"
 PREFIX = "/api/extraction"
@@ -230,6 +237,40 @@ def test_a_jira_skipped_for_a_refused_grant_is_kept_even_the_first_time(
     tasks.sync_after_confirmation("act_1")
 
     assert kept(session) == {"jira": "reconnect"}
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        pytest.param({"needs_reconnect": True}, tasks.JIRA_NEEDS_RECONNECT, id="refused-grant"),
+        pytest.param({"needs_reconnect": False}, tasks.JIRA_SKIPPED, id="no-project"),
+        pytest.param(None, tasks.JIRA_SKIPPED, id="never-connected"),
+    ],
+)
+def test_the_jira_sync_says_which_skip_it_was(
+    session: Session, monkeypatch: pytest.MonkeyPatch, config: dict | None, expected: str
+) -> None:
+    """lsh2217, review of #754: the real ``sync_action_item_jira`` reads the
+    team's ``needs_reconnect`` itself when ``jira_access`` answers ``None`` --
+    the tests above only stub its answer."""
+    from autune_core.integrations_config import IntegrationConfig
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+
+    item(session)
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "jira_access", lambda _team, **_kw: None)
+    monkeypatch.setattr(
+        tasks,
+        "load_integration",
+        lambda _s, team, _svc: (
+            None if config is None else IntegrationConfig("jira", team, "r", config)
+        ),
+    )
+
+    assert SYNC_ACTION_ITEM_JIRA("act_1") == expected
 
 
 def test_a_team_without_jira_has_nothing_to_keep(session: Session, sends: dict) -> None:
