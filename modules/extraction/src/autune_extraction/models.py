@@ -618,7 +618,10 @@ class ExtDueReminder(Base):
 
     No text and no person: the message is not kept, and who it went to is
     the item's assignee at the time, which the item already says. Goes with
-    the item, and so with its meeting."""
+    the item, and so with its meeting.
+
+    A row also stands for a reminder the outbound check refused: it is
+    settled, reported once, and not tried again (review of #751)."""
 
     __tablename__ = "ext_due_reminders"
     __table_args__ = (
