@@ -185,6 +185,11 @@ class JiraClient(HttpClient):
         project with thousands of open issues is read in Jira. The four
         fields a row shows are the only ones asked for -- no description, no
         comments, nobody's email address.
+
+        An issue with a security level is left out (``level is EMPTY``). It is
+        read with the grant of the person who connected Jira, and the list
+        shows to the whole Autune team: a level restricts an issue to some
+        people on the Jira site, and passing its title on would undo that.
         """
         if PROJECT_KEY.fullmatch(project_key) is None:
             raise PermanentIntegrationError(f"{self.service}: not a project key")
@@ -193,7 +198,8 @@ class JiraClient(HttpClient):
             "/search/jql",
             params={
                 "jql": (
-                    f'project = "{project_key}" AND statusCategory != Done ORDER BY updated DESC'
+                    f'project = "{project_key}" AND level is EMPTY'
+                    " AND statusCategory != Done ORDER BY updated DESC"
                 ),
                 "fields": "summary,status,assignee,duedate",
                 "maxResults": max(1, min(limit, OPEN_ISSUES_MAX)),

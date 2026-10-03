@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui";
 
@@ -38,12 +38,25 @@ const body = { fontSize: "var(--text-rowBody)", lineHeight: "var(--text-rowBody-
 
 export function JiraOpenIssues() {
   const [state, setState] = useState<State>({ kind: "closed" });
+  // Which request an answer belongs to. Collapsing moves it on, so an answer
+  // that arrives after 접기 is dropped instead of opening the list again.
+  const request = useRef(0);
 
   const load = useCallback(() => {
+    const mine = ++request.current;
     setState({ kind: "loading" });
     listJiraOpenIssues()
-      .then((projects) => setState({ kind: "ready", projects }))
-      .catch(() => setState({ kind: "failed" }));
+      .then((projects) => {
+        if (request.current === mine) setState({ kind: "ready", projects });
+      })
+      .catch(() => {
+        if (request.current === mine) setState({ kind: "failed" });
+      });
+  }, []);
+
+  const collapse = useCallback(() => {
+    request.current += 1;
+    setState({ kind: "closed" });
   }, []);
 
   if (state.kind === "closed") {
@@ -65,7 +78,7 @@ export function JiraOpenIssues() {
         <Button tone="text" size="compact" onClick={load} disabled={state.kind === "loading"}>
           다시 불러오기
         </Button>
-        <Button tone="text" size="compact" onClick={() => setState({ kind: "closed" })}>
+        <Button tone="text" size="compact" onClick={collapse}>
           접기
         </Button>
       </div>

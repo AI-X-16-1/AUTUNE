@@ -26,7 +26,8 @@ def client(handler: Callable[[httpx.Request], httpx.Response]) -> JiraClient:
 
 
 def test_it_asks_for_one_projects_unfinished_issues_and_four_fields() -> None:
-    """The query is bounded to the project, leaves out what is done, and asks
+    """The query is bounded to the project, leaves out what is done and any
+    issue with a security level (the list shows to the whole team), and asks
     for the fields a row shows -- no description, no comments."""
     seen: list[httpx.Request] = []
 
@@ -39,7 +40,9 @@ def test_it_asks_for_one_projects_unfinished_issues_and_four_fields() -> None:
     assert seen[0].method == "GET"
     assert seen[0].url.path == f"/ex/jira/{CLOUD}/rest/api/3/search/jql"
     params = seen[0].url.params
-    assert params["jql"] == 'project = "AUT" AND statusCategory != Done ORDER BY updated DESC'
+    assert params["jql"] == (
+        'project = "AUT" AND level is EMPTY AND statusCategory != Done ORDER BY updated DESC'
+    )
     assert params["fields"] == "summary,status,assignee,duedate"
     assert params["maxResults"] == "50"
 

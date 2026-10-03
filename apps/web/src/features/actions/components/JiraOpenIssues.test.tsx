@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { JiraOpenIssues } from "./JiraOpenIssues";
@@ -126,5 +126,33 @@ describe("JiraOpenIssues", () => {
     fireEvent.click(screen.getByRole("button", { name: "접기" }));
 
     await waitFor(() => expect(screen.queryByText("배포 일정 공유")).toBeNull());
+  });
+
+  it("stays closed when the answer arrives after it was closed", async () => {
+    let answer: (projects: JiraProjectIssues[]) => void = () => {};
+    list.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    render(<JiraOpenIssues />);
+
+    open();
+    await screen.findByText("Jira에서 불러오는 중입니다.");
+    fireEvent.click(screen.getByRole("button", { name: "접기" }));
+    await act(async () => answer([PROJECT]));
+
+    expect(screen.queryByText("배포 일정 공유")).toBeNull();
+    expect(screen.getByRole("button", { name: "Jira 열린 이슈 보기" })).toBeTruthy();
+  });
+
+  it("stays closed when a request that failed is answered after it was closed", async () => {
+    let fail: (reason: Error) => void = () => {};
+    list.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    render(<JiraOpenIssues />);
+
+    open();
+    await screen.findByText("Jira에서 불러오는 중입니다.");
+    fireEvent.click(screen.getByRole("button", { name: "접기" }));
+    await act(async () => fail(new Error("502")));
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Jira 열린 이슈 보기" })).toBeTruthy();
   });
 });

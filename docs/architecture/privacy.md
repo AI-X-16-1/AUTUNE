@@ -372,6 +372,9 @@ the feature needs.
     team's connection -- the grant of the person who connected it -- so
     every member of the Autune team sees those titles, whether or not they
     have an account on the Jira site (decided with the user, 2026-10-02).
+    An issue with a Jira security level is left out of that list: the level
+    restricts it to some people on the site, and the grant it is read with
+    would otherwise pass its title to everyone on the team.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
