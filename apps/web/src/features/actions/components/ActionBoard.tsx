@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
 import { CandidateBand } from "./CandidateBand";
-import { canDrop, columnOf, groupForBoard } from "../board";
+import { CONFIRMED_NOTICE, canDrop, confirms, groupForBoard } from "../board";
 import { COLUMNS, COLUMN_LABELS } from "../types";
 import type { ActionItemDraft } from "../api";
 import type { Moves } from "../board";
@@ -87,15 +87,13 @@ export function ActionBoard({
     setOver(null);
     if (onMove === undefined || !canDrop(dragged, target, moves)) return;
     const id = dragged.id;
-    const confirms = columnOf(dragged) === "needs_confirmation";
+    const confirmed = confirms(dragged, target);
     setFailure(null);
     setNotice(null);
     setMoves((current) => ({ ...current, [id]: target }));
     try {
       await onMove(id, target);
-      if (confirms) {
-        setNotice("확정했습니다. 팀이 연결한 도구가 있으면 그쪽에도 반영됩니다.");
-      }
+      if (confirmed) setNotice(CONFIRMED_NOTICE);
     } catch {
       setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {

@@ -206,3 +206,36 @@ def test_an_asked_turn_records_tools_and_no_text(session: Session, team: dict[st
         }
     ]
     assert row.answer is None
+
+
+def test_a_chat_asks_about_the_person_who_asked(session: Session, team: dict[str, str]) -> None:
+    from autune_agent.main.registry import Tool
+    from autune_agent.main.toolcall import FunctionCall
+    from autune_agent.testing import FakeRouter, ScriptedToolModel
+
+    seen: list[str] = []
+
+    def person_action_items(session: Any, team_id: str, user_id: str) -> dict[str, Any]:
+        seen.append(user_id)
+        return {"ok": True, "summary": "남은 일 1건.", "items": [{"title": "문서"}]}
+
+    tools = {
+        "extraction.person_action_items": Tool(
+            "extraction.person_action_items", "Use this.", person_action_items
+        )
+    }
+    model = ScriptedToolModel([[FunctionCall("extraction__person_action_items", {})], "DONE"])
+
+    run_and_record(
+        "내 기한 지난 거 있어?",
+        session=session,
+        router=FakeRouter(),
+        team_id=team["team"],
+        requested_by=team["member"],
+        trigger={"kind": "chat"},
+        subagents={},
+        tools=tools,
+        asker=model,
+    )
+
+    assert seen == [team["member"]]

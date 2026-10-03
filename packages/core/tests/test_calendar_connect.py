@@ -250,8 +250,14 @@ def test_status_is_the_persons_own(world: dict[str, Any]) -> None:
 
 
 def _status_with_current_client(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, current: str
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    current: str,
+    secret: str | None = None,
 ) -> dict[str, bool]:
+    """The status as a server whose Google client is ``current`` gives it. A
+    client has a secret exactly when it has an id, unless a test says
+    otherwise: a blank id with a secret is a configuration nobody has."""
     monkeypatch.setattr(
         auth_router_module,
         "get_settings",
@@ -259,7 +265,7 @@ def _status_with_current_client(
             _env_file=None,
             env="local",
             google_client_id=current,
-            google_client_secret="s",
+            google_client_secret=("s" if current else "") if secret is None else secret,
             google_integration_client_id="",
             google_integration_client_secret="",
         ),
@@ -281,6 +287,37 @@ def test_a_grant_issued_to_another_client_says_it_needs_reconnecting(
         "needs_reconnect": True,
     }
     assert _status_with_current_client(world, monkeypatch, "the-old-client") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
+def test_with_no_google_client_configured_a_grant_is_not_called_broken(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mminjae97, review of #711: `"x" != ""` said "reconnect" on a server
+    that cannot connect anything, while module B skipped the person without
+    a word. The card and B say the same thing: nothing."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, "") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
+@pytest.mark.parametrize(("client_id", "secret"), [("the-new-client", ""), ("", "s")])
+def test_half_a_google_client_is_not_one_to_reconnect_to(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, client_id: str, secret: str
+) -> None:
+    """Review of #718: the status looked at the id alone while module B needs
+    the id and the secret, so with a secret missing the card said "reconnect"
+    and B said nothing. Both read the same thing now."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, client_id, secret) == {
         "connected": True,
         "needs_reconnect": False,
     }
@@ -409,6 +446,10 @@ def test_with_an_integration_client_the_calendar_goes_through_it_start_to_finish
     assert exchanged == []
     assert response.status_code == 303
     assert world["grants"] == {ME: "1//from-the-integration-client"}
+    # The grant records the client that issued it -- the integration client,
+    # not the sign-in one -- which is what later tells a stranded grant apart
+    # (mkkim68, review of #711).
+    assert world["configs"][ME]["client_id"] == "integration-client"
 
 
 def test_with_an_integration_client_disconnect_revokes_through_it(

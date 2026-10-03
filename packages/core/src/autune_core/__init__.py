@@ -13,6 +13,7 @@ from .auth import (
     issue_token,
     require_self,
     set_session_cookie,
+    user_for_token,
 )
 from .auth_service import upsert_user_from_google
 from .db import Base, get_engine, get_session, get_sessionmaker, session_scope
@@ -23,6 +24,7 @@ from .entities import (
     TeamIntegration,
     TeamMember,
     User,
+    UserConsent,
     UserIntegration,
     Utterance,
 )
@@ -77,6 +79,7 @@ __all__ = [
     "TeamIntegration",
     "JiraAccess",
     "jira_access",
+    "UserConsent",
     "UserIntegration",
     "USER_SERVICES",
     "UserIntegrationConfig",
@@ -91,6 +94,7 @@ __all__ = [
     "CurrentUser",
     "current_user",
     "issue_token",
+    "user_for_token",
     "require_self",
     "SESSION_COOKIE",
     "set_session_cookie",

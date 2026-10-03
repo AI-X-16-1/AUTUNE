@@ -122,7 +122,7 @@ is a separate consent, given after signing in and described next. Nothing reads
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar today (#435), mail when it exists. Optional: blank, the sign-in client does both |
-| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup. With the pair set, `AUTUNE_GOOGLE_REDIRECT_URI` is required too, and its absence is refused at startup |
 
 Sign-in keeps `AUTUNE_GOOGLE_CLIENT_ID`. The two are separate so that an
 identity-only client and one that asks for somebody's calendar can be reviewed
@@ -134,11 +134,24 @@ it, so a grant is always refreshed with the client that issued it.
 - **No second redirect URI.** One callback (`/api/auth/google/callback`)
   finishes sign-in and the calendar connect, so `AUTUNE_GOOGLE_REDIRECT_URI`
   must be registered on the integration client as well as on the sign-in one.
+  The integration pair without that variable is refused at startup: the
+  connect would start and then have no callback to finish on.
 - **Setting these on a running deployment strands its connected calendars.**
   Google binds a refresh token to the client that issued it. A grant issued
   to the sign-in client is refused at its next refresh once the integration
   client is in use, and the person is asked to connect again. Nothing migrates
   a grant from one client to the other.
+- **A grant records the client that issued it.** A connect stores the
+  issuing `client_id` beside the grant (public by nature, not a credential).
+  When it differs from the client the deployment refreshes with now,
+  `GET /api/auth/google/calendar` reports `needs_reconnect: true`, the
+  calendar card says the connection is broken, and module B skips the
+  refresh instead of sending one Google would refuse. A grant from before
+  the client was recorded says nothing either way and is tried as before —
+  which includes every calendar connected before #711, so the first switch
+  to an integration client is still found out by a refused refresh. With no
+  Google client configured at all, nothing is reported as needing a
+  reconnect: there is nothing to reconnect to.
 
 **Two cookies, two jobs.** `autune_session` is the signed session (7 days,
 `HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
@@ -149,12 +162,23 @@ browser cannot sign them in as whoever started it. Redis proves a state was
 issued; the cookie is what proves to whom.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
-**A signed-out session is signed out in the browser only.** `POST /logout`
-clears the cookie; the JWT it held stays valid until it expires. A token that
-leaked cannot be revoked, which is acceptable for a first version and is not
-acceptable for long — it needs a token version on `User`, or a server-side
-session, before this carries real meetings. Until then the only way to end
-every session at once is rotating `AUTUNE_SECRET_KEY`, which signs everyone out.
+**Signing out ends the person's sessions on the server, on every device.**
+`POST /logout` writes the moment on the person's row
+(`users.sessions_valid_from`) and clears the cookie; from then on
+`current_user` refuses every token of theirs issued up to it — the browser
+that signed out, another browser, a developer token, a copy that leaked. The
+next sign-in issues a token after that moment, which is good. It is one value
+per person, not a session per device: signing out in one place signs out
+everywhere, and there is no list of sessions to look at. Deploying this signed
+nobody out — a person who has never signed out has no moment to compare
+with. To end **everybody's** sessions at once, rotate `AUTUNE_SECRET_KEY`.
+
+Every door that takes a session token asks the same function
+(`autune_core.auth.user_for_token`): the HTTP routes through `current_user`,
+and module A's live WebSocket directly, because its handler cannot use a
+dependency. The check is made when a request or a connection arrives — **a
+live socket opened before the sign-out stays open until it closes**; it is
+not cut off mid-recording.
 
 ### Web (`apps/web`)
 

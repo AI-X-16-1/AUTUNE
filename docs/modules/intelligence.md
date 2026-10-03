@@ -392,6 +392,31 @@ exactly what a surveillance feature looks like. Read
   holds, getting easier to re-identify over time rather than harder. Deliver
   it the way S23 delivers speaking ratio (subject only); it does not appear on
   the shared dashboard (S26).
+- **A person who deletes their own speech takes their words out of E too
+  (#587, #614).** `@on_speech_deleted("intelligence")` (registered in
+  `service.py`, which every router import reaches) runs `forget.forget_speech`
+  before A deletes the utterances, applying B's and C's rules to E's copies --
+  the work stays, the words go:
+  - B's copy: an item still awaiting confirmation that was drawn from the
+    speech is dropped, as B deletes such a draft. Any other item, and a
+    decision, reads "삭제된 발화에서 만든 항목" when its text is one of its own
+    deleted lines -- equal, the line with B's " (담당 ..., 기한 ...)" tail, or one
+    containing the other -- and a decision also when every line it came from
+    is deleted. A summary or a person's writing stays. E cannot see B's edit
+    history, so it errs toward replacing. Classifications and ambiguous
+    agreements on the speech are dropped.
+  - Not covered here: the agent layer's run records and pending-action
+    arguments that hold Report output -- mkkim68's, a #614 follow-up.
+  - C's copy: a topic built only from the speech goes with its participation,
+    and a question naming it is cleared -- this covers a meeting C leaves with
+    no topic and does not republish.
+  - D's copy: a replaced decision reads the same in this meeting's lineage and
+    as a later meeting's `previous_statement`; a link to a topic that went is
+    dropped.
+  - Meeting reports and corrections: every replaced text and the deleted line
+    itself are replaced where quoted; the rest stays. A copy already posted to
+    Slack is outside Autune and is not recalled.
+  - The weekly report holds counts and pattern names only and needs nothing.
 
 ## Open questions
 
