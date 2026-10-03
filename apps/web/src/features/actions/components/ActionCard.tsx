@@ -1,8 +1,8 @@
-import { StatusDot } from "@/shared/ui";
+import { MaskedText, StatusDot } from "@/shared/ui";
 
 import { isOverdue } from "../dates";
 import { isCandidate } from "../types";
-import type { ActionItemRead } from "../types";
+import type { ActionItemRead, SourceUtterance } from "../types";
 
 /**
  * What a dragged card carries: the item's id under Autune's own type, and no
@@ -38,6 +38,7 @@ export function ActionCard({
   onSelect,
   showMeeting = false,
   drag,
+  context,
 }: {
   item: ActionItemRead;
   selected?: boolean;
@@ -45,6 +46,12 @@ export function ActionCard({
   showMeeting?: boolean;
   /** Present on a board that moves cards; `moving` while its change is in flight. */
   drag?: { moving: boolean; onStart: () => void; onEnd: () => void };
+  /**
+   * The lines said just before this card's sentence, for a sentence that
+   * says nothing by itself (`pointsAtNothing`). Shown under the title, muted,
+   * and named as what they are so nobody reads a neighbouring line as the item.
+   */
+  context?: SourceUtterance[];
 }) {
   const overdue = isOverdue(item);
   const draggable = drag !== undefined && !drag.moving;
@@ -104,6 +111,22 @@ export function ActionCard({
           </span>
         ) : null}
       </div>
+
+      {context !== undefined && context.length > 0 ? (
+        <div
+          role="group"
+          aria-label="앞선 발화"
+          className="mt-1 border-l border-[var(--color-hairline)] pl-2 text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          <span>앞선 발화</span>
+          {context.map((line) => (
+            <p key={line.id}>
+              <MaskedText>{line.text}</MaskedText>
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       <div
         className="mt-1 text-[var(--color-ink-muted)]"
