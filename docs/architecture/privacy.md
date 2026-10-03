@@ -406,7 +406,8 @@ the feature needs.
     utterance. A message already delivered stays in that person's Slack
     when the item or the meeting is deleted; Autune keeps only that a
     reminder of that kind went (`ext_due_reminders`), and that goes with
-    the item.
+    the item. Each person can turn their own reminders off, and only their
+    own (`ext_due_reminder_optouts`, which goes with the account).
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not

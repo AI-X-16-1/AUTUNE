@@ -160,6 +160,23 @@ export const putSummaryNote = (meetingId: string, body: string) =>
     body: JSON.stringify({ body }),
   });
 
+/** The caller's own due-date reminders by Slack DM (review of #751). */
+export interface DueReminderSetting {
+  /** On unless the caller turned them off. */
+  on: boolean;
+  /** Whether this server sends reminders at all; when not, the switch changes nothing yet. */
+  sent_here: boolean;
+}
+
+export const getDueReminders = () => api.extraction<DueReminderSetting>("/me/due-reminders");
+
+/** Only the caller's own: the request names nobody. */
+export const setDueReminders = (on: boolean) =>
+  api.extraction<DueReminderSetting>("/me/due-reminders", {
+    method: "PUT",
+    body: JSON.stringify({ on }),
+  });
+
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */
 export const getReview = (meetingId: string) =>
   api.extraction<MeetingReview>(`/reviews/${encodeURIComponent(meetingId)}`);

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { getSession, type SessionUser } from "@/shared/api/auth";
 
 import { CalendarConnect } from "./CalendarConnect";
+import { DueReminderSetting } from "./DueReminderSetting";
 import { JiraConnect } from "./JiraConnect";
 import { NotionConnect } from "./NotionConnect";
 import { SlackConnect } from "./SlackConnect";
@@ -66,6 +67,7 @@ export function IntegrationSettingsScreen() {
         </h2>
         <CalendarConnect />
         <SlackMeConnect />
+        <DueReminderSetting />
       </section>
 
       <section aria-label="팀 연결" className="flex flex-col gap-2">
