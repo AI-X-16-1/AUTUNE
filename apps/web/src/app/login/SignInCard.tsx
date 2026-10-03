@@ -10,6 +10,7 @@
  * their backends land in W2. On a server without Google credentials the Google
  * button is disabled up front rather than answering the click with a 500.
  */
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Button } from "@/shared/ui/Button";
@@ -201,8 +202,15 @@ export function SignInCard({ redirectTo = "/" }: { redirectTo?: string }) {
         className="mt-4 text-ink-muted"
         style={{ fontSize: "var(--text-metaSmall)", lineHeight: "var(--text-metaSmall-leading)" }}
       >
-        계속하면 이용약관과 개인정보 처리방침에 동의하는 것입니다. 녹음 원본은 서버에 보관되지
-        않습니다.
+        계속하면{" "}
+        <Link href="/legal#terms" className="underline underline-offset-2">
+          이용약관
+        </Link>
+        과{" "}
+        <Link href="/legal#privacy" className="underline underline-offset-2">
+          개인정보 처리방침
+        </Link>
+        에 동의하는 것입니다. 녹음 원본은 서버에 보관되지 않습니다.
       </p>
     </div>
   );
