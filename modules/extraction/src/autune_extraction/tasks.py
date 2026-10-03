@@ -142,9 +142,7 @@ def _follow_corrections(corrections: service.SourceCorrections) -> None:
     is logged: the rows are already right, and the next edit sends them."""
     try:
         for action_item_id in corrections.changed_items:
-            sync_action_item.delay(action_item_id)
-            sync_action_item_jira.delay(action_item_id)
-            sync_action_item_calendar.delay(action_item_id)
+            sync_item_copies.delay(action_item_id)
         for decision_id in corrections.changed_decisions:
             sync_decision.delay(decision_id)
     except Exception as exc:  # noqa: BLE001 -- the correction itself is committed
@@ -679,6 +677,20 @@ def sync_after_confirmation(action_item_id: str) -> None:
             _record_failure(action_item_id, sync_state.JIRA, sync_state.RECONNECT)
         else:
             _sync_went(action_item_id, sync_state.JIRA)
+
+
+@shared_task(name="autune.extraction.sync_item_copies", acks_late=True)
+def sync_item_copies(action_item_id: str) -> None:
+    """``sync_after_confirmation`` on the worker: an item's Notion page, Jira
+    issue and calendar event, each failure kept and each success clearing it
+    (#680).
+
+    For the paths that change an item outside a person's edit -- a corrected
+    line (``_follow_corrections``) and deleted speech
+    (``forget_deleted_speech``). They used to queue the three syncs directly,
+    so a failure there was neither recorded nor cleared (PARKJAEKYUNG0525,
+    review of #754). One task, the three in turn, as an edit runs them."""
+    sync_after_confirmation(action_item_id)
 
 
 def _sync_failed(action_item_id: str, system: str, exc: BaseException) -> None:
@@ -1504,9 +1516,7 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         done = service.forget_speech(session, utterance_ids)
     try:
         for action_item_id in done.changed_items:
-            sync_action_item.delay(action_item_id)
-            sync_action_item_jira.delay(action_item_id)
-            sync_action_item_calendar.delay(action_item_id)
+            sync_item_copies.delay(action_item_id)
         for decision_id in done.changed_decisions:
             sync_decision.delay(decision_id)
     except Exception as exc:  # noqa: BLE001 -- the deletion must go on; the rows changed
