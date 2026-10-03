@@ -159,8 +159,12 @@ agreement, and sync the result to Notion and Jira.
    makes a new one; if someone archives it, it is left archived (#403). The
    board does not say so yet: later edits to that item stop reaching Notion
    and only the log records it. S18's integration row is where an "archived in
-   Notion" state belongs once it exists. A team without Notion connected is
-   skipped. Not
+   Notion" state belongs once it exists. A create that timed out on our side
+   may still have made the page: when the item's last Notion copy failed as
+   `unreachable`, the next create first asks the database for a live page
+   with exactly the item's title made since shortly before that failure, and
+   keeps it if there is exactly one (review of #754). A team without Notion
+   connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
