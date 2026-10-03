@@ -88,7 +88,7 @@ function Members({ teamId }: { teamId: string }) {
         <h2 id="invite-title" className="mb-2" style={SECTION_TITLE}>
           팀원 초대
         </h2>
-        <TeamInvite teamId={teamId} />
+        <TeamInvite teamId={teamId} canConnectMail />
       </section>
     </>
   );
