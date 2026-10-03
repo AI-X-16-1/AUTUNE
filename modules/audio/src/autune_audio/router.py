@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import Utterance
-from autune_core import CurrentUser, get_logger, get_session
+from autune_core import CurrentUser, User, get_logger, get_session
 from autune_core.auth import clear_session_cookie
 from autune_core.errors import AutuneError
 from autune_core.events import publish
@@ -114,11 +114,33 @@ def get_transcript(meeting_id: str, user: CurrentUser, session: SessionDep) -> l
 
 @router.get("/teams", response_model=list[TeamSummary])
 def list_teams(user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
-    """The teams this person may open a meeting for. Feeds ``POST /meetings``."""
+    """The teams this person may open a meeting for. Feeds ``POST /meetings``.
+    Pinned ones first, then in the order joined; the first is the default."""
+    return _my_teams(session, user)
+
+
+def _my_teams(session: Session, user: User) -> list[TeamSummary]:
+    pinned = service.pinned_team_ids(session, member=user)
     return [
-        TeamSummary(team_id=team.id, name=team.name)
+        TeamSummary(team_id=team.id, name=team.name, pinned=team.id in pinned)
         for team in service.teams_for(session, member=user)
     ]
+
+
+@router.put("/teams/{team_id}/pin", response_model=list[TeamSummary])
+def pin_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """Pin a team to the top of the caller's own list -- up to three -- and
+    answer with the list as it now stands. Members of the team only. A fourth
+    pin is a 409 ``too_many_pinned_teams``."""
+    service.pin_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
+
+
+@router.delete("/teams/{team_id}/pin", response_model=list[TeamSummary])
+def unpin_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """Take the pin off, and answer with the list as it now stands."""
+    service.unpin_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
 
 
 @router.post("/teams", response_model=TeamSummary, status_code=status.HTTP_201_CREATED)

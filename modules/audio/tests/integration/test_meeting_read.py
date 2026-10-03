@@ -113,7 +113,7 @@ def test_a_member_lists_only_their_own_teams(
 
     body = client.get("/api/audio/teams").json()
 
-    assert body == [{"team_id": team, "name": "Test Team"}]
+    assert body == [{"team_id": team, "name": "Test Team", "pinned": False}]
 
 
 def test_a_person_on_no_team_gets_an_empty_list(app_for, outsider: User) -> None:

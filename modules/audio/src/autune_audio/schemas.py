@@ -259,6 +259,9 @@ class TeamSummary(BaseModel):
 
     team_id: str
     name: str
+    pinned: bool = False
+    """Whether the caller pinned this team to the top of their own list. Theirs
+    alone: no other member's answer carries it."""
 
 
 class SpeakerCandidate(BaseModel):

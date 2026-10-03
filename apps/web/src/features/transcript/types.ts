@@ -102,7 +102,8 @@ export type MeetingSummary = {
   started_at: string | null;
 };
 
-export type TeamSummary = { team_id: string; name: string };
+/** `pinned`: the caller put this team at the top of their own list. */
+export type TeamSummary = { team_id: string; name: string; pinned?: boolean };
 
 /**
  * Module A's own speaker endpoints — `/api/audio/meetings/{id}/speakers` and

@@ -89,7 +89,8 @@ Plus the shared entities in `packages/core`, which A writes.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/teams` | The teams the caller may open a meeting for; feeds `POST /meetings` |
+| GET | `/teams` | The teams the caller may open a meeting for, the ones they pinned first and then in the order joined; the first is the default. Feeds `POST /meetings` |
+| PUT / DELETE | `/teams/{team_id}/pin` | Pin a team to the top of the caller's own list (at most three; a fourth is 409 `too_many_pinned_teams`) or take the pin off. Answers with the list as it now stands. The pin is on the caller's membership and shows in nobody else's list |
 | POST | `/meetings` | Open a meeting for a team, before there is any audio |
 | GET | `/meetings/{meeting_id}` | Title, status and the two privacy flags. What S12 polls |
 | POST | `/meetings/{meeting_id}/recording` | Upload a recording and queue transcription (202) |
