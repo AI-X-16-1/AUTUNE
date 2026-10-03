@@ -636,6 +636,8 @@ class ExtDueReminder(Base):
     """The date the reminder was about. A due date moved later is a new date,
     and the item is owed a reminder for it."""
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    """When the reminder was settled: sent, or, for a refusal, when the outbound
+    check refused it. Named for the common case."""
 
 
 class ExtConfirmation(Base, TimestampMixin):

@@ -15,7 +15,10 @@ name) has nobody to tell and is skipped.
 ``ext_due_reminders``, written with the send in one transaction. A send Slack
 accepted followed by a commit that failed, or a delivery that timed out on
 our side, takes the claim back with it, and the next run sends again. That
-is the price of never keeping a claim for a message that did not go.
+is the price of never keeping a claim for a message that did not go -- with
+one exception: a send the outbound check refused keeps its claim, written
+afterwards in its own transaction (``service.settle_refused_due_reminder``),
+so the refusal is reported once and not every ten minutes.
 
 **The two moments:**
 
