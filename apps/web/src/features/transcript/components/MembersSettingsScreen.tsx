@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { listTeamMembers } from "../api";
@@ -31,6 +32,15 @@ export function MembersSettingsScreen() {
   return (
     <main style={{ padding: "var(--space-24) var(--space-page) var(--space-page)" }}>
       <div className="max-w-[760px]">
+        {/* A team is the unit a project gets today: its own members, its own
+            meetings. Someone already on a team had no way back to S02 short of
+            typing its address. */}
+        <p className="mb-4" style={META}>
+          프로젝트마다 구성원을 따로 두려면 팀을 하나 더 만드세요.{" "}
+          <Link href="/workspace/new" className="text-[var(--color-accent-default)]">
+            새 팀 만들기
+          </Link>
+        </p>
         <TeamScope>{(teamId) => <Members key={teamId} teamId={teamId} />}</TeamScope>
       </div>
     </main>
