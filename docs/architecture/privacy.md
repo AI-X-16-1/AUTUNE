@@ -294,6 +294,18 @@ person's, those counts are that person's completion record. So:
 A test proving that your module's data is fully removed when a meeting is
 deleted is part of shipping a table, not an extra.
 
+**A pending team invitation** (#552) is the one place Autune holds the
+address of somebody who has agreed to nothing yet. It is kept in
+`aud_team_invitations` only -- no `users` row is made for an address that
+has not signed up -- and it does not wait for the analysis window: the row
+is deleted when the invitation is accepted, when it lapses (seven days; the
+retention sweep, and the next invitation made for that team), when a new
+invitation to the same address replaces it, when the team or the inviter's
+account is deleted, and when the invited person deletes their own account.
+The link's token is stored as a hash, and log lines about invitations carry
+ids, never the address. Until it is accepted an invitation changes nothing
+about what the invited person, or the team, can read.
+
 **Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
 and deletion apply to what Autune holds. An item or decision a team sent to its
 own Notion or Jira, through an integration the team connected, is the team's
@@ -342,6 +354,16 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
+- A cloud model is never the default, and in module B it has to be switched on
+  twice (#392). B's classifier and resolver send text to a provider only when
+  their implementation is set to `llm` (or `llm_checked`), and B's settings
+  refuse to load that unless `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is
+  set as well. The flag checks nothing about the meeting or the key -- the code
+  cannot tell a real meeting from a dummy one, or a paid key from a free one --
+  it makes sending speech out something a deployment says deliberately. Until
+  #392 is decided, only demo meetings go through a deployment that sets it.
+  This is module B's alone: the agent's, C's and D's cloud switches are their
+  owners' and have no second switch today.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
@@ -364,6 +386,17 @@ the feature needs.
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
     description, due date and assignee's Jira account only.
+    One read brings content back the other way: a team's screen can list
+    the open issues of the project it connected (key, title, status,
+    assignee's display name, due date), read from Jira when a member asks
+    and passed through. None of it is stored or logged, so there is nothing
+    of the team's Jira for Autune to retain or delete. It is read with the
+    team's connection -- the grant of the person who connected it -- so
+    every member of the Autune team sees those titles, whether or not they
+    have an account on the Jira site (decided with the user, 2026-10-02).
+    An issue with a Jira security level is left out of that list: the level
+    restricts it to some people on the site, and the grant it is read with
+    would otherwise pass its title to everyone on the team.
   - **Slack, a due-date reminder:** a direct message to an action item's
     assignee -- their own linked account, through the bot of the team that
     held the meeting -- the day before its due date and once after it

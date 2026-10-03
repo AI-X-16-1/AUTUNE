@@ -30,8 +30,7 @@ export function contextFor(pathname: string): AssistantContext {
   const meeting = MEETING.exec(pathname);
   if (meeting) {
     return {
-      // The meeting's title belongs to module A; this feature calls /api/agent
-      // only, so the label names the kind of page rather than the meeting.
+      // Until GET /api/agent/meeting-label answers with the title (Assistant).
       label: "회의",
       meetingId: meeting[1],
       suggestions: [
