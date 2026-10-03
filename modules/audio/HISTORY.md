@@ -902,6 +902,20 @@ and after (recall 1.000, precision 1.000, 32/35 exact, the 3 declared rows
 unchanged) -- it has no row with any of these characters, which is itself
 the gap: the regressions are pinned in unit tests, not in the corpus.
 
+**Grouped digits, the edges, 2026-10-02 (#716).** Two shapes the grouped
+rule still let through, found in review and never seen from Whisper in
+evaluation 04: a number starting 19/20 whose other groups are all one or two
+digits (`2001-01-31-23-45-6` passed as a date and time), and a number split
+into more than six groups (`97-12-27-83-76-57-3` kept its seventh; one digit
+at a time was missed whole). The date exemption now checks values -- month
+1-12, day 1-31, one hour and minute after a full date -- instead of widths,
+and the rule joins any number of groups. A cap of sixteen, the first version,
+moved the leak to the seventeenth group, where `main` had masked everything
+six at a time (review of #734). Closed because it is cheap and only
+masks more, not because it was measured. In the same note, from review of
+#723: the line-crossing phone pattern also crosses several blank lines
+(`02\n\n123\n\n4567`), which over-masks a paragraph break.
+
 **Phones across lines, 2026-10-02 (#688).** Reverting the `_HSPACE` change in
 #687 left a gap that was there on `main` all along: a nine-digit `02` number
 split by newlines matched nothing, because `account` needs ten digits and the
