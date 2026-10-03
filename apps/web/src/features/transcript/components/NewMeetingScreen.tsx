@@ -337,6 +337,15 @@ export function NewMeetingScreen({
                   ))}
                 </select>
               )}
+              {teams !== null && teams.length > 0 ? (
+                <Link
+                  href="/workspace/new"
+                  className="ml-3 text-[var(--color-accent-default)]"
+                  style={{ fontSize: "var(--text-meta)" }}
+                >
+                  새 팀 만들기
+                </Link>
+              ) : null}
             </Field>
             <Field label="오디오 소스">
               <SourceChoice value={source} onChange={setSource} />

@@ -76,7 +76,8 @@ class Settings(BaseSettings):
     google_integration_client_id: str = ""
     google_integration_client_secret: str = ""
     """A second Google OAuth client, for what a person connects after signing in
-    -- their own calendar today (#435), mail when it exists. Sign-in keeps
+    -- their own calendar (#435) and sending an invitation from their own Gmail
+    (#552). Sign-in keeps
     ``google_client_id``: an identity-only client and one that asks for
     someone's calendar are reviewed by Google on different terms, and need not
     share a consent screen.

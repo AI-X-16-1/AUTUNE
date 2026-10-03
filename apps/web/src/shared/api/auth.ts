@@ -173,6 +173,41 @@ export async function disconnectCalendar(): Promise<{ revoked: boolean }> {
   return (await response.json()) as { revoked: boolean };
 }
 
+/**
+ * Where the browser goes to let Autune send mail as the signed-in person --
+ * an invitation link from their own Gmail (#552). `gmail.send` only: nothing
+ * in the mailbox can be read. Back to `redirectTo` with `?gmail=connected`.
+ */
+export function googleGmailConnectUrl(redirectTo = "/"): string {
+  return authUrl(`/google/gmail/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+}
+
+/** Whether the signed-in person has let Autune send mail as them. */
+export async function getGmailConnection(): Promise<{
+  connected: boolean;
+  needs_reconnect?: boolean;
+} | null> {
+  try {
+    const response = await fetch(authUrl("/google/gmail"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as { connected: boolean; needs_reconnect?: boolean };
+  } catch {
+    return null;
+  }
+}
+
+/** Revoke the Gmail send grant at Google and forget it, as for the calendar. */
+export async function disconnectGmail(): Promise<{ revoked: boolean }> {
+  const response = await fetch(authUrl("/google/gmail/disconnect"), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "gmail_disconnect_failed", "disconnect failed");
+  }
+  return (await response.json()) as { revoked: boolean };
+}
+
 /** A team's Jira connection, as a member of the meeting's team sees it. */
 export interface JiraConnection {
   connected: boolean;

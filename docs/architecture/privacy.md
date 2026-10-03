@@ -303,7 +303,16 @@ retention sweep, and the next invitation made for that team), when a new
 invitation to the same address replaces it, when the team or the inviter's
 account is deleted, and when the invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
-ids, never the address. Until it is accepted an invitation changes nothing
+ids, never the address.
+
+The inviter may have the link **mailed from their own Gmail** (#552), when
+they ask and only through their own `gmail.send` grant -- Autune runs no mail
+server and holds no shared sender. That hands the address and the link to
+Google, as the inviter pasting it into their own mail would. The message names
+the inviter and the team, never the invited address; it is built and sent
+inside the request that made the invitation, so the token never enters a Celery
+payload; and the answer says only whether Gmail took it, which does not depend
+on whether the address has an account here. Until it is accepted an invitation changes nothing
 about what the invited person, or the team, can read.
 
 **Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
@@ -415,6 +424,20 @@ the feature needs.
     grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
     is left to reach the calendar with. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
+  - **A person's Google grants themselves (#760 review):** a deleted
+    account's rows go, but the refresh tokens are not revoked at Google, for
+    the calendar or for `gmail_send`. Autune holds no copy any more, so
+    nothing can use them, and the person still sees Autune under their Google
+    account's third-party access until they remove it there. Revoking on
+    deletion is the follow-up (#763). Disconnecting in Autune does revoke, and a
+    revoke can end the person's other grant from the same Google account,
+    which is then shown as needing a reconnect. Each grant asks for its own
+    scope only, and a token that comes back carrying another grant's scope
+    is refused. A calendar connected before #760 may carry sign-in's scopes
+    (`openid email profile`) through `include_granted_scopes`; nothing
+    before #760 asked for `gmail.send`, so no stored grant carries both
+    personal scopes. Reconnecting the calendar gives it a token with its own
+    scope only.
 
 ## 7. Review checklist
 

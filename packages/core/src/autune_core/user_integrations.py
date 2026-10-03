@@ -23,10 +23,11 @@ from .crypto import decrypt, encrypt
 from .entities import UserIntegration
 from .errors import ValidationError
 
-USER_SERVICES: Final = ("calendar", "slack")
+USER_SERVICES: Final = ("calendar", "slack", "gmail_send")
 """Kept in step with the check constraint on ``user_integrations.service``.
-``slack`` is a person's own Slack identity for direct messages (#255); ``gmail``
-is added with #431's decision, not before it."""
+``slack`` is a person's own Slack identity for direct messages (#255);
+``gmail_send`` is a grant to send mail as the person and nothing else (#552).
+``gmail`` -- reading a mailbox -- is added with #431's decision, not before it."""
 
 
 @dataclass(frozen=True)
