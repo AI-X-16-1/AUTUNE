@@ -52,18 +52,6 @@ export interface ExternalRefRead {
 }
 
 /**
- * One item as `/api/extraction` returns it — `ActionItemRead` in
- * `modules/extraction/src/autune_extraction/schemas.py`.
- *
- * **Not a contract, so it is not generated.** The contracts package covers what
- * crosses between modules; this is module B's own response body, which nobody
- * else parses, and no generator reads it. It extends the generated `ActionItem`
- * so every field the two share stays generated, and names only the three the
- * server adds. `test_the_web_read_model_mirror_is_current` in
- * `modules/extraction/tests` pins the Python side's field set and names this
- * file, so a field added there fails a test rather than going missing here.
- */
-/**
  * The last attempt to copy the item to `system` failed (#680). A kind and a
  * time are all the server keeps: no message from the outside service.
  */
@@ -89,6 +77,18 @@ export interface CalendarState {
     | null;
 }
 
+/**
+ * One item as `/api/extraction` returns it — `ActionItemRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py`.
+ *
+ * **Not a contract, so it is not generated.** The contracts package covers what
+ * crosses between modules; this is module B's own response body, which nobody
+ * else parses, and no generator reads it. It extends the generated `ActionItem`
+ * so every field the two share stays generated, and names only the three the
+ * server adds. `test_the_web_read_model_mirror_is_current` in
+ * `modules/extraction/tests` pins the Python side's field set and names this
+ * file, so a field added there fails a test rather than going missing here.
+ */
 export interface ActionItemRead extends ActionItem {
   meeting_id: string;
   /** The meeting the item came from; the board across meetings shows it. */

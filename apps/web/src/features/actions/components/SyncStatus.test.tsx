@@ -69,6 +69,18 @@ describe("SyncStatus", () => {
     expect(screen.getByText(/Jira 연동 실패/)).toBeTruthy();
   });
 
+  it("does not claim a resend the server did not queue", async () => {
+    // `queued: false`: the item has nothing outside to follow it (#754 review).
+    retry.mockResolvedValue({ queued: false });
+    render(<SyncStatus item={item([JIRA_DOWN])} calendar={null} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+    const said = (await screen.findByRole("status")).textContent;
+    expect(said).toContain("보낼 것이 없습니다");
+    expect(said).not.toContain("다시 보냈습니다");
+  });
+
   it("says so when the retry itself could not be sent", async () => {
     retry.mockRejectedValue(new Error("502"));
     render(<SyncStatus item={item([JIRA_DOWN])} calendar={null} />);

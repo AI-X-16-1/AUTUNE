@@ -35,7 +35,12 @@ from autune_core import (
 )
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_extraction import service, sync_state, tasks
-from autune_extraction.models import ExtActionItem, ExtCalendarEvent, ExtSyncFailure
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtCalendarEvent,
+    ExtExternalRef,
+    ExtSyncFailure,
+)
 from autune_extraction.router import router
 from autune_extraction.schemas import CalendarState
 from autune_integrations import (
@@ -44,7 +49,7 @@ from autune_integrations import (
     TransientIntegrationError,
 )
 
-from .conftest import READER, SYNC_FAILED, SYNC_WENT, sign_in
+from .conftest import READER, RECORD_FAILURE, SYNC_FAILED, SYNC_WENT, sign_in
 
 MEETING = "mtg_1"
 PREFIX = "/api/extraction"
@@ -99,18 +104,28 @@ def sends(session: Session, monkeypatch: pytest.MonkeyPatch) -> dict[str, BaseEx
             session.rollback()
             raise
 
-    outcome: dict[str, BaseException | None] = {"notion": None, "calendar": None, "jira": None}
+    outcome: dict[str, BaseException | str | None] = {
+        "notion": None,
+        "calendar": None,
+        "jira": None,
+    }
 
-    def send(system: str) -> Callable[[str], None]:
-        def run(_action_item_id: str) -> None:
-            if outcome[system] is not None:
-                raise outcome[system]  # type: ignore[misc]
+    def send(system: str) -> Callable[[str], str | None]:
+        """Raise what is under ``system``, or answer it when it is a string --
+        ``sync_action_item_jira``'s outcome."""
+
+        def run(_action_item_id: str) -> str | None:
+            answer = outcome[system]
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
 
         return run
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "_sync_failed", SYNC_FAILED)
     monkeypatch.setattr(tasks, "_sync_went", SYNC_WENT)
+    monkeypatch.setattr(tasks, "_record_failure", RECORD_FAILURE)
     monkeypatch.setattr(tasks, "sync_action_item", send("notion"))
     monkeypatch.setattr(tasks, "sync_action_item_calendar", send("calendar"))
     monkeypatch.setattr(tasks, "sync_action_item_jira", send("jira"))
@@ -184,6 +199,45 @@ def test_the_next_copy_that_goes_through_clears_it(session: Session, sends: dict
     assert kept(session) == {"notion": "unreachable"}
 
     sends["notion"] = None
+    tasks.sync_after_confirmation("act_1")
+
+    assert kept(session) == {}
+
+
+def test_a_jira_skipped_for_a_refused_grant_stays_failed(session: Session, sends: dict) -> None:
+    """``jira_access`` raises a refused grant once and answers ``None`` from then
+    on. A retry without reconnecting must not take the red mark off an item
+    Jira never got (review of #754)."""
+    item(session)
+    sends["jira"] = JiraReconnectRequiredError("refused")
+    tasks.sync_after_confirmation("act_1")
+    assert kept(session) == {"jira": "reconnect"}
+
+    sends["jira"] = tasks.JIRA_NEEDS_RECONNECT
+    tasks.sync_after_confirmation("act_1")
+
+    assert kept(session) == {"jira": "reconnect"}
+
+
+def test_a_jira_skipped_for_a_refused_grant_is_kept_even_the_first_time(
+    session: Session, sends: dict
+) -> None:
+    """An item edited after another item's sync found the grant refused never
+    sees the error itself; it is still a copy that did not go."""
+    item(session)
+    sends["jira"] = tasks.JIRA_NEEDS_RECONNECT
+
+    tasks.sync_after_confirmation("act_1")
+
+    assert kept(session) == {"jira": "reconnect"}
+
+
+def test_a_team_without_jira_has_nothing_to_keep(session: Session, sends: dict) -> None:
+    item(session)
+    sends["jira"] = TransientIntegrationError("down")
+    tasks.sync_after_confirmation("act_1")
+
+    sends["jira"] = tasks.JIRA_SKIPPED
     tasks.sync_after_confirmation("act_1")
 
     assert kept(session) == {}
@@ -267,6 +321,40 @@ def test_the_list_and_the_detail_carry_the_failure(client: TestClient, session: 
         (entry,) = body["sync_failures"]
         assert (entry["system"], entry["kind"]) == ("jira", "reconnect")
         assert entry["failed_at"].startswith("2026-10-02T01:00:00")
+
+
+def test_a_draft_with_nothing_outside_shows_no_failure(
+    client: TestClient, session: Session
+) -> None:
+    """Moved back to 확인 필요 after a failed first copy: no sync runs for it and
+    "다시 시도" queues nothing, so a red mark would stay for good (review of
+    #754)."""
+    item(session, status="needs_confirmation")
+    failure(session)
+
+    (listed,) = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+    detail = client.get(f"{PREFIX}/action-items/act_1").json()
+
+    assert listed["sync_failures"] == detail["sync_failures"] == []
+
+
+def test_a_draft_with_a_copy_outside_still_shows_its_failure(
+    client: TestClient, session: Session
+) -> None:
+    """Confirmed once, it keeps its page and its copies follow, so a retry does
+    something and the failure is worth showing."""
+    item(session, status="needs_confirmation")
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_1", system="notion", meeting_id=MEETING, external_id="page-1"
+        )
+    )
+    session.commit()
+    failure(session)
+
+    (listed,) = client.get(f"{PREFIX}/action-items", params={"meeting_id": MEETING}).json()
+
+    assert [entry["system"] for entry in listed["sync_failures"]] == ["jira"]
 
 
 def test_an_item_nothing_failed_for_carries_none(client: TestClient, session: Session) -> None:

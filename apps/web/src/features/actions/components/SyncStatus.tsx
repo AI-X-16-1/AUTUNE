@@ -71,15 +71,19 @@ export function SyncStatus({
   calendar: CalendarState | null;
 }) {
   const failures = item.sync_failures ?? [];
-  const [retry, setRetry] = useState<"idle" | "sending" | "sent" | "failed">("idle");
+  const [retry, setRetry] = useState<"idle" | "sending" | "sent" | "nothing" | "failed">(
+    "idle",
+  );
 
   if (failures.length === 0 && calendar === null) return null;
 
   const again = async () => {
     setRetry("sending");
     try {
-      await retrySync(item.id);
-      setRetry("sent");
+      // `queued: false` is the server saying nothing went: the item has
+      // nothing outside to follow it (review of #754).
+      const { queued } = await retrySync(item.id);
+      setRetry(queued ? "sent" : "nothing");
     } catch {
       setRetry("failed");
     }
@@ -122,6 +126,11 @@ export function SyncStatus({
           {retry === "sent" ? (
             <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
               다시 보냈습니다. 잠시 뒤 목록을 새로 열면 결과가 보입니다.
+            </span>
+          ) : null}
+          {retry === "nothing" ? (
+            <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
+              보낼 것이 없습니다. 항목을 확정하면 다시 보냅니다.
             </span>
           ) : null}
           {retry === "failed" ? (

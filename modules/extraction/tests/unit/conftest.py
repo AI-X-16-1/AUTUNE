@@ -29,6 +29,8 @@ SYNC_FAILED = tasks._sync_failed
 
 SYNC_WENT = tasks._sync_went
 
+RECORD_FAILURE = tasks._record_failure
+
 
 @pytest.fixture(autouse=True)
 def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -45,6 +47,7 @@ def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     # too. ``test_sync_failures`` puts the real ones back.
     monkeypatch.setattr(tasks, "_sync_failed", lambda _id, _system, _exc: None)
     monkeypatch.setattr(tasks, "_sync_went", lambda _id, _system: None)
+    monkeypatch.setattr(tasks, "_record_failure", lambda _id, _system, _kind: None)
 
 
 def sign_in(app: FastAPI, session: Session, *, team_id: str = "team_1") -> None:

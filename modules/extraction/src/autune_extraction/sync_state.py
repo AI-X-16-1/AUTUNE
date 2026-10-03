@@ -33,7 +33,7 @@ from autune_core import Meeting, PrivacyViolationError, TeamMember, users_with_i
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_integrations import ReconnectRequiredError, TransientIntegrationError
 
-from .models import ExtActionItem, ExtCalendarEvent, ExtSyncFailure
+from .models import ExtActionItem, ExtCalendarEvent, ExtExternalRef, ExtSyncFailure
 from .schemas import CalendarState, SyncFailureRead
 
 NOTION, JIRA, CALENDAR = "notion", "jira", "calendar"
@@ -97,10 +97,37 @@ def failures_for(
     grant above all -- is a fact about that person's own account, so it is
     returned only when the reader is the item's assignee (review of this
     change). A caller with no reader gets none of them.
+
+    **An item whose copies do not follow shows none** -- back in 확인 필요 with
+    nothing outside, so no sync runs for it, "다시 시도" queues nothing, and a
+    failure kept from its first confirmation would stay red for good
+    (PARKJAEKYUNG0525, review of #754). The rule is ``service.copies_follow``'s,
+    read here for the whole list at once.
     """
     if not items:
         return {}
     assignee = {item.id: item.assignee_id for item in items}
+    drafts = [item.id for item in items if item.status == ActionStatus.NEEDS_CONFIRMATION.value]
+    if drafts:
+        copied = set(
+            session.scalars(
+                select(ExtExternalRef.action_item_id).where(
+                    ExtExternalRef.action_item_id.in_(drafts)
+                )
+            )
+        ) | set(
+            session.scalars(
+                select(ExtCalendarEvent.action_item_id).where(
+                    ExtCalendarEvent.action_item_id.in_(drafts),
+                    ExtCalendarEvent.event_id.is_not(None),
+                )
+            )
+        )
+        for item_id in drafts:
+            if item_id not in copied:
+                assignee.pop(item_id)
+        if not assignee:
+            return {}
     rows = session.scalars(
         select(ExtSyncFailure)
         .where(ExtSyncFailure.action_item_id.in_(assignee))
