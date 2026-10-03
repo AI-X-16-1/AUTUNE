@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { Button, StatusDot } from "@/shared/ui";
 
+import { CopyMinutes } from "./CopyMinutes";
 import { getSummary, putSummaryNote } from "../api";
 import { isOverdue } from "../dates";
 import { COLUMNS, COLUMN_LABELS, MAX_NOTE_CHARS } from "../types";
@@ -134,6 +135,11 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             근거 발화와 수정은 액션 탭에서 →
           </Link>
         </p>
+      </section>
+
+      <section aria-label="회의록">
+        <Heading>회의록</Heading>
+        <CopyMinutes summary={summary} />
       </section>
 
       <MemoEditor

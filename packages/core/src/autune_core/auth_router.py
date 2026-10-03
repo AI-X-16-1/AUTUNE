@@ -33,8 +33,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Cookie, Depends, Query, Request
+from fastapi import APIRouter, Cookie, Depends, Header, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -45,10 +46,13 @@ from .auth import (
     _session_token,
     clear_session_cookie,
     current_user,
+    end_sessions,
     issue_token,
     set_session_cookie,
+    signed_in_user_or_none,
 )
 from .auth_service import upsert_user_from_google
+from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
 from .db import get_session
 from .entities import Meeting, Team, TeamMember
@@ -272,7 +276,25 @@ def providers() -> dict[str, bool]:
 
 
 @router.post("/logout", status_code=204)
-def logout() -> Response:
+def logout(
+    session: Annotated[Session, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+    autune_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Sign out: end every session this person has, then clear the cookie.
+
+    Until now this only cleared the cookie, and the token it held stayed
+    valid for the rest of its seven days. ``end_sessions`` makes the server
+    refuse it, and every other token the person holds -- another browser, a
+    developer token, a copy that leaked.
+
+    204 whoever asks. A request with no session, an expired one or one
+    already signed out has nothing to end and still gets its cookie cleared:
+    signing out must not be something that can fail."""
+    user = signed_in_user_or_none(session, authorization, autune_session)
+    if user is not None:
+        end_sessions(user)
+        log.info("auth_signed_out", user_id=user.id)
     response = Response(status_code=204)
     clear_session_cookie(response)
     return response
@@ -281,12 +303,20 @@ def logout() -> Response:
 @router.get("/me")
 def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> dict[str, object]:
     """Who is signed in, and the teams they belong to -- what S28 settings
-    (#496) chooses a team's integrations from, with no meeting to name it."""
+    (#496) chooses a team's integrations from, with no meeting to name it.
+
+    **In the order the person joined them** (#742). Two screens take the
+    first as the default: the assistant (S34) asks about ``teams[0]``, and
+    S28 opens on it. By name, accepting an invitation (#552) to a team whose
+    name sorts earlier silently made the inviting team that default -- the
+    change of default nobody asked for that the review of #539 was about.
+    Module A's ``teams_for`` answers in the same order for the same reason,
+    so the two lists a browser holds agree on which team is first."""
     teams = session.execute(
         select(Team.id, Team.name)
         .join(TeamMember, TeamMember.team_id == Team.id)
         .where(TeamMember.user_id == user.id)
-        .order_by(Team.name, Team.id)
+        .order_by(TeamMember.id)
     ).all()
     return {
         "id": user.id,
@@ -294,6 +324,59 @@ def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> 
         "display_name": user.display_name,
         "teams": [{"id": team_id, "name": name} for team_id, name in teams],
     }
+
+
+# --------------------------------------------------------------------------- #
+# What a person agreed to: recorded here, asked for by the consent page
+# --------------------------------------------------------------------------- #
+
+
+class _ConsentIn(BaseModel):
+    document: str
+    version: str
+
+
+class _ConsentsIn(BaseModel):
+    consents: list[_ConsentIn]
+
+
+def _consents_answer(consents: list[Consent]) -> dict[str, object]:
+    return {
+        "consents": [
+            {
+                "document": c.document,
+                "version": c.version,
+                "agreed_at": c.agreed_at.isoformat() if c.agreed_at else None,
+            }
+            for c in consents
+        ]
+    }
+
+
+@router.get("/consents")
+def my_consents(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, object]:
+    """The documents and versions the signed-in person agreed to -- theirs
+    only. The consent page compares this with what it requires; the server
+    does not know which version is current (``autune_core.consents``)."""
+    return _consents_answer(consents_of(session, user.id))
+
+
+@router.post("/consents")
+def agree(
+    body: _ConsentsIn,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+) -> dict[str, object]:
+    """Record that the signed-in person agreed to each document and version
+    named. Agreeing again changes nothing: the first time is the one kept.
+    Nobody can agree for anyone else -- the person is the session's."""
+    recorded = record_consents(
+        session, user.id, [(item.document, item.version) for item in body.consents]
+    )
+    log.info("auth_consents_recorded", user_id=user.id, documents=len(body.consents))
+    return _consents_answer(recorded)
 
 
 # --------------------------------------------------------------------------- #
@@ -463,14 +546,24 @@ def google_calendar_status(
     ``needs_reconnect`` is true for a grant recorded as issued to another
     Google client than the one this deployment refreshes with now: its
     refresh token cannot work. A grant from before the client was recorded
-    says nothing either way, and is reported as it always was."""
+    says nothing either way, and is reported as it always was.
+
+    With no Google client configured at all there is nothing to compare
+    with: module B reaches nobody's calendar in that state and says nothing
+    (``tasks._calendars``), and the card must not say more than B does --
+    connecting again would not help. So that is not ``needs_reconnect``
+    (mminjae97, review of #711)."""
     grant = load_user_integration(session, user.id, "calendar")
     connected = grant is not None and bool(grant.secret)
     issued_to = grant.config.get("client_id") if grant is not None else None
-    current = get_settings().google_integration_credentials[0]
+    # "Configured" as module B reads it (``tasks._google_client_configured``):
+    # an id and a secret. Half a client refreshes nothing, so it is not a
+    # client to reconnect to either (review of #718).
+    current, secret = get_settings().google_integration_credentials
+    configured = bool(current and secret)
     return {
         "connected": connected,
-        "needs_reconnect": connected and bool(issued_to) and issued_to != current,
+        "needs_reconnect": (connected and configured and bool(issued_to) and issued_to != current),
     }
 
 

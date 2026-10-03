@@ -886,6 +886,49 @@ one argument at each of the two call sites, and the reason it is two and not one
 is the same as the row above: the guard checks what the masker promises, so it
 has to see everything the masker sees.
 
+**Separators, derived instead of copied, 2026-10-02 (#324).** The masker kept
+its own list of the characters `privacy._SEP` accepts between digit groups,
+and the two drifted a third time: a thin space the pattern took made a phone
+number "mixed script" and all of it went, and a card read across lines lost
+its last four. Over-masking, not a leak, but the documented shape broke. The
+masker now treats any whitespace and the punctuation `privacy` exports as
+layout, so the list exists once. The first version also stopped `_HSPACE`
+counting `\v`, `\f`, U+0085, U+2028 and U+2029 as space, to keep a phone
+match from bridging two lines; review showed it left a nine-digit `02`
+number split by one of them matched by nothing, through the outbound guard,
+so it was reverted -- detection stays wide, and only the masker's layout
+changed. A newline-split `02` number is missed on `main` too (#688). The masking corpus scored the same before
+and after (recall 1.000, precision 1.000, 32/35 exact, the 3 declared rows
+unchanged) -- it has no row with any of these characters, which is itself
+the gap: the regressions are pinned in unit tests, not in the corpus.
+
+**Grouped digits, the edges, 2026-10-02 (#716).** Two shapes the grouped
+rule still let through, found in review and never seen from Whisper in
+evaluation 04: a number starting 19/20 whose other groups are all one or two
+digits (`2001-01-31-23-45-6` passed as a date and time), and a number split
+into more than six groups (`97-12-27-83-76-57-3` kept its seventh; one digit
+at a time was missed whole). The date exemption now checks values -- month
+1-12, day 1-31, one hour and minute after a full date -- instead of widths,
+and the rule joins any number of groups. A cap of sixteen, the first version,
+moved the leak to the seventeenth group, where `main` had masked everything
+six at a time (review of #734). Closed because it is cheap and only
+masks more, not because it was measured. In the same note, from review of
+#723: the line-crossing phone pattern also crosses several blank lines
+(`02\n\n123\n\n4567`), which over-masks a paragraph break.
+
+**Phones across lines, 2026-10-02 (#688).** Reverting the `_HSPACE` change in
+#687 left a gap that was there on `main` all along: a nine-digit `02` number
+split by newlines matched nothing, because `account` needs ten digits and the
+phone pattern does not cross a line. A second phone pattern on the card's
+narrow separator closes it. The leading zero and the 2-3 / 3-4 / 4 layout
+are what keep it from joining figures on adjacent lines; the corpus scores
+the same, and `예산\n150000\n200000` is matched exactly as before (by
+`account`, a known over-mask). What it newly over-masks, found in review and
+accepted as the safe direction: a short zero-led figure at a line end
+followed by a three-to-four and a four-digit line -- `Q1 05\n300\n2500원`,
+`목표 01\n300\n2024`. If a false positive is reported, look at this pattern
+first.
+
 **Numbers read aloud, 2026-10-02 (#160, evaluation 04).** #160 asked for a
 count of comma-split and one-syllable-at-a-time numbers before widening a
 pattern. There was nothing to count -- 218 stored utterances and HiKE's 1,121
@@ -898,6 +941,34 @@ resident numbers leaked, 0/32 phones. The decision this drives: don't fix
 #160's shapes; measure a total-length catch-all for hyphen-joined digit runs
 against the corpus (the `2024-2025-2026` false positive is its known cost).
 TTS is not a meeting, so the rates are not field rates.
+
+**Grouped digits, 2026-10-02 (#696).** Evaluation 04 (PR #697) found that
+Whisper writes a number read aloud in digits and guesses its hyphens, and the
+length-keyed patterns let mis-grouped accounts and resident numbers through
+(28 of 96 synthetic clips). The fix is one rule in `privacy.py`: a run of
+digit groups joined by a hyphen, a dash or the filler Whisper keeps (음, 어)
+is personal data once it holds eleven digits, however it is split -- refused
+when it is a list of years or a date range, and refused whole so a date range
+is not retried from the inside. Not a bare space or a dot: price lists and
+version strings. Re-run of the same 96 clips: **1 leak**, an account Whisper
+wrote run-together (`45080930978`), which keeps its last four by the old
+`account` rule and counts only because the hyphenated baseline now keeps none.
+
+The trade, decided rather than discovered: the rule is declared above
+`account`, so a correctly hyphenated account loses its last four. A resident
+number Whisper hyphenated 6-3-4 is also an account shape, and the alternative
+was four of its digits standing. Two corpus rows (3-3-6, 6-2-6 accounts) now
+differ in the safe direction and say so (`known_inexact`); recall and
+precision stay 1.000. TTS, one voice: not field rates.
+
+Review moved one line. The date exemption first refused any run whose groups
+were all four digits or fewer and started with 19xx/20xx -- which is exactly
+the shape of a number Whisper split into short groups, so `2008-26-643-8793`
+passed as a date. It now refuses only a year followed by one- or two-digit
+groups or more years. What the rule newly over-masks, accepted: hyphenated
+lists past eleven digits (`100-200-300-400-500명`, an ISBN). The filler `어`
+is a separator on the strength of `음` alone; the next corpus run should
+say whether any match is joined only by `어`.
 
 **Retention and deletion, 2026-10-01 (#581–#584, then #363).** Four rows that
 were document-only became code: an hourly sweep deletes meetings past

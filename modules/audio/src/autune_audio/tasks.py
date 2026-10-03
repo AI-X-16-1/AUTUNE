@@ -497,4 +497,5 @@ def expire_meetings() -> None:
         meetings=len(result.meetings),
         hooks_failed=len(result.hooks_failed),
         profiles=result.profiles,
+        invitations=result.invitations,
     )

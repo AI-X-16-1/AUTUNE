@@ -294,6 +294,18 @@ person's, those counts are that person's completion record. So:
 A test proving that your module's data is fully removed when a meeting is
 deleted is part of shipping a table, not an extra.
 
+**A pending team invitation** (#552) is the one place Autune holds the
+address of somebody who has agreed to nothing yet. It is kept in
+`aud_team_invitations` only -- no `users` row is made for an address that
+has not signed up -- and it does not wait for the analysis window: the row
+is deleted when the invitation is accepted, when it lapses (seven days; the
+retention sweep, and the next invitation made for that team), when a new
+invitation to the same address replaces it, when the team or the inviter's
+account is deleted, and when the invited person deletes their own account.
+The link's token is stored as a hash, and log lines about invitations carry
+ids, never the address. Until it is accepted an invitation changes nothing
+about what the invited person, or the team, can read.
+
 **Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
 and deletion apply to what Autune holds. An item or decision a team sent to its
 own Notion or Jira, through an integration the team connected, is the team's
@@ -310,6 +322,26 @@ account anyway.
 - Participants are notified when recording starts.
 - A non-consenting participant's speech can be excluded from analysis. Excluded
   utterances are not stored, not just hidden.
+- **Agreement to the terms and to the privacy policy is recorded per person**:
+  which of the two, which version, when (`user_consents`, written by
+  `packages/core` behind `/api/auth/consents`; #715). A changed document is a
+  new version, which nobody has agreed to yet. The server records and does
+  not gate: the consent page holds a person, no API call is refused.
+  - **Withdrawal.** Those two are what using the service rests on, so taking
+    the agreement back is leaving: deleting the account deletes the record
+    with it (`ON DELETE CASCADE`). There is no separate withdrawal, and
+    nothing is kept behind as proof — whether evidence of consent should
+    outlive the account is part of #92.
+  - **It is consent to nothing else.** The table can only say "agreed", so a
+    consent a person must be able to refuse and withdraw is not recorded in
+    it, and a check constraint keeps it to the two documents. In particular
+    it does not permit voice data: module A's `voice_profiles_enabled` stays
+    off until a separate, refusable consent exists and A reads that record
+    (#268, #92 Q4). Which record is the source of truth for it is A's to
+    decide with the privacy owner.
+  - **It is not the consent to a recording.** That is per meeting, about the
+    people in the room, and module A keeps it (`aud_consent_attestations`,
+    `participants.consented`). The two never stand in for each other.
 
 ## 6. Third-party services
 

@@ -45,7 +45,7 @@ export default async function MeetingReviewLayout({
             { href: tab("/summary"), label: "요약" },
             { href: tab(""), label: "전사" },
             { href: tab("/actions"), label: "액션" },
-            { href: tab("/gap"), label: "갭" },
+            { href: tab("/gap"), label: "분석" },
             { href: tab("/context"), label: "컨텍스트" },
           ]}
         />

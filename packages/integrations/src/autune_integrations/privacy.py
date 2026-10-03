@@ -85,8 +85,17 @@ _R: Final = rf"(?![{_EDGE}])"
 # `+82 (10) 1234-5678` -- and that form is not caught; it is pinned as a known
 # miss rather than widened here, because `(` between groups is also what
 # `(1) 2024-2025` looks like.
+#
+# `\v`, `\f`, U+0085, U+2028 and U+2029 still count as space here, though they
+# break a line: narrowing them out (#324, first version of #687) left a
+# nine-digit `02` number split by one of them matched by nothing, and this is
+# the detector `check_outbound` relies on. Detection stays wide; how the masker
+# lays out what it hides is ``masking._layout``'s business.
 _HSPACE: Final = r"[^\S\r\n]"
-_SEP: Final = rf"{_HSPACE}*(?:[-.–—)]{_HSPACE}*)?"
+SEPARATOR_PUNCTUATION: Final = "-.–—)"
+"""The punctuation `_SEP` accepts between digit groups. Exported so module A's
+masker keeps exactly these as layout instead of a hand-made copy (#324)."""
+_SEP: Final = rf"{_HSPACE}*(?:[{re.escape(SEPARATOR_PUNCTUATION)}]{_HSPACE}*)?"
 
 # The card pattern alone may cross a line break. Four groups of four is a
 # shape nothing else in a transcript has, and a card number read aloud
@@ -119,6 +128,43 @@ _SEP_TIGHT: Final = r"[-.\s]?"
 # list of date formats to go stale.
 MIN_ACCOUNT_DIGITS: Final = 10
 
+# Whisper writes a number read aloud in digits and **guesses where the hyphens
+# go** (evaluation 04, #696). A phone number comes back 3-4-4, but an account
+# read 3-2-6 came back `450-80-930-9782` and a resident number
+# `971-227-837-6573`: shapes the patterns above key on by group length, so they
+# matched nothing, or matched `account` on the tail and left the front
+# standing. 15 of 32 synthetic accounts and 13 of 32 resident numbers leaked.
+#
+# So: any run of digit groups joined by a hyphen or a dash -- or by the filler
+# Whisper keeps between them (`628음 84음 919160`) -- however it is split, once
+# it holds MIN_GROUPED_DIGITS digits. Not a bare space and not a dot: `3000
+# 5000 10000원` is a list of prices and `1.2.3` a version, and neither is a
+# shape this needs. The one hyphenated thing a meeting says that is this long
+# and not an identifier is a list of years or a date range (`2024-2025-2026`,
+# `2026-10-02-2026-10-05`, #125's false positive), which ``find_pii`` refuses:
+# one or more dates, each a 19xx/20xx year optionally followed by a month
+# (1-12), a day (1-31) and, after a full date, one hour (0-23) and minute
+# (0-59). The values are checked, not just the widths: the first version took
+# any four-or-fewer-digit groups after a year and passed `2012-34-567-8901`
+# (review of #702); the second took any one- or two-digit groups and passed
+# `2012-34-56-78-90-1` and `2001-01-31-23-45-6` (#716) -- month 34, and a
+# "time" with a sixth group.
+#
+# Declared before `account`, so on the same span this wins and every digit
+# goes. That costs a correctly hyphenated account its last four (`1002-123-
+# 456789` is eleven-plus digits and both shapes): the four that #138 kept for a
+# reader to recognise their own account. A mis-grouped resident number keeping
+# four is the leak; an account losing four is the annoyance.
+MIN_GROUPED_DIGITS: Final = 11
+_GROUP_SEP: Final = rf"{_HSPACE}*(?:[-–—]|음|어){_HSPACE}*"
+_DATE: Final = (
+    r"(?:19|20)\d\d"
+    r"(?:\D+(?:0?[1-9]|1[0-2])"  # month
+    r"(?:\D+(?:0?[1-9]|[12]\d|3[01])"  # day
+    r"(?:\D+(?:[01]?\d|2[0-3])\D+[0-5]?\d)?)?)?"  # hour and minute, after a full date
+)
+_YEAR_LED: Final = re.compile(rf"{_DATE}(?:\D+{_DATE})*")
+
 PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # Longest shapes first: an RRN also looks like two number groups, and a card
     # number contains things that look like account fragments.
@@ -140,6 +186,14 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # a regex goes stale: 070 is a common Korean VoIP range, 0505 is a safe
     # number and 080 is freephone, and none of them were in the old list.
     ("phone", re.compile(rf"{_L}0\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
+    # The same number written across lines, on the card's narrow separator
+    # (#688). `account` catches a line-split number of ten digits or more, but a
+    # nine-digit Seoul number (`02` / `123` / `4567`) matched nothing and
+    # `check_outbound` passed it -- most likely in text a person typed with line
+    # breaks: an edited report, a correction, an action item. The leading zero
+    # and the 2-3 / 3-4 / 4 layout are what keep this from joining two figures
+    # on adjacent lines, the hazard `_HSPACE` exists for.
+    ("phone", re.compile(rf"{_L}0\d{{1,2}}{_SEP_CARD}\d{{3,4}}{_SEP_CARD}\d{{4}}{_R}")),
     # +82-10-1234-5678. Without this the account pattern takes the first two
     # groups and leaves the last eight digits standing.
     ("phone", re.compile(rf"{_L}\+?82{_SEP}\d{{1,3}}{_SEP}\d{{3,4}}{_SEP}\d{{4}}{_R}")),
@@ -156,6 +210,17 @@ PII_PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     # account said *with* separators is not matched here at all and still keeps
     # its last four.
     ("digits", re.compile(rf"{_L}\d{{12,}}{_R}")),
+    # A hyphen- or filler-joined run of eleven digits or more, however Whisper
+    # grouped it (#696; MIN_GROUPED_DIGITS). **Above `account`**, like the
+    # run-together rule above it: on the same span the first declared wins, and
+    # a resident number Whisper hyphenated 6-3-4 is also an account shape that
+    # would keep its last four.
+    # No cap on the number of groups. Six left a seventh standing
+    # (`97-12-27-83-76-57-3`) and missed a number read one digit at a time
+    # (#716); sixteen moved the same leak to the seventeenth group, where `main`
+    # had masked everything six at a time (review of #734). A separator is
+    # required between groups, so an unbounded repeat does not backtrack.
+    ("digits", re.compile(rf"{_L}\d{{1,7}}(?:{_GROUP_SEP}\d{{1,7}})+{_R}")),
     # Bank layouts vary -- 3-2-6, 6-2-6, 3-3-6 -- and get said without
     # separators as often as with. See MIN_ACCOUNT_DIGITS for what keeps this
     # from matching every date in a transcript.
@@ -211,12 +276,17 @@ def find_pii(text: str) -> list[tuple[int, int, str]]:
         #       masker nor the guard.
         position = 0
         while (match := pattern.search(text, position)) is not None:
-            rejected = MASK_CHAR in match.group() or (
+            rejected = (
+                MASK_CHAR in match.group()
                 # A date, a version, a figure said in three parts.
-                category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS
+                or (category == "account" and _digit_count(match.group()) < MIN_ACCOUNT_DIGITS)
+                or (category == "digits" and _is_short_or_dated(match.group()))
             )
             if rejected:
-                position = match.start() + 1
+                # A grouped run refused as a date range or too short is refused
+                # whole: retrying inside it would find `10-02-2026-10-05` in
+                # `2026-10-02-2026-10-05` and mask the date it just let go.
+                position = match.end() if category == "digits" else match.start() + 1
                 continue
             found.append((match.start(), match.end(), category))
             position = match.end()
@@ -246,6 +316,17 @@ def _most_specific(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, st
 
 def _digit_count(value: str) -> int:
     return sum(1 for c in value if c.isdigit())
+
+
+def _is_short_or_dated(value: str) -> bool:
+    """A grouped run too short to be an identifier, or one or more real dates --
+    year, then month 1-12, day 1-31, and after a full date one hour and minute.
+    The run-together ``digits`` rule (twelve and up, no separator) passes both."""
+    if not any(not c.isdigit() for c in value):
+        return False
+    if _digit_count(value) < MIN_GROUPED_DIGITS:
+        return True
+    return _YEAR_LED.fullmatch(value) is not None
 
 
 MASK_CHAR: Final = "*"

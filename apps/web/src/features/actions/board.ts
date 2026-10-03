@@ -8,6 +8,19 @@ import type { ActionItemRead, ActionStatus } from "./types";
  */
 export type Moves = Readonly<Record<string, ActionStatus>>;
 
+/**
+ * Said after a change that confirmed an item -- out of "확인 필요" -- by a drop
+ * on the board or by the detail window's select. One sentence for both, so
+ * the same act does not read differently by where it was done.
+ */
+export const CONFIRMED_NOTICE =
+  "확정했습니다. 팀이 연결한 도구가 있으면 그쪽에도 반영됩니다.";
+
+/** Whether moving `item` to `target` is the move that confirms it. */
+export function confirms(item: ActionItemRead, target: ActionStatus): boolean {
+  return columnOf(item) === "needs_confirmation" && target !== "needs_confirmation";
+}
+
 /** The column an item is drawn in. */
 export function columnOf(
   item: ActionItemRead,
@@ -24,6 +37,27 @@ export function columnOf(
  * its way somewhere: a second drop would race the first, the way a second pick
  * in the detail window's select would (review of #292). Not its own column.
  */
+/** Letters, not counting spaces. "다음 주 화요일까지 볼게요" is eleven. */
+export const SHORT_SENTENCE = 16;
+
+/**
+ * Whether a card's sentence is the kind that says nothing by itself: one the
+ * pipeline took from an utterance and nobody -- no model, no person --
+ * rewrote, short enough to be an answer ("그럴게") or a pointer ("그건 제가
+ * 볼게요"). Such a card is shown with the line said just before it
+ * (`useCardContext`).
+ *
+ * Length is a rule of thumb, not a reading of the sentence: a short sentence
+ * that is complete gets a hint it did not need, which costs a line; a long
+ * one that still points at nothing gets none, and the detail window has it.
+ */
+export function pointsAtNothing(item: ActionItemRead): boolean {
+  if (item.origin !== "model") return false;
+  if (item.description_resolved) return false;
+  if ((item.source_utterance_ids?.length ?? 0) === 0) return false;
+  return [...item.description.replace(/\s/g, "")].length <= SHORT_SENTENCE;
+}
+
 export function canDrop(
   item: ActionItemRead | undefined,
   target: ActionStatus,

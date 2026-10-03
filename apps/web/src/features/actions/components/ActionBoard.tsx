@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
 import { CandidateBand } from "./CandidateBand";
-import { canDrop, groupForBoard } from "../board";
+import { CONFIRMED_NOTICE, canDrop, confirms, groupForBoard } from "../board";
+import { useCardContext } from "../hooks/useCardContext";
 import { COLUMNS, COLUMN_LABELS } from "../types";
 import type { ActionItemDraft } from "../api";
 import type { Moves } from "../board";
@@ -39,6 +40,12 @@ import type { ActionItemRead, ActionStatus } from "../types";
  *
  * The select stays the way to do it without a pointer: the browser's own drag
  * and drop has no keyboard path and does not fire on most touch screens.
+ *
+ * **A drop that confirmed an item says so afterwards** (#712): one line, not a
+ * question. The drop has already applied, as decided; what the line adds is
+ * that a person who meant only to tidy the board learns that this move was
+ * the one that sends the item on. It offers no undo -- whether one can be
+ * honoured once a copy has left is not settled.
  */
 export function ActionBoard({
   items,
@@ -65,19 +72,31 @@ export function ActionBoard({
   // The select in the detail window says why a change did not hold; a card
   // that only slid back would say nothing (review of #292).
   const [failure, setFailure] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  // The board's own state changes a tick after `dragstart`, not inside it: a
+  // re-render of the card while the browser is still starting the drag
+  // cancels the drag in some versions of Chrome (review of #710).
+  const starting = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(starting.current), []);
 
   const { candidates, byColumn } = useMemo(() => groupForBoard(items, moves), [items, moves]);
+  // The line said before a card whose sentence says nothing by itself.
+  const context = useCardContext(items);
   const dragged = draggedId === null ? undefined : items.find((item) => item.id === draggedId);
 
   const drop = async (target: ActionStatus) => {
+    window.clearTimeout(starting.current);
     setDraggedId(null);
     setOver(null);
     if (onMove === undefined || !canDrop(dragged, target, moves)) return;
     const id = dragged.id;
+    const confirmed = confirms(dragged, target);
     setFailure(null);
+    setNotice(null);
     setMoves((current) => ({ ...current, [id]: target }));
     try {
       await onMove(id, target);
+      if (confirmed) setNotice(CONFIRMED_NOTICE);
     } catch {
       setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
@@ -98,6 +117,15 @@ export function ActionBoard({
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
           {failure}
+        </p>
+      ) : null}
+      {notice !== null ? (
+        <p
+          role="status"
+          className="text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {notice}
         </p>
       ) : null}
 
@@ -160,16 +188,22 @@ export function ActionBoard({
                     selected={item.id === selectedId}
                     onSelect={onSelect}
                     showMeeting={showMeeting}
+                    context={context[item.id]}
                     drag={
                       onMove === undefined
                         ? undefined
                         : {
                             moving: item.id in moves,
                             onStart: () => {
-                              setFailure(null);
-                              setDraggedId(item.id);
+                              window.clearTimeout(starting.current);
+                              starting.current = window.setTimeout(() => {
+                                setFailure(null);
+                                setNotice(null);
+                                setDraggedId(item.id);
+                              }, 0);
                             },
                             onEnd: () => {
+                              window.clearTimeout(starting.current);
                               setDraggedId(null);
                               setOver(null);
                             },
@@ -188,6 +222,7 @@ export function ActionBoard({
         selectedId={selectedId}
         onSelect={onSelect}
         showMeeting={showMeeting}
+        context={context}
       />
     </div>
   );

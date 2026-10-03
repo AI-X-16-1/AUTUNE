@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from autune_audio.live import registry as live_registry
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
-from autune_core.auth import decode_token
+from autune_core.auth import user_for_token
 from autune_core.deletion import on_user_deleted
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
@@ -185,18 +185,24 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
 
 
 def teams_for(session: Session, *, member: User) -> list[Team]:
-    """The teams ``member`` belongs to, by name.
+    """The teams ``member`` belongs to, in the order they joined them.
 
     ``MeetingCreate`` takes a ``team_id`` and a browser holding only a token has
     no way to learn one; this is that way. Read-only over shared entities,
     which invariant 4 allows every module.
+
+    **Joined first, listed first** (#552). The screens take the first team as
+    the default -- S06 opens a new meeting for it. Sorted by name, accepting an
+    invitation to a team whose name sorts earlier silently made that team the
+    default, so a person's next meeting went to the team they had just joined
+    rather than their own. Joining a team now adds it to the end.
     """
     return list(
         session.scalars(
             sa.select(Team)
             .join(TeamMember, TeamMember.team_id == Team.id)
             .where(TeamMember.user_id == member.id)
-            .order_by(Team.name)
+            .order_by(TeamMember.id)
         )
     )
 
@@ -723,21 +729,21 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
     """Who is on the other end of a live socket, and may they be.
 
     A WebSocket handler cannot take ``CurrentUser`` as a dependency, so the
-    same two checks the HTTP routes make -- decode the token, confirm the
-    membership -- are one function here, and the socket and the routes cannot
-    come to different conclusions about the same token.
+    same two checks the HTTP routes make -- the token, then the membership --
+    are one function here. The token is checked by core's ``user_for_token``,
+    the function ``current_user`` is, so the socket and the routes cannot come
+    to different conclusions about the same token: a signed-out one is
+    refused here as it is there (#727).
 
     One deliberate divergence from ``current_user``: a well-signed token whose
     user row is gone raises ``PermissionDeniedError`` here, not
     ``NotFoundError``. The socket maps ``NotFoundError`` to a close code
     meaning "no such meeting", and a deleted user must not be reported as that.
     """
-    user_id = decode_token(token).get("sub")
-    if not user_id:
-        raise PermissionDeniedError("token carries no subject")
-    user = session.get(User, user_id)
-    if user is None:
-        raise PermissionDeniedError("token names nobody")
+    try:
+        user = user_for_token(session, token)
+    except NotFoundError as exc:
+        raise PermissionDeniedError("token names nobody") from exc
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)

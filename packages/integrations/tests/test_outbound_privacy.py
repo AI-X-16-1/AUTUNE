@@ -437,9 +437,11 @@ def test_a_figure_before_an_account_does_not_hide_it(line: str) -> None:
     The account shape matched `50 1002-123` first — nine digits, a figure,
     correctly rejected — and the scan then resumed past it, so the account that
     starts inside what was rejected was never looked at. It reached neither the
-    masker nor the guard.
+    masker nor the guard. Since #696 the grouped-digits rule, declared above
+    `account`, is the one that claims a hyphenated eleven-digit run, so either
+    name means the account was found.
     """
-    assert "account" in find_unmasked(line)
+    assert {"account", "digits"} & set(find_unmasked(line))
 
 
 def test_an_oversized_payload_is_refused_before_it_is_scanned() -> None:
@@ -562,7 +564,9 @@ KNOWN_OVER_MASKING = [
 
 @pytest.mark.parametrize(("category", "text"), KNOWN_OVER_MASKING)
 def test_a_four_group_list_is_over_masked_and_we_know_it(category: str, text: str) -> None:
-    assert {cat for _, _, cat in find_pii(text)} == {category}
+    # Since #696 a hyphenated list of sixteen digits is also a grouped run;
+    # the over-masking is the same, by one more name.
+    assert {cat for _, _, cat in find_pii(text)} - {"digits"} == {category}
 
 
 @pytest.mark.parametrize("head", ["010", "1234", "900101", "+82"])
@@ -585,6 +589,14 @@ def test_a_match_does_not_run_across_a_line_break() -> None:
     assert {cat for _, _, cat in find_pii("예산\n150000\n200000")} == {"account"}
 
 
+@pytest.mark.parametrize("brk", ["\u2028", "\v"])
+def test_a_nine_digit_number_split_by_a_vertical_separator_is_still_found(brk: str) -> None:
+    """Review of #687: narrowing `_HSPACE` to exclude these left `02` + 123 +
+    4567 matched by nothing -- `account` needs ten digits -- and the outbound
+    guard let it through. Detection stays wide."""
+    assert "phone" in find_unmasked(f"02{brk}123{brk}4567")
+
+
 def test_a_card_number_split_across_lines_is_still_one_card() -> None:
     """The one shape allowed to cross a line break, and why: without it the
     text below matched `account` (0, 14) and left `9012` *and* `3456` in the
@@ -601,3 +613,101 @@ def test_an_international_number_with_a_bracketed_area_code_is_a_known_miss() ->
     `(1) 2024-2025` has the same shape. Pinned so the miss is a decision,
     not a surprise."""
     assert find_pii("+82 (10) 1234-5678") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "계좌는 450-80-930-9782에요",  # an account read 3-2-6, hyphenated 3-2-3-4
+        "주민번호는 971-227-837-6573입니다",  # 6-7 hyphenated 3-3-3-4
+        "주민번호는 700826-643-8793입니다",  # 6-7 hyphenated 6-3-4
+        "계좌는 628음 84음 919160이에요",  # a filler kept between the groups
+        "계좌는 450-80-9309782에요",  # a seven-digit last group `account` refuses
+        # Review of #702: split into short groups and starting with 19/20, these
+        # passed the first version's date exemption.
+        "계좌는 2012-34-567-8901이에요",
+        "계좌 2024-450-80-930-9782",
+        "주민번호는 2008-26-643-8793입니다",
+        "계좌는 1990-12-345-6789",
+        "계좌는 2013-45-6789-01이에요",
+        "주민번호는 2003-15-3123-456입니다",
+    ],
+)
+def test_a_number_whisper_grouped_its_own_way_is_found(text: str) -> None:
+    """#696: Whisper hyphenates by guess, and these were stored in the clear or
+    kept their front groups (evaluation 04)."""
+    assert "digits" in {cat for _, _, cat in find_pii(text)}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2026-10-02-2026-10-05 휴가",  # a date range: refused whole, not retried inside
+        "2026-09-18까지 배포",  # a date
+        "버전 1.2.3.4",  # dots are not a grouping separator
+        "010-1234",  # too short
+        "2024-2025-2026-2027 로드맵",  # a list of years
+        "2026-10-02T14:30:00+09:00",  # a timestamp
+        "2026-10-05-15-30에",  # a date and a time
+    ],
+)
+def test_dates_years_and_short_runs_are_not_grouped_digits(text: str) -> None:
+    assert "digits" not in {cat for _, _, cat in find_pii(text)}
+
+
+@pytest.mark.parametrize("text", ["02\n123\n4567", "02\r\n123\r\n4567", "02-123\n4567"])
+def test_a_nine_digit_number_split_across_lines_is_found(text: str) -> None:
+    """#688: `account` covers a line-split number of ten digits or more; a
+    nine-digit `02` number matched nothing, and `check_outbound` passed it."""
+    assert "phone" in find_unmasked(text)
+
+
+def test_figures_on_adjacent_lines_are_not_joined_into_a_phone() -> None:
+    """The leading zero and the layout keep the line-crossing phone pattern from
+    joining unrelated figures -- the hazard `_HSPACE` exists for."""
+    assert "phone" not in {cat for _, _, cat in find_pii("회의 3\n2024\n10월")}
+    assert "phone" not in {cat for _, _, cat in find_pii("예산\n150000\n200000")}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "2012-34-56-78-90-1",  # month 34: not a date, whatever the widths
+        "2001-01-31-23-45-6",  # a date, a time, and a sixth group
+        "2001-01-3-12-34-56",
+        "97-12-27-83-76-57-3",  # seven groups: the seventh stood after the old cap
+        "450-80-930-97-82-1-2",
+        "9-7-1-2-2-7-8-3-7-6-5-7-3",  # read one digit at a time
+    ],
+)
+def test_the_shapes_716_found_are_grouped_digits(text: str) -> None:
+    """#716: what the grouped rule still missed after #702. Not seen from
+    Whisper in evaluation 04 -- closed because it costs nothing safe to close."""
+    spans = [(start, end) for start, end, cat in find_pii(text) if cat == "digits"]
+    assert spans == [(0, len(text))]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["2026-10-05-15-30에", "2026-10-02-2026-10-05", "2026-1-5까지", "1-2-3차 스프린트"],
+)
+def test_real_dates_and_short_lists_stay_out_of_grouped_digits(text: str) -> None:
+    assert "digits" not in {cat for _, _, cat in find_pii(text)}
+
+
+def test_a_run_of_more_than_sixteen_groups_is_hidden_whole() -> None:
+    """Review of #734: a cap of sixteen left the seventeenth group and later
+    standing, where `main`, six at a time, had hidden everything."""
+    text = "12-34-56-78-90-12-34-56-78-90-12-34-56-78-90-12-345-6789"
+    assert [(s, e) for s, e, cat in find_pii(text) if cat == "digits"] == [(0, len(text))]
+    one_at_a_time = "-".join("123456789012345678")
+    assert [(s, e) for s, e, cat in find_pii(one_at_a_time) if cat == "digits"] == [
+        (0, len(one_at_a_time))
+    ]
+
+
+def test_an_unbounded_group_run_is_scanned_quickly() -> None:
+    started = time.monotonic()
+    find_pii("1-" * 2_000 + "x")
+    find_pii("1음 " * 1_300 + "x")
+    assert time.monotonic() - started < 2.0
