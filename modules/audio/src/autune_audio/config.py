@@ -57,6 +57,17 @@ class AudioSettings(BaseSettings):
     See ``service.sweep_orphans``.
     """
 
+    heartbeat_interval_s: float = 30.0
+    """How often a running job's ``JobGuard`` writes ``aud_jobs.heartbeat_at``
+    and reads back whether it has been cancelled or superseded. Also the
+    longest a cancel waits before the worker sees it. Provisional (HISTORY.md).
+    """
+
+    stall_after_s: float = 120.0
+    """How old a running job's heartbeat may be before the job counts as
+    stalled -- its worker gone -- and may be restarted. Four missed heartbeats.
+    Provisional (HISTORY.md)."""
+
     hf_token: str = ""
     """Hugging Face token for the gated pyannote models.
 
