@@ -359,3 +359,77 @@ def test_one_row_that_breaks_does_not_block_the_rest(
 
     assert calls == ["page-1", "page-2"]
     assert [r[2] for r in owed(session)] == ["page-1"]
+
+
+def test_rows_of_unconnected_teams_do_not_keep_a_connected_team_waiting(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #764: more passed-over rows than one batch, first by
+    id, and the connected team's page behind them is still trashed."""
+    other = "team_off"
+    session.add(Meeting(id="mtg_off", team_id=other, title="t"))
+    for n in range(tasks.CLEANUP_BATCH + 5):
+        session.add(ExtExternalCleanup(team_id=other, system="notion", external_id=f"off-{n}"))
+    session.commit()
+    owe(session, "notion", "page-1")
+    monkeypatch.setattr(
+        tasks, "load_integration", lambda _s, team, _n: NOTION if team == TEAM else None
+    )
+
+    assert tasks.drain_external_cleanup() == 1
+
+    assert Notion.trashed == ["page-1"]
+    session.expire_all()
+    left = session.scalars(select(ExtExternalCleanup)).all()
+    assert len(left) == tasks.CLEANUP_BATCH + 5
+    assert {r.attempts for r in left} == {0}
+
+
+def test_a_run_tries_at_most_one_batch(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    connected(monkeypatch)
+    for n in range(tasks.CLEANUP_BATCH + 3):
+        session.add(ExtExternalCleanup(team_id=TEAM, system="notion", external_id=f"page-{n}"))
+    session.commit()
+
+    assert tasks.drain_external_cleanup() == tasks.CLEANUP_BATCH
+    assert len(owed(session)) == 3
+
+
+def test_a_jira_key_with_no_site_is_dropped_not_closed(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #764: a key without a site could be anyone's issue on
+    the site connected now."""
+    connected(monkeypatch)
+    owe(session, "jira", "AUT-1", None)
+
+    tasks.drain_external_cleanup()
+
+    assert Jira.closed == []
+    assert Jira.comments == []
+    assert owed(session) == []
+
+
+def test_a_jira_ref_with_no_site_is_not_owed(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connected(monkeypatch, jira=None)
+    item_id = item_with(session, "jira", "AUT-1", site=None)
+
+    tasks.close_jira_issue(item_id)
+
+    assert owed(session) == []
+
+
+def test_giving_up_logs_the_id_a_person_would_clean_up_by_hand(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connected(monkeypatch)
+    Notion.fail = PermanentIntegrationError("forbidden", upstream_status=403)
+    owe(session, "notion", "page-1")
+
+    with capture_logs() as logs:
+        tasks.drain_external_cleanup()
+
+    (entry,) = [e for e in logs if e["event"] == "extraction_external_cleanup_refused"]
+    assert entry["external_id"] == "page-1"
