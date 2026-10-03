@@ -56,6 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
+from . import reminders
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -83,6 +84,7 @@ from .models import (
     ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
+    ExtDueReminder,
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
@@ -3157,6 +3159,142 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
             .order_by(ExtConfirmation.utterance_id)
         )
     )
+
+
+@dataclass(frozen=True)
+class DueReminder:
+    """One reminder owed: which item, which kind, and who it is for. The
+    recipient is the item's assignee and nothing else -- there is no field a
+    caller could put another person in."""
+
+    action_item_id: str
+    meeting_id: str
+    team_id: str
+    assignee_id: str
+    kind: str
+    due_date: date
+    description: str
+    meeting_title: str | None
+
+
+def due_reminders_to_send(session: Session, *, now: datetime) -> list[DueReminder]:
+    """The reminders owed at ``now`` and not yet sent (``reminders``).
+
+    An item is owed one when it is confirmed and not done, has a due date
+    that puts it a day ahead or up to ``OVERDUE_DAYS`` behind in Korea's
+    calendar, and its assignee is an account on the meeting's team -- the
+    same person ``calendar_sync._calendar_owner`` acts for. A typed name has
+    nobody to tell; someone who left the team is not told about its work
+    (ADR 0007). A meeting past its retention window is left out even before
+    the sweep removes it. Nothing at all outside the sending hours.
+    """
+    if not reminders.sending_hours(now):
+        return []
+    today = reminders.korean_day(now)
+    rows = session.execute(
+        select(ExtActionItem, Meeting.team_id, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == ExtActionItem.assignee_id,
+            ),
+        )
+        .where(
+            ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            ExtActionItem.due_date.is_not(None),
+            ExtActionItem.due_date >= today - timedelta(days=reminders.OVERDUE_DAYS),
+            ExtActionItem.due_date <= today + timedelta(days=1),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.due_date, ExtActionItem.id)
+    ).all()
+    sent = {
+        (item_id, kind, due)
+        for item_id, kind, due in session.execute(
+            select(
+                ExtDueReminder.action_item_id, ExtDueReminder.kind, ExtDueReminder.due_date
+            ).where(ExtDueReminder.action_item_id.in_([item.id for item, _, _ in rows]))
+        )
+    }
+    owed: list[DueReminder] = []
+    for item, team_id, title in rows:
+        kind = reminders.kind_for(item.due_date, today)
+        if kind is None or (item.id, kind, item.due_date) in sent:
+            continue
+        owed.append(
+            DueReminder(
+                action_item_id=item.id,
+                meeting_id=item.meeting_id,
+                team_id=team_id,
+                assignee_id=item.assignee_id,
+                kind=kind,
+                due_date=item.due_date,
+                description=item.description,
+                meeting_title=title,
+            )
+        )
+    return owed
+
+
+def send_due_reminder(
+    session: Session, slack: SlackApi, reminder: DueReminder, *, now: datetime
+) -> bool:
+    """Claim the reminder and send it, in that order -- or send nothing.
+
+    **The item is read again first, and locked.** The list this reminder came
+    from was read in another transaction, seconds or more ago. Since then
+    the item may have been given to somebody else -- the message would go to
+    the person who no longer holds it -- finished, moved to another date, or
+    deleted. It is sent only if the item is still open, still due on that
+    date, and still assigned to the same account on the meeting's team
+    (review of #751). Anything else sends nothing and claims nothing; the
+    next run reads the item as it now is.
+
+    The claim is the row in ``ext_due_reminders``, inserted only if absent, so
+    two runs cannot both send: the second finds the row and returns false.
+    The send is inside the caller's transaction with the claim, so a failed
+    send takes the claim back and the next run tries again -- the shape
+    ``ask_for_confirmation`` uses for its DM. It goes to the item's assignee,
+    whom the reminder carries; there is no other recipient to pass.
+    """
+    item = session.scalar(
+        select(ExtActionItem).where(ExtActionItem.id == reminder.action_item_id).with_for_update()
+    )
+    if (
+        item is None
+        or item.status not in (ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value)
+        or item.due_date != reminder.due_date
+        or item.assignee_id != reminder.assignee_id
+        or not _is_team_member(session, user_id=reminder.assignee_id, team_id=reminder.team_id)
+    ):
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtDueReminder)
+        .values(
+            action_item_id=reminder.action_item_id,
+            kind=reminder.kind,
+            due_date=reminder.due_date,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["action_item_id", "kind", "due_date"])
+        .returning(ExtDueReminder.action_item_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        reminder.assignee_id,
+        reminders.build_due_reminder(
+            reminder.kind,
+            # As it reads now, not as it read when the list was made.
+            description=item.description,
+            due_date=reminder.due_date,
+            meeting_title=reminder.meeting_title,
+            board_url=answer_url(reminder.meeting_id),
+        ),
+    )
+    return True
 
 
 @dataclass(frozen=True)

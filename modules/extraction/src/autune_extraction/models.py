@@ -611,6 +611,30 @@ def _utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
+class ExtDueReminder(Base):
+    """That an item's assignee was sent a due-date reminder of one kind for one
+    due date (``reminders``). The primary key is the "once": a second run, a
+    redelivered task or two workers find the row and send nothing.
+
+    No text and no person: the message is not kept, and who it went to is
+    the item's assignee at the time, which the item already says. Goes with
+    the item, and so with its meeting."""
+
+    __tablename__ = "ext_due_reminders"
+    __table_args__ = (
+        CheckConstraint("kind IN ('due_soon','overdue')", name="ck_ext_due_reminders_kind"),
+    )
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    due_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    """The date the reminder was about. A due date moved later is a new date,
+    and the item is owed a reminder for it."""
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtConfirmation(Base, TimestampMixin):
     """One ambiguous agreement, and the question to its speaker about it.
 
