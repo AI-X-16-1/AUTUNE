@@ -398,9 +398,15 @@ the feature needs.
     the calendar or for `gmail_send`. Autune holds no copy any more, so
     nothing can use them, and the person still sees Autune under their Google
     account's third-party access until they remove it there. Revoking on
-    deletion is the follow-up. Disconnecting in Autune does revoke, and a
+    deletion is the follow-up (#763). Disconnecting in Autune does revoke, and a
     revoke can end the person's other grant from the same Google account,
-    which is then shown as needing a reconnect.
+    which is then shown as needing a reconnect. Each grant asks for its own
+    scope only, and a token that comes back carrying another grant's scope
+    is refused. A calendar connected before #760 may carry sign-in's scopes
+    (`openid email profile`) through `include_granted_scopes`; nothing
+    before #760 asked for `gmail.send`, so no stored grant carries both
+    personal scopes. Reconnecting the calendar gives it a token with its own
+    scope only.
 
 ## 7. Review checklist
 

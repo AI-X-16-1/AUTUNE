@@ -234,3 +234,18 @@ def test_connecting_again_clears_the_mark(world: dict[str, Any]) -> None:
         "connected": True,
         "needs_reconnect": False,
     }
+
+
+def test_a_grant_that_comes_back_with_the_calendars_scope_too_is_refused(
+    world: dict[str, Any],
+) -> None:
+    """A merged token would let the Gmail row write the calendar (#760 review)."""
+    world["google"].grant = GoogleGrant(
+        "id-token", "1//merged", frozenset({"openid", GMAIL_SEND_SCOPE, CALENDAR_SCOPE})
+    )
+    client = signed_in(world)
+
+    response = callback(client, start(client))
+
+    assert response.headers["location"].endswith("/settings/members?gmail=failed")
+    assert world["rows"] == {}

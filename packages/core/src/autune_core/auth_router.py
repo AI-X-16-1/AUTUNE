@@ -591,6 +591,14 @@ def _complete_personal_connect(
     account = str(claims["sub"])
     if kind.scope not in grant.scopes:
         raise PermissionDeniedError(f"{kind.label} access was not granted")
+    # A token carrying another personal grant's scope is a merged one --
+    # ``include_granted_scopes`` is no longer asked for, but a consent screen
+    # can still hand one back -- and storing it under this kind would let it
+    # do the other's job (mkkim68, review of #760). Refused; connecting again
+    # is the fix.
+    if any(other.scope in grant.scopes for other in _PERSONAL.values() if other is not kind):
+        log.warning(f"auth_google_{kind.service}_merged_grant_refused")
+        raise PermissionDeniedError(f"{kind.label} access came with another grant's scope")
     if not grant.refresh_token:
         raise PermissionDeniedError("Google granted no offline access; connect again")
     previous = load_user_integration(session, transaction.user_id, kind.service)
