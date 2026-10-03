@@ -162,6 +162,21 @@ browser cannot sign them in as whoever started it. Redis proves a state was
 issued; the cookie is what proves to whom.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
+**Google flows also carry PKCE** (#704). Sign-in and the personal connects
+send an S256 `code_challenge`; the verifier waits in the same Redis entry as
+the `state` and goes out only with the code exchange, so a code lifted off the
+redirect is worthless elsewhere, even with the client secret. Nothing to
+configure: Google accepts PKCE from a web client as it is. Atlassian, Notion
+and Slack are sent no challenge yet: whether each accepts one from a
+confidential client has to be checked against a real app per provider first,
+and until then `state` with the cookie above binds their callbacks.
+
+**A connect that stores a token checks the encryption key before it spends
+the code** (#593, #704). Calendar, Jira, Notion and Slack callbacks all fail
+on a missing or broken `AUTUNE_ENCRYPTION_KEY` before the provider is asked,
+so no grant is issued that nothing keeps; the screen shows the connect as
+failed.
+
 **Signing out ends the person's sessions on the server, on every device.**
 `POST /logout` writes the moment on the person's row
 (`users.sessions_valid_from`) and clears the cookie; from then on

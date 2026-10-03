@@ -72,6 +72,7 @@ from .oauth.google import (
     GoogleOAuthClient,
     get_google_client,
     get_google_integration_client,
+    pkce_pair,
 )
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
 from .oauth.slack import (
@@ -174,8 +175,17 @@ def google_start(
 ) -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
-    store.put(state, OAuthTransaction(nonce=nonce, redirect_to=_safe_redirect_target(redirect_to)))
-    response = RedirectResponse(google.authorization_url(state=state, nonce=nonce), status_code=307)
+    verifier, challenge = pkce_pair()
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce, redirect_to=_safe_redirect_target(redirect_to), code_verifier=verifier
+        ),
+    )
+    response = RedirectResponse(
+        google.authorization_url(state=state, nonce=nonce, code_challenge=challenge),
+        status_code=307,
+    )
     response.set_cookie(
         STATE_COOKIE,
         state,
@@ -258,7 +268,10 @@ def _complete_sign_in(
     if error or not code:
         raise PermissionDeniedError("Google sign-in did not complete")
 
-    identity = google.verify(google.exchange_code(code), nonce=transaction.nonce)
+    identity = google.verify(
+        google.exchange_code(code, code_verifier=transaction.code_verifier),
+        nonce=transaction.nonce,
+    )
     if not identity.email_verified:
         raise PermissionDeniedError("this Google account's email is not verified")
 
@@ -402,6 +415,7 @@ def google_calendar_start(
     """
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
+    verifier, challenge = pkce_pair()
     store.put(
         state,
         OAuthTransaction(
@@ -409,10 +423,15 @@ def google_calendar_start(
             redirect_to=_safe_redirect_target(redirect_to),
             purpose="calendar",
             user_id=user.id,
+            code_verifier=verifier,
         ),
     )
     url = google.authorization_url(
-        state=state, nonce=nonce, scope=f"openid {CALENDAR_SCOPE}", offline=True
+        state=state,
+        nonce=nonce,
+        scope=f"openid {CALENDAR_SCOPE}",
+        offline=True,
+        code_challenge=challenge,
     )
     response = RedirectResponse(url, status_code=307)
     response.set_cookie(
@@ -489,7 +508,10 @@ def _complete_calendar_connect(
 ) -> RedirectResponse:
     if not transaction.user_id:
         raise PermissionDeniedError("calendar connect was not started by a signed-in person")
-    grant = google.exchange_grant(code)
+    # Before the code is spent: a deploy that cannot store the refresh token
+    # fails here, not after Google has issued a grant nothing keeps (#704).
+    ensure_configured()
+    grant = google.exchange_grant(code, code_verifier=transaction.code_verifier)
     # The ID token proves this code answered *our* request (nonce), not which
     # Google account it was: someone may keep their calendar on another account,
     # and the consent asks for no ``email``, so none is required (#452 review).
@@ -729,6 +751,8 @@ def _finish_jira_connect(
     try:
         if error or not code:
             raise PermissionDeniedError("Jira access was not granted")
+        # Before the code is spent, as for Slack (#593, #704).
+        ensure_configured()
         tokens = atlassian.exchange_code(code)
         if not tokens.refresh_token:
             raise PermissionDeniedError("Atlassian granted no offline access")
@@ -940,6 +964,8 @@ def _finish_notion_connect(
     try:
         if error or not code:
             raise PermissionDeniedError("Notion access was not granted")
+        # Before the code is spent, as for Slack (#593, #704).
+        ensure_configured()
         grant = notion.exchange_code(code)
         save_integration(
             session,
