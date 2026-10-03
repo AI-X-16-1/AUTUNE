@@ -64,10 +64,28 @@ x-python: &python
     AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
     # The provider key under its shared name. Module B reads it when its own
     # AUTUNE_EXTRACTION_LLM_API_KEY is blank (#701); no other module reads it.
-    # A key selects nothing: B's classifier is pinned to `fake` below and its
-    # resolver is not set to `llm`, so with this file as it is B calls no
-    # provider and nothing of a meeting leaves the server through it.
+    # A key selects nothing by itself: the two lines under it do.
     AUTUNE_LLM_API_KEY: ${AUTUNE_LLM_API_KEY:-}
+    # Module B's resolver is the cloud model (decided by the user, 2026-10-02):
+    # it rewrites a commitment or a decision that points at nothing ("그럴게")
+    # into a sentence that says what, from the lines around it and the lines
+    # about the same thing, and records which lines it used. With `fake` the
+    # board showed the utterance as it was said.
+    #
+    # WHAT LEAVES THIS SERVER because of it: for each commitment and decision
+    # the classifier finds, that utterance and its neighbours as module A
+    # masked them, from consenting speakers only, with the names on the
+    # team's roster replaced (#530). A name that is not on the roster goes as
+    # it was said. The classifier stays `fake`, so the rest of a meeting does
+    # not go.
+    #
+    # UPLOAD DEMO MEETINGS ONLY to this site until #392 is decided. Nothing in
+    # the code can tell a real meeting from a dummy one, or a paid key from
+    # a free one (the key's holder says this one is paid). The second line is
+    # the switch #392 asks for: B refuses to load an `llm` implementation
+    # without it. Removing both lines turns the model off again.
+    AUTUNE_EXTRACTION_RESOLVER_IMPL: llm
+    AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392: "true"
     # The implementations scripts/up.sh runs without --real-models, for the
     # same reasons it gives: B's checkpoints are unpublished (#112) and both NLI
     # checkpoints are a private repo (#172).
