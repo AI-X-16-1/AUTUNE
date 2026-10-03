@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, Request
@@ -421,6 +421,35 @@ def test_retry_queues_the_same_sync_an_edit_does(
     assert response.status_code == 202
     assert response.json() == {"queued": True}
     assert ran == ["act_1"]
+
+
+def test_a_second_press_within_the_cooldown_is_refused(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """lsh2217, review of #754: each press runs Notion, the calendar and Jira
+    once more, so a second one inside ``RETRY_COOLDOWN`` runs nothing."""
+    item(session)
+    ran: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", ran.append)
+
+    first = client.post(f"{PREFIX}/action-items/act_1/sync")
+    second = client.post(f"{PREFIX}/action-items/act_1/sync")
+
+    assert first.status_code == 202
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "retry_too_soon"
+    assert ran == ["act_1"]
+
+
+def test_a_press_after_the_cooldown_goes(session: Session) -> None:
+    item(session)
+    start = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+
+    assert sync_state.claim_retry(session, "act_1", now=start)
+    assert not sync_state.claim_retry(session, "act_1", now=start + timedelta(seconds=29))
+    assert sync_state.claim_retry(
+        session, "act_1", now=start + sync_state.RETRY_COOLDOWN + timedelta(seconds=1)
+    )
 
 
 def test_an_item_never_confirmed_has_nothing_to_retry(

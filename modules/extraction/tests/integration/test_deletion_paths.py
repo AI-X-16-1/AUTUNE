@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtExtractionRun,
     ExtMeetingNote,
     ExtSyncFailure,
+    ExtSyncRetry,
 )
 
 B_TABLES = (
@@ -49,6 +50,7 @@ B_TABLES = (
     "ext_meeting_notes",
     "ext_due_reminders",
     "ext_sync_failures",
+    "ext_sync_retries",
 )
 
 
@@ -119,6 +121,9 @@ def meeting(db_session: Session) -> dict[str, str]:
             kind="unreachable",
             failed_at=datetime(2026, 9, 11, tzinfo=UTC),
         )
+    )
+    db_session.add(
+        ExtSyncRetry(action_item_id=item.id, retried_at=datetime(2026, 9, 11, tzinfo=UTC))
     )
     db_session.add(
         ExtDueReminder(
@@ -195,3 +200,4 @@ def test_a_deleted_item_keeps_its_edit_event_and_loses_the_link(
     # What it was reminded about goes with it: a reminder is nothing without its item.
     assert count(db_session, "ext_due_reminders") == 0
     assert count(db_session, "ext_sync_failures") == 0
+    assert count(db_session, "ext_sync_retries") == 0
