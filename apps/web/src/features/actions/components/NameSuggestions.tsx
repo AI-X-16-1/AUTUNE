@@ -8,8 +8,8 @@ import type { Project } from "../types";
 const NEW = "__new__";
 
 /**
- * Words said often in the team's latest meetings that no project is named or
- * aliased by (the user, 2026-10-04) -- each one can become a project, or an
+ * Words that came up in several of the team's latest meetings that no project
+ * is named or aliased by (the user, 2026-10-04) -- each one can become a project, or an
  * alias of one. Words and counts only; the server never sends a sentence.
  */
 export function NameSuggestions({
@@ -66,7 +66,8 @@ export function NameSuggestions({
   return (
     <div aria-label="회의에 자주 나온 말" className="flex flex-col gap-2">
       <p className="text-[var(--color-ink-muted)]" style={meta}>
-        회의에 자주 나왔지만 아직 프로젝트 이름이나 별칭이 아닌 말입니다.
+        여러 회의에 나왔지만 아직 프로젝트 이름이나 별칭이 아닌 말입니다. 팀원
+        이름은 빼고 셉니다.
       </p>
       {words.length > 0 ? (
         <ul className="flex flex-wrap gap-2">
@@ -81,7 +82,9 @@ export function NameSuggestions({
               }}
             >
               <span className="text-[var(--color-ink-body)]">{word}</span>
-              <span className="text-[var(--color-ink-muted)]">{count}회</span>
+              <span className="text-[var(--color-ink-muted)]">
+                회의 {count}번
+              </span>
               <select
                 aria-label={`${word} 넣기`}
                 value=""

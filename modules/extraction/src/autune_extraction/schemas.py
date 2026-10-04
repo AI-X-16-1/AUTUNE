@@ -259,10 +259,12 @@ class ProjectRead(BaseModel):
 
 
 class NameSuggestion(BaseModel):
-    """A word said often in the team's meetings that no project has yet."""
+    """A word that came up in several of the team's meetings that no project
+    has yet."""
 
     word: str
     count: int
+    """In how many of the latest meetings it came up -- meetings, not mentions."""
 
 
 class ProjectWrite(BaseModel):

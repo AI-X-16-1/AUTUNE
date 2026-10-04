@@ -296,8 +296,9 @@ def assign_summary_projects(
 def project_name_suggestions(
     team_id: str, session: SessionDep, reader: CurrentUser
 ) -> list[NameSuggestion]:
-    """Words said often in the team's latest meetings that no project is named
-    or aliased by (``projects.suggest_names``) -- words and counts only."""
+    """Words that came up in several of the team's latest meetings that no
+    project is named or aliased by, members' names left out
+    (``projects.suggest_names``) -- words and counts only."""
     team = _member_team(session, reader, None, team_id)
     return [
         NameSuggestion(word=word, count=count)

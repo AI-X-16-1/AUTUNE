@@ -64,7 +64,7 @@ describe("NameSuggestions", () => {
       />,
     );
     const select = await screen.findByLabelText("베타 넣기");
-    expect(screen.getByText("5회")).toBeTruthy();
+    expect(screen.getByText("회의 5번")).toBeTruthy();
     fireEvent.change(select, { target: { value: "__new__" } });
     await waitFor(() => expect(onChanged).toHaveBeenCalledWith(saved));
     expect(createProject).toHaveBeenCalledWith("team_1", {

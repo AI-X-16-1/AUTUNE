@@ -11,6 +11,7 @@ change its projects, and a row can only go to a project of its own team.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, Request
@@ -276,36 +277,112 @@ def test_the_summary_carries_the_projects_and_places_again_on_request(
 # --- names no project has yet ------------------------------------------------------
 
 
-def _say(session: Session, uid: str, who: str, text: str, at: float) -> None:
+def _meeting_saying(
+    session: Session,
+    meeting_id: str,
+    lines: list[str],
+    *,
+    days_ago: int = 1,
+    status: str = "complete",
+    unconsented: list[str] | None = None,
+) -> None:
+    """A meeting of TEAM, held ``days_ago``, where a consenting speaker said
+    ``lines`` and one who did not consent said ``unconsented``."""
     session.add(
-        Utterance(
-            id=uid,
-            meeting_id=MEETING,
-            participant_id=who,
-            speaker_label="화자",
-            start_sec=at,
-            end_sec=at + 0.5,
-            text=text,
+        Meeting(
+            id=meeting_id,
+            team_id=TEAM,
+            title=meeting_id,
+            started_at=datetime.now(UTC) - timedelta(days=days_ago),
+            status=status,
         )
     )
+    for who, consented, texts in (("y", True, lines), ("n", False, unconsented or [])):
+        participant = f"par_{meeting_id}_{who}"
+        session.add(
+            Participant(
+                id=participant, meeting_id=meeting_id, speaker_label=who, consented=consented
+            )
+        )
+        for n, text in enumerate(texts):
+            session.add(
+                Utterance(
+                    id=f"utt_{meeting_id}_{who}{n}",
+                    meeting_id=meeting_id,
+                    participant_id=participant,
+                    speaker_label="화자",
+                    start_sec=float(n),
+                    end_sec=float(n) + 0.5,
+                    text=text,
+                )
+            )
+    session.flush()
 
 
-def test_words_said_often_that_no_project_has_are_suggested(
+def test_words_said_in_several_meetings_that_no_project_has_are_suggested(
     client: TestClient, session: Session
 ) -> None:
     for n in range(3):
-        _say(session, f"utt_p{n}", "par_yes", "Payflow 결제에서 오튠 연동을 봤어요", 10.0 + n)
-        _say(session, f"utt_s{n}", "par_no", "Secretname 얘기", 20.0 + n)
-    session.flush()
+        _meeting_saying(
+            session,
+            f"mtg_s{n}",
+            ["Payflow 결제에서 오튠 연동을 봤어요", "결제는 마이크로 서비스로"],
+            unconsented=["Secretname 얘기"],
+        )
 
     suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
 
     words = {s["word"]: s["count"] for s in suggested}
     assert words["Payflow"] == 3
-    assert words["결제"] == 3, "the particle after it is taken off"
+    assert words["결제"] == 3, "said twice in each, counted once per meeting"
+    assert words["연동"] == 3, "을 is always a particle"
+    assert "마이크로" in words and "마이크" not in words, "no particle split it alone"
     assert "오튠" not in words, "already Autune's alias"
     assert "Secretname" not in words, "a speaker who did not consent is not read"
+    assert "봤어요" not in words, "a verb names no project"
     assert set(suggested[0]) == {"word", "count"}, "words and counts, never a sentence"
+
+
+def test_a_word_repeated_in_one_meeting_is_one_meeting(
+    client: TestClient, session: Session
+) -> None:
+    _meeting_saying(session, "mtg_z", ["Zeta Zeta Zeta", "Zeta 다시 Zeta"])
+
+    suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
+
+    assert suggested == []
+
+
+def test_team_members_and_people_addressed_are_never_suggested(
+    client: TestClient, session: Session
+) -> None:
+    session.add(User(id="usr_mj", email="mj@example.com", display_name="문민재"))
+    session.add(TeamMember(team_id=TEAM, user_id="usr_mj"))
+    for n in range(3):
+        _meeting_saying(
+            session,
+            f"mtg_n{n}",
+            ["민재님이 결제 맡아주세요", "민재가 할게요", "지훈씨도 같이 봐요"],
+        )
+
+    suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
+
+    words = {s["word"] for s in suggested}
+    assert words == {"결제"}, words
+
+
+def test_meetings_not_yet_held_or_failed_are_not_read(client: TestClient, session: Session) -> None:
+    # Ten meetings booked ahead would otherwise fill the latest ten.
+    for n in range(10):
+        _meeting_saying(session, f"mtg_f{n}", [], days_ago=-(n + 1), status="scheduled")
+    _meeting_saying(session, "mtg_failed", ["Omega"], status="failed")
+    _meeting_saying(session, "mtg_x", ["Omega"], status="scheduled", days_ago=2)
+    for n in range(3):
+        _meeting_saying(session, f"mtg_h{n}", ["Payflow"], days_ago=n + 3)
+
+    suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
+
+    assert suggested == [{"word": "Payflow", "count": 3}]
 
 
 def test_suggestions_are_for_the_teams_members_only(client: TestClient) -> None:

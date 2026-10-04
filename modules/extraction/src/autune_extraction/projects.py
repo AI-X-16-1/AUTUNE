@@ -28,12 +28,13 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting, get_logger
+from autune_core import Meeting, TeamMember, User, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from . import service
@@ -44,6 +45,7 @@ from .models import (
     ExtDecisionSource,
     ExtProject,
 )
+from .pipeline.llm import substitute_names
 
 log = get_logger(__name__)
 
@@ -290,6 +292,9 @@ SUGGEST_MEETINGS = 10
 """How many of the team's latest meetings the suggestions read."""
 
 SUGGEST_MIN_COUNT = 3
+"""In how many of those meetings a word must come up -- meetings, not
+mentions, so one line repeating a word is one meeting."""
+
 SUGGEST_MAX = 15
 
 _LATIN = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
@@ -399,7 +404,39 @@ _COMMON = frozenset(
 """Words that come up in any meeting and name no project. Kept short: a word
 wrongly suggested costs a glance, a project name wrongly hidden costs more."""
 
-_LATIN_COMMON = frozenset({"the", "and", "for", "you", "okay", "yes", "api", "ok"})
+_LATIN_COMMON = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "you",
+        "okay",
+        "yes",
+        "api",
+        "ok",
+        "com",
+        "net",
+        "org",
+        "www",
+        "http",
+        "https",
+    }
+)
+
+_PREDICATE_ENDINGS = ("요", "죠", "니다", "니까", "세요", "까요", "네요", "어서", "아서")
+"""Endings of a verb or an adjective in speech ("맡아주세요", "했습니다"):
+such a word is never a project's name."""
+
+_ADDRESSED = ("님", "씨")
+"""What follows a person's name when they are spoken to or about -- a word
+ending so names a person, whether or not they are on the team."""
+
+_NAME_MARK = re.compile(r"\[사람\d+\][가-힣]*")
+"""A scrubbed name with whatever was attached to it (님, a particle)."""
+
+_SURE_PARTICLES = frozenset(p for p in _PARTICLES if len(p) >= 2) | {"은", "는", "을", "를"}
+"""Particles no noun ends in; the others ("로", "이", "도"...) end words too --
+"마이크로" -- and are taken off only when the word is seen without them."""
 
 
 def _stem(word: str) -> str:
@@ -410,21 +447,37 @@ def _stem(word: str) -> str:
     return word
 
 
-def suggest_names(session: Session, team_id: str) -> list[tuple[str, int]]:
-    """Words said often in the team's latest meetings that no project of the
-    team is named or aliased by -- candidates for a project or an alias,
-    with how many times each was said.
+def suggest_names(
+    session: Session, team_id: str, *, now: datetime | None = None
+) -> list[tuple[str, int]]:
+    """Words that came up in several of the team's latest meetings and that no
+    project of the team is named or aliased by -- candidates for a project or
+    an alias, with how many meetings each came up in.
 
     Only the words and their counts leave this function, never a sentence, and
-    only consented speakers' lines are read (privacy.md section 5). Latin words
-    of three letters or more and Korean words of two to eight syllables, a
-    particle taken off; common words left out. A rule, not a model: it misses
-    names and suggests some words that are not names, and a person chooses."""
+    only consented speakers' lines are read (privacy.md section 5). The team's
+    members' names are taken out first, the way an outbound line is scrubbed
+    (#411), and so is any word ending in 님 or 씨: a count next to a person's
+    name would say how often they were talked about. Only meetings that took
+    place count -- not one still scheduled or ahead of ``now``, not one that
+    failed.
+
+    Latin words of three letters or more and Korean words of two to eight
+    syllables; common words and verb forms left out. A particle that can also
+    end a noun is taken off only when the word also comes bare or with another
+    particle, so "마이크로" stays whole. A rule, not a model: it misses names and suggests
+    some words that are not names, and a person chooses."""
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
     meetings = list(
         session.scalars(
             select(Meeting.id)
-            .where(Meeting.team_id == team_id, service.within_retention())
-            .order_by(Meeting.started_at.desc().nullslast(), Meeting.created_at.desc())
+            .where(
+                Meeting.team_id == team_id,
+                service.within_retention(),
+                Meeting.status.not_in(("scheduled", "failed")),
+                held <= (now or datetime.now(UTC)),
+            )
+            .order_by(held.desc())
             .limit(SUGGEST_MEETINGS)
         )
     )
@@ -432,21 +485,57 @@ def suggest_names(session: Session, team_id: str) -> list[tuple[str, int]]:
     for row in team_projects(session, team_id):
         known.add(row.name.lower())
         known.update(a.lower() for a in row.aliases.split("\n") if a)
-    counts: dict[str, int] = {}
-    shown: dict[str, str] = {}
+    roster = list(
+        session.scalars(
+            select(User.display_name)
+            .join(TeamMember, TeamMember.user_id == User.id)
+            .where(TeamMember.team_id == team_id)
+        )
+    )
+
+    # Each meeting's raw words, then which Korean stems stand on their own.
+    said: list[list[str]] = []
     for meeting_id in meetings:
         consented = service.consented_utterance_ids(session, meeting_id)
-        for line in service.stored_transcript(session, meeting_id):
-            if line.id not in consented or not line.text:
+        lines = [
+            line.text
+            for line in service.stored_transcript(session, meeting_id)
+            if line.id in consented and line.text
+        ]
+        words: list[str] = []
+        for text in substitute_names(lines, roster):
+            text = _NAME_MARK.sub(" ", text)
+            words += [w for w in _LATIN.findall(text) if w.lower() not in _LATIN_COMMON]
+            words += [
+                w
+                for w in _HANGUL.findall(text)
+                if not _stem(w).endswith(_ADDRESSED) and not w.endswith(_PREDICATE_ENDINGS)
+            ]
+        said.append(words)
+    forms: dict[str, set[str]] = {}
+    for words in said:
+        for word in words:
+            forms.setdefault(_stem(word), set()).add(word)
+
+    def settled(word: str) -> str:
+        stem = _stem(word)
+        if stem == word or word[len(stem) :] in _SURE_PARTICLES:
+            return stem
+        seen = forms.get(stem, set())
+        return stem if stem in seen or len(seen) >= 2 else word
+
+    counts: dict[str, int] = {}
+    shown: dict[str, str] = {}
+    for words in said:
+        here: dict[str, str] = {}
+        for word in map(settled, words):
+            key = word.lower()
+            if key in _COMMON or key in known or len(word) < 2:
                 continue
-            words = [w for w in _LATIN.findall(line.text) if w.lower() not in _LATIN_COMMON]
-            words += [_stem(w) for w in _HANGUL.findall(line.text)]
-            for word in words:
-                key = word.lower()
-                if key in _COMMON or key in known or len(word) < 2:
-                    continue
-                counts[key] = counts.get(key, 0) + 1
-                shown.setdefault(key, word)
+            here.setdefault(key, word)
+        for key, word in here.items():
+            counts[key] = counts.get(key, 0) + 1
+            shown.setdefault(key, word)
     ranked = sorted(
         ((shown[k], n) for k, n in counts.items() if n >= SUGGEST_MIN_COUNT),
         key=lambda pair: (-pair[1], pair[0]),
