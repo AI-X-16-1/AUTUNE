@@ -82,6 +82,7 @@ from .oauth.slack import (
     SlackOAuthClient,
     SlackTeamNotConnectedError,
     SlackWrongWorkspaceError,
+    channel_name_for,
     get_slack_oauth_client,
 )
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
@@ -1123,7 +1124,8 @@ def _finish_slack_connect(
         # Decided before anything else can fail, so a failure path never has
         # to ask a session that may be broken.
         shared = _workspace_used_elsewhere(session, install.workspace_id, team_id)
-        channel = _alert_channel(slack, install, previous)
+        team = session.get(Team, team_id)
+        channel = _alert_channel(slack, install, previous, team.name if team else "")
         if previous is None or channel.id != previous.config.get("channel"):
             made = channel
         save_integration(
@@ -1176,16 +1178,25 @@ def _finish_slack_connect(
 
 
 def _alert_channel(
-    slack: SlackOAuthClient, install: SlackInstall, previous: IntegrationConfig | None
+    slack: SlackOAuthClient,
+    install: SlackInstall,
+    previous: IntegrationConfig | None,
+    team_name: str,
 ) -> SlackChannel:
     """The team's channel: kept on a re-install into the same workspace while it
-    can still take posts, made new (private, installer invited) otherwise."""
+    can still take posts, made new (private, installer invited) otherwise --
+    named after the team, ``slack_channel_name`` when the team's name will not
+    do (``channel_name_for``)."""
     if previous is not None and previous.config.get("workspace_id") == install.workspace_id:
         kept = previous.config.get("channel")
         if kept and slack.channel_usable(install.access_token, str(kept)):
             return SlackChannel(str(kept), str(previous.config.get("channel_name") or ""))
+    fallback = get_settings().slack_channel_name
     return slack.create_alert_channel(
-        install.access_token, get_settings().slack_channel_name, invite=install.installer_id
+        install.access_token,
+        channel_name_for(team_name, fallback),
+        invite=install.installer_id,
+        fallback=fallback,
     )
 
 
