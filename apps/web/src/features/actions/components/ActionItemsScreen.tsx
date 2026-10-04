@@ -8,7 +8,6 @@ import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { CalendarConnect } from "./CalendarConnect";
 import { CarriedOverActions } from "./CarriedOverActions";
-import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
 import { MyConfirmations } from "./MyConfirmations";
 import { SlackConnect } from "./SlackConnect";
@@ -89,8 +88,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             연동 설정
           </Link>
           <CalendarConnect />
-          <SlackMeConnect />
-          <JiraConnect meetingId={meetingId} />
+            <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
         </div>

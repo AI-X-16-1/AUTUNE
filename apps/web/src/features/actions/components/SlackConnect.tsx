@@ -11,6 +11,8 @@ import {
 } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
+import { SlackMeConnect } from "./SlackMeConnect";
+
 /**
  * One button to install Autune's bot in the team's Slack (#428). The install
  * makes a private #autune (or #autune-2... when taken), invites whoever
@@ -18,6 +20,11 @@ import { Button } from "@/shared/ui";
  *
  * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
  * (#496); the server checks membership either way.
+ *
+ * The person's own Slack link (DM 받기, `SlackMeConnect`) sits right under it
+ * and only once the team's Slack is connected (the user, 2026-10-04): before
+ * that the server refuses the link anyway (`slack_team_not_connected`), so the
+ * button would only lead to an error.
  */
 export function SlackConnect({
   meetingId,
@@ -74,7 +81,7 @@ export function SlackConnect({
 
   if (!state.connected) {
     return (
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3" aria-label="Slack">
         <Button
           tone="text"
           size="compact"
@@ -91,46 +98,51 @@ export function SlackConnect({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <span className="text-[var(--color-ink-muted)]" style={meta}>
-        Slack 연결됨 · {state.workspace_name ?? "워크스페이스"}
-        {state.channel_name ? ` · #${state.channel_name} (비공개)` : ""}
-      </span>
-      {state.channel_url ? (
-        <a
-          className="text-[var(--color-accent-default)]"
-          style={meta}
-          href={state.channel_url}
-          target="_blank"
-          rel="noopener noreferrer"
+    <div className="flex flex-col gap-2" aria-label="Slack">
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-[var(--color-ink-muted)]" style={meta}>
+          Slack 연결됨 · {state.workspace_name ?? "워크스페이스"}
+          {state.channel_name ? ` · #${state.channel_name} (비공개)` : ""}
+        </span>
+        {state.channel_url ? (
+          <a
+            className="text-[var(--color-accent-default)]"
+            style={meta}
+            href={state.channel_url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Slack에서 열기
+          </a>
+        ) : null}
+        <Button
+          tone="quiet"
+          size="compact"
+          loading={busy}
+          onClick={() => {
+            setBusy(true);
+            void disconnectSlack(scope)
+              .then(({ revoked, shared }) => {
+                setState({ connected: false });
+                setNote(
+                  shared
+                    ? "연결을 해제했습니다. 같은 워크스페이스의 다른 팀이 Autune을 쓰고 있어 봇은 남겨 두었습니다."
+                    : revoked
+                      ? "Slack 연결을 해제했습니다."
+                      : "연결을 해제했습니다. Slack 앱 관리에서 Autune도 확인해 주세요.",
+                );
+              })
+              .catch(() => setNote("연결을 해제하지 못했습니다."))
+              .finally(() => setBusy(false));
+          }}
         >
-          Slack에서 열기
-        </a>
-      ) : null}
-      <Button
-        tone="quiet"
-        size="compact"
-        loading={busy}
-        onClick={() => {
-          setBusy(true);
-          void disconnectSlack(scope)
-            .then(({ revoked, shared }) => {
-              setState({ connected: false });
-              setNote(
-                shared
-                  ? "연결을 해제했습니다. 같은 워크스페이스의 다른 팀이 Autune을 쓰고 있어 봇은 남겨 두었습니다."
-                  : revoked
-                    ? "Slack 연결을 해제했습니다."
-                    : "연결을 해제했습니다. Slack 앱 관리에서 Autune도 확인해 주세요.",
-              );
-            })
-            .catch(() => setNote("연결을 해제하지 못했습니다."))
-            .finally(() => setBusy(false));
-        }}
-      >
-        연결 해제
-      </Button>
-      {status}
+          연결 해제
+        </Button>
+        {status}
+      </div>
+      <div className="pl-4">
+        <SlackMeConnect />
+      </div>
     </div>
   );
 }
