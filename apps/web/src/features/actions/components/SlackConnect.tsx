@@ -15,8 +15,9 @@ import { SlackMeConnect } from "./SlackMeConnect";
 
 /**
  * One button to install Autune's bot in the team's Slack (#428). The install
- * makes a private #autune (or #autune-2... when taken), invites whoever
- * installed, and the team's briefings and reports go there.
+ * makes a private alert channel (named after the team once the server does
+ * so, #autune before; -2... when taken), invites whoever installed, and the
+ * team's briefings and reports go there.
  *
  * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
  * (#496); the server checks membership either way.
@@ -57,7 +58,7 @@ export function SlackConnect({
       else if (result === "failed")
         setNote(
           url.searchParams.get("reason") === "slack_channel_unavailable"
-            ? "알림 채널 이름(#autune ~ #autune-10)이 모두 사용 중입니다. 하나를 비우고 다시 연결해 주세요."
+            ? "알림 채널로 쓸 이름(채널 이름과 -2 ~ -10)이 모두 사용 중입니다. 하나를 비우고 다시 연결해 주세요."
             : "Slack을 연결하지 못했습니다. 다시 시도해 주세요.",
         );
       if (result !== null) {
