@@ -3531,6 +3531,55 @@ def summary_lines(session: Session, meeting_id: str) -> list[str]:
     return [u.text for u in stored_transcript(session, meeting_id) if u.id in consented and u.text]
 
 
+def summary_board(session: Session, meeting_id: str) -> list[str]:
+    """The run's own decisions and items as lines for the summarizer's last call
+    (#421 v2), so the paragraph agrees with the rows under it on the tab.
+
+    **Only what a model wrote from the masked lines.** A decision or an item a
+    person typed (``origin=user``), a description a person edited, a reviewer's
+    rewording: none of it passed module A's masking, and it is not sent out --
+    a phone number typed into an item would also make the outbound check refuse
+    every summary of the meeting. A rejected decision is not the meeting's and
+    is left out. Each line says whether a person has confirmed it yet.
+    """
+    rejected = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                ExtDecisionReview.status == "rejected",
+            )
+        )
+    )
+    confirmed = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                ExtDecisionReview.status == "confirmed",
+            )
+        )
+    )
+    rows: list[str] = []
+    for decision in session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    ):
+        if decision.id in rejected:
+            continue
+        state = "확정" if decision.id in confirmed else "확인 전"
+        rows.append(f"결정({state}): {decision.statement}")
+    for item in session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id == meeting_id, ExtActionItem.origin == "model")
+        .order_by(ExtActionItem.created_at, ExtActionItem.id)
+    ):
+        if _person_wrote_description(session, item.id):
+            continue
+        state = "확인 전" if item.status == ActionStatus.NEEDS_CONFIRMATION.value else "확정"
+        rows.append(f"할 일({state}): {item.description}")
+    return rows
+
+
 def summary_is_current(session: Session, meeting_id: str, lines: Sequence[str]) -> bool:
     """A stored summary was written from exactly ``lines`` -- asking again would
     spend a provider's quota on the answer already here."""

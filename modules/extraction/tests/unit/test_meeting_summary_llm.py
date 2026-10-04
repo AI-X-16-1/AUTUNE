@@ -11,6 +11,7 @@ and a summary already written from the same lines is not asked for again.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -357,3 +358,125 @@ def test_with_no_summarizer_the_task_does_nothing(
     monkeypatch.setattr(tasks, "get_summarizer", lambda: None)
 
     assert tasks.summarize_meeting(MEETING) is False
+
+
+# --- the prompt and the board (#421 v2, prompt revision) ---------------------------
+
+
+def test_no_example_in_a_prompt_names_a_placeholder() -> None:
+    """A ``[사람1]`` copied from an example would be put back as a real name."""
+    for prompt in (summary_module._SECTION_PROMPT, summary_module._FINAL_PROMPT):
+        assert re.search(r"\[사람\d", prompt) is None
+
+
+def test_the_board_goes_to_the_last_call_only_with_its_names_replaced() -> None:
+    line = "고객 인터뷰에서 나온 요청 사항을 하나씩 검토했고 정리한 표를 같이 봤어요"
+    lines = [f"{line} {n}번" for n in range(200)]
+    parts = sections(lines)
+    provider = Provider(*([{"points": ["표를 검토했습니다"]}] * len(parts)), FINAL)
+    s = summarizer(provider)
+    s.use_roster(["박재경"])
+
+    s.summarize(lines, board=["할 일(확인 전): 박재경 님이 표를 정리"])
+
+    assert all("뽑아 둔 결정과 할 일" not in provider.prompt(n) for n in range(len(parts)))
+    last = provider.prompt(len(parts))
+    assert "- 할 일(확인 전): [사람1] 님이 표를 정리" in last
+    assert "박재경" not in provider.sent
+    for body in provider.bodies:
+        assert len(_dumps(body)) <= MAX_OUTBOUND_CHARS
+
+
+def test_a_number_the_board_carries_counts_as_said() -> None:
+    provider = Provider(
+        {"overview": "릴리스를 논의한 회의입니다.", "points": ["할 일: 7번 항목을 정리합니다"]}
+    )
+
+    written = summarizer(provider).summarize(["릴리스 얘기를 했어요"], board=["할 일: 7번 항목"])
+
+    assert written is not None and written.points == ("할 일: 7번 항목을 정리합니다",)
+
+
+def test_a_long_board_is_cut_to_its_share_of_the_last_call() -> None:
+    provider = Provider(FINAL)
+    board = [f"할 일(확인 전): 아주 긴 할 일 설명 {'가' * 80} {n}" for n in range(40)]
+
+    summarizer(provider).summarize(LINES, board=board)
+
+    assert len(_dumps(provider.bodies[0])) <= MAX_OUTBOUND_CHARS
+    assert "할 일 설명" in provider.prompt(0)
+    assert provider.prompt(0).count("- 할 일(확인 전)") < len(board)
+
+
+def test_the_board_holds_only_what_a_model_wrote(session: Session) -> None:
+    session.add_all(
+        [
+            ExtDecision(
+                id="dec_ok",
+                meeting_id=MEETING,
+                statement="배포를 금요일로 미룬다",
+                confidence=0.9,
+                origin="model",
+            ),
+            ExtDecision(
+                id="dec_no",
+                meeting_id=MEETING,
+                statement="거절된 결정",
+                confidence=0.9,
+                origin="model",
+            ),
+            ExtDecision(
+                id="dec_typed",
+                meeting_id=MEETING,
+                statement="사람이 쓴 결정 010-1234-5678",
+                confidence=1.0,
+                origin="user",
+            ),
+            ExtActionItem(
+                id="act_ok",
+                meeting_id=MEETING,
+                description="릴리스 노트 정리",
+                status="todo",
+                confidence=0.9,
+                origin="model",
+            ),
+            ExtActionItem(
+                id="act_typed",
+                meeting_id=MEETING,
+                description="사람이 쓴 할 일",
+                status="todo",
+                confidence=1.0,
+                origin="user",
+            ),
+            ExtActionItem(
+                id="act_edited",
+                meeting_id=MEETING,
+                description="사람이 고친 설명",
+                status="needs_confirmation",
+                confidence=0.9,
+                origin="model",
+            ),
+        ]
+    )
+    session.add(
+        ExtDecisionReview(
+            decision_id="dec_no",
+            meeting_id=MEETING,
+            status="rejected",
+            reviewed_at=datetime(2026, 10, 1, tzinfo=UTC),
+        )
+    )
+    session.add(
+        ExtEditEvent(
+            meeting_id=MEETING,
+            action_item_id="act_edited",
+            kind="edited",
+            fields="description",
+        )
+    )
+    session.flush()
+
+    assert service.summary_board(session, MEETING) == [
+        "결정(확인 전): 배포를 금요일로 미룬다",
+        "할 일(확정): 릴리스 노트 정리",
+    ]

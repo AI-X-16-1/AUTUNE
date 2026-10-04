@@ -290,9 +290,10 @@ def summarize_meeting(meeting_id: str) -> bool:
         if not lines or service.summary_is_current(session, meeting_id, lines):
             return False
         roster = service.team_roster(session, meeting_id)
+        board = service.summary_board(session, meeting_id)
     give_roster(summarizer, roster)
     try:
-        written = summarizer.summarize(lines)
+        written = summarizer.summarize(lines, board=board)
     except PrivacyViolationError:
         log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
         return False
