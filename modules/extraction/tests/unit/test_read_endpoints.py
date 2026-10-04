@@ -53,7 +53,7 @@ from autune_extraction.models import (
     ExtNotionTarget,
 )
 from autune_extraction.router import router
-from autune_extraction.schemas import ExternalRefRead
+from autune_extraction.schemas import ActionItemCreate, ExternalRefRead
 
 from .conftest import READER, sign_in
 
@@ -715,6 +715,7 @@ def test_the_result_carries_what_the_pipeline_classified(
     ]
 
 
+@pytest.mark.usefixtures("no_sync")
 def test_the_result_reflects_a_correction_made_after_extraction(
     client: TestClient, session: Session
 ) -> None:
@@ -908,6 +909,7 @@ def test_history_names_the_fields_an_edit_changed_and_keeps_no_value(
     assert "2026-10-02" not in str(stored)
 
 
+@pytest.mark.usefixtures("no_sync")
 def test_a_hand_added_item_starts_its_history_with_being_added(
     client: TestClient, session: Session
 ) -> None:
@@ -918,6 +920,35 @@ def test_a_hand_added_item_starts_its_history_with_being_added(
     history = client.get(f"{PREFIX}/action-items/{created['id']}").json()["history"]
 
     assert [(h["kind"], h["fields"]) for h in history] == [("created", [])]
+
+
+def test_a_hand_added_item_is_confirmed_and_its_outside_copies_are_queued(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A person's own item is not a draft for them to confirm (2026-10-04): it
+    goes to 할 일, and its calendar event, Notion page and Jira issue are queued
+    as a confirmation queues them -- a typed due date reaches the calendar."""
+    queued: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", queued.append)
+
+    created = client.post(
+        f"{PREFIX}/action-items",
+        json={"meeting_id": MEETING, "description": "견적서 보내기", "due_date": "2026-10-10"},
+    ).json()
+
+    assert created["status"] == "todo"
+    assert queued == [created["id"]]
+
+
+def test_an_item_the_agent_adds_still_waits_for_the_board(session: Session) -> None:
+    """The chat drafted it; a person has not read it on the board yet."""
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="채팅이 만든 항목"),
+        origin=next(iter(service.AGENT_ORIGINS)),
+    )
+
+    assert item.status == "needs_confirmation"
 
 
 @pytest.mark.usefixtures("no_sync")
