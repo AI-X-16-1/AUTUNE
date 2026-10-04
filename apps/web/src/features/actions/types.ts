@@ -181,6 +181,11 @@ export interface ActionItemDetail extends ActionItemRead {
   related?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
+  /**
+   * The reader's own Slack confirmation DM about one of this item's lines —
+   * only for the person it went to, since nobody else can open it (#680).
+   */
+  confirmation_dm_url?: string | null;
 }
 
 /** `CarriedOverItem`: an open item from an earlier meeting of the same team. */

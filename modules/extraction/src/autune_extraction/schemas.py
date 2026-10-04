@@ -404,6 +404,9 @@ class ActionItemDetail(ActionItemRead):
     if it says more than they show. Same consent filter as ``context``."""
 
     history: list[EditHistoryEntry] = Field(default_factory=list)
+    confirmation_dm_url: str | None = None
+    """The reader's own Slack confirmation DM about one of this item's lines --
+    only for the person it went to, since nobody else can open it (#680)."""
     """What people did to the item, oldest first (S18, #109). Empty for an item
     the model extracted and nobody has touched since."""
 

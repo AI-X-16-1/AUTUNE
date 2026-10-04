@@ -766,6 +766,24 @@ def _utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
+class ExtWeeklyDigest(Base):
+    """That a person was sent the weekly digest of their open items for one
+    week, through one team's Slack (the user, 2026-10-04). The primary key is
+    the "once", as ``ext_due_reminders``'s is. No text: the message is not
+    kept. Goes with the person and with the team."""
+
+    __tablename__ = "ext_weekly_digests"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtDueReminder(Base):
     """That an item's assignee was sent a due-date reminder of one kind for one
     due date (``reminders``). The primary key is the "once": a second run, a
