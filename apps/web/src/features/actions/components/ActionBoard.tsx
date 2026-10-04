@@ -46,6 +46,10 @@ import type { ActionItemRead, ActionStatus } from "../types";
  * that a person who meant only to tidy the board learns that this move was
  * the one that sends the item on. It offers no undo -- whether one can be
  * honoured once a copy has left is not settled.
+ *
+ * **The card whose detail window is open (`selectedId`) cannot be dragged**
+ * (#712): its status select is right beside it, and a drop and a pick racing
+ * each other would end on whichever request landed last.
  */
 export function ActionBoard({
   items,
@@ -190,7 +194,10 @@ export function ActionBoard({
                     showMeeting={showMeeting}
                     context={context[item.id]}
                     drag={
-                      onMove === undefined
+                      // Its detail window is open: its status is changed there.
+                      // Two ways at once would send two PATCHes and the last to
+                      // land would win (#712).
+                      onMove === undefined || item.id === selectedId
                         ? undefined
                         : {
                             moving: item.id in moves,
