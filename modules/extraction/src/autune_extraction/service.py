@@ -89,6 +89,7 @@ from .models import (
     ExtExternalRef,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtMeetingSummary,
 )
 from .noun_form import tidy
 from .pipeline.base import (
@@ -113,6 +114,7 @@ from .schemas import (
     DecisionReviewUpdate,
     EditHistoryEntry,
     ExternalRefRead,
+    GeneratedSummary,
     MeetingReview,
     MeetingSummary,
     MyConfirmation,
@@ -735,6 +737,16 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     ids = set(utterance_ids)
     if not ids:
         return SpeechForgotten()
+    # A written summary restates the meeting, deleted lines included, and is
+    # model output nobody accepted: it goes, and the next run writes one from
+    # what is left (#421 v2).
+    session.execute(
+        delete(ExtMeetingSummary).where(
+            ExtMeetingSummary.meeting_id.in_(
+                select(Utterance.meeting_id).where(Utterance.id.in_(ids))
+            )
+        )
+    )
     items = session.scalars(
         select(ExtActionItem)
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
@@ -3480,6 +3492,11 @@ def meeting_summary(
         )
     )
     note = session.get(ExtMeetingNote, meeting_id)
+    written = session.get(ExtMeetingSummary, meeting_id)
+    if written is not None and written.source_digest != source_digest(
+        summary_lines(session, meeting_id)
+    ):
+        written = None  # its lines changed since; the next run writes a new one
     return MeetingSummary(
         meeting_id=meeting_id,
         decisions=[
@@ -3493,7 +3510,55 @@ def meeting_summary(
         ),
         note=note.body if note is not None else None,
         note_updated_at=note.updated_at if note is not None else None,
+        generated=GeneratedSummary(
+            overview=written.overview,
+            points=[p for p in written.points.split("\n") if p],
+            model_version=written.model_version,
+            created_at=written.created_at,
+        )
+        if written is not None
+        else None,
     )
+
+
+def summary_lines(session: Session, meeting_id: str) -> list[str]:
+    """What a written summary of this meeting may be made from (#421 v2): the
+    stored, masked lines of the speakers who consented, in spoken order, blank
+    ones left out -- the same lines the classifier reads (privacy.md section 5).
+    Also what ``ExtMeetingSummary.source_digest`` is taken over, so a summary is
+    shown only while these are still what it was written from."""
+    consented = consented_utterance_ids(session, meeting_id)
+    return [u.text for u in stored_transcript(session, meeting_id) if u.id in consented and u.text]
+
+
+def summary_is_current(session: Session, meeting_id: str, lines: Sequence[str]) -> bool:
+    """A stored summary was written from exactly ``lines`` -- asking again would
+    spend a provider's quota on the answer already here."""
+    written = session.get(ExtMeetingSummary, meeting_id)
+    return written is not None and written.source_digest == source_digest(lines)
+
+
+def store_meeting_summary(
+    session: Session,
+    meeting_id: str,
+    *,
+    overview: str,
+    points: Sequence[str],
+    model_version: str,
+    lines: Sequence[str],
+) -> ExtMeetingSummary:
+    """Replace the meeting's written summary with this one, made from ``lines``."""
+    row = session.get(ExtMeetingSummary, meeting_id)
+    if row is None:
+        row = ExtMeetingSummary(meeting_id=meeting_id)
+        session.add(row)
+    row.overview = overview
+    row.points = "\n".join(points)
+    row.model_version = model_version
+    row.source_digest = source_digest(lines)
+    row.created_at = datetime.now(UTC)
+    session.flush()
+    return row
 
 
 def set_meeting_note(session: Session, meeting_id: str, body: str) -> ExtMeetingNote | None:

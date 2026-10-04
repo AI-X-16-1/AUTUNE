@@ -902,6 +902,35 @@ class ExtMeetingNote(Base):
     )
 
 
+class ExtMeetingSummary(Base):
+    """A meeting's summary written by a cloud model (#421 v2, ``summary_impl=llm``).
+
+    Model output over the meeting's consented, masked lines, names put back --
+    meeting content, shown to the team on the 요약 tab. ``source_digest`` is
+    ``service.source_digest`` over the lines it was written from: a summary
+    whose lines have changed since (a correction, a deletion, a change of
+    consent) no longer matches what the meeting says and is not shown
+    (``service.meeting_summary``); the next run writes a new one. Deleted speech
+    deletes it outright (``service.forget_speech``). One per meeting, deleted
+    with it, so it keeps the meeting's retention.
+
+    ``points`` holds one sentence per line: each was checked to be one line.
+    """
+
+    __tablename__ = "ext_meeting_summaries"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    overview: Mapped[str] = mapped_column(Text, nullable=False)
+    points: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtExtractionRun(Base):
     """Which speech the last extraction of a meeting was allowed to read (#518).
 

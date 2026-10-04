@@ -286,6 +286,18 @@ class MeetingNoteUpdate(BaseModel):
     body: str = Field(max_length=MAX_NOTE_CHARS)
 
 
+class GeneratedSummary(BaseModel):
+    """A meeting's summary written by a cloud model (#421 v2), shown on the 요약
+    tab above B's own rows and marked as a model's. Present only with
+    ``summary_impl=llm`` and only while the lines it was written from are
+    unchanged."""
+
+    overview: str
+    points: list[str]
+    model_version: str
+    created_at: datetime
+
+
 class MeetingSummary(BaseModel):
     """S15's 요약 tab, v1 (#421, WBS 4.9): B's own rows in three levels, no model.
 
@@ -309,6 +321,9 @@ class MeetingSummary(BaseModel):
     the confirmation window."""
     note: str | None = None
     note_updated_at: datetime | None = None
+    generated: GeneratedSummary | None = None
+    """v2: a model's summary of the whole meeting, or ``None`` when none is
+    written or the meeting has changed since."""
 
 
 class ActionItemDetail(ActionItemRead):

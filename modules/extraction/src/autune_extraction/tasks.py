@@ -70,7 +70,7 @@ from .models import (
     ExtExternalRef,
 )
 from .pipeline.base import give_roster
-from .pipeline.registry import get_classifier, get_nli, get_resolver
+from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
 
 log = get_logger(__name__)
 
@@ -259,6 +259,61 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    # Its own task, so a provider that is down costs the 요약 tab its paragraph
+    # and never this run its rows (#421 v2). Only when a summarizer is on.
+    if get_summarizer() is not None:
+        try:
+            summarize_meeting.delay(meeting_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
+            log.warning("extraction_summary_not_queued", error=type(exc).__name__)
+
+
+@shared_task(name="autune.extraction.summarize_meeting", acks_late=True)
+def summarize_meeting(meeting_id: str) -> bool:
+    """The 요약 tab's written summary (#421 v2): the meeting's consented lines to
+    ``summary_impl``'s model, the answer stored with the digest of those lines.
+
+    Skipped when no summarizer is on, when the meeting has no lines, and when
+    the stored summary was written from exactly these lines -- a re-extraction
+    that changed no line does not ask again. Reads, then calls the model with no
+    session open, then writes: a transaction is never held across a call that
+    takes seconds. A failed or unusable answer leaves the tab as v1 built it and
+    is logged by meeting id; nothing about it fails the meeting.
+
+    Returns whether a summary was written.
+    """
+    summarizer = get_summarizer()
+    if summarizer is None:
+        return False
+    with session_scope() as session:
+        lines = service.summary_lines(session, meeting_id)
+        if not lines or service.summary_is_current(session, meeting_id, lines):
+            return False
+        roster = service.team_roster(session, meeting_id)
+    give_roster(summarizer, roster)
+    try:
+        written = summarizer.summarize(lines)
+    except PrivacyViolationError:
+        log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
+        return False
+    except Exception as exc:  # noqa: BLE001 -- the tab keeps v1; logged by id, never the text
+        log.warning("extraction_summary_failed", meeting_id=meeting_id, error=type(exc).__name__)
+        return False
+    if written is None:
+        return False
+    with session_scope() as session:
+        # Written from the lines read above; if they changed while the model was
+        # answering, the digest says so and the tab does not show it.
+        service.store_meeting_summary(
+            session,
+            meeting_id,
+            overview=written.overview,
+            points=written.points,
+            model_version=written.model_version,
+            lines=lines,
+        )
+    log.info("extraction_summary_stored", meeting_id=meeting_id, points=len(written.points))
+    return True
 
 
 @shared_task(name="autune.extraction.periodic.reextract_consent_changes")
