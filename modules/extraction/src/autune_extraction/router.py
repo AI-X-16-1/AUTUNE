@@ -137,7 +137,7 @@ def get_action_item(
 ) -> ActionItemDetail:
     """One item and the text of the utterances it came from, for the drawer."""
     item = service.readable_action_item(session, action_item_id, reader)
-    return service.read_detail(session, item)
+    return service.read_detail(session, item, reader_id=reader.id)
 
 
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)

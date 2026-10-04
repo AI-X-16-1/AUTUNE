@@ -1566,8 +1566,13 @@ def related_utterances(session: Session, item_id: str) -> list[SourceUtterance]:
     return [SourceUtterance(id=uid, text=text) for uid, text in rows]
 
 
-def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
+def read_detail(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
+
+    ``reader_id`` gets the reader their own confirmation DM about one of the
+    item's lines, when there is one (``confirmation_dm_url``).
 
     The only route in this module that returns the full *set* of sources
     verbatim. It is here and not on the list because the drawer is the one
@@ -1596,7 +1601,47 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
         else context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
         related=[] if hidden else related_utterances(session, item.id),
         history=edit_history(session, item.id),
+        confirmation_dm_url=confirmation_dm_url(session, item, reader_id) if reader_id else None,
     )
+
+
+SLACK_OPEN = "https://slack.com/app_redirect?team={team}&channel={channel}"
+"""Slack's documented redirect: opens a conversation in the app or the browser."""
+
+
+def confirmation_dm_url(session: Session, item: ExtActionItem, reader_id: str) -> str | None:
+    """Where the reader's own confirmation DM about one of the item's lines is
+    (#680, the user, 2026-10-04) -- or ``None``.
+
+    **Only for the person the DM went to**: the speaker of the line, by its
+    participant. Slack opens a DM for its two members only, so a link shown to
+    anyone else would lead nowhere -- and would tell them a DM exists. The
+    place (``dm_channel``) is what #609 stores; the workspace is the team's
+    Slack connection's. A DM sent but not placed, or a team no longer on Slack,
+    is no link.
+    """
+    source_ids = [s.utterance_id for s in item.sources if s.utterance_id]
+    if not source_ids:
+        return None
+    channel = session.scalar(
+        select(ExtConfirmation.dm_channel)
+        .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtConfirmation.utterance_id.in_(source_ids),
+            ExtConfirmation.dm_channel.is_not(None),
+            Participant.user_id == reader_id,
+        )
+        .limit(1)
+    )
+    if not channel:
+        return None
+    meeting = session.get(Meeting, item.meeting_id)
+    slack = load_integration(session, meeting.team_id, "slack") if meeting else None
+    team = slack.config.get("workspace_id") if slack is not None else None
+    if not team:
+        return None
+    return SLACK_OPEN.format(team=team, channel=channel)
 
 
 def action_item_external_refs(

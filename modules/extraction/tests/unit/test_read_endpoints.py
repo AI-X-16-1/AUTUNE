@@ -488,7 +488,9 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     detail = client.get(f"{PREFIX}/action-items/act_1").json()
 
     assert {
-        k: v for k, v in detail.items() if k not in ("sources", "context", "related", "history")
+        k: v
+        for k, v in detail.items()
+        if k not in ("sources", "context", "related", "history", "confirmation_dm_url")
     } == listed
 
 
