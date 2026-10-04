@@ -1162,7 +1162,9 @@ def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[
 
 def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
     """``read_model`` for a single item a route just wrote, with its assignee
-    looked up. No summary or sync refs -- the routes that write never sent
+    and the meetings it was carried through looked up -- the board replaces
+    the card with this answer, so a dropped count would drop the badge. No
+    summary or sync refs -- the routes that write never sent
     them."""
     name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
     return read_model(
@@ -1170,6 +1172,7 @@ def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
         assignee_name=name,
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
+        carried_meetings=meetings_since(session, [item]).get(item.id, 0),
     )
 
 
@@ -1400,12 +1403,17 @@ STALE_AFTER = 3
 user, 2026-10-04): the board and the carried-over popup mark it."""
 
 
-def meetings_since(session: Session, items: Sequence[ExtActionItem]) -> dict[str, int]:
+def meetings_since(
+    session: Session, items: Sequence[ExtActionItem], *, now: datetime | None = None
+) -> dict[str, int]:
     """For each *open* item, how many of its team's meetings have been held
     since the meeting it was made in -- the meetings it was carried through
     unfinished. Held is ``started_at``, or the upload when nobody recorded a
-    start, as ``carried_over`` reads it; a meeting past retention does not
-    count. Two queries for the whole list."""
+    start, as ``carried_over`` reads it. Only a meeting that actually took
+    place counts: not one still ``scheduled`` or ahead of ``now``, not one that
+    ``failed``, and not one past retention. Counted up to now, wherever the
+    item is shown -- the board and the popup say the same number. Two queries
+    for the whole list."""
     open_items = [i for i in items if i.status in _OPEN_STATUSES]
     if not open_items:
         return {}
@@ -1421,7 +1429,10 @@ def meetings_since(session: Session, items: Sequence[ExtActionItem]) -> dict[str
     by_team: dict[str, list[datetime]] = {}
     for team_id, when in session.execute(
         select(Meeting.team_id, held).where(
-            Meeting.team_id.in_({team for team, _ in own.values()}), within_retention()
+            Meeting.team_id.in_({team for team, _ in own.values()}),
+            within_retention(),
+            held <= (now or datetime.now(UTC)),
+            Meeting.status.not_in(_NOT_HELD),
         )
     ).tuples():
         by_team.setdefault(team_id, []).append(_aware(when))
@@ -1434,6 +1445,10 @@ def meetings_since(session: Session, items: Sequence[ExtActionItem]) -> dict[str
         mine = _aware(when)
         out[item.id] = sum(1 for other in by_team.get(team_id, []) if other > mine)
     return out
+
+
+_NOT_HELD = ("scheduled", "failed")
+"""Meeting statuses that never took place, so carried nothing through."""
 
 
 def _aware(moment: datetime) -> datetime:
