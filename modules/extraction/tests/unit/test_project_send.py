@@ -9,6 +9,7 @@ connected is reported, not tried; and one tool failing never stops the others.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -31,12 +32,14 @@ from autune_core import (
     get_session,
 )
 from autune_core.errors import AutuneError
-from autune_extraction import project_send, service, tasks
+from autune_extraction import project_send, projects, service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
     ExtActionItem,
+    ExtCalendarCleanup,
     ExtDecision,
     ExtDecisionReview,
+    ExtMinutesEvent,
     ExtProject,
     ExtProjectSend,
 )
@@ -281,3 +284,114 @@ def test_the_route_reports_each_copy(session: Session, monkeypatch: pytest.Monke
         client.post(f"{PREFIX}/summary/{MEETING}/projects/send", json={"targets": []}).status_code
         == 422
     )
+
+
+# --- the sender's own calendar ------------------------------------------------------
+
+
+class FakeCalendar:
+    def __init__(self) -> None:
+        self.created: list[dict[str, Any]] = []
+        self.updated: list[str] = []
+        self.gone: set[str] = set()
+
+    def create_all_day_event(
+        self,
+        calendar_id: str,
+        summary: str,
+        day: date,
+        *,
+        description: str = "",
+        private: dict[str, str] | None = None,
+    ) -> str:
+        self.created.append(
+            {"calendar": calendar_id, "summary": summary, "day": day, "private": private}
+        )
+        return f"evt_{len(self.created)}"
+
+    def update_all_day_event(
+        self, calendar_id: str, event_id: str, summary: str, day: date, *, description: str = ""
+    ) -> bool:
+        if event_id in self.gone:
+            return False
+        self.updated.append(event_id)
+        return True
+
+
+def calendar_clients(calendar: FakeCalendar) -> project_send.Clients:
+    return project_send.Clients(calendar=(calendar, "primary", "user_sender"))
+
+
+def test_minutes_go_to_the_senders_own_calendar_on_the_meeting_day(session: Session) -> None:
+    calendar = FakeCalendar()
+
+    sent, _ = project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+
+    assert {(s.project_name, s.outcome) for s in sent} == {
+        ("Autune", "created"),
+        ("App", "created"),
+    }
+    first = calendar.created[0]
+    assert first["summary"] == "제품팀-Autune-2026-10-01"
+    assert first["day"] == date(2026, 10, 1)
+    # Not the due-date events' tag: the read-back must never take it for an item.
+    assert first["private"] == {"autune_minutes": "1"}
+    rows = session.query(ExtMinutesEvent).all()
+    assert {(r.user_id, r.event_id) for r in rows} == {
+        ("user_sender", "evt_1"),
+        ("user_sender", "evt_2"),
+    }
+
+
+def test_sending_again_updates_the_event_or_replaces_a_deleted_one(session: Session) -> None:
+    calendar = FakeCalendar()
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+    calendar.gone.add("evt_2")
+
+    sent, _ = project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+
+    assert {s.outcome for s in sent} == {"updated"}
+    assert calendar.updated == ["evt_1"]
+    assert len(calendar.created) == 3, "the event deleted by hand is made again"
+
+
+def test_a_meeting_with_no_day_gets_no_event(session: Session) -> None:
+    meeting = session.get(Meeting, MEETING)
+    assert meeting is not None
+    meeting.started_at = None
+    session.flush()
+
+    sent, _ = project_send.send(session, MEETING, ["calendar"], calendar_clients(FakeCalendar()))
+
+    assert {s.outcome for s in sent} == {"no_date"}
+
+
+def test_no_calendar_connected_is_reported(session: Session) -> None:
+    sent, _ = project_send.send(session, MEETING, ["calendar"], project_send.Clients())
+
+    assert {s.outcome for s in sent} == {"not_connected"}
+
+
+def test_deleting_a_project_queues_its_events_for_removal(session: Session) -> None:
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(FakeCalendar()))
+
+    projects.delete_project(session, TEAM, "prj_a")
+
+    queued = {(q.user_id, q.event_id) for q in session.query(ExtCalendarCleanup).all()}
+    assert queued == {("user_sender", "evt_1")}
+
+
+def test_an_expiring_meeting_queues_its_minutes_events(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(FakeCalendar()))
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    tasks.queue_meeting_calendar_events(MEETING)
+
+    queued = {(q.user_id, q.event_id) for q in session.query(ExtCalendarCleanup).all()}
+    assert queued == {("user_sender", "evt_1"), ("user_sender", "evt_2")}

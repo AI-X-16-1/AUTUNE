@@ -18,6 +18,12 @@ belong to no project to send them as.
 - Slack: a message in the team's alert channel.
 - Jira: a task in the project's own Jira project, or the team's when the
   project names none.
+- Google Calendar: an all-day event on the meeting's day in the calendar of
+  **the person who pressed send** -- their own calendar, by their own click.
+  Team work is not copied into anybody else's (``calendar_sync``). The event
+  carries its own private tag, not the due-date events' one, so the due-date
+  read-back never takes it for an item. It goes when the meeting expires, the
+  person's account is deleted or the project is (``ext_minutes_events``).
 
 Sending again updates the same copy (``ext_project_sends``): the Slack message
 and the Jira task are rewritten; a Notion page's body cannot be replaced in one
@@ -46,13 +52,17 @@ from autune_core.errors import PrivacyViolationError
 from autune_integrations import IntegrationError
 
 from . import service
-from .models import ExtDecision, ExtProject, ExtProjectSend
+from .models import ExtDecision, ExtMinutesEvent, ExtProject, ExtProjectSend
 from .notion_setup import MINUTES_NOTION_PROPERTIES
 from .slots import meeting_day
 
 log = get_logger(__name__)
 
-TARGETS = ("notion", "slack", "jira")
+TARGETS = ("notion", "slack", "jira", "calendar")
+MINUTES_TAG = ("autune_minutes", "1")
+"""The private property on a minutes event. Not ``calendar_sync.TAG``: the
+due-date read-back asks Google for that one, and must not see these."""
+
 NOTION_TEXT_LIMIT = 2000
 """Notion's limit on one text object; a longer line is cut, never sent whole."""
 
@@ -84,7 +94,8 @@ class Sent:
     project_name: str
     target: str
     outcome: str
-    """``created``, ``updated``, ``not_connected`` or ``failed``."""
+    """``created``, ``updated``, ``not_connected``, ``no_date`` (a calendar event
+    for a meeting with no recorded day) or ``failed``."""
 
 
 @dataclass
@@ -97,6 +108,8 @@ class Clients:
     """A ``SlackClient`` and the alert channel id."""
     jira: tuple[Any, str | None] | None = None
     """A ``JiraClient`` and the team's default project key."""
+    calendar: tuple[Any, str, str] | None = None
+    """A ``CalendarClient``, the calendar id, and whose calendar it is."""
 
 
 def _item_line(item: Any) -> str:
@@ -181,8 +194,40 @@ def _notion_page(m: Minutes, meeting_id: str, database_id: str) -> dict[str, Any
     return {"parent": {"database_id": database_id}, "properties": properties, "children": children}
 
 
+def _to_calendar(session: Session, meeting_id: str, m: Minutes, clients: Clients) -> str:
+    """The minutes as an all-day event on the sender's own calendar."""
+    if clients.calendar is None:
+        return "not_connected"
+    if m.day is None:
+        return "no_date"
+    calendar, calendar_id, user_id = clients.calendar
+    row = session.get(ExtMinutesEvent, (meeting_id, m.project_id, user_id))
+    if row is not None and calendar.update_all_day_event(
+        calendar_id, row.event_id, m.title, m.day, description=m.text
+    ):
+        session.flush()
+        return "updated"
+    event_id = calendar.create_all_day_event(
+        calendar_id, m.title, m.day, description=m.text, private={MINUTES_TAG[0]: MINUTES_TAG[1]}
+    )
+    if row is not None:
+        # Deleted by hand in the calendar since: a new one in its place.
+        row.event_id = event_id
+        session.flush()
+        return "updated"
+    session.add(
+        ExtMinutesEvent(
+            meeting_id=meeting_id, project_id=m.project_id, user_id=user_id, event_id=event_id
+        )
+    )
+    session.flush()
+    return "created"
+
+
 def _send_one(session: Session, meeting_id: str, m: Minutes, target: str, clients: Clients) -> str:
     """One copy out; returns the outcome. Raises only what the caller catches."""
+    if target == "calendar":
+        return _to_calendar(session, meeting_id, m, clients)
     row = session.get(ExtProjectSend, (meeting_id, m.project_id, target))
     if target == "notion":
         if clients.notion is None:

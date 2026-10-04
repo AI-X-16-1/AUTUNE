@@ -281,14 +281,14 @@ class ProjectSendRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    targets: list[Literal["notion", "slack", "jira"]] = Field(min_length=1)
+    targets: list[Literal["notion", "slack", "jira", "calendar"]] = Field(min_length=1)
 
 
 class ProjectSendResult(BaseModel):
     project_id: str
     project_name: str
-    target: Literal["notion", "slack", "jira"]
-    outcome: Literal["created", "updated", "not_connected", "failed"]
+    target: Literal["notion", "slack", "jira", "calendar"]
+    outcome: Literal["created", "updated", "not_connected", "no_date", "failed"]
 
 
 class ProjectSendReport(BaseModel):

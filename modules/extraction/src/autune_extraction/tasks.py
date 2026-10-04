@@ -76,6 +76,7 @@ from .models import (
     ExtDecision,
     ExtDecisionRef,
     ExtExternalRef,
+    ExtMinutesEvent,
 )
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver
@@ -273,7 +274,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
 
 
 def send_project_minutes(
-    session: Session, meeting_id: str, targets: Sequence[str]
+    session: Session, meeting_id: str, targets: Sequence[str], *, sender_id: str
 ) -> tuple[list[project_send.Sent], int]:
     """The 요약 tab's "프로젝트별로 보내기" (2026-10-04): the team's tools built
     here, where every client is, and the minutes sent by ``project_send``. Runs
@@ -281,6 +282,7 @@ def send_project_minutes(
 
     A tool the team has not connected is reported as such, not tried; Jira's
     access is asked for only when Jira was chosen, since it may refresh a token.
+    The calendar is ``sender_id``'s own, through their own grant.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
@@ -307,7 +309,18 @@ def send_project_minutes(
                 JiraClient.for_cloud(access.access_token, access.cloud_id),
                 access.project_key,
             )
-    return project_send.send(session, meeting_id, targets, clients)
+    if "calendar" not in targets:
+        return project_send.send(session, meeting_id, targets, clients)
+    # The sender's own calendar, through their own grant (``_calendars``).
+    with _calendars(session) as calendar_for:
+        try:
+            mine = calendar_for(sender_id)
+        except AutuneError:
+            mine = None  # a refused or foreign grant: reported as not connected
+        if mine is not None:
+            calendar, calendar_id = mine
+            clients.calendar = (calendar, calendar_id, sender_id)
+        return project_send.send(session, meeting_id, targets, clients)
 
 
 @shared_task(name="autune.extraction.periodic.reextract_consent_changes")
@@ -1217,9 +1230,17 @@ def forget_user_calendar_events(user_id: str) -> None:
                     select(ExtCalendarCleanup).where(ExtCalendarCleanup.user_id == user_id)
                 )
             )
-            ids = [e.event_id for e in events if e.event_id] + [q.event_id for q in queued]
+            # The project minutes they sent to their own calendar, too.
+            minutes = list(
+                session.scalars(select(ExtMinutesEvent).where(ExtMinutesEvent.user_id == user_id))
+            )
+            ids = (
+                [e.event_id for e in events if e.event_id]
+                + [q.event_id for q in queued]
+                + [m.event_id for m in minutes]
+            )
             removed, failed = _remove_events(calendar_for, user_id, ids)
-            for row in [*events, *queued]:
+            for row in [*events, *queued, *minutes]:
                 session.delete(row)
         if failed:
             # Best effort (privacy.md section 4): the account goes on, and these
@@ -1285,12 +1306,21 @@ def queue_meeting_calendar_events(meeting_id: str) -> None:
     unrecorded. Safe to run twice (the queue is unique per user and event).
     """
     with session_scope() as session:
-        rows = session.execute(
-            select(ExtCalendarEvent.user_id, ExtCalendarEvent.event_id).where(
-                ExtCalendarEvent.meeting_id == meeting_id,
-                ExtCalendarEvent.event_id.is_not(None),
+        rows: list[tuple[str, str | None]] = [
+            (user, event)
+            for user, event in session.execute(
+                select(ExtCalendarEvent.user_id, ExtCalendarEvent.event_id).where(
+                    ExtCalendarEvent.meeting_id == meeting_id,
+                    ExtCalendarEvent.event_id.is_not(None),
+                )
+            ).tuples()
+        ]
+        # And the project minutes people sent to their own calendars.
+        rows += session.execute(
+            select(ExtMinutesEvent.user_id, ExtMinutesEvent.event_id).where(
+                ExtMinutesEvent.meeting_id == meeting_id
             )
-        ).all()
+        ).tuples()
         if rows:
             session.execute(
                 service._insert_if_absent_into(session, ExtCalendarCleanup)

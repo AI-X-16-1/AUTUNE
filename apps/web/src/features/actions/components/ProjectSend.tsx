@@ -11,6 +11,7 @@ const TARGETS: { key: SendTarget; label: string }[] = [
   { key: "notion", label: "Notion" },
   { key: "slack", label: "Slack" },
   { key: "jira", label: "Jira" },
+  { key: "calendar", label: "내 Google 캘린더" },
 ];
 
 const OUTCOME: Record<ProjectSendReport["results"][number]["outcome"], string> =
@@ -18,6 +19,7 @@ const OUTCOME: Record<ProjectSendReport["results"][number]["outcome"], string> =
     created: "보냄",
     updated: "고침",
     not_connected: "연결 안 됨",
+    no_date: "회의 날짜 없음",
     failed: "실패",
   };
 
@@ -78,7 +80,8 @@ export function ProjectSend({ meetingId }: { meetingId: string }) {
       </div>
       <p className="text-[var(--color-ink-muted)]" style={meta}>
         확정된 결정과 할 일만 &quot;팀-프로젝트-회의 날짜&quot;로 보냅니다. 다시
-        보내면 같은 페이지·메시지·이슈를 고칩니다.
+        보내면 같은 페이지·메시지·이슈·일정을 고칩니다. 캘린더는 보내는 사람
+        본인의 캘린더에 회의 날짜 종일 일정으로 들어갑니다.
       </p>
       {failed ? (
         <span

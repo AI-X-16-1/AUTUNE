@@ -302,7 +302,9 @@ def send_summary_projects(
     to the chosen tools (``project_send``). Sending again updates the same
     copies. Any member, like confirming."""
     service.require_readable_meeting(session, meeting_id, reader)
-    sent, unsorted = tasks.send_project_minutes(session, meeting_id, payload.targets)
+    sent, unsorted = tasks.send_project_minutes(
+        session, meeting_id, payload.targets, sender_id=reader.id
+    )
     session.commit()
     return ProjectSendReport(
         results=[

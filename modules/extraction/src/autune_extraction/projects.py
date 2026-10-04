@@ -40,8 +40,10 @@ from . import service
 from .models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtCalendarCleanup,
     ExtDecision,
     ExtDecisionSource,
+    ExtMinutesEvent,
     ExtProject,
 )
 
@@ -251,6 +253,19 @@ def delete_project(session: Session, team_id: str, project_id: str) -> None:
     row = session.get(ExtProject, project_id)
     if row is None or row.team_id != team_id:
         raise NotFoundError("project", project_id)
+    # Its minutes on people's calendars: queued for removal with each owner's
+    # grant, since the rows that name them go with the project.
+    events = session.execute(
+        select(ExtMinutesEvent.user_id, ExtMinutesEvent.event_id).where(
+            ExtMinutesEvent.project_id == project_id
+        )
+    ).all()
+    if events:
+        session.execute(
+            service._insert_if_absent_into(session, ExtCalendarCleanup)
+            .values([{"user_id": user, "event_id": event} for user, event in events])
+            .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
+        )
     for item in session.scalars(
         select(ExtActionItem).where(ExtActionItem.project_id == project_id)
     ):

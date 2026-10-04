@@ -126,6 +126,35 @@ class ExtProjectSend(Base):
     )
 
 
+class ExtMinutesEvent(Base):
+    """A project's minutes as an all-day event on the meeting's day, in the
+    calendar of the person who sent them (2026-10-04).
+
+    Their own calendar, by their own click: team work is not copied into
+    anybody else's (``calendar_sync``). Kept so sending again updates the same
+    event, and so the event goes when the meeting expires or the person's
+    account is deleted (``tasks.queue_meeting_calendar_events``,
+    ``tasks.forget_user_calendar_events``) -- and when the project is deleted
+    (``projects.delete_project``). The event id only, no text.
+    """
+
+    __tablename__ = "ext_minutes_events"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtActionItem(Base, TimestampMixin):
     """One trackable commitment, as the user will eventually accept it.
 
