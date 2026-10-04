@@ -89,6 +89,7 @@ from .models import (
     ExtExternalRef,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtWeeklyDigest,
 )
 from .noun_form import tidy
 from .pipeline.base import (
@@ -3292,6 +3293,116 @@ def send_due_reminder(
             due_date=reminder.due_date,
             meeting_title=reminder.meeting_title,
             board_url=answer_url(reminder.meeting_id),
+        ),
+    )
+    return True
+
+
+@dataclass(frozen=True)
+class WeeklyDigest:
+    """One digest owed: whose, through which team's Slack, for which week. The
+    recipient is the person whose items they are -- there is no field a caller
+    could put another person in."""
+
+    user_id: str
+    team_id: str
+    week_start: date
+
+
+def _open_items_of(
+    session: Session, *, user_id: str | None, team_id: str | None, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]]:
+    """Open items with their team and meeting title, assigned to an account
+    that is on the meeting's team -- narrowed to one person and team when
+    given. A meeting past its retention window is left out."""
+    query = (
+        select(ExtActionItem, Meeting.team_id, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == ExtActionItem.assignee_id,
+            ),
+        )
+        .where(
+            ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.due_date, ExtActionItem.id)
+    )
+    if user_id is not None:
+        query = query.where(ExtActionItem.assignee_id == user_id)
+    if team_id is not None:
+        query = query.where(Meeting.team_id == team_id)
+    return [(item, team, title) for item, team, title in session.execute(query).tuples()]
+
+
+def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDigest]:
+    """The digests owed at ``now`` and not yet sent (the user, 2026-10-04):
+    one per person and team that has an open item assigned to that person on
+    that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
+    Who counts is who ``due_reminders_to_send`` would remind: an account on the
+    meeting's team -- a typed name has nobody to tell."""
+    week = reminders.digest_week(now)
+    if week is None:
+        return []
+    owners = {
+        (item.assignee_id, team)
+        for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
+        if item.assignee_id
+    }
+    sent = set(
+        session.execute(
+            select(ExtWeeklyDigest.user_id, ExtWeeklyDigest.team_id).where(
+                ExtWeeklyDigest.week_start == week
+            )
+        ).tuples()
+    )
+    return [
+        WeeklyDigest(user_id=user, team_id=team, week_start=week)
+        for user, team in sorted(owners)
+        if (user, team) not in sent
+    ]
+
+
+def send_weekly_digest(
+    session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
+) -> bool:
+    """Claim the week's digest and send it, in that order -- or send nothing.
+
+    The person's items are read again here, as they are now: one finished or
+    given away since the list was made is not in it, and a person with none
+    left is sent nothing and claims nothing. The claim is inserted only if
+    absent, in the caller's transaction with the send, so two runs cannot both
+    send and a failed send takes the claim back -- ``send_due_reminder``'s
+    shape. It goes to ``digest.user_id`` and nobody else.
+    """
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    if not rows:
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtWeeklyDigest)
+        .values(
+            user_id=digest.user_id,
+            team_id=digest.team_id,
+            week_start=digest.week_start,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "week_start"])
+        .returning(ExtWeeklyDigest.user_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        digest.user_id,
+        reminders.build_weekly_digest(
+            [
+                reminders.DigestLine(item.description, item.due_date, title)
+                for item, _, title in rows
+            ],
+            today=digest.week_start,
+            board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
         ),
     )
     return True
