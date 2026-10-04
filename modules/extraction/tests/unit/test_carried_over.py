@@ -180,3 +180,38 @@ def test_another_teams_meeting_is_not_found(client: TestClient, session: Session
 
     assert client.get(f"{PREFIX}/carried-over/mtg_other").status_code == 404
     assert client.get(f"{PREFIX}/carried-over/mtg_missing").status_code == 404
+
+
+# --- carried through meeting after meeting (the user, 2026-10-04) ------------------
+
+
+def test_each_open_item_counts_the_meetings_held_since_its_own(session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+    item(session, "act_last", "mtg_last")
+    item(session, "act_old_done", "mtg_old", status="done")
+    rows = [session.get(ExtActionItem, i) for i in ("act_old", "act_last", "act_old_done")]
+
+    counts = service.meetings_since(session, [r for r in rows if r is not None])
+
+    # team_1 held mtg_last, mtg_now and mtg_later after mtg_old; team_2's do not count.
+    assert counts == {"act_old": 3, "act_last": 2}
+
+
+def test_the_popup_counts_and_marks_the_stuck_ones(session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+    item(session, "act_last", "mtg_last")
+
+    result = service.carried_over(session, "mtg_later", today=TODAY)
+
+    assert result.stale == 1
+    marked = {i.id: i.carried_meetings for i in result.items}
+    assert marked == {"act_old": 3, "act_last": 2}
+    assert result.items[0].id == "act_old", "stuck first among the not-overdue"
+
+
+def test_the_board_carries_the_count(client: TestClient, session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+
+    listed = client.get(f"{PREFIX}/action-items?meeting_id=mtg_old").json()
+
+    assert [i["carried_meetings"] for i in listed] == [3]

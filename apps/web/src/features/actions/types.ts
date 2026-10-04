@@ -74,6 +74,11 @@ export interface ActionItemRead extends ActionItem {
    */
   origin: "model" | "user" | "followup" | "chat";
   /**
+   * For an open item: how many of its team's meetings were held since it was
+   * made. `STALE_AFTER` (3) or more reads as stuck.
+   */
+  carried_meetings?: number;
+  /**
    * A line it was drawn from was corrected after it was made (#586) and the
    * text may still need a person's eye. Cleared by their next edit.
    */
@@ -194,6 +199,8 @@ export interface CarriedOverItem extends ActionItemRead {
 export interface CarriedOver {
   open: number;
   overdue: number;
+  /** Open items carried through three or more meetings. */
+  stale?: number;
   items: CarriedOverItem[];
 }
 
