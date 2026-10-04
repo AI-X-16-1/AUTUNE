@@ -863,6 +863,15 @@ def create_action_item(
     ``confidence`` is 1.0 and ``origin`` is ``user``: a person typing an item is
     the certainty, and the origin is what edit cost is measured against.
 
+    **A person's own item is confirmed as it is written** -- ``todo``, not
+    ``needs_confirmation``. Confirmation is a person checking what the model
+    drafted (ADR 0006, #246); a person who typed the item has done that
+    already, and asking them to confirm their own words kept a typed due date
+    off their calendar until a second click nobody expected (decided with the
+    user, 2026-10-04). ``router.create_action_item`` then queues the outside
+    copies as a confirmation does. An item the agent adds (``AGENT_ORIGINS``)
+    still waits for the board: the chat drafted it.
+
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
@@ -912,7 +921,9 @@ def create_action_item(
         assignee_id=payload.assignee_id,
         assignee_label=payload.assignee_label,
         due_date=payload.due_date,
-        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        status=(
+            ActionStatus.TODO.value if origin == "user" else ActionStatus.NEEDS_CONFIRMATION.value
+        ),
         confidence=1.0,
         origin=origin,
     )
