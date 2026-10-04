@@ -89,6 +89,7 @@ from .models import (
     ExtExternalRef,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtWeeklyDigest,
 )
 from .noun_form import tidy
 from .pipeline.base import (
@@ -864,6 +865,15 @@ def create_action_item(
     ``confidence`` is 1.0 and ``origin`` is ``user``: a person typing an item is
     the certainty, and the origin is what edit cost is measured against.
 
+    **A person's own item is confirmed as it is written** -- ``todo``, not
+    ``needs_confirmation``. Confirmation is a person checking what the model
+    drafted (ADR 0006, #246); a person who typed the item has done that
+    already, and asking them to confirm their own words kept a typed due date
+    off their calendar until a second click nobody expected (decided with the
+    user, 2026-10-04). ``router.create_action_item`` then queues the outside
+    copies as a confirmation does. An item the agent adds (``AGENT_ORIGINS``)
+    still waits for the board: the chat drafted it.
+
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
@@ -913,7 +923,9 @@ def create_action_item(
         assignee_id=payload.assignee_id,
         assignee_label=payload.assignee_label,
         due_date=payload.due_date,
-        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        status=(
+            ActionStatus.TODO.value if origin == "user" else ActionStatus.NEEDS_CONFIRMATION.value
+        ),
         confidence=1.0,
         origin=origin,
     )
@@ -1567,6 +1579,9 @@ def read_detail(
 ) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
 
+    ``reader_id`` gets the reader their own confirmation DM about one of the
+    item's lines, when there is one (``confirmation_dm_url``).
+
     The only route in this module that returns the full *set* of sources
     verbatim. It is here and not on the list because the drawer is the one
     screen that shows every quotation, and it shows one item's at a time --
@@ -1600,7 +1615,47 @@ def read_detail(
         else context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
         related=[] if hidden else related_utterances(session, item.id),
         history=edit_history(session, item.id),
+        confirmation_dm_url=confirmation_dm_url(session, item, reader_id) if reader_id else None,
     )
+
+
+SLACK_OPEN = "https://slack.com/app_redirect?team={team}&channel={channel}"
+"""Slack's documented redirect: opens a conversation in the app or the browser."""
+
+
+def confirmation_dm_url(session: Session, item: ExtActionItem, reader_id: str) -> str | None:
+    """Where the reader's own confirmation DM about one of the item's lines is
+    (#680, the user, 2026-10-04) -- or ``None``.
+
+    **Only for the person the DM went to**: the speaker of the line, by its
+    participant. Slack opens a DM for its two members only, so a link shown to
+    anyone else would lead nowhere -- and would tell them a DM exists. The
+    place (``dm_channel``) is what #609 stores; the workspace is the team's
+    Slack connection's. A DM sent but not placed, or a team no longer on Slack,
+    is no link.
+    """
+    source_ids = [s.utterance_id for s in item.sources if s.utterance_id]
+    if not source_ids:
+        return None
+    channel = session.scalar(
+        select(ExtConfirmation.dm_channel)
+        .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtConfirmation.utterance_id.in_(source_ids),
+            ExtConfirmation.dm_channel.is_not(None),
+            Participant.user_id == reader_id,
+        )
+        .limit(1)
+    )
+    if not channel:
+        return None
+    meeting = session.get(Meeting, item.meeting_id)
+    slack = load_integration(session, meeting.team_id, "slack") if meeting else None
+    team = slack.config.get("workspace_id") if slack is not None else None
+    if not team:
+        return None
+    return SLACK_OPEN.format(team=team, channel=channel)
 
 
 def action_item_external_refs(
@@ -3307,6 +3362,116 @@ def send_due_reminder(
             due_date=reminder.due_date,
             meeting_title=reminder.meeting_title,
             board_url=answer_url(reminder.meeting_id),
+        ),
+    )
+    return True
+
+
+@dataclass(frozen=True)
+class WeeklyDigest:
+    """One digest owed: whose, through which team's Slack, for which week. The
+    recipient is the person whose items they are -- there is no field a caller
+    could put another person in."""
+
+    user_id: str
+    team_id: str
+    week_start: date
+
+
+def _open_items_of(
+    session: Session, *, user_id: str | None, team_id: str | None, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]]:
+    """Open items with their team and meeting title, assigned to an account
+    that is on the meeting's team -- narrowed to one person and team when
+    given. A meeting past its retention window is left out."""
+    query = (
+        select(ExtActionItem, Meeting.team_id, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == ExtActionItem.assignee_id,
+            ),
+        )
+        .where(
+            ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.due_date, ExtActionItem.id)
+    )
+    if user_id is not None:
+        query = query.where(ExtActionItem.assignee_id == user_id)
+    if team_id is not None:
+        query = query.where(Meeting.team_id == team_id)
+    return [(item, team, title) for item, team, title in session.execute(query).tuples()]
+
+
+def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDigest]:
+    """The digests owed at ``now`` and not yet sent (the user, 2026-10-04):
+    one per person and team that has an open item assigned to that person on
+    that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
+    Who counts is who ``due_reminders_to_send`` would remind: an account on the
+    meeting's team -- a typed name has nobody to tell."""
+    week = reminders.digest_week(now)
+    if week is None:
+        return []
+    owners = {
+        (item.assignee_id, team)
+        for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
+        if item.assignee_id
+    }
+    sent = set(
+        session.execute(
+            select(ExtWeeklyDigest.user_id, ExtWeeklyDigest.team_id).where(
+                ExtWeeklyDigest.week_start == week
+            )
+        ).tuples()
+    )
+    return [
+        WeeklyDigest(user_id=user, team_id=team, week_start=week)
+        for user, team in sorted(owners)
+        if (user, team) not in sent
+    ]
+
+
+def send_weekly_digest(
+    session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
+) -> bool:
+    """Claim the week's digest and send it, in that order -- or send nothing.
+
+    The person's items are read again here, as they are now: one finished or
+    given away since the list was made is not in it, and a person with none
+    left is sent nothing and claims nothing. The claim is inserted only if
+    absent, in the caller's transaction with the send, so two runs cannot both
+    send and a failed send takes the claim back -- ``send_due_reminder``'s
+    shape. It goes to ``digest.user_id`` and nobody else.
+    """
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    if not rows:
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtWeeklyDigest)
+        .values(
+            user_id=digest.user_id,
+            team_id=digest.team_id,
+            week_start=digest.week_start,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "week_start"])
+        .returning(ExtWeeklyDigest.user_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        digest.user_id,
+        reminders.build_weekly_digest(
+            [
+                reminders.DigestLine(item.description, item.due_date, title)
+                for item, _, title in rows
+            ],
+            today=digest.week_start,
+            board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
         ),
     )
     return True

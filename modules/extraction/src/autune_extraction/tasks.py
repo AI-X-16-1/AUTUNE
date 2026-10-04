@@ -443,6 +443,71 @@ def ask_confirmations() -> list[str]:
     return asked
 
 
+@shared_task(name="autune.extraction.periodic.send_weekly_digests")
+@periodic(timedelta(minutes=10))
+def send_weekly_digests() -> list[str]:
+    """Monday's digest of each person's own open items, by Slack DM to that
+    person alone (the user, 2026-10-04; ``service.weekly_digests_to_send``).
+    Returns the user ids a digest went to.
+
+    The shape of ``remind_due_items``: each digest claimed and sent in its own
+    transaction, a team without Slack or a person without a linked account
+    skipped and looked at again next run, an unexpected error that one
+    digest's, and a privacy refusal never swallowed -- raised after the rest
+    are sent. Every ten minutes; outside a Monday's sending hours in Korea it
+    finds nothing owed.
+    """
+    if not get_settings().weekly_digest:
+        return []
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = service.weekly_digests_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({d.team_id for d in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent: list[str] = []
+    refused: list[str] = []
+    not_linked = 0
+    for digest in owed:
+        secret = secrets[digest.team_id]
+        if secret is None:
+            continue
+        try:
+            with session_scope() as session:
+                went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
+        except PrivacyViolationError:
+            refused.append(digest.user_id)
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one digest's; logged by type, ids only
+            log.warning(
+                "extraction_weekly_digest_failed",
+                user_id=digest.user_id,
+                team_id=digest.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent.append(digest.user_id)
+    if owed:
+        log.info(
+            "extraction_weekly_digests_sent",
+            owed=len(owed),
+            sent=len(sent),
+            not_linked=not_linked,
+        )
+    if refused:
+        raise PrivacyViolationError(
+            f"weekly digest refused by the outbound check for {len(refused)} person(s): "
+            f"{', '.join(refused)}"
+        )
+    return sent
+
+
 @shared_task(name="autune.extraction.periodic.remind_due_items")
 @periodic(timedelta(minutes=10))
 def remind_due_items() -> list[str]:

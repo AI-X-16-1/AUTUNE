@@ -14,10 +14,10 @@ import type {
  * The quotation and the history for one item, fetched when its drawer opens —
  * one request, since `GET /action-items/{id}` returns both.
  *
- * Only `sources`, `history` and `calendar` are taken from the response.
- * Everything else the drawer shows comes from the item the board already
- * holds, which is also what an edit updates — reading the status from here too
- * would show the old one after the user changed it.
+ * Only `sources`, `history`, `calendar` and the reader's own DM link are taken
+ * from the response. Everything else the drawer shows comes from the item the
+ * board already holds, which is also what an edit updates — reading the status
+ * from here too would show the old one after the user changed it.
  *
  * `calendar` is where the item stands on its assignee's calendar and, where it
  * has no event, why not (#680). It follows `revision` like the history: an
@@ -39,6 +39,7 @@ export function useSourceUtterances(
     related: SourceUtterance[];
     history: EditHistoryEntry[] | null;
     calendar: CalendarState | null;
+    dmUrl: string | null;
     error: Error | null;
   }>({
     id: item.id,
@@ -47,6 +48,7 @@ export function useSourceUtterances(
     related: [],
     history: null,
     calendar: null,
+    dmUrl: null,
     error: null,
   });
 
@@ -65,6 +67,7 @@ export function useSourceUtterances(
             related: detail.related ?? [],
             history: detail.history ?? [],
             calendar: detail.calendar ?? null,
+            dmUrl: detail.confirmation_dm_url ?? null,
             error: null,
           });
       },
@@ -77,6 +80,7 @@ export function useSourceUtterances(
             related: [],
             history: null,
             calendar: null,
+            dmUrl: null,
             error: cause instanceof Error ? cause : new Error(String(cause)),
           });
         }
@@ -91,6 +95,7 @@ export function useSourceUtterances(
   const mine = state.id === item.id;
   const history = mine ? state.history : null;
   const calendar = mine ? state.calendar : null;
+  const dmUrl = mine ? state.dmUrl : null;
   if (expected === 0)
     return {
       sources: [],
@@ -100,6 +105,7 @@ export function useSourceUtterances(
       error: null,
       history,
       calendar,
+      dmUrl,
     };
   if (!mine)
     return {
@@ -110,6 +116,7 @@ export function useSourceUtterances(
       error: null,
       history: null,
       calendar: null,
+      dmUrl: null,
     };
   return {
     sources: state.sources,
@@ -119,5 +126,6 @@ export function useSourceUtterances(
     error: state.error,
     history,
     calendar,
+    dmUrl,
   };
 }

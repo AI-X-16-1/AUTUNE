@@ -41,7 +41,9 @@ outbound check reads it like every other message.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 
 from .slots import KST
 
@@ -106,3 +108,57 @@ def build_due_reminder(
             board_url,
         ]
     )
+
+
+# --- the weekly digest (the user, 2026-10-04) ----------------------------------
+
+DIGEST_WEEKDAY = 0
+"""Monday, in Korea: the week's open work, as it starts."""
+
+DIGEST_MAX_LINES = 10
+"""Items a digest lists; the rest are counted, and the board has them all."""
+
+
+def digest_week(now: datetime) -> date | None:
+    """The Monday a digest sent at ``now`` is for -- or ``None`` when ``now`` is
+    not a Monday's sending hours in Korea, and nothing goes."""
+    if not sending_hours(now):
+        return None
+    today = korean_day(now)
+    return today if today.weekday() == DIGEST_WEEKDAY else None
+
+
+@dataclass(frozen=True)
+class DigestLine:
+    description: str
+    due_date: date | None
+    meeting_title: str | None
+
+
+def build_weekly_digest(lines: Sequence[DigestLine], *, today: date, board_url: str) -> str:
+    """The digest as plain text: what is late, what is due this week, the rest
+    -- most urgent first, at most ``DIGEST_MAX_LINES``, and where to see all."""
+    week_end = today + timedelta(days=6)
+
+    def order(line: DigestLine) -> tuple[int, date]:
+        if line.due_date is None:
+            return (2, date.max)
+        return (0 if line.due_date < today else 1, line.due_date)
+
+    ordered = sorted(lines, key=order)
+    out = [f"이번 주 열린 액션 아이템 {len(ordered)}개입니다."]
+    for line in ordered[:DIGEST_MAX_LINES]:
+        when = ""
+        if line.due_date is not None:
+            if line.due_date < today:
+                when = f" · 기한 지남({line.due_date.isoformat()})"
+            elif line.due_date <= week_end:
+                when = f" · 이번 주 {line.due_date.isoformat()}"
+            else:
+                when = f" · 기한 {line.due_date.isoformat()}"
+        where = f" · {slack_escape(line.meeting_title)}" if line.meeting_title else ""
+        out.append(f"• {slack_escape(line.description)}{when}{where}")
+    if len(ordered) > DIGEST_MAX_LINES:
+        out.append(f"외 {len(ordered) - DIGEST_MAX_LINES}개")
+    out.append(board_url)
+    return "\n".join(out)
