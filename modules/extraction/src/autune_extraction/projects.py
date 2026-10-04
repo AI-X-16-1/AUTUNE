@@ -276,3 +276,173 @@ def place(session: Session, row: ExtActionItem | ExtDecision, project_id: str | 
     row.project_id = project_id
     row.project_by_person = True
     session.flush()
+
+
+# --- names people say that no project has yet (the user, 2026-10-04) -----------
+
+SUGGEST_MEETINGS = 10
+"""How many of the team's latest meetings the suggestions read."""
+
+SUGGEST_MIN_COUNT = 3
+SUGGEST_MAX = 15
+
+_LATIN = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
+_HANGUL = re.compile(r"[가-힣]{2,8}")
+_PARTICLES = (
+    "에서는",
+    "으로는",
+    "에서",
+    "으로",
+    "한테",
+    "까지",
+    "부터",
+    "처럼",
+    "보다",
+    "이랑",
+    "은",
+    "는",
+    "이",
+    "가",
+    "을",
+    "를",
+    "에",
+    "의",
+    "도",
+    "로",
+    "과",
+    "와",
+    "랑",
+    "만",
+)
+_COMMON = frozenset(
+    {
+        "그거",
+        "이거",
+        "저거",
+        "그건",
+        "이건",
+        "저희",
+        "우리",
+        "회의",
+        "오늘",
+        "내일",
+        "어제",
+        "다음",
+        "이번",
+        "지금",
+        "일단",
+        "그래서",
+        "그리고",
+        "그러면",
+        "그럼",
+        "근데",
+        "그런데",
+        "아니",
+        "네네",
+        "맞아요",
+        "감사합니다",
+        "정리",
+        "확인",
+        "공유",
+        "진행",
+        "부분",
+        "생각",
+        "얘기",
+        "이야기",
+        "문제",
+        "내용",
+        "관련",
+        "정도",
+        "하나",
+        "다들",
+        "이제",
+        "혹시",
+        "저도",
+        "제가",
+        "그냥",
+        "같이",
+        "먼저",
+        "나중",
+        "금요일",
+        "월요일",
+        "화요일",
+        "수요일",
+        "목요일",
+        "토요일",
+        "일요일",
+        "오전",
+        "오후",
+        "주말",
+        "이번주",
+        "다음주",
+        "시간",
+        "일정",
+        "자료",
+        "문서",
+        "작업",
+        "담당",
+        "기한",
+        "결정",
+        "할게요",
+        "하겠습니다",
+        "있어요",
+        "없어요",
+        "같아요",
+    }
+)
+"""Words that come up in any meeting and name no project. Kept short: a word
+wrongly suggested costs a glance, a project name wrongly hidden costs more."""
+
+_LATIN_COMMON = frozenset({"the", "and", "for", "you", "okay", "yes", "api", "ok"})
+
+
+def _stem(word: str) -> str:
+    """A Korean word without the particle after it ("오튠에서" -> "오튠")."""
+    for particle in _PARTICLES:
+        if word.endswith(particle) and len(word) - len(particle) >= 2:
+            return word[: -len(particle)]
+    return word
+
+
+def suggest_names(session: Session, team_id: str) -> list[tuple[str, int]]:
+    """Words said often in the team's latest meetings that no project of the
+    team is named or aliased by -- candidates for a project or an alias,
+    with how many times each was said.
+
+    Only the words and their counts leave this function, never a sentence, and
+    only consented speakers' lines are read (privacy.md section 5). Latin words
+    of three letters or more and Korean words of two to eight syllables, a
+    particle taken off; common words left out. A rule, not a model: it misses
+    names and suggests some words that are not names, and a person chooses."""
+    meetings = list(
+        session.scalars(
+            select(Meeting.id)
+            .where(Meeting.team_id == team_id, service.within_retention())
+            .order_by(Meeting.started_at.desc().nullslast(), Meeting.created_at.desc())
+            .limit(SUGGEST_MEETINGS)
+        )
+    )
+    known: set[str] = set()
+    for row in team_projects(session, team_id):
+        known.add(row.name.lower())
+        known.update(a.lower() for a in row.aliases.split("\n") if a)
+    counts: dict[str, int] = {}
+    shown: dict[str, str] = {}
+    for meeting_id in meetings:
+        consented = service.consented_utterance_ids(session, meeting_id)
+        for line in service.stored_transcript(session, meeting_id):
+            if line.id not in consented or not line.text:
+                continue
+            words = [w for w in _LATIN.findall(line.text) if w.lower() not in _LATIN_COMMON]
+            words += [_stem(w) for w in _HANGUL.findall(line.text)]
+            for word in words:
+                key = word.lower()
+                if key in _COMMON or key in known or len(word) < 2:
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+                shown.setdefault(key, word)
+    ranked = sorted(
+        ((shown[k], n) for k, n in counts.items() if n >= SUGGEST_MIN_COUNT),
+        key=lambda pair: (-pair[1], pair[0]),
+    )
+    return ranked[:SUGGEST_MAX]

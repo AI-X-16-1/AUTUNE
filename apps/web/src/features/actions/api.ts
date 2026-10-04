@@ -170,6 +170,12 @@ export const putSummaryNote = (meetingId: string, body: string) =>
 export const listProjects = (scope: IntegrationScope) =>
   api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
 
+/** Words said often in the team's meetings that no project has yet. */
+export const listProjectSuggestions = (teamId: string) =>
+  api.extraction<{ word: string; count: number }[]>(
+    `/projects/suggestions?team_id=${encodeURIComponent(teamId)}`,
+  );
+
 export const createProject = (teamId: string, draft: ProjectDraft) =>
   api.extraction<Project>(`/projects?team_id=${encodeURIComponent(teamId)}`, {
     method: "POST",

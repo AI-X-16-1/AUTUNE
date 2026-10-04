@@ -48,6 +48,7 @@ from .schemas import (
     MeetingReview,
     MeetingSummary,
     MyConfirmation,
+    NameSuggestion,
     Outbound,
     ProjectPlacement,
     ProjectRead,
@@ -289,6 +290,19 @@ def assign_summary_projects(
     response = service.meeting_summary(session, meeting_id)
     session.commit()
     return response
+
+
+@router.get("/projects/suggestions", response_model=list[NameSuggestion])
+def project_name_suggestions(
+    team_id: str, session: SessionDep, reader: CurrentUser
+) -> list[NameSuggestion]:
+    """Words said often in the team's latest meetings that no project is named
+    or aliased by (``projects.suggest_names``) -- words and counts only."""
+    team = _member_team(session, reader, None, team_id)
+    return [
+        NameSuggestion(word=word, count=count)
+        for word, count in projects.suggest_names(session, team)
+    ]
 
 
 @router.get("/projects", response_model=list[ProjectRead])

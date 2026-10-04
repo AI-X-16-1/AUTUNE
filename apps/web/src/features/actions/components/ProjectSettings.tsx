@@ -12,6 +12,7 @@ import {
   updateProject,
 } from "../api";
 import type { Project } from "../types";
+import { NameSuggestions } from "./NameSuggestions";
 
 /**
  * The team's projects on S28 (the user, 2026-10-04): a meeting that covers
@@ -93,6 +94,16 @@ export function ProjectSettings({ teamId }: { teamId: string }) {
               setNote("프로젝트를 추가했습니다.");
             })
             .catch(refused)
+        }
+      />
+      <NameSuggestions
+        teamId={teamId}
+        projects={projects}
+        onChanged={(saved) =>
+          setProjects((list) => {
+            const rest = (list ?? []).filter((p) => p.id !== saved.id);
+            return [...rest, saved];
+          })
         }
       />
       {note ? (

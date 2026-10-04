@@ -258,6 +258,13 @@ class ProjectRead(BaseModel):
     jira_project_key: str | None = None
 
 
+class NameSuggestion(BaseModel):
+    """A word said often in the team's meetings that no project has yet."""
+
+    word: str
+    count: int
+
+
 class ProjectWrite(BaseModel):
     """A project as a member types it."""
 

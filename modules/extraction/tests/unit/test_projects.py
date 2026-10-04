@@ -256,3 +256,42 @@ def test_the_summary_carries_the_projects_and_places_again_on_request(
     assert [p["id"] for p in summary["projects"]] == ["prj_a", "prj_b"]
     assert [d["project_id"] for d in summary["decisions"]] == ["prj_a"]
     assert [i["project_id"] for i in summary["action_items"]] == ["prj_a"]
+
+
+# --- names no project has yet ------------------------------------------------------
+
+
+def _say(session: Session, uid: str, who: str, text: str, at: float) -> None:
+    session.add(
+        Utterance(
+            id=uid,
+            meeting_id=MEETING,
+            participant_id=who,
+            speaker_label="화자",
+            start_sec=at,
+            end_sec=at + 0.5,
+            text=text,
+        )
+    )
+
+
+def test_words_said_often_that_no_project_has_are_suggested(
+    client: TestClient, session: Session
+) -> None:
+    for n in range(3):
+        _say(session, f"utt_p{n}", "par_yes", "Payflow 결제에서 오튠 연동을 봤어요", 10.0 + n)
+        _say(session, f"utt_s{n}", "par_no", "Secretname 얘기", 20.0 + n)
+    session.flush()
+
+    suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
+
+    words = {s["word"]: s["count"] for s in suggested}
+    assert words["Payflow"] == 3
+    assert words["결제"] == 3, "the particle after it is taken off"
+    assert "오튠" not in words, "already Autune's alias"
+    assert "Secretname" not in words, "a speaker who did not consent is not read"
+    assert set(suggested[0]) == {"word", "count"}, "words and counts, never a sentence"
+
+
+def test_suggestions_are_for_the_teams_members_only(client: TestClient) -> None:
+    assert client.get(f"{PREFIX}/projects/suggestions?team_id=team_2").status_code == 404
