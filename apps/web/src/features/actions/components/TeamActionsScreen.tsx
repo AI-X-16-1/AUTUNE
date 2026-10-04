@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { JiraOpenIssues } from "./JiraOpenIssues";
+import { ProjectFilter } from "./ProjectFilter";
+import { listMyProjects } from "../api";
 import { isOverdue, localToday } from "../dates";
 import { useActionItems } from "../hooks/useActionItems";
-import type { ActionItemRead } from "../types";
+import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
+import type { ActionItemRead, Project } from "../types";
 
 /**
  * S17 across every meeting — the sidebar's "액션아이템".
@@ -47,7 +50,20 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
     return { all: items, mine, overdue } satisfies Record<Tab, ActionItemRead[]>;
   }, [items, me, today]);
 
-  const shown = lists[tab];
+  // The project filter (2026-10-04), across every team the person is on.
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [project, setProject] = useState<ProjectChoice>(ALL_PROJECTS);
+  useEffect(() => {
+    let alive = true;
+    listMyProjects()
+      .then((list) => alive && setProjects(list))
+      .catch(() => alive && setProjects([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const shown = inProject(lists[tab], project);
   const selected = items.find((item) => item.id === selectedId);
 
   return (
@@ -65,6 +81,10 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
           active={tab}
           onChange={setTab}
         />
+
+        <div className="mt-3">
+          <ProjectFilter projects={projects} value={project} onChange={setProject} />
+        </div>
 
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
