@@ -17,6 +17,7 @@ const OUTCOME: Record<ProjectSendReport["results"][number]["outcome"], string> =
   {
     created: "보냄",
     updated: "고침",
+    retracted: "내림",
     not_connected: "연결 안 됨",
     failed: "실패",
   };

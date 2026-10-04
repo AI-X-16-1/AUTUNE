@@ -21,7 +21,16 @@ belong to no project to send them as.
 
 Sending again updates the same copy (``ext_project_sends``): the Slack message
 and the Jira task are rewritten; a Notion page's body cannot be replaced in one
-call, so the old page goes to the trash and a new one takes its place.
+call, so a new page is made first and only then is the old one emptied and
+trashed -- a failed send never leaves the team with no page.
+
+**Copies follow what changes after they went** (#787 review): a person deleting
+their own speech, a decision taken back, a line masked again -- ``refresh``
+rewrites each copy the meeting has, and a project left with nothing confirmed
+has its copies retracted: the Notion page emptied and trashed, the Slack
+message deleted, the Jira task emptied and closed. A deleted meeting or project
+queues its copies in ``ext_project_send_cleanup`` for the same retraction
+(``tasks.drain_project_send_cleanup``).
 
 **What leaves** is the same text the item and decision syncs already send to
 the same tools -- descriptions, statements, the assignee's name and the due
@@ -32,7 +41,7 @@ and the person is told which copy went and which did not.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -42,11 +51,17 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, Team, get_logger
-from autune_core.errors import PrivacyViolationError
-from autune_integrations import IntegrationError
+from autune_integrations.errors import PermanentIntegrationError
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
 
 from . import service
-from .models import ExtDecision, ExtProject, ExtProjectSend
+from .models import (
+    ExtActionItem,
+    ExtDecision,
+    ExtProject,
+    ExtProjectSend,
+    ExtProjectSendCleanup,
+)
 from .notion_setup import MINUTES_NOTION_PROPERTIES
 from .slots import meeting_day
 
@@ -55,6 +70,17 @@ log = get_logger(__name__)
 TARGETS = ("notion", "slack", "jira")
 NOTION_TEXT_LIMIT = 2000
 """Notion's limit on one text object; a longer line is cut, never sent whole."""
+
+REQUEST_BUDGET = MAX_OUTBOUND_CHARS - 1000
+"""Text one request carries, under the outbound check's limit with room for the
+title, the meeting id and Slack's or Jira's own fields. Longer minutes go to
+Notion over several requests, and are cut short for Slack and Jira."""
+
+RETRACTED_TITLE = "Autune에서 내린 회의록"
+"""What a copy says on its way out: no meeting content, so the trash and Jira's
+history keep no sentence of it."""
+
+RETRACTED_NOTE = "회의 내용이 바뀌거나 삭제되어 Autune에서 내린 회의록입니다."
 
 
 @dataclass(frozen=True)
@@ -78,13 +104,29 @@ class Minutes:
         return "\n".join(parts).rstrip()
 
 
+def _fit(text: str, budget: int = REQUEST_BUDGET) -> str:
+    """``text`` cut at a line so it fits one request, saying how much was left
+    out. Nothing is added but a count."""
+    if len(text) <= budget:
+        return text
+    lines = text.split("\n")
+    kept: list[str] = []
+    used = 0
+    for n, line in enumerate(lines):
+        if used + len(line) + 1 > budget - 40:
+            return "\n".join([*kept, f"... 외 {len(lines) - n}줄은 Autune에서 볼 수 있습니다."])
+        kept.append(line)
+        used += len(line) + 1
+    return "\n".join(kept)
+
+
 @dataclass(frozen=True)
 class Sent:
     project_id: str
     project_name: str
     target: str
     outcome: str
-    """``created``, ``updated``, ``not_connected`` or ``failed``."""
+    """``created``, ``updated``, ``retracted``, ``not_connected`` or ``failed``."""
 
 
 @dataclass
@@ -161,14 +203,7 @@ def _text(content: str) -> list[dict[str, Any]]:
     return [{"type": "text", "text": {"content": content[:NOTION_TEXT_LIMIT]}}]
 
 
-def _notion_page(m: Minutes, meeting_id: str, database_id: str) -> dict[str, Any]:
-    names = MINUTES_NOTION_PROPERTIES
-    properties: dict[str, Any] = {
-        names["title"]: {"title": _text(m.title)},
-        names["meeting"]: {"rich_text": _text(meeting_id)},
-    }
-    if m.day is not None:
-        properties[names["date"]] = {"date": {"start": m.day.isoformat()}}
+def _notion_blocks(m: Minutes) -> list[dict[str, Any]]:
     children: list[dict[str, Any]] = []
     for heading, lines in (("결정", m.decisions), ("할 일", m.items)):
         if not lines:
@@ -178,85 +213,419 @@ def _notion_page(m: Minutes, meeting_id: str, database_id: str) -> dict[str, Any
             {"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": _text(line)}}
             for line in lines
         ]
-    return {"parent": {"database_id": database_id}, "properties": properties, "children": children}
+    return children
 
 
-def _send_one(session: Session, meeting_id: str, m: Minutes, target: str, clients: Clients) -> str:
-    """One copy out; returns the outcome. Raises only what the caller catches."""
-    row = session.get(ExtProjectSend, (meeting_id, m.project_id, target))
+def _block_chars(block: dict[str, Any]) -> int:
+    """What a block costs the outbound check, which counts every string in a
+    body -- ``"bulleted_list_item"`` and ``"text"`` too, not only the line."""
+    return len("".join(strings_in(block)))
+
+
+def _chunks(blocks: list[dict[str, Any]], first: int) -> list[list[dict[str, Any]]]:
+    """Blocks in runs that each fit one request; the first run shares its
+    request with the page's properties (``first`` characters of them)."""
+    runs: list[list[dict[str, Any]]] = [[]]
+    used = first
+    for block in blocks:
+        size = _block_chars(block)
+        if runs[-1] and (used + size > REQUEST_BUDGET or len(runs[-1]) >= 100):
+            runs.append([])
+            used = 0
+        runs[-1].append(block)
+        used += size
+    return runs
+
+
+def _create_notion_page(notion: Any, m: Minutes, meeting_id: str, database_id: str) -> str:
+    """The page, its first blocks in the same request and the rest appended a
+    request at a time, each under the outbound limit. A page whose appends
+    fail is emptied and trashed before the error goes on: no half a page."""
+    names = MINUTES_NOTION_PROPERTIES
+    properties: dict[str, Any] = {
+        names["title"]: {"title": _text(m.title)},
+        names["meeting"]: {"rich_text": _text(meeting_id)},
+    }
+    if m.day is not None:
+        properties[names["date"]] = {"date": {"start": m.day.isoformat()}}
+    page = {"parent": {"database_id": database_id}, "properties": properties}
+    first, *rest = _chunks(_notion_blocks(m), len("".join(strings_in(page))))
+    made = notion.request("POST", "/pages", json={**page, "children": first})
+    page_id = str(made.get("id", ""))
+    try:
+        for run in rest:
+            notion.request("PATCH", f"/blocks/{page_id}/children", json={"children": run})
+    except Exception:
+        try:
+            _retract_notion(notion, page_id)
+        except Exception as exc:  # noqa: BLE001 -- the first error is the one to raise
+            log.warning("extraction_project_partial_page_kept", error=type(exc).__name__)
+        raise
+    return page_id
+
+
+def _retract_notion(notion: Any, page_id: str) -> str:
+    """Empty a minutes page -- title and every block -- then trash it, so the
+    trash keeps no sentence (the way a decision's page goes, #670). ``gone``
+    for a page already deleted, or already in the trash where nothing can be
+    edited."""
+    title = MINUTES_NOTION_PROPERTIES["title"]
+    try:
+        notion.update_page(page_id, {title: {"title": _text(RETRACTED_TITLE)}})
+    except PermanentIntegrationError:
+        if notion.page_state(page_id) == "live":
+            raise
+        return "gone"
+    cursor: str | None = None
+    while True:
+        listed = notion.request(
+            "GET",
+            f"/blocks/{page_id}/children",
+            params={"page_size": 100, **({"start_cursor": cursor} if cursor else {})},
+        )
+        for block in listed.get("results", []):
+            notion.request("DELETE", f"/blocks/{block['id']}")
+        cursor = listed.get("next_cursor")
+        if not listed.get("has_more") or not cursor:
+            break
+    notion.trash_page(page_id)
+    return "retracted"
+
+
+def retract(target: str, external_id: str, clients: Clients) -> str:
+    """Take one copy out of its tool: ``retracted``, ``gone`` (nothing left to
+    take out) or ``not_connected``. Raises what the tool raises."""
+    if not external_id:
+        return "gone"
     if target == "notion":
         if clients.notion is None:
             return "not_connected"
-        notion, database_id = clients.notion
-        if row is not None:
-            notion.trash_page(row.external_id)
-        made = notion.request("POST", "/pages", json=_notion_page(m, meeting_id, database_id))
-        external = str(made.get("id", ""))
-    elif target == "slack":
+        return _retract_notion(clients.notion[0], external_id)
+    if target == "slack":
         if clients.slack is None:
             return "not_connected"
+        channel, _, ts = external_id.partition(":")
+        answer = clients.slack[0].request(
+            "POST", "/chat.delete", json={"channel": channel, "ts": ts}
+        )
+        if not answer.get("ok", True):
+            if answer.get("error") in ("message_not_found", "channel_not_found"):
+                return "gone"
+            raise PermanentIntegrationError(f"slack refused the delete: {answer.get('error')}")
+        return "retracted"
+    if clients.jira is None:
+        return "not_connected"
+    jira = clients.jira[0]
+    if not jira.update_task(
+        external_id,
+        RETRACTED_TITLE,
+        due_date=None,
+        assignee_account_id=None,
+        keep_assignee=True,
+        description=RETRACTED_NOTE,
+    ):
+        return "gone"
+    jira.move_to_category(external_id, "done")
+    return "retracted"
+
+
+def _connected(target: str, m: Minutes, clients: Clients) -> bool:
+    if target == "notion":
+        return clients.notion is not None
+    if target == "slack":
+        return clients.slack is not None
+    return clients.jira is not None and bool(m.jira_project_key or clients.jira[1])
+
+
+def _write(m: Minutes, meeting_id: str, target: str, old: str, clients: Clients) -> str:
+    """The copy written, over ``old`` when there is one; its new address."""
+    if target == "notion":
+        assert clients.notion is not None
+        notion, database_id = clients.notion
+        page_id = _create_notion_page(notion, m, meeting_id, database_id)
+        if old:
+            try:
+                _retract_notion(notion, old)
+            except Exception as exc:  # noqa: BLE001 -- owed, not lost
+                # The new page is there; the old one is retracted later.
+                log.warning("extraction_project_old_page_kept", error=type(exc).__name__)
+                raise _OldCopyOwedError(page_id) from exc
+        return page_id
+    if target == "slack":
+        assert clients.slack is not None
         slack, channel = clients.slack
-        if row is not None and ":" in row.external_id:
-            at, ts = row.external_id.split(":", 1)
-            slack.update_message(at, ts, m.text)
-            external = row.external_id
-        else:
-            external = f"{channel}:{slack.post_message(channel, m.text)}"
-    else:
-        if clients.jira is None:
-            return "not_connected"
-        jira, default_key = clients.jira
-        key = m.jira_project_key or default_key
-        if not key:
-            return "not_connected"
-        kept = row is not None and jira.update_task(
-            row.external_id,
-            m.title,
-            due_date=None,
-            assignee_account_id=None,
-            keep_assignee=True,
-            description=m.text,
+        if old and ":" in old:
+            at, ts = old.split(":", 1)
+            slack.update_message(at, ts, _fit(m.text))
+            return old
+        return f"{channel}:{slack.post_message(channel, _fit(m.text))}"
+    assert clients.jira is not None
+    jira, default_key = clients.jira
+    description = _fit(m.text)
+    if old and jira.update_task(
+        old,
+        m.title,
+        due_date=None,
+        assignee_account_id=None,
+        keep_assignee=True,
+        description=description,
+    ):
+        return old
+    key = m.jira_project_key or default_key
+    return str(jira.create_task(key, m.title, description=description))
+
+
+class _OldCopyOwedError(Exception):
+    """A new Notion page went up but the old one could not be retracted."""
+
+    def __init__(self, page_id: str) -> None:
+        super().__init__(page_id)
+        self.page_id = page_id
+
+
+def _send_one(session: Session, meeting_id: str, m: Minutes, target: str, clients: Clients) -> str:
+    """One copy out, in its own savepoint; returns the outcome.
+
+    The row is claimed before anything is sent -- ``INSERT ... ON CONFLICT DO
+    NOTHING`` and then a locked read -- so a second person sending at the same
+    moment waits for the first and updates the copy the first one made,
+    instead of making another. A failure rolls back this copy's row only."""
+    if not _connected(target, m, clients):
+        return "not_connected"
+    key = {"meeting_id": meeting_id, "project_id": m.project_id, "target": target}
+    with session.begin_nested():
+        session.execute(
+            service._insert_if_absent_into(session, ExtProjectSend)
+            .values(**key, external_id="")
+            .on_conflict_do_nothing(index_elements=["meeting_id", "project_id", "target"])
         )
-        external = row.external_id if kept and row is not None else ""
-        if not kept:
-            external = jira.create_task(key, m.title, description=m.text)
-    if row is None:
-        session.add(
-            ExtProjectSend(
-                meeting_id=meeting_id,
-                project_id=m.project_id,
-                target=target,
-                external_id=external,
-            )
-        )
+        row = session.execute(
+            select(ExtProjectSend)
+            .filter_by(**key)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one()
+        old = row.external_id
+        try:
+            row.external_id = _write(m, meeting_id, target, old, clients)
+        except _OldCopyOwedError as owed:
+            row.external_id = owed.page_id
+            _queue(session, meeting_team(session, meeting_id), [(target, old)])
         session.flush()
-        return "created"
-    row.external_id = external
-    session.flush()
-    return "updated"
+    return "updated" if old else "created"
+
+
+def meeting_team(session: Session, meeting_id: str) -> str | None:
+    meeting = session.get(Meeting, meeting_id)
+    return meeting.team_id if meeting is not None else None
+
+
+def _queue(session: Session, team_id: str | None, copies: Sequence[tuple[str, str]]) -> int:
+    """Copies to retract later, into ``ext_project_send_cleanup``. Safe to run
+    twice (unique per team, tool and address)."""
+    values = [
+        {"team_id": team_id, "target": target, "external_id": external}
+        for target, external in copies
+        if external
+    ]
+    if team_id is None or not values:
+        return 0
+    session.execute(
+        service._insert_if_absent_into(session, ExtProjectSendCleanup)
+        .values(values)
+        .on_conflict_do_nothing(index_elements=["team_id", "target", "external_id"])
+    )
+    return len(values)
+
+
+def queue_meeting(session: Session, meeting_id: str) -> int:
+    """Before a meeting goes: every copy of its minutes, queued for retraction."""
+    rows = session.execute(
+        select(ExtProjectSend.target, ExtProjectSend.external_id).where(
+            ExtProjectSend.meeting_id == meeting_id
+        )
+    ).tuples()
+    return _queue(session, meeting_team(session, meeting_id), list(rows))
+
+
+def queue_project(session: Session, project_id: str) -> int:
+    """Before a project goes: every copy of its minutes, queued for retraction."""
+    project = session.get(ExtProject, project_id)
+    if project is None:
+        return 0
+    rows = session.execute(
+        select(ExtProjectSend.target, ExtProjectSend.external_id).where(
+            ExtProjectSend.project_id == project_id
+        )
+    ).tuples()
+    return _queue(session, project.team_id, list(rows))
+
+
+def _try(
+    session: Session,
+    meeting_id: str,
+    project: tuple[str, str],
+    target: str,
+    attempt: Any,
+) -> Sent:
+    """One copy's work, whatever it raises costing that copy only. Ids and the
+    error's class in the log: the text is meeting content."""
+    try:
+        outcome = attempt()
+    except Exception as exc:  # noqa: BLE001 -- one copy never stops the others
+        log.warning(
+            "extraction_project_send_failed",
+            meeting_id=meeting_id,
+            project_id=project[0],
+            target=target,
+            error=type(exc).__name__,
+        )
+        outcome = "failed"
+    return Sent(project[0], project[1], target, outcome)
+
+
+def _retract_row(session: Session, row: ExtProjectSend, clients: Clients) -> str:
+    with session.begin_nested():
+        outcome = retract(row.target, row.external_id, clients)
+        if outcome == "not_connected":
+            return outcome
+        session.delete(row)
+        session.flush()
+    return "retracted"
+
+
+def _emptied(
+    session: Session, meeting_id: str, kept: set[str], targets: Sequence[str]
+) -> list[ExtProjectSend]:
+    """The meeting's copies whose project has nothing confirmed any more."""
+    query = select(ExtProjectSend).where(
+        ExtProjectSend.meeting_id == meeting_id, ExtProjectSend.target.in_(targets)
+    )
+    if kept:
+        query = query.where(ExtProjectSend.project_id.not_in(kept))
+    return list(session.scalars(query))
 
 
 def send(
     session: Session, meeting_id: str, targets: Sequence[str], clients: Clients
 ) -> tuple[list[Sent], int]:
-    """Every project's minutes to every chosen tool. Returns what happened to
-    each copy, and how many confirmed rows were left out as 미분류."""
+    """Every project's minutes to every chosen tool, and the chosen tools'
+    copies of a project left with nothing confirmed retracted. Returns what
+    happened to each copy, and how many confirmed rows were left out as
+    미분류."""
+    chosen = [t for t in TARGETS if t in targets]
     out: list[Sent] = []
     projects, unsorted = minutes(session, meeting_id)
     for m in projects:
-        for target in [t for t in TARGETS if t in targets]:
-            try:
-                outcome = _send_one(session, meeting_id, m, target, clients)
-            except (IntegrationError, PrivacyViolationError) as exc:
-                # Ids and the error's class only: the text is meeting content.
-                log.warning(
-                    "extraction_project_send_failed",
-                    meeting_id=meeting_id,
-                    project_id=m.project_id,
-                    target=target,
-                    error=type(exc).__name__,
+        for target in chosen:
+            out.append(
+                _try(
+                    session,
+                    meeting_id,
+                    (m.project_id, m.project_name),
+                    target,
+                    lambda m=m, target=target: _send_one(session, meeting_id, m, target, clients),
                 )
-                outcome = "failed"
-            out.append(Sent(m.project_id, m.project_name, target, outcome))
+            )
+    names = _names(session, meeting_id)
+    for row in _emptied(session, meeting_id, {m.project_id for m in projects}, chosen):
+        out.append(
+            _try(
+                session,
+                meeting_id,
+                (row.project_id, names.get(row.project_id, "")),
+                row.target,
+                lambda row=row: _retract_row(session, row, clients),
+            )
+        )
     log.info("extraction_project_minutes_sent", meeting_id=meeting_id, copies=len(out))
     return out, unsorted
+
+
+def _names(session: Session, meeting_id: str) -> dict[str, str]:
+    return {
+        project_id: name
+        for project_id, name in session.execute(
+            select(ExtProject.id, ExtProject.name)
+            .join(ExtProjectSend, ExtProjectSend.project_id == ExtProject.id)
+            .where(ExtProjectSend.meeting_id == meeting_id)
+        ).tuples()
+    }
+
+
+def meetings_with_sends(
+    session: Session, item_ids: Iterable[str], decision_ids: Iterable[str]
+) -> set[str]:
+    """The meetings of these items and decisions whose minutes went out."""
+    items, decisions = set(item_ids), set(decision_ids)
+    meetings: set[str] = set()
+    if items:
+        meetings |= set(
+            session.scalars(select(ExtActionItem.meeting_id).where(ExtActionItem.id.in_(items)))
+        )
+    if decisions:
+        meetings |= set(
+            session.scalars(select(ExtDecision.meeting_id).where(ExtDecision.id.in_(decisions)))
+        )
+    if not meetings:
+        return set()
+    return set(
+        session.scalars(
+            select(ExtProjectSend.meeting_id)
+            .where(ExtProjectSend.meeting_id.in_(meetings))
+            .distinct()
+        )
+    )
+
+
+def sent_targets(session: Session, meeting_id: str) -> list[str]:
+    """The tools this meeting's minutes went to, for ``refresh``."""
+    return sorted(
+        set(
+            session.scalars(
+                select(ExtProjectSend.target).where(ExtProjectSend.meeting_id == meeting_id)
+            )
+        )
+    )
+
+
+def refresh(session: Session, meeting_id: str, clients: Clients) -> list[Sent]:
+    """After the meeting's confirmed rows changed with nobody pressing send --
+    speech deleted, a decision taken back, a line masked again: every copy it
+    already has rewritten, or retracted when its project has nothing confirmed
+    left. Makes no copy that was not there. A tool not connected keeps its
+    copy until it is (it cannot be reached either way)."""
+    existing = list(
+        session.scalars(select(ExtProjectSend).where(ExtProjectSend.meeting_id == meeting_id))
+    )
+    if not existing:
+        return []
+    projects, _ = minutes(session, meeting_id)
+    by_id = {m.project_id: m for m in projects}
+    names = _names(session, meeting_id)
+    out: list[Sent] = []
+    for row in existing:
+        m = by_id.get(row.project_id)
+        project = (row.project_id, names.get(row.project_id, ""))
+        if m is None:
+            out.append(
+                _try(
+                    session,
+                    meeting_id,
+                    project,
+                    row.target,
+                    lambda row=row: _retract_row(session, row, clients),
+                )
+            )
+        else:
+            out.append(
+                _try(
+                    session,
+                    meeting_id,
+                    project,
+                    row.target,
+                    lambda m=m, row=row: _send_one(session, meeting_id, m, row.target, clients),
+                )
+            )
+    log.info("extraction_project_minutes_refreshed", meeting_id=meeting_id, copies=len(out))
+    return out
