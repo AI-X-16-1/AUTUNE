@@ -1381,9 +1381,22 @@ def drain_calendar_cleanup() -> int:
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
 def sync_decision(decision_id: str) -> None:
-    """Step 7 for one decision a person just confirmed: its Notion page, once.
-    And for one that stopped being confirmed, or was deleted, while it had a
-    page: that page is retired (``service.sync_decision_to_notion``, #669).
+    """Step 7 for one decision a person just confirmed: its Notion page and its
+    Jira issue, once each. And for one that stopped being confirmed, or was
+    deleted, while it had them: both are retired (#669).
+
+    The Jira half runs whatever the Notion half did -- a Notion that is down
+    must not keep the issue from being made or retired -- and a Jira failure is
+    logged, not raised. A Notion failure is raised after, as before.
+    """
+    try:
+        _sync_decision_notion(decision_id)
+    finally:
+        _sync_decision_jira_logged(decision_id)
+
+
+def _sync_decision_notion(decision_id: str) -> None:
+    """The Notion half (``service.sync_decision_to_notion``).
 
     ``sync_action_item``'s rules, for the team's decision database
     (``decision_db_id`` in its Notion config). A team that connected Notion for
@@ -1426,13 +1439,85 @@ def sync_decision_after_confirmation(decision_id: str) -> None:
     failing the confirmation that started it. Catches ``PrivacyViolationError``
     the same way and for the same reason -- see that function's own note."""
     try:
-        sync_decision(decision_id)
+        _sync_decision_notion(decision_id)
     except IntegrationError:
         log.warning("extraction_notion_decision_sync_failed", decision_id=decision_id)
     except PrivacyViolationError:
         log.warning(
             "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
         )
+    # Separately, so a Notion failure never costs Jira its issue.
+    _sync_decision_jira_logged(decision_id)
+
+
+def sync_decision_jira(decision_id: str) -> None:
+    """The Jira half of a decision's sync (``jira_sync.sync_decision_to_jira``):
+    its issue in the team's chosen project, made, rewritten or retired.
+
+    Skipped, not failed, for a team that has not connected Jira or chosen a
+    project, or whose connection needs a reconnect -- ``sync_action_item_jira``'s
+    rules, and like it no self-retry. A deleted decision is found through its
+    ref, which outlives it and names the meeting.
+    """
+    with session_scope() as session:
+        decision = session.get(ExtDecision, decision_id)
+        if decision is not None:
+            meeting_id: str | None = decision.meeting_id
+        else:
+            ref = session.get(ExtDecisionRef, (decision_id, jira_sync.JIRA))
+            meeting_id = ref.meeting_id if ref is not None else None
+        meeting = session.get(Meeting, meeting_id) if meeting_id else None
+        if meeting is None:
+            return
+        access = jira_access(meeting.team_id, check_project=True)
+        if access is None or not access.project_key:
+            log.info("extraction_jira_not_connected", decision_id=decision_id)
+            return
+        config = load_integration(session, meeting.team_id, jira_sync.JIRA)
+        client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+        try:
+            jira_sync.sync_decision_to_jira(
+                session,
+                client,
+                decision_id=decision_id,
+                project_key=access.project_key,
+                site=access.cloud_id,
+                site_url=config.config.get("site_url") if config is not None else None,
+            )
+        finally:
+            client.close()
+
+
+def _sync_decision_jira_logged(decision_id: str) -> None:
+    """``sync_decision_jira``, a failure logged by its class. ``AutuneError``
+    covers a refused grant as well as an integration error; the outbound
+    check's refusal is caught the same way."""
+    try:
+        sync_decision_jira(decision_id)
+    except (AutuneError, PrivacyViolationError) as exc:
+        log.warning(
+            "extraction_jira_decision_sync_failed",
+            decision_id=decision_id,
+            error=type(exc).__name__,
+        )
+
+
+@shared_task(name="autune.extraction.periodic.retire_decision_issues")
+@periodic(timedelta(minutes=10))
+def retire_decision_issues() -> int:
+    """Retire, on a timer, the Jira issues of decisions that are gone or no
+    longer confirmed -- what ``retire_decision_pages`` is for Notion (#683).
+    A decision's issue is retired right after the change; when that one call
+    failed, a deleted decision has no next change to try again on. Returns
+    how many were tried. A tick with nothing to retire calls Jira not at all.
+    Ids and counts only."""
+    with session_scope() as session:
+        owed = jira_sync.decision_issues_to_retire(session)
+    for decision_id, _meeting_id in owed:
+        _sync_decision_jira_logged(decision_id)
+    if owed:
+        log.info("extraction_jira_decision_issues_retired", listed=len(owed))
+    return len(owed)
 
 
 @shared_task(name="autune.extraction.update_confirmation_dm", acks_late=True)
