@@ -348,11 +348,35 @@ export function ActionDetailDrawer({
             )}
           </section>
 
-          {item.sync_refs?.length ? (
+          {item.sync_refs?.length || quotation.dmUrl ? (
             <section className="mt-6">
               <SectionTitle>연동</SectionTitle>
               <div className="mt-2 grid gap-2">
-                {item.sync_refs.map((ref) => (
+                {quotation.dmUrl ? (
+                  // The reader's own confirmation DM: the server sends this to
+                  // the person it went to and nobody else (#680).
+                  <div
+                    className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    <StatusDot variant="confirmed" />
+                    <span className="text-[var(--color-ink-body)]">
+                      Slack 확인 DM
+                    </span>
+                    <span className="text-[var(--color-ink-muted)]">
+                      나에게 온 DM
+                    </span>
+                    <a
+                      href={quotation.dmUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto text-[var(--color-accent-text)]"
+                    >
+                      열기
+                    </a>
+                  </div>
+                ) : null}
+                {(item.sync_refs ?? []).map((ref) => (
                   <div
                     key={ref.system}
                     className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"

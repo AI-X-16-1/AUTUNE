@@ -169,13 +169,20 @@ def retry_action_item_sync(
 
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
 def create_action_item(
-    payload: ActionItemCreate, session: SessionDep, reader: CurrentUser
+    payload: ActionItemCreate,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
 ) -> ActionItemRead:
     """Add an item the model missed.
 
     ADR 0006 ranks recall above precision because a wrong item costs a click and
     a missing one costs re-reading the meeting. This is the route that makes the
     second recoverable.
+
+    The item is confirmed as written (``service.create_action_item``), so its
+    Notion page, Jira issue and due-date event are queued here after the
+    commit, exactly as ``update_action_item`` queues them on confirmation.
     """
     service.require_readable_meeting(session, payload.meeting_id, reader)
     item = service.create_action_item(session, payload)
@@ -186,6 +193,8 @@ def create_action_item(
     # first lets ``get_session`` roll it back.
     response = service.read_one(session, item)
     session.commit()
+    if service.copies_follow(session, item):
+        background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
 
