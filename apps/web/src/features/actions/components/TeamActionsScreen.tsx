@@ -8,10 +8,12 @@ import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { JiraOpenIssues } from "./JiraOpenIssues";
 import { ProjectFilter } from "./ProjectFilter";
+import { ProjectProgressStrip } from "./ProjectProgressStrip";
 import { listMyProjects } from "../api";
 import { isOverdue, localToday } from "../dates";
 import { useActionItems } from "../hooks/useActionItems";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
+import { projectProgress } from "../projectProgress";
 import type { ActionItemRead, Project } from "../types";
 
 /**
@@ -64,6 +66,10 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
   }, []);
 
   const shown = inProject(lists[tab], project);
+  const progress = useMemo(
+    () => projectProgress(items, projects, today),
+    [items, projects, today],
+  );
   const selected = items.find((item) => item.id === selectedId);
 
   return (
@@ -85,6 +91,8 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
         <div className="mt-3">
           <ProjectFilter projects={projects} value={project} onChange={setProject} />
         </div>
+
+        <ProjectProgressStrip lines={progress} value={project} onChoose={setProject} />
 
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
