@@ -1043,3 +1043,64 @@ def test_an_earlier_meeting_past_retention_carries_nothing_over(
     carried = client.get(f"{PREFIX}/carried-over/{MEETING}").json()
 
     assert (carried["open"], carried["items"]) == (0, [])
+
+
+# --- several at once (the user, 2026-10-04) ----------------------------------------
+
+
+def test_several_drafts_are_confirmed_at_once_and_each_queues_its_copies(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queued: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", queued.append)
+    action_item(session, "act_1")
+    action_item(session, "act_2")
+    action_item(session, "act_done", status="todo")
+
+    result = client.post(
+        f"{PREFIX}/action-items/bulk",
+        json={"ids": ["act_1", "act_2", "act_done", "act_nobody"], "action": "confirm"},
+    ).json()
+
+    assert result == {
+        "confirmed": ["act_1", "act_2"],
+        "deleted": [],
+        "skipped": ["act_done", "act_nobody"],
+    }
+    assert queued == ["act_1", "act_2"]
+    assert session.get(ExtActionItem, "act_1").status == "todo"  # type: ignore[union-attr]
+    history = client.get(f"{PREFIX}/action-items/act_1").json()["history"]
+    assert [(h["kind"], h["fields"]) for h in history] == [("edited", ["status"])]
+
+
+def test_several_drafts_are_deleted_at_once_and_a_confirmed_item_is_not(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("remove_calendar_event", "close_jira_issue", "trash_notion_page"):
+        monkeypatch.setattr(tasks, name, lambda _id: None)
+    action_item(session, "act_1")
+    action_item(session, "act_kept", status="in_progress")
+
+    result = client.post(
+        f"{PREFIX}/action-items/bulk", json={"ids": ["act_1", "act_kept"], "action": "delete"}
+    ).json()
+
+    assert result == {"confirmed": [], "deleted": ["act_1"], "skipped": ["act_kept"]}
+    assert session.get(ExtActionItem, "act_1") is None
+    assert session.get(ExtActionItem, "act_kept") is not None
+
+
+def test_another_teams_draft_is_skipped_like_an_unknown_one(
+    client: TestClient, session: Session
+) -> None:
+    action_item(session, "act_theirs", meeting_id=OTHER_MEETING)
+    session.execute(
+        Meeting.__table__.update().where(Meeting.id == OTHER_MEETING).values(team_id="team_2")
+    )
+
+    result = client.post(
+        f"{PREFIX}/action-items/bulk", json={"ids": ["act_theirs"], "action": "confirm"}
+    ).json()
+
+    assert result["skipped"] == ["act_theirs"]
+    assert session.get(ExtActionItem, "act_theirs").status == "needs_confirmation"  # type: ignore[union-attr]
