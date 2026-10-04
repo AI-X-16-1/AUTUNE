@@ -102,6 +102,30 @@ class ExtProject(Base):
     )
 
 
+class ExtProjectSend(Base):
+    """Where a project's minutes for one meeting were sent, per tool (2026-10-04).
+
+    One row per (meeting, project, target): the Notion page id, the Slack
+    message as ``channel:ts``, or the Jira issue key. Sending again updates that
+    copy instead of making a second one. Holds addresses, no text; goes with the
+    meeting, and with the project.
+    """
+
+    __tablename__ = "ext_project_sends"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    target: Mapped[str] = mapped_column(String(16), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtActionItem(Base, TimestampMixin):
     """One trackable commitment, as the user will eventually accept it.
 

@@ -51,6 +51,9 @@ from .schemas import (
     Outbound,
     ProjectPlacement,
     ProjectRead,
+    ProjectSendReport,
+    ProjectSendRequest,
+    ProjectSendResult,
     ProjectWrite,
     ReviewDecision,
 )
@@ -289,6 +292,30 @@ def assign_summary_projects(
     response = service.meeting_summary(session, meeting_id)
     session.commit()
     return response
+
+
+@router.post("/summary/{meeting_id}/projects/send", response_model=ProjectSendReport)
+def send_summary_projects(
+    meeting_id: str, payload: ProjectSendRequest, session: SessionDep, reader: CurrentUser
+) -> ProjectSendReport:
+    """Send each project's confirmed decisions and items, as "팀-프로젝트-날짜",
+    to the chosen tools (``project_send``). Sending again updates the same
+    copies. Any member, like confirming."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    sent, unsorted = tasks.send_project_minutes(session, meeting_id, payload.targets)
+    session.commit()
+    return ProjectSendReport(
+        results=[
+            ProjectSendResult(
+                project_id=s.project_id,
+                project_name=s.project_name,
+                target=s.target,  # type: ignore[arg-type]
+                outcome=s.outcome,  # type: ignore[arg-type]
+            )
+            for s in sent
+        ],
+        unsorted=unsorted,
+    )
 
 
 @router.get("/projects", response_model=list[ProjectRead])

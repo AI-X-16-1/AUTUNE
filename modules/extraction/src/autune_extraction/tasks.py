@@ -56,7 +56,15 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_backfill, notion_setup, projects, service
+from . import (
+    calendar_sync,
+    jira_sync,
+    notion_backfill,
+    notion_setup,
+    project_send,
+    projects,
+    service,
+)
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
@@ -262,6 +270,44 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+
+
+def send_project_minutes(
+    session: Session, meeting_id: str, targets: Sequence[str]
+) -> tuple[list[project_send.Sent], int]:
+    """The 요약 tab's "프로젝트별로 보내기" (2026-10-04): the team's tools built
+    here, where every client is, and the minutes sent by ``project_send``. Runs
+    in the request -- a person pressed the button and waits to see what went.
+
+    A tool the team has not connected is reported as such, not tried; Jira's
+    access is asked for only when Jira was chosen, since it may refresh a token.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        return [], 0
+    team_id = meeting.team_id
+    clients = project_send.Clients()
+    if "notion" in targets:
+        notion = load_integration(session, team_id, "notion")
+        database_id = notion_setup.database_id(session, team_id, notion, "minutes_db_id")
+        if notion is not None and notion.secret and database_id:
+            clients.notion = (NotionClient(notion.secret), database_id)
+    if "slack" in targets:
+        slack = load_integration(session, team_id, "slack")
+        channel = slack.config.get("channel") if slack is not None else None
+        if slack is not None and slack.secret and channel:
+            clients.slack = (SlackClient(slack.secret), str(channel))
+    if "jira" in targets:
+        try:
+            access = jira_access(team_id)
+        except AutuneError:
+            access = None  # a refused grant: reported as not connected
+        if access is not None:
+            clients.jira = (
+                JiraClient.for_cloud(access.access_token, access.cloud_id),
+                access.project_key,
+            )
+    return project_send.send(session, meeting_id, targets, clients)
 
 
 @shared_task(name="autune.extraction.periodic.reextract_consent_changes")
