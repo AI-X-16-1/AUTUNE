@@ -47,9 +47,7 @@ def upgrade() -> None:
         op.add_column(table, sa.Column("project_id", sa.String(length=64), nullable=True))
         op.add_column(
             table,
-            sa.Column(
-                "project_by_person", sa.Boolean(), nullable=False, server_default=sa.false()
-            ),
+            sa.Column("project_by_person", sa.Boolean(), nullable=False, server_default=sa.false()),
         )
         op.create_foreign_key(
             f"fk_{table}_project_id_ext_projects",
