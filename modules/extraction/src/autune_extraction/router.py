@@ -199,7 +199,9 @@ def update_action_item(
 
 
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_action_item(action_item_id: str, session: SessionDep, reader: CurrentUser) -> None:
+def delete_action_item(
+    action_item_id: str, session: SessionDep, reader: CurrentUser, background: BackgroundTasks
+) -> None:
     """Delete an item the model got wrong.
 
     Real deletion. ``privacy.md`` allows no soft deletes and no tombstones
@@ -210,14 +212,18 @@ def delete_action_item(action_item_id: str, session: SessionDep, reader: Current
     (``tasks.remove_calendar_event``, #435), its Jira issue is closed with a
     note (``tasks.close_jira_issue``, #82) and its Notion page goes to Notion's
     trash (``tasks.trash_notion_page``, #467): once the rows cascade away none
-    of them can be found again.
+    of them can be found again. The project minutes it went out in are
+    rewritten after (``tasks.refresh_project_minutes``).
     """
     item = service.readable_action_item(session, action_item_id, reader)
     tasks.remove_calendar_event(item.id)
     tasks.close_jira_issue(item.id)
     tasks.trash_notion_page(item.id)
+    meeting_id = item.meeting_id
     service.delete_action_item(session, item)
     session.commit()
+    # The project minutes it was in, when they went out, lose it too.
+    background.add_task(tasks.refresh_project_minutes, meeting_id)
 
 
 @router.get("/reviews/{meeting_id}", response_model=MeetingReview)

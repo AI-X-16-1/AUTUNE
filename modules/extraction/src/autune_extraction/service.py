@@ -1760,6 +1760,20 @@ def delete_action_item(session: Session, item: ExtActionItem) -> None:
     _record_edit(session, meeting_id=meeting_id, action_item_id=None, kind="deleted")
 
 
+def record_placement(session: Session, item: ExtActionItem) -> None:
+    """A person moved an item to a project (or out of one): a correction like
+    any edit. It is also what keeps the move -- ``build_action_items`` rebuilds
+    a meeting's model items only while nobody has corrected anything, and a
+    rebuilt item would come back with a new id and the rules' choice."""
+    _record_edit(
+        session,
+        meeting_id=item.meeting_id,
+        action_item_id=item.id,
+        kind="edited",
+        fields=("project_id",),
+    )
+
+
 def _record_edit(
     session: Session,
     *,

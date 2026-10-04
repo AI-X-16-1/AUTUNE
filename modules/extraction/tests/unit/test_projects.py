@@ -174,6 +174,21 @@ def test_a_project_a_person_chose_stays(session: Session) -> None:
     assert item.project_id == "prj_b" and item.project_by_person
 
 
+def test_a_moved_item_survives_extracting_the_meeting_again(session: Session) -> None:
+    item = session.get(ExtActionItem, "act_1")
+    assert item is not None
+    projects.place(session, item, "prj_b")
+
+    rebuilt = service.build_action_items(session, meeting_id=MEETING, utterances=[], classified=[])
+
+    assert rebuilt is None, "the move is a correction, so the draft is kept"
+    kept = session.get(ExtActionItem, "act_1")
+    assert kept is not None and kept.project_id == "prj_b" and kept.project_by_person
+    assert [(e.kind, e.fields) for e in service.edit_history(session, "act_1")] == [
+        ("edited", ["project_id"])
+    ]
+
+
 def test_deleting_a_project_unassigns_its_rows(session: Session) -> None:
     projects.assign_meeting(session, MEETING)
 

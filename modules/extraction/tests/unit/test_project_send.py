@@ -42,9 +42,11 @@ from autune_extraction.models import (
     ExtMinutesEvent,
     ExtProject,
     ExtProjectSend,
+    ExtProjectSendCleanup,
 )
 from autune_extraction.router import router
 from autune_integrations.errors import PermanentIntegrationError
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
 
 from .conftest import sign_in
 
@@ -54,36 +56,98 @@ PREFIX = "/api/extraction"
 
 
 class FakeNotion:
-    def __init__(self) -> None:
-        self.pages: list[dict[str, Any]] = []
-        self.trashed: list[str] = []
+    """Records every request in order, with the page each one touched."""
 
-    def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
-        self.pages.append(json)
-        return {"id": f"page_{len(self.pages)}"}
+    def __init__(self, *, fail_appends: bool = False) -> None:
+        self.pages: list[dict[str, Any]] = []
+        self.calls: list[tuple[str, str]] = []
+        self.blocks: dict[str, list[str]] = {}
+        self.bodies: list[dict[str, Any]] = []
+        self.trashed: list[str] = []
+        self.retitled: list[str] = []
+        self.fail_appends = fail_appends
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any = None,
+        params: Any = None,  # noqa: A002
+    ) -> dict[str, Any]:
+        self.calls.append((method, path))
+        if json is not None:
+            self.bodies.append(json)
+        if method == "POST" and path == "/pages":
+            self.pages.append(json)
+            page_id = f"page_{len(self.pages)}"
+            self.blocks[page_id] = [f"{page_id}_b{n}" for n in range(len(json["children"]))]
+            return {"id": page_id}
+        if method == "PATCH" and path.endswith("/children"):
+            if self.fail_appends:
+                raise PermanentIntegrationError("notion refused")
+            page_id = path.split("/")[2]
+            self.blocks[page_id] += [f"{page_id}_x{n}" for n in range(len(json["children"]))]
+            return {}
+        if method == "GET":
+            page_id = path.split("/")[2]
+            return {"results": [{"id": b} for b in self.blocks.get(page_id, [])]}
+        if method == "DELETE":
+            block = path.split("/")[2]
+            for listed in self.blocks.values():
+                if block in listed:
+                    listed.remove(block)
+            return {}
+        raise AssertionError((method, path))
+
+    def update_page(self, page_id: str, properties: dict[str, Any]) -> None:
+        self.calls.append(("retitle", page_id))
+        self.retitled.append(page_id)
+        self.bodies.append(properties)
+
+    def page_state(self, page_id: str) -> str:
+        return "live"
 
     def trash_page(self, page_id: str) -> bool:
+        self.calls.append(("trash", page_id))
         self.trashed.append(page_id)
         return True
 
+    def close(self) -> None:
+        pass
+
 
 class FakeSlack:
-    def __init__(self) -> None:
+    def __init__(self, *, fail: bool = False) -> None:
         self.posted: list[tuple[str, str]] = []
         self.updated: list[tuple[str, str, str]] = []
+        self.deleted: list[tuple[str, str]] = []
+        self.fail = fail
 
     def post_message(self, channel: str, text: str) -> str:
+        if self.fail:
+            raise RuntimeError("not an integration error")
         self.posted.append((channel, text))
         return f"17000.{len(self.posted)}"
 
     def update_message(self, channel: str, ts: str, text: str) -> None:
         self.updated.append((channel, ts, text))
 
+    def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
+        assert (method, path) == ("POST", "/chat.delete")
+        self.deleted.append((json["channel"], json["ts"]))
+        return {"ok": True}
+
+    def close(self) -> None:
+        pass
+
 
 class FakeJira:
     def __init__(self, *, fail: bool = False) -> None:
         self.created: list[tuple[str, str, str]] = []
         self.updated: list[str] = []
+        self.descriptions: list[str] = []
+        self.closed: list[str] = []
         self.fail = fail
 
     def create_task(self, key: str, summary: str, *, description: str = "") -> str:
@@ -92,9 +156,17 @@ class FakeJira:
         self.created.append((key, summary, description))
         return f"{key}-{len(self.created)}"
 
-    def update_task(self, issue_key: str, summary: str, **_: Any) -> bool:
+    def update_task(self, issue_key: str, summary: str, **kw: Any) -> bool:
         self.updated.append(issue_key)
+        self.descriptions.append(kw.get("description") or "")
         return True
+
+    def move_to_category(self, issue_key: str, category: str) -> bool:
+        self.closed.append(issue_key)
+        return True
+
+    def close(self) -> None:
+        pass
 
 
 @pytest.fixture(autouse=True)
@@ -235,6 +307,11 @@ def test_sending_again_updates_the_same_copies(session: Session) -> None:
 
     assert {s.outcome for s in sent} == {"updated"}
     assert notion.trashed == ["page_1", "page_2"]
+    # The new page first, then the old one emptied and trashed: a failed send
+    # never leaves the team without its page.
+    assert notion.calls.index(("POST", "/pages")) < notion.calls.index(("retitle", "page_1"))
+    assert notion.calls.index(("retitle", "page_1")) < notion.calls.index(("trash", "page_1"))
+    assert notion.blocks["page_1"] == [], "nothing left in the trash to read"
     assert [ts for _, ts, _ in slack.updated] == ["17000.1", "17000.2"]
     assert jira.updated == ["TEAM-1", "APP-2"]
     assert len(slack.posted) == 2 and len(jira.created) == 2
@@ -290,32 +367,35 @@ def test_the_route_reports_each_copy(session: Session, monkeypatch: pytest.Monke
 
 
 class FakeCalendar:
+    """Google Calendar's events endpoint, as ``project_send`` calls it."""
+
     def __init__(self) -> None:
         self.created: list[dict[str, Any]] = []
         self.updated: list[str] = []
+        self.deleted: list[str] = []
         self.gone: set[str] = set()
 
-    def create_all_day_event(
-        self,
-        calendar_id: str,
-        summary: str,
-        day: date,
-        *,
-        description: str = "",
-        private: dict[str, str] | None = None,
-    ) -> str:
-        self.created.append(
-            {"calendar": calendar_id, "summary": summary, "day": day, "private": private}
-        )
-        return f"evt_{len(self.created)}"
-
-    def update_all_day_event(
-        self, calendar_id: str, event_id: str, summary: str, day: date, *, description: str = ""
-    ) -> bool:
+    def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
+        if method == "POST":
+            self.created.append(
+                {
+                    "calendar": path.split("/")[2],
+                    "summary": json["summary"],
+                    "description": json["description"],
+                    "day": date.fromisoformat(json["start"]["date"]),
+                    "private": json.get("extendedProperties", {}).get("private"),
+                    "transparency": json.get("transparency"),
+                }
+            )
+            return {"id": f"evt_{len(self.created)}"}
+        event_id = path.rsplit("/", 1)[1]
         if event_id in self.gone:
-            return False
+            return {"status": "cancelled"}  # Google keeps a deleted event a while
         self.updated.append(event_id)
-        return True
+        return {"status": "confirmed", "description": json["description"]}
+
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        self.deleted.append(event_id)
 
 
 def calendar_clients(calendar: FakeCalendar) -> project_send.Clients:
@@ -336,6 +416,7 @@ def test_minutes_go_to_the_senders_own_calendar_on_the_meeting_day(session: Sess
     assert first["day"] == date(2026, 10, 1)
     # Not the due-date events' tag: the read-back must never take it for an item.
     assert first["private"] == {"autune_minutes": "1"}
+    assert first["transparency"] == "transparent", "a note, not a busy day"
     rows = session.query(ExtMinutesEvent).all()
     assert {(r.user_id, r.event_id) for r in rows} == {
         ("user_sender", "evt_1"),
@@ -395,3 +476,234 @@ def test_an_expiring_meeting_queues_its_minutes_events(
 
     queued = {(q.user_id, q.event_id) for q in session.query(ExtCalendarCleanup).all()}
     assert queued == {("user_sender", "evt_1"), ("user_sender", "evt_2")}
+
+
+def _withdraw(session: Session, decision_id: str) -> None:
+    review = session.get(ExtDecisionReview, decision_id)
+    assert review is not None
+    review.status = "rejected"
+    session.flush()
+
+
+def test_a_project_left_with_nothing_is_retracted_when_sent_again(session: Session) -> None:
+    tools, notion, slack, jira = clients()
+    project_send.send(session, MEETING, ["notion", "slack", "jira"], tools)
+    _withdraw(session, "dec_app")  # App's only confirmed row
+
+    sent, _ = project_send.send(session, MEETING, ["notion", "slack", "jira"], tools)
+
+    app = {(s.target, s.outcome) for s in sent if s.project_id == "prj_b"}
+    assert app == {("notion", "retracted"), ("slack", "retracted"), ("jira", "retracted")}
+    assert "page_2" in notion.trashed and notion.blocks["page_2"] == []
+    assert ("C_TEAM", "17000.2") in slack.deleted
+    assert "APP-2" in jira.closed
+    assert session.query(ExtProjectSend).filter_by(project_id="prj_b").count() == 0
+
+
+def test_a_change_after_sending_rewrites_or_retracts_the_copies(session: Session) -> None:
+    tools, notion, slack, jira = clients()
+    project_send.send(session, MEETING, ["slack", "jira"], tools)
+    _withdraw(session, "dec_ok")  # Autune keeps its item
+    _withdraw(session, "dec_app")  # App has nothing left
+
+    refreshed = project_send.refresh(session, MEETING, tools)
+
+    outcomes = {(s.project_id, s.target): s.outcome for s in refreshed}
+    assert outcomes == {
+        ("prj_a", "slack"): "updated",
+        ("prj_a", "jira"): "updated",
+        ("prj_b", "slack"): "retracted",
+        ("prj_b", "jira"): "retracted",
+    }
+    rewritten = slack.updated[-1][2]
+    assert "배포는 금요일" not in rewritten and "릴리스 노트 정리" in rewritten
+    assert notion.pages == [], "refresh makes no copy that was not there"
+
+
+def test_refresh_without_copies_does_nothing(session: Session) -> None:
+    tools, notion, slack, _ = clients()
+
+    assert project_send.refresh(session, MEETING, tools) == []
+    assert not notion.calls and not slack.posted
+
+
+def test_an_unexpected_error_costs_that_copy_only(session: Session) -> None:
+    tools, notion, _, _ = clients()
+    tools.slack = (FakeSlack(fail=True), "C_TEAM")
+
+    sent, _ = project_send.send(session, MEETING, ["notion", "slack"], tools)
+
+    outcomes = {(s.project_id, s.target): s.outcome for s in sent}
+    assert outcomes[("prj_a", "notion")] == "created"
+    assert outcomes[("prj_a", "slack")] == "failed"
+    kept = {(r.project_id, r.target) for r in session.query(ExtProjectSend)}
+    assert kept == {("prj_a", "notion"), ("prj_b", "notion")}, "sent copies stay recorded"
+
+
+def test_long_minutes_go_to_notion_in_requests_under_the_limit(session: Session) -> None:
+    for n in range(120):
+        session.add(
+            ExtActionItem(
+                id=f"act_long{n}",
+                meeting_id=MEETING,
+                description=f"{n}번째 아주 긴 할 일 설명입니다 " * 3,
+                status="todo",
+                confidence=0.9,
+                origin="model",
+                project_id="prj_a",
+            )
+        )
+    session.flush()
+    tools, notion, slack, jira = clients()
+
+    sent, _ = project_send.send(session, MEETING, ["notion", "slack", "jira"], tools)
+
+    assert {s.outcome for s in sent} == {"created"}
+    assert all(len("".join(strings_in(b))) < MAX_OUTBOUND_CHARS for b in notion.bodies)
+    assert len(notion.blocks["page_1"]) == 124, "two headings and every line, in several requests"
+    assert len(notion.calls) > 1
+    assert len(slack.posted[0][1]) < MAX_OUTBOUND_CHARS
+    assert "Autune에서 볼 수 있습니다" in slack.posted[0][1]
+    assert all(len(d) < MAX_OUTBOUND_CHARS for _, _, d in jira.created)
+
+
+def test_a_page_whose_appends_fail_is_taken_back(session: Session) -> None:
+    for n in range(120):
+        session.add(
+            ExtActionItem(
+                id=f"act_long{n}",
+                meeting_id=MEETING,
+                description=f"{n}번째 아주 긴 할 일 설명입니다 " * 3,
+                status="todo",
+                confidence=0.9,
+                origin="model",
+                project_id="prj_a",
+            )
+        )
+    session.flush()
+    tools, _, _, _ = clients()
+    notion = FakeNotion(fail_appends=True)
+    tools.notion = (notion, "db_minutes")
+
+    sent, _ = project_send.send(session, MEETING, ["notion"], tools)
+
+    assert {(s.project_id, s.outcome) for s in sent} == {("prj_a", "failed"), ("prj_b", "created")}
+    assert "page_1" in notion.trashed, "no half a page left live"
+    assert session.query(ExtProjectSend).filter_by(project_id="prj_a").count() == 0
+
+
+def test_a_deleted_meeting_or_project_queues_its_copies(session: Session) -> None:
+    tools, _, _, _ = clients()
+    project_send.send(session, MEETING, ["notion", "slack"], tools)
+
+    assert project_send.queue_project(session, "prj_b") == 2
+    assert project_send.queue_meeting(session, MEETING) == 4
+    queued = {(r.target, r.external_id) for r in session.query(ExtProjectSendCleanup)}
+    assert queued == {
+        ("notion", "page_1"),
+        ("notion", "page_2"),
+        ("slack", "C_TEAM:17000.1"),
+        ("slack", "C_TEAM:17000.2"),
+    }, "queued once, however often"
+
+
+def test_the_drain_retracts_queued_copies(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools, notion, slack, _ = clients()
+    project_send.send(session, MEETING, ["notion", "slack"], tools)
+    project_send.queue_meeting(session, MEETING)
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield session
+
+    monkeypatch.setattr(tasks, "session_scope", same_session)
+    monkeypatch.setattr(tasks, "_project_clients", lambda *_: tools)
+
+    assert tasks.drain_project_send_cleanup() == 4
+    assert sorted(notion.trashed) == ["page_1", "page_2"]
+    assert sorted(slack.deleted) == [("C_TEAM", "17000.1"), ("C_TEAM", "17000.2")]
+    assert session.query(ExtProjectSendCleanup).count() == 0
+
+
+def test_a_tool_no_longer_connected_is_given_up_on_after_some_tries(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session.add(ExtProjectSendCleanup(team_id=TEAM, target="slack", external_id="C:1"))
+    session.flush()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield session
+
+    monkeypatch.setattr(tasks, "session_scope", same_session)
+    monkeypatch.setattr(tasks, "_project_clients", lambda *_: project_send.Clients())
+
+    for _ in range(tasks.CLEANUP_MAX_ATTEMPTS - 1):
+        assert tasks.drain_project_send_cleanup() == 0
+    assert session.query(ExtProjectSendCleanup).count() == 1
+    tasks.drain_project_send_cleanup()
+    assert session.query(ExtProjectSendCleanup).count() == 0
+
+
+def test_the_meetings_that_sent_minutes_are_found_from_their_rows(session: Session) -> None:
+    tools, _, _, _ = clients()
+    assert project_send.meetings_with_sends(session, ["act_ok"], ["dec_ok"]) == set()
+    project_send.send(session, MEETING, ["slack"], tools)
+
+    assert project_send.meetings_with_sends(session, ["act_ok"], []) == {MEETING}
+    assert project_send.meetings_with_sends(session, [], ["dec_app"]) == {MEETING}
+
+
+def test_a_calendar_that_did_not_answer_is_failed_not_unconnected(session: Session) -> None:
+    sent, _ = project_send.send(
+        session, MEETING, ["calendar"], project_send.Clients(calendar_failed=True)
+    )
+
+    assert {s.outcome for s in sent} == {"failed"}
+    assert session.query(ExtMinutesEvent).count() == 0
+
+
+def test_a_project_left_with_nothing_loses_its_event_when_sent_again(session: Session) -> None:
+    calendar = FakeCalendar()
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+    _withdraw(session, "dec_app")
+
+    sent, _ = project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+
+    assert ("prj_b", "retracted") in {(s.project_id, s.outcome) for s in sent}
+    assert calendar.deleted == ["evt_2"]
+    assert {r.project_id for r in session.query(ExtMinutesEvent)} == {"prj_a"}
+
+
+def test_a_change_after_sending_reaches_the_senders_calendar(session: Session) -> None:
+    calendar = FakeCalendar()
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+    _withdraw(session, "dec_ok")
+    _withdraw(session, "dec_app")
+    asked: list[str] = []
+
+    def calendar_for(user_id: str) -> tuple[Any, str] | None:
+        asked.append(user_id)
+        return calendar, "primary"
+
+    refreshed = project_send.refresh(session, MEETING, project_send.Clients(), calendar_for)
+
+    assert {(s.project_id, s.outcome) for s in refreshed} == {
+        ("prj_a", "updated"),
+        ("prj_b", "retracted"),
+    }
+    assert set(asked) == {"user_sender"}, "only through the owner's own grant"
+    assert calendar.deleted == ["evt_2"]
+    assert session.query(ExtMinutesEvent).count() == 1
+
+
+def test_an_owner_not_reachable_keeps_the_event_for_later(session: Session) -> None:
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(FakeCalendar()))
+    _withdraw(session, "dec_app")
+
+    refreshed = project_send.refresh(session, MEETING, project_send.Clients(), lambda _: None)
+
+    assert {s.outcome for s in refreshed} == {"not_connected"}
+    assert session.query(ExtMinutesEvent).count() == 2

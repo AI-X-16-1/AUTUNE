@@ -1,9 +1,12 @@
-"""add ext_project_sends: where a project's minutes for a meeting were sent
+"""add ext_project_sends and ext_project_send_cleanup: where a project's minutes went
 
 One row per meeting, project and tool (notion, slack, jira): the page id, the
 Slack message as channel:ts, or the issue key, so sending again updates that
 copy rather than making another. Addresses only, no text. Goes with the
 meeting and with the project (CASCADE).
+
+ext_project_send_cleanup holds the copies still to retract after their meeting
+or project was deleted: team, tool and address, no text. Goes with the team.
 
 Owner: 강민구. Apply with `alembic upgrade heads` (plural).
 See docs/engineering/migrations.md.
@@ -38,7 +41,24 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["project_id"], ["ext_projects.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("meeting_id", "project_id", "target"),
     )
+    op.create_table(
+        "ext_project_send_cleanup",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("team_id", sa.String(length=64), nullable=False),
+        sa.Column("target", sa.String(length=16), nullable=False),
+        sa.Column("external_id", sa.String(length=255), nullable=False),
+        sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.ForeignKeyConstraint(["team_id"], ["teams.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("team_id", "target", "external_id", name="uq_ext_project_send_cleanup"),
+    )
+    op.create_index("ix_ext_project_send_cleanup_team_id", "ext_project_send_cleanup", ["team_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_ext_project_send_cleanup_team_id", table_name="ext_project_send_cleanup")
+    op.drop_table("ext_project_send_cleanup")
     op.drop_table("ext_project_sends")

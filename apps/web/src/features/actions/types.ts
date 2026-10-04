@@ -241,7 +241,13 @@ export interface ProjectSendReport {
     project_id: string;
     project_name: string;
     target: SendTarget;
-    outcome: "created" | "updated" | "not_connected" | "no_date" | "failed";
+    outcome:
+      | "created"
+      | "updated"
+      | "retracted"
+      | "not_connected"
+      | "no_date"
+      | "failed";
   }[];
   /** Confirmed rows with no project, left out. */
   unsorted: number;

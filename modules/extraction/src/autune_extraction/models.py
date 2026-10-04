@@ -108,7 +108,11 @@ class ExtProjectSend(Base):
     One row per (meeting, project, target): the Notion page id, the Slack
     message as ``channel:ts``, or the Jira issue key. Sending again updates that
     copy instead of making a second one. Holds addresses, no text; goes with the
-    meeting, and with the project.
+    meeting, and with the project -- each copied first to
+    ``ext_project_send_cleanup`` so the copy outside goes too.
+
+    ``external_id`` is empty only inside the transaction that claimed the row
+    to make the first copy: two people sending at once make one copy.
     """
 
     __tablename__ = "ext_project_sends"
@@ -135,7 +139,18 @@ class ExtMinutesEvent(Base):
     event, and so the event goes when the meeting expires or the person's
     account is deleted (``tasks.queue_meeting_calendar_events``,
     ``tasks.forget_user_calendar_events``) -- and when the project is deleted
-    (``projects.delete_project``). The event id only, no text.
+    (``projects.delete_project``) -- and the event follows what changes after
+    it was sent (``project_send.refresh``). The event id only, no text.
+
+    ``event_id`` is empty only inside the transaction that claimed the row to
+    make the event, so a double click makes one event.
+
+    **A calendar disconnected before the event goes cannot be reached.** The
+    grant is the only way into a person's calendar, so their minutes events
+    stay there -- in their own calendar, put there by their own click, where
+    they can delete them -- and the cleanup row is dropped with a log line
+    after its tries (``tasks.drain_calendar_cleanup``). Removing them at
+    disconnect needs a hook core does not have yet.
     """
 
     __tablename__ = "ext_minutes_events"
@@ -152,6 +167,36 @@ class ExtMinutesEvent(Base):
     event_id: Mapped[str] = mapped_column(String(255), nullable=False)
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtProjectSendCleanup(Base):
+    """A copy of a project's minutes still to take out of a team's tool, after
+    the meeting or the project it belonged to was deleted (#787 review).
+
+    ``ext_project_sends`` goes with the meeting and with the project, so before
+    either goes its rows are copied here, and ``tasks.drain_project_send_cleanup``
+    retracts each with the team's own connection: the Notion page emptied and
+    trashed, the Slack message deleted, the Jira task emptied and closed.
+    Addresses only, no text. No meeting or project key: the row has to outlive
+    both. ``team_id`` cascades -- with the team goes every connection that
+    could reach the copy.
+    """
+
+    __tablename__ = "ext_project_send_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "target", "external_id", name="uq_ext_project_send_cleanup"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

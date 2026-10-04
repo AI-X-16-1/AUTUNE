@@ -288,7 +288,7 @@ class ProjectSendResult(BaseModel):
     project_id: str
     project_name: str
     target: Literal["notion", "slack", "jira", "calendar"]
-    outcome: Literal["created", "updated", "not_connected", "no_date", "failed"]
+    outcome: Literal["created", "updated", "retracted", "not_connected", "no_date", "failed"]
 
 
 class ProjectSendReport(BaseModel):

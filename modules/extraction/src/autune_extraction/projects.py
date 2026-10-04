@@ -36,14 +36,12 @@ from sqlalchemy.orm import Session
 from autune_core import Meeting, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
-from . import service
+from . import project_send, service
 from .models import (
     ExtActionItem,
     ExtActionItemSource,
-    ExtCalendarCleanup,
     ExtDecision,
     ExtDecisionSource,
-    ExtMinutesEvent,
     ExtProject,
 )
 
@@ -249,23 +247,14 @@ def save_project(
 
 
 def delete_project(session: Session, team_id: str, project_id: str) -> None:
-    """Delete one of this team's projects; its rows become unassigned."""
+    """Delete one of this team's projects; its rows become unassigned, and the
+    copies of its minutes are queued to be taken out of the team's tools."""
     row = session.get(ExtProject, project_id)
     if row is None or row.team_id != team_id:
         raise NotFoundError("project", project_id)
-    # Its minutes on people's calendars: queued for removal with each owner's
-    # grant, since the rows that name them go with the project.
-    events = session.execute(
-        select(ExtMinutesEvent.user_id, ExtMinutesEvent.event_id).where(
-            ExtMinutesEvent.project_id == project_id
-        )
-    ).all()
-    if events:
-        session.execute(
-            service._insert_if_absent_into(session, ExtCalendarCleanup)
-            .values([{"user_id": user, "event_id": event} for user, event in events])
-            .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
-        )
+    # Its minutes' copies go with it -- the team's tools and people's own
+    # calendars -- queued before the rows cascade away.
+    project_send.queue_project(session, project_id)
     for item in session.scalars(
         select(ExtActionItem).where(ExtActionItem.project_id == project_id)
     ):
@@ -282,7 +271,8 @@ def delete_project(session: Session, team_id: str, project_id: str) -> None:
 
 def place(session: Session, row: ExtActionItem | ExtDecision, project_id: str | None) -> None:
     """A person puts a decision or an item in a project of its meeting's team --
-    or in none. Either way the rules leave it there from now on."""
+    or in none. Either way the rules leave it there from now on, and so does
+    extracting the meeting again."""
     if project_id is not None:
         project = session.get(ExtProject, project_id)
         meeting = session.get(Meeting, row.meeting_id)
@@ -290,4 +280,9 @@ def place(session: Session, row: ExtActionItem | ExtDecision, project_id: str | 
             raise ValidationError("not a project of this meeting's team", field="project_id")
     row.project_id = project_id
     row.project_by_person = True
+    # A decision is upserted by id when the meeting is extracted again and
+    # keeps the flag; a model item is deleted and rebuilt unless a correction
+    # is on record, so the move is recorded as one.
+    if isinstance(row, ExtActionItem):
+        service.record_placement(session, row)
     session.flush()
