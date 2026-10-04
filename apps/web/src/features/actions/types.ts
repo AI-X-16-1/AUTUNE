@@ -73,6 +73,8 @@ export interface ActionItemRead extends ActionItem {
    * item drafted from an utterance in the chat.
    */
   origin: "model" | "user" | "followup" | "chat";
+  /** The team's project this item is about, or null for none (미분류). */
+  project_id?: string | null;
   /**
    * A line it was drawn from was corrected after it was made (#586) and the
    * text may still need a person's eye. Cleared by their next edit.
@@ -214,6 +216,28 @@ export interface SummaryDecision {
   id: string;
   statement: string;
   status: "pending" | "confirmed";
+  /** The team's project it is about, or null for none (미분류). */
+  project_id?: string | null;
+}
+
+/**
+ * One of a team's projects (`ext_projects`, 2026-10-04). A meeting's decisions
+ * and items point at one, by what was said or by a person, so a meeting that
+ * covers several projects reads — and later goes out — project by project.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  /** Other names people say for it, matched in what was said. */
+  aliases: string[];
+  jira_project_key: string | null;
+}
+
+/** A project as a member types it. */
+export interface ProjectDraft {
+  name: string;
+  aliases: string[];
+  jira_project_key?: string | null;
 }
 
 /**
@@ -230,6 +254,8 @@ export interface MeetingSummary {
   ambiguous_waiting: number;
   note: string | null;
   note_updated_at: string | null;
+  /** The team's projects, to group the decisions and items by. */
+  projects?: Project[];
 }
 
 /** The memo's limit, the server's `MAX_NOTE_CHARS`. */
