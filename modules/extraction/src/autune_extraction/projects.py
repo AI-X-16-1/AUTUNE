@@ -267,7 +267,8 @@ def delete_project(session: Session, team_id: str, project_id: str) -> None:
 
 def place(session: Session, row: ExtActionItem | ExtDecision, project_id: str | None) -> None:
     """A person puts a decision or an item in a project of its meeting's team --
-    or in none. Either way the rules leave it there from now on."""
+    or in none. Either way the rules leave it there from now on, and so does
+    extracting the meeting again."""
     if project_id is not None:
         project = session.get(ExtProject, project_id)
         meeting = session.get(Meeting, row.meeting_id)
@@ -275,4 +276,9 @@ def place(session: Session, row: ExtActionItem | ExtDecision, project_id: str | 
             raise ValidationError("not a project of this meeting's team", field="project_id")
     row.project_id = project_id
     row.project_by_person = True
+    # A decision is upserted by id when the meeting is extracted again and
+    # keeps the flag; a model item is deleted and rebuilt unless a correction
+    # is on record, so the move is recorded as one.
+    if isinstance(row, ExtActionItem):
+        service.record_placement(session, row)
     session.flush()
