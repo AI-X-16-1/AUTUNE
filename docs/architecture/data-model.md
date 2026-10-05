@@ -26,7 +26,7 @@ absence of a prefix is what marks a table as shared.
 | --- | --- |
 | `users` | A person with an account |
 | `teams` | An organization or squad |
-| `team_members` | User ↔ team membership and role |
+| `team_members` | User ↔ team membership and role, and whether the person pinned the team to the top of their own list (`pinned_at`) |
 | `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
 | `user_integrations` | One person's own Google grants: their calendar, and sending mail as them (`gmail_send`, #552) |
 | `user_consents` | One person's agreement to one version of the terms or the privacy policy |

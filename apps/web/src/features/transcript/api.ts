@@ -82,6 +82,17 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
 /**
+ * Pin a team to the top of my own team list (up to three), or take the pin
+ * off. Both answer with the list as it now stands, pinned teams first. A
+ * fourth pin is a 409 `too_many_pinned_teams`.
+ */
+export const pinTeam = (teamId: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}/pin`, { method: "PUT" });
+
+export const unpinTeam = (teamId: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}/pin`, { method: "DELETE" });
+
+/**
  * The token for an invitation link, shown once, and when the link lapses.
  * `emailed` is whether Gmail took the mail `sendEmail` asked for.
  */

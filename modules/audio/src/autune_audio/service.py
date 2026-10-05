@@ -22,6 +22,7 @@ from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import user_for_token
 from autune_core.deletion import on_user_deleted
+from autune_core.entities import team_order
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
 from . import identification, storage
@@ -186,7 +187,8 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
 
 
 def teams_for(session: Session, *, member: User) -> list[Team]:
-    """The teams ``member`` belongs to, in the order they joined them.
+    """The teams ``member`` belongs to: the ones they pinned, then the rest in
+    the order they joined them.
 
     ``MeetingCreate`` takes a ``team_id`` and a browser holding only a token has
     no way to learn one; this is that way. Read-only over shared entities,
@@ -197,15 +199,84 @@ def teams_for(session: Session, *, member: User) -> list[Team]:
     invitation to a team whose name sorts earlier silently made that team the
     default, so a person's next meeting went to the team they had just joined
     rather than their own. Joining a team now adds it to the end.
+
+    **Pinned teams come before all of that** (``pin_team``), in the order they
+    were pinned -- so the default is something a person can choose, and the
+    order is ``team_order``, the one ``GET /api/auth/me`` uses too.
     """
     return list(
         session.scalars(
             sa.select(Team)
             .join(TeamMember, TeamMember.team_id == Team.id)
             .where(TeamMember.user_id == member.id)
-            .order_by(TeamMember.id)
+            .order_by(*team_order())
         )
     )
+
+
+MAX_PINNED_TEAMS = 3
+"""How many teams a person may pin (decided with the user, 2026-10-02). A pin
+says "these first"; with every team pinned it says nothing."""
+
+
+class TooManyPinnedTeamsError(ConflictError):
+    """A fourth pin. Its own code, so the screen can say "unpin one first"
+    rather than "try again"."""
+
+    code = "too_many_pinned_teams"
+
+
+def pinned_team_ids(session: Session, *, member: User) -> set[str]:
+    """The teams ``member`` has pinned. Their own pins only."""
+    return set(
+        session.scalars(
+            sa.select(TeamMember.team_id).where(
+                TeamMember.user_id == member.id, TeamMember.pinned_at.is_not(None)
+            )
+        )
+    )
+
+
+def pin_team(session: Session, *, team_id: str, member: User, now: datetime | None = None) -> None:
+    """Put ``team_id`` at the top of ``member``'s own team list.
+
+    The pin is on their membership row: it changes nobody else's list, it is
+    not in what another member can read, and it goes when the membership
+    does. Pinning a team that is already pinned keeps its place -- a second
+    click must not reorder the list. At most ``MAX_PINNED_TEAMS``.
+
+    Every membership of the person is locked first, so two pins sent at once
+    are counted one after the other and cannot both be the third.
+    """
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.user_id == member.id).with_for_update()
+        )
+    )
+    row = next(r for r in rows if r.team_id == team_id)
+    if row.pinned_at is not None:
+        return
+    if sum(1 for r in rows if r.pinned_at is not None) >= MAX_PINNED_TEAMS:
+        raise TooManyPinnedTeamsError(
+            f"at most {MAX_PINNED_TEAMS} teams can be pinned", limit=MAX_PINNED_TEAMS
+        )
+    row.pinned_at = now or datetime.now(tz=UTC)
+    session.flush()
+    log.info("team_pinned", team_id=team_id, user_id=member.id)
+
+
+def unpin_team(session: Session, *, team_id: str, member: User) -> None:
+    """Take the pin off. The team goes back to where the order of joining puts
+    it. Unpinning a team that is not pinned is not an error."""
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    session.execute(
+        sa.update(TeamMember)
+        .where(TeamMember.user_id == member.id, TeamMember.team_id == team_id)
+        .values(pinned_at=None)
+    )
+    session.flush()
+    log.info("team_unpinned", team_id=team_id, user_id=member.id)
 
 
 def create_team(
