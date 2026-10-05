@@ -472,8 +472,7 @@ function Arithmetic({ breakdown, coverage }: { breakdown: ScoreBreakdown; covera
     <>
       {coverage === "missing" ? (
         <p>
-          누락 항목은 회의에 대응하는 토픽이 없어 잴 신호가 없습니다. 그래서 템플릿이 정한 항목
-          중요도가 그대로 점수가 됩니다.
+          회의에서 관련 내용이 확인되지 않아, 해당 항목의 중요도를 기준으로 점수를 계산합니다.
         </p>
       ) : (
         <p>측정된 값의 가중 평균{breakdown.damping !== null ? "에 미흡 감쇠를 곱한 값" : ""}입니다.</p>
