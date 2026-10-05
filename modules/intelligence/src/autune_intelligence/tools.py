@@ -141,8 +141,15 @@ def team_trend(session: Session, team_id: str) -> dict[str, Any]:
     scored meetings (newest first, at most five) as items.
     """
     dashboard = service.get_dashboard(session, team_id)
+    # B's counts do not wait for E's scores (#800 review): say them either way.
+    completion = (
+        f" 최근 4주 회의의 액션아이템 완료율 {dashboard.action_item_completion_rate:.0%},"
+        f" 기한 지난 항목 {dashboard.overdue_action_items}건."
+        if dashboard.action_item_completion_rate is not None
+        else ""
+    )
     if dashboard.meeting_count == 0:
-        return _result(summary="이 팀에는 점수가 매겨진 회의가 없습니다.", items=[])
+        return _result(summary="이 팀에는 점수가 매겨진 회의가 없습니다." + completion, items=[])
 
     summary = (
         f"점수가 매겨진 회의 {dashboard.meeting_count}건, "
@@ -150,11 +157,7 @@ def team_trend(session: Session, team_id: str) -> dict[str, Any]:
     )
     if dashboard.action_item_confirmation_rate is not None:
         summary += f" 액션아이템 확정률 {dashboard.action_item_confirmation_rate:.0%}."
-    if dashboard.action_item_completion_rate is not None:
-        summary += (
-            f" 액션아이템 완료율 {dashboard.action_item_completion_rate:.0%},"
-            f" 기한 지난 항목 {dashboard.overdue_action_items}건."
-        )
+    summary += completion
     return _result(
         summary=summary,
         items=[

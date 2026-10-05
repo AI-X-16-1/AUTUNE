@@ -172,6 +172,29 @@ def test_team_trend_names_both_rates_and_keeps_them_apart(db_session: Session, t
     assert "기한 지난 항목 2건" in summary
 
 
+def test_team_trend_names_completion_before_any_meeting_is_scored(
+    db_session: Session, team: str
+) -> None:
+    """B's counts can be current while E has scored nothing (#800 review)."""
+    from autune_contracts import TeamActionProgress
+    from autune_intelligence import service
+
+    m = _new_meeting(db_session, team)
+    service.store_action_progress(
+        db_session,
+        TeamActionProgress(
+            team_id=team,
+            as_of=datetime.now(UTC),
+            meetings=[{"meeting_id": m, "confirmed": 2, "done": 1, "overdue": 0}],
+        ),
+    )
+
+    result = tools.team_trend(db_session, team)
+
+    assert result["items"] == []
+    assert "완료율 50%" in result["summary"]
+
+
 def test_team_trend_says_nothing_of_completion_it_does_not_know(
     db_session: Session, team: str
 ) -> None:

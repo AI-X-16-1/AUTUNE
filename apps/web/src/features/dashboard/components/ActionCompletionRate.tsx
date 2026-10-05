@@ -6,6 +6,8 @@ import { DashboardCard } from "./DashboardCard";
  * Team totals only. The window is the server's (`ACTION_COMPLETION_WINDOW`).
  *
  * `asOf` is `null` when those counts are missing or stale -- unknown, not 0%.
+ * B sends none for a team with no meeting in 13 weeks, so such a team reads as
+ * not received.
  * With `asOf` set and no `rate`, nothing is confirmed yet.
  */
 export function ActionCompletionRate({
@@ -22,7 +24,7 @@ export function ActionCompletionRate({
       {asOf == null ? (
         <p style={metaStyle}>완료 현황을 아직 받지 못했습니다.</p>
       ) : rate == null ? (
-        <p style={metaStyle}>확정된 액션 아이템이 없습니다.</p>
+        <p style={metaStyle}>최근 4주 회의에서 확정된 액션 아이템이 없습니다.</p>
       ) : (
         <>
           <div
