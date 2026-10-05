@@ -7,9 +7,10 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any, cast
 
 from celery import shared_task
@@ -862,18 +863,35 @@ def send_weekly_digests() -> list[str]:
 
     sent: list[str] = []
     refused: list[str] = []
+    unasked: list[str] = []
     not_linked = 0
-    away = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        if leave and _out_of_office(digest.user_id, now):
-            # Held back, not claimed: asked again next run, and sent then if
-            # they are back inside the sending hours.
-            away += 1
-            continue
+        if leave:
+            would_go = partial(service.weekly_digest_would_go, digest=digest, now=now)
+            try:
+                if _held_back(would_go, digest.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(digest.user_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one digest's; logged by type, ids only
+                # Asking is part of this digest's send and fails as its send
+                # does: this person's only. The others still get theirs, and
+                # the refusals already collected are still raised at the end
+                # (PARKJAEKYUNG0525, review of #841).
+                log.warning(
+                    "extraction_weekly_digest_failed",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
         try:
             with session_scope() as session:
                 went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
@@ -905,19 +923,15 @@ def send_weekly_digests() -> list[str]:
             continue
         if went:
             sent.append(digest.user_id)
-    if owed:
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_weekly_digests_sent",
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
-            away=away,
         )
-    if refused:
-        raise PrivacyViolationError(
-            f"weekly digest refused by the outbound check for {len(refused)} person(s): "
-            f"{', '.join(refused)}"
-        )
+    _raise_refusals("weekly digest", refused, unasked)
     return sent
 
 
@@ -948,18 +962,35 @@ def send_daily_digests() -> list[str]:
 
     sent: list[str] = []
     refused: list[str] = []
+    unasked: list[str] = []
     not_linked = 0
-    away = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        if leave and _out_of_office(digest.user_id, now):
-            # Held back, not claimed: asked again next run, and sent then if
-            # they are back inside the sending hours.
-            away += 1
-            continue
+        if leave:
+            would_go = partial(service.daily_digest_would_go, owed=digest, now=now)
+            try:
+                if _held_back(would_go, digest.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(digest.user_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+                # Asking is part of this DM's send and fails as its send
+                # does: this person's only. The others still get theirs, and
+                # the refusals already collected are still raised at the end
+                # (PARKJAEKYUNG0525, review of #841).
+                log.warning(
+                    "extraction_daily_digest_failed",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
         try:
             with session_scope() as session:
                 went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
@@ -991,26 +1022,70 @@ def send_daily_digests() -> list[str]:
             continue
         if went:
             sent.append(digest.user_id)
-    if owed:
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_daily_digests_sent",
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
-            away=away,
         )
+    _raise_refusals("morning digest", refused, unasked)
+    return sent
+
+
+def _raise_refusals(what: str, refused: list[str], unasked: list[str]) -> None:
+    """Raise the privacy refusals a digest run collected, each as what it was:
+    a message the outbound check refused (its claim already settled), or a
+    question to a person's calendar it refused (nothing claimed -- no message
+    was refused, and the digest is tried again next run)."""
+    said = []
     if refused:
-        raise PrivacyViolationError(
-            f"morning digest refused by the outbound check for {len(refused)} person(s): "
+        said.append(
+            f"{what} refused by the outbound check for {len(refused)} person(s): "
             f"{', '.join(refused)}"
         )
-    return sent
+    if unasked:
+        said.append(
+            f"{what}: the read of a person's calendar was refused by the outbound check "
+            f"for {len(unasked)} person(s): {', '.join(unasked)}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+
+
+def _held_back(would_go: Callable[[Session], bool], user_id: str, now: datetime) -> bool:
+    """Whether this digest waits because its person is out of office right now.
+
+    **The calendar is asked last, and outside the send.** ``would_go`` -- every
+    reason not to send that Autune's own tables hold -- is asked first, in a
+    transaction that is closed before Google is called: a calendar is read
+    only for a message that would otherwise go, no transaction of the send's
+    stays open while Google answers, and a refusal of the question cannot be
+    mistaken for a refusal of the message (review of #838, review of #841).
+
+    **A run that holds somebody back looks like a run with nothing to send.**
+    That is why a deployment that reads calendars logs no summary of its
+    digests: ``owed=1 sent=0`` with no failure beside it is that one person's
+    absence, repeated every ten minutes until the run they came back. Nothing
+    is counted, nothing is claimed and nothing is written here; what a send
+    leaves -- its claim and its time -- is what any send leaves.
+    """
+    with session_scope() as session:
+        if not would_go(session):
+            return False
+    return _out_of_office(user_id, now)
 
 
 def _out_of_office(user_id: str, now: datetime) -> bool:
     """Whether this person's own connected calendar marks them out of office
     right now (``days_off.away_now``) -- ``False`` for someone with no calendar
     connected, and ``False`` when it cannot be read.
+
+    **Nobody's calendar is read for a message that could not reach them.** A
+    person who has not linked a Slack account gets no DM whatever their
+    calendar says, so theirs is not asked about -- every ten minutes of a
+    morning, it would be (mkkim68, review of #838).
 
     **Unknown is not away.** A digest is the person's own work sent to
     themselves; a grant that lapsed or a Google outage must not silence it.
@@ -1019,6 +1094,9 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
     """
     try:
         with session_scope() as session, _calendars(session) as calendar_for:
+            linked = load_user_integration(session, user_id, "slack")
+            if linked is None or not linked.config.get("slack_user_id"):
+                return False
             connection = calendar_for(user_id)
             if connection is None:
                 return False
@@ -1053,7 +1131,9 @@ def refresh_public_holidays() -> int:
     now = datetime.now(tz=UTC)
     try:
         days = days_off.fetch_public_holidays(today=reminders.korean_day(now))
-    except IntegrationError as exc:
+    except Exception as exc:  # noqa: BLE001 -- whatever the answer was, the last read stays
+        # Not only ``IntegrationError``: the answer is somebody else's file,
+        # and no shape of it may fail this task (review of #838).
         log.warning("extraction_public_holidays_not_read", reason=type(exc).__name__)
         return 0
     with session_scope() as session:

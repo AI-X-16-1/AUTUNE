@@ -3625,6 +3625,31 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
     ]
 
 
+def _weekly_rows_to_send(
+    session: Session, digest: WeeklyDigest, *, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]] | None:
+    """The person's open items for this digest -- or ``None`` when no digest is
+    to go: they turned their reminders off, paused the day, or have none left.
+    Read as things are now, by the send and by ``weekly_digest_would_go``, so
+    the two cannot come to mean different things."""
+    if not due_reminders_on(session, digest.user_id) or notifications_paused(
+        session, digest.user_id, digest.week_start
+    ):
+        return None
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    return list(rows) or None
+
+
+def weekly_digest_would_go(session: Session, digest: WeeklyDigest, *, now: datetime) -> bool:
+    """Whether this digest would be sent if it were tried now -- every reason
+    not to that Autune can see in its own tables. The task asks this BEFORE it
+    reads the person's calendar (``tasks._out_of_office``), in a transaction
+    of its own, so the calendar is read only for a message that would
+    otherwise go and never while a transaction of the send's is open (review
+    of #838 and of #841)."""
+    return _weekly_rows_to_send(session, digest, now=now) is not None
+
+
 def send_weekly_digest(
     session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
 ) -> bool:
@@ -3641,12 +3666,8 @@ def send_weekly_digest(
     their reminders off after the list was made is sent nothing and claims
     nothing, as ``send_due_reminder`` treats them.
     """
-    if not due_reminders_on(session, digest.user_id) or notifications_paused(
-        session, digest.user_id, digest.week_start
-    ):
-        return False
-    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
-    if not rows:
+    rows = _weekly_rows_to_send(session, digest, now=now)
+    if rows is None:
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtWeeklyDigest)
@@ -3947,6 +3968,30 @@ def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: dateti
     return set(item_ids) - earlier
 
 
+def _daily_content_to_send(
+    session: Session, owed: DailyDigestOwed, *, now: datetime
+) -> reminders.DailyDigest | None:
+    """What this person's morning DM would say -- or ``None`` when none is to
+    go: they turned their reminders off, paused the day, or nothing changed
+    and nothing is open. Read as things are now, by the send and by
+    ``daily_digest_would_go``."""
+    if not due_reminders_on(session, owed.user_id) or notifications_paused(
+        session, owed.user_id, owed.day
+    ):
+        return None
+    content = daily_digest_content(
+        session, owed, since=_daily_since(session, owed, now=now), now=now
+    )
+    return None if content.empty else content
+
+
+def daily_digest_would_go(session: Session, owed: DailyDigestOwed, *, now: datetime) -> bool:
+    """Whether this morning DM would be sent if it were tried now
+    (``weekly_digest_would_go``'s reason): asked before the person's calendar
+    is read, in a transaction of its own."""
+    return _daily_content_to_send(session, owed, now=now) is not None
+
+
 def send_daily_digest(
     session: Session, slack: SlackApi, owed: DailyDigestOwed, *, now: datetime
 ) -> bool:
@@ -3960,14 +4005,8 @@ def send_daily_digest(
     with the send, so two runs cannot both send and a failed send takes the
     claim back. It goes to ``owed.user_id`` and nobody else.
     """
-    if not due_reminders_on(session, owed.user_id) or notifications_paused(
-        session, owed.user_id, owed.day
-    ):
-        return False
-    content = daily_digest_content(
-        session, owed, since=_daily_since(session, owed, now=now), now=now
-    )
-    if content.empty:
+    content = _daily_content_to_send(session, owed, now=now)
+    if content is None:
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtDailyDigest)
