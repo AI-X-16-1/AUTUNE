@@ -611,6 +611,24 @@ def _utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
+class ExtWeeklyDigest(Base):
+    """That a person was sent the weekly digest of their open items for one
+    week, through one team's Slack (the user, 2026-10-04). The primary key is
+    the "once", as ``ext_due_reminders``'s is. No text: the message is not
+    kept. Goes with the person and with the team."""
+
+    __tablename__ = "ext_weekly_digests"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtDueReminder(Base):
     """That an item's assignee was sent a due-date reminder of one kind for one
     due date (``reminders``). The primary key is the "once": a second run, a
@@ -776,6 +794,37 @@ class ExtEditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class ExtSyncFailure(Base):
+    """That the last attempt to copy an item to one outside system failed, what
+    kind of failure it was, and when (#680).
+
+    The claim in ``ext_external_refs`` is rolled back when a send fails, so a
+    failure left no trace and the board could only say "sent" or "sending".
+    This row is the trace. **A kind and a time, nothing else**: not the
+    outside service's message, which may echo what was sent, and not what
+    was being sent. One row per item and system -- the latest failure --
+    removed by the next attempt that succeeds, and gone with the item.
+    """
+
+    __tablename__ = "ext_sync_failures"
+    __table_args__ = (
+        CheckConstraint(
+            "system IN ('notion','jira','calendar')", name="ck_ext_sync_failures_system"
+        ),
+        CheckConstraint(
+            "kind IN ('privacy','reconnect','unreachable','rejected')",
+            name="ck_ext_sync_failures_kind",
+        ),
+    )
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    system: Mapped[str] = mapped_column(String(16), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ExtCalendarEvent(Base):

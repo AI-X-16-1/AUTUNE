@@ -137,18 +137,44 @@ def get_action_item(
 ) -> ActionItemDetail:
     """One item and the text of the utterances it came from, for the drawer."""
     item = service.readable_action_item(session, action_item_id, reader)
-    return service.read_detail(session, item)
+    return service.read_detail(session, item, reader_id=reader.id)
+
+
+@router.post("/action-items/{action_item_id}/sync", status_code=status.HTTP_202_ACCEPTED)
+def retry_action_item_sync(
+    action_item_id: str,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
+) -> dict[str, bool]:
+    """Send the item to the team's connected tools again -- the "다시 시도" beside
+    a failed copy (#680). The same call an edit queues, after the response;
+    what it does is decided there (create, update, or nothing to send).
+    Members of the meeting's team only. An item that was never confirmed has
+    nothing outside to retry and queues nothing."""
+    item = service.readable_action_item(session, action_item_id, reader)
+    queued = service.copies_follow(session, item)
+    if queued:
+        background.add_task(tasks.sync_after_confirmation, item.id)
+    return {"queued": queued}
 
 
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
 def create_action_item(
-    payload: ActionItemCreate, session: SessionDep, reader: CurrentUser
+    payload: ActionItemCreate,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
 ) -> ActionItemRead:
     """Add an item the model missed.
 
     ADR 0006 ranks recall above precision because a wrong item costs a click and
     a missing one costs re-reading the meeting. This is the route that makes the
     second recoverable.
+
+    The item is confirmed as written (``service.create_action_item``), so its
+    Notion page, Jira issue and due-date event are queued here after the
+    commit, exactly as ``update_action_item`` queues them on confirmation.
     """
     service.require_readable_meeting(session, payload.meeting_id, reader)
     item = service.create_action_item(session, payload)
@@ -159,6 +185,8 @@ def create_action_item(
     # first lets ``get_session`` roll it back.
     response = service.read_one(session, item)
     session.commit()
+    if service.copies_follow(session, item):
+        background.add_task(tasks.sync_after_confirmation, item.id)
     return response
 
 

@@ -44,3 +44,23 @@ describe("Assistant header", () => {
     expect(label).not.toHaveBeenCalled();
   });
 });
+
+describe("Assistant when the model is busy", () => {
+  it("says to try again shortly", async () => {
+    // jsdom draws no layout, so it has no scrollIntoView for the message list.
+    Element.prototype.scrollIntoView = vi.fn();
+    const { ApiError } = await import("@/shared/api/client");
+    vi.spyOn(api, "sendChat").mockRejectedValue(
+      new ApiError(503, "agent_busy", "busy"),
+    );
+
+    open("/actions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "업무가 한 사람에게 몰려 있어?" }),
+    );
+
+    expect(
+      await screen.findByText(/1분쯤 뒤에 다시 물어봐 주세요/),
+    ).toBeTruthy();
+  });
+});
