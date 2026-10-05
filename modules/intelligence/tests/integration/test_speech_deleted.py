@@ -363,3 +363,52 @@ def test_what_b_deletes_or_rewrites_goes_from_es_copy_too(db_session: Session, t
     assert f"• {SPEECH_DELETED_TEXT} — 김민경 · 10/5" in report.body_markdown
     assert "• 배포하기 자동화" in report.body_markdown  # another item that only starts so
     assert "디자인은 다음 주 재검토" in report.body_markdown
+
+
+def test_a_topic_gone_from_one_meeting_keeps_its_links_in_another(
+    db_session: Session, team: str
+) -> None:
+    """Two meetings forgotten together, each losing the topic the other keeps
+    under the same label: each drops only its own topic's links (#725 review)."""
+    said: dict[str, tuple[str, str]] = {}
+    for day, only_mine, shared in (
+        (2, "결제 API 스펙", "디자인 시안"),
+        (9, "디자인 시안", "결제 API 스펙"),
+    ):
+        meeting = _meeting(db_session, team, day=day)
+        mine = _utterance(db_session, meeting, f"{only_mine} 이야기를 길게 했습니다", 1.0)
+        theirs = _utterance(db_session, meeting, OTHER, 5.0)
+        said[meeting] = (mine, shared)
+        db_session.add(
+            IntelCompletion(
+                meeting_id=meeting,
+                first_seen_at=datetime.now(UTC),
+                gap_payload={
+                    "contract_version": "2.4",
+                    "meeting_id": meeting,
+                    "topics": [
+                        {"id": "topic_mine", "label": only_mine, "utterance_ids": [mine]},
+                        {"id": "topic_both", "label": shared, "utterance_ids": [mine, theirs]},
+                    ],
+                    "participation": [],
+                    "gaps": [],
+                },
+                context_payload={
+                    "contract_version": "2.4",
+                    "meeting_id": meeting,
+                    "topic_links": [
+                        {"topic_label": only_mine, "linked_meeting_id": meeting},
+                        {"topic_label": shared, "linked_meeting_id": meeting},
+                    ],
+                    "decision_lineage": [],
+                },
+            )
+        )
+    db_session.flush()
+
+    forget_speech(db_session, [mine for mine, _ in said.values()])
+
+    for meeting, (_, shared) in said.items():
+        row = db_session.get(IntelCompletion, meeting)
+        assert row is not None and row.context_payload is not None
+        assert [link["topic_label"] for link in row.context_payload["topic_links"]] == [shared]

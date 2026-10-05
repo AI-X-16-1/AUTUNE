@@ -105,6 +105,21 @@ class FakeNotion:
         self.pages.append((database_id, properties))
         return f"page_{len(self.pages)}"
 
+    def find_pages(
+        self, database_id: str, *, title_property: str, title: str, created_after: datetime
+    ) -> list[str]:
+        """Pages made in ``database_id`` with exactly this title, not trashed.
+        The fake keeps no creation time, so ``created_after`` is not applied."""
+        check_outbound({"title": title}, destination="notion")
+        found = []
+        for n, (db, properties) in enumerate(self.pages, start=1):
+            page_id = f"page_{n}"
+            value = properties.get(title_property, {}).get("title", [])
+            text = value[0]["text"]["content"] if value else None
+            if db == database_id and text == title and page_id not in self.archived | self.deleted:
+                found.append(page_id)
+        return found
+
     def update_page(self, page_id: str, properties: dict) -> None:
         check_outbound({"properties": properties}, destination="notion")
         if page_id in self.deleted:

@@ -574,7 +574,8 @@ def test_a_privacy_violation_on_rescore_is_raised_after_the_rest(
         service.rescore_where_people_changed()
 
     assert leaking in str(raised.value)
-    assert "010" not in str(raised.value)
+    # Not a bare "010": the message carries random hex ids that can contain it (#662).
+    assert "1234-5678" not in str(raised.value)
     assert {payload["meeting_id"] for payload in rescore_sent} == {fine}
 
 

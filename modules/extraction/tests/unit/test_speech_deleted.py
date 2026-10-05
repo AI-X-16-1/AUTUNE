@@ -154,9 +154,7 @@ def queued(session: Session, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str,
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(tasks, "session_scope", scope)
     for task in (
-        "sync_action_item",
-        "sync_action_item_jira",
-        "sync_action_item_calendar",
+        "sync_item_copies",
         "sync_decision",
     ):
         stub = SimpleNamespace(delay=lambda ident, task=task: sent.append((task, ident)))
@@ -223,11 +221,7 @@ def test_a_draft_that_was_confirmed_once_is_kept_and_its_copy_follows(
     tasks.forget_deleted_speech("user_1", GONE)
 
     assert item_state(session, "act_back") == (PLACEHOLDER, None)
-    assert {task for task, ident in queued if ident == "act_back"} == {
-        "sync_action_item",
-        "sync_action_item_jira",
-        "sync_action_item_calendar",
-    }
+    assert {task for task, ident in queued if ident == "act_back"} == {"sync_item_copies"}
     assert item_state(session, "act_draft") is None, "a draft never confirmed still goes"
 
 
@@ -265,7 +259,7 @@ def test_a_draft_whose_only_copy_is_a_calendar_event_is_kept_too(
     tasks.forget_deleted_speech("user_1", GONE)
 
     assert item_state(session, "act_event") == (PLACEHOLDER, None)
-    assert ("sync_action_item_calendar", "act_event") in queued
+    assert ("sync_item_copies", "act_event") in queued
 
 
 def test_the_hook_is_registered_in_a_process_that_only_imported_the_router() -> None:
@@ -318,11 +312,7 @@ def test_only_confirmed_changes_are_queued_to_follow(
     items = {ident for task, ident in queued if task != "sync_decision"}
     decisions = {ident for task, ident in queued if task == "sync_decision"}
     assert items == {"act_line", "act_summary", "act_edited", "act_oldedit"}
-    assert {task for task, ident in queued if ident == "act_line"} == {
-        "sync_action_item",
-        "sync_action_item_jira",
-        "sync_action_item_calendar",
-    }
+    assert {task for task, ident in queued if ident == "act_line"} == {"sync_item_copies"}
     assert decisions == {"dec_line", "dec_writeup"}, "not the unconfirmed one, not untouched"
 
 
@@ -344,7 +334,7 @@ def test_a_queue_failure_does_not_stop_the_deletion(
     def down(_: Any) -> None:
         raise ConnectionError("broker down")
 
-    monkeypatch.setattr(tasks, "sync_action_item", SimpleNamespace(delay=down))
+    monkeypatch.setattr(tasks, "sync_item_copies", SimpleNamespace(delay=down))
 
     tasks.forget_deleted_speech("user_1", GONE)  # must not raise
 
