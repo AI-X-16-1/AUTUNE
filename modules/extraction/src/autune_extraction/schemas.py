@@ -190,6 +190,10 @@ class ActionItemRead(BaseModel):
     status: str
     confidence: float
     origin: str
+    carried_meetings: int = 0
+    """For an open item: how many of its team's meetings have been held since
+    it was made (``service.meetings_since``). ``STALE_AFTER`` or more reads as
+    stuck on the board."""
     project_id: str | None = None
     """The team's project this item is about (``ext_projects``), or ``None``."""
 
@@ -539,6 +543,8 @@ class CarriedOver(BaseModel):
 
     open: int
     overdue: int
+    stale: int = 0
+    """Open items carried through ``STALE_AFTER`` or more meetings."""
     items: list[CarriedOverItem]
 
 

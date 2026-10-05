@@ -7,6 +7,7 @@ import { Button, StatusDot } from "@/shared/ui";
 import { getCarriedOver } from "../api";
 import { isOverdue } from "../dates";
 import type { CarriedOver, CarriedOverItem } from "../types";
+import { staleLabel } from "../stale";
 
 /**
  * What the team's earlier meetings left open (PRD 5.2, WBS 4.8): a popup the
@@ -61,6 +62,12 @@ export function CarriedOverActions({ meetingId }: { meetingId: string }) {
             <span className="text-[var(--color-signal-critical)]">
               {" "}
               · 기한 지남 {result.overdue}건
+            </span>
+          ) : null}
+          {result.stale ? (
+            <span className="text-[var(--color-signal-attention)]">
+              {" "}
+              · 계속 밀림 {result.stale}건
             </span>
           ) : null}
         </span>
@@ -163,6 +170,14 @@ function CarriedRow({ item }: { item: CarriedOverItem }) {
           className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
+          {staleLabel(item) ? (
+            <span
+              className="text-[var(--color-signal-attention)]"
+              style={{ fontWeight: "var(--text-status-weight)" }}
+            >
+              {staleLabel(item)}
+            </span>
+          ) : null}
           <span className="text-[var(--color-ink-body)]">
             {item.needs_reassignment
               ? "재배정 필요"

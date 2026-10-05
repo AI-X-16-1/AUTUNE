@@ -1070,6 +1070,7 @@ def read_model(
     sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
+    carried_meetings: int = 0,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
@@ -1135,6 +1136,7 @@ def read_model(
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+        carried_meetings=carried_meetings,
         sync_failures=sync_failures or [],
     )
 
@@ -1182,11 +1184,13 @@ def read_one(
     session: Session, item: ExtActionItem, *, reader_id: str | None = None
 ) -> ActionItemRead:
     """``read_model`` for a single item a route just wrote, read the way the list
-    reads it -- assignee, summary, copies outside and standing failures.
+    reads it -- assignee, summary, copies outside, standing failures and the
+    meetings it was carried through.
 
     The board replaces its copy of the item with this answer. Without the
     summary, the copies and the failures, an edit made the card's link and its
-    red "연동 실패" disappear until the next reload (review of #754).
+    red "연동 실패" disappear until the next reload (review of #754); without the
+    carried count it would drop the badge.
     ``reader_id`` is the caller, for the failure a calendar shows only to its
     assignee (``sync_state.failures_for``)."""
     name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
@@ -1200,6 +1204,7 @@ def read_one(
         ),
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
+        carried_meetings=meetings_since(session, [item]).get(item.id, 0),
     )
 
 
@@ -1413,6 +1418,7 @@ def list_action_items(
     # so get no calendar failure, which is one person's to see.
     failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
+    carried = meetings_since(session, items)
     return [
         read_model(
             item,
@@ -1422,9 +1428,68 @@ def list_action_items(
             sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
+            carried_meetings=carried.get(item.id, 0),
         )
         for item in items
     ]
+
+
+STALE_AFTER = 3
+"""Meetings an open item may be carried through before it reads as stuck (the
+user, 2026-10-04): the board and the carried-over popup mark it."""
+
+
+def meetings_since(
+    session: Session, items: Sequence[ExtActionItem], *, now: datetime | None = None
+) -> dict[str, int]:
+    """For each *open* item, how many of its team's meetings have been held
+    since the meeting it was made in -- the meetings it was carried through
+    unfinished. Held is ``started_at``, or the upload when nobody recorded a
+    start, as ``carried_over`` reads it. Only a meeting that actually took
+    place counts: not one still ``scheduled`` or ahead of ``now``, not one that
+    ``failed``, and not one past retention. Counted up to now, wherever the
+    item is shown -- the board and the popup say the same number. Two queries
+    for the whole list."""
+    open_items = [i for i in items if i.status in _OPEN_STATUSES]
+    if not open_items:
+        return {}
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    own = {
+        meeting_id: (team_id, when)
+        for meeting_id, team_id, when in session.execute(
+            select(Meeting.id, Meeting.team_id, held).where(
+                Meeting.id.in_({i.meeting_id for i in open_items})
+            )
+        ).tuples()
+    }
+    by_team: dict[str, list[datetime]] = {}
+    for team_id, when in session.execute(
+        select(Meeting.team_id, held).where(
+            Meeting.team_id.in_({team for team, _ in own.values()}),
+            within_retention(),
+            held <= (now or datetime.now(UTC)),
+            Meeting.status.not_in(_NOT_HELD),
+        )
+    ).tuples():
+        by_team.setdefault(team_id, []).append(_aware(when))
+    out: dict[str, int] = {}
+    for item in open_items:
+        found = own.get(item.meeting_id)
+        if found is None:
+            continue
+        team_id, when = found
+        mine = _aware(when)
+        out[item.id] = sum(1 for other in by_team.get(team_id, []) if other > mine)
+    return out
+
+
+_NOT_HELD = ("scheduled", "failed")
+"""Meeting statuses that never took place, so carried nothing through."""
+
+
+def _aware(moment: datetime) -> datetime:
+    """SQLite hands back naive datetimes; compare everything in UTC."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 CARRIED_OVER_SHOWN = 10
@@ -1500,6 +1565,12 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
         return item.due_date is not None and item.due_date < day
 
     rows.sort(key=lambda i: (not late(i), i.due_date or date.max, i.created_at, i.id))
+    carried = meetings_since(session, rows)
+    stale = {item.id for item in rows if carried.get(item.id, 0) >= STALE_AFTER}
+    # Stuck ones first among equals: overdue, then stuck, then by date.
+    rows.sort(
+        key=lambda i: (not late(i), i.id not in stale, i.due_date or date.max, i.created_at, i.id)
+    )
     shown = rows[:CARRIED_OVER_SHOWN]
     names = assignee_names(session, shown)
     departed = departed_assignees(session, shown)
@@ -1508,6 +1579,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     return CarriedOver(
         open=len(rows),
         overdue=sum(1 for item in rows if late(item)),
+        stale=len(stale),
         items=[
             CarriedOverItem(
                 **read_model(
@@ -1517,6 +1589,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
                     sync_refs=refs.get(item.id, []),
                     assignee_departed=item.id in departed,
                     meeting_title=earlier[item.meeting_id].title,
+                    carried_meetings=carried.get(item.id, 0),
                 ).model_dump(),
                 meeting_started_at=earlier[item.meeting_id].started_at,
             )

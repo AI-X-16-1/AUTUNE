@@ -159,6 +159,7 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
         "status",
         "confidence",
         "origin",
+        "carried_meetings",
         "project_id",
         "source_utterance_ids",
         "deleted_source_count",
