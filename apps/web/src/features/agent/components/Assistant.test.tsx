@@ -1,7 +1,16 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
+import type { PendingAction } from "../types";
+
+type PendingStatus = PendingAction["status"];
 import { Assistant } from "./Assistant";
 
 // S34 header: "{meeting title} 보고 있음" on a meeting page, the page's name
@@ -42,5 +51,87 @@ describe("Assistant header", () => {
 
     expect(screen.getByText("액션아이템 보고 있음")).toBeTruthy();
     expect(label).not.toHaveBeenCalled();
+  });
+});
+
+describe("Assistant when the model is busy", () => {
+  it("says to try again shortly", async () => {
+    // jsdom draws no layout, so it has no scrollIntoView for the message list.
+    Element.prototype.scrollIntoView = vi.fn();
+    const { ApiError } = await import("@/shared/api/client");
+    vi.spyOn(api, "sendChat").mockRejectedValue(
+      new ApiError(503, "agent_busy", "busy"),
+    );
+
+    open("/actions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "업무가 한 사람에게 몰려 있어?" }),
+    );
+
+    expect(
+      await screen.findByText(/1분쯤 뒤에 다시 물어봐 주세요/),
+    ).toBeTruthy();
+  });
+});
+
+describe("Assistant launcher alert", () => {
+  // agent-assistant.md section 2: a 6px signal.critical dot when the assistant
+  // has something to say first; the nearest signal is the approvals queue (9.7).
+  const WAITING = {
+    id: "pend_1",
+    team_id: "team_1",
+    meeting_id: null,
+    subagent: "workload",
+    kind: "reassign",
+    tool: "extraction.reassign_action_item",
+    status: "pending" as PendingStatus,
+    reject_reason: null,
+    result_ok: null,
+    created_at: "2026-10-03T00:00:00Z",
+    decided_at: null,
+    title: "재배정",
+    body: "",
+    needs_check: false,
+  };
+
+  it("shows a dot while a proposal waits for this person", async () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([WAITING]);
+
+    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
+
+    expect(
+      await screen.findByLabelText("승인을 기다리는 제안이 있습니다"),
+    ).toBeTruthy();
+  });
+
+  async function shownFor(
+    answer: () => Promise<PendingAction[]>,
+  ): Promise<boolean> {
+    const listed = vi.spyOn(api, "listPending").mockImplementation(answer);
+    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
+    await waitFor(() => expect(listed).toHaveBeenCalled());
+    return screen.queryByLabelText("승인을 기다리는 제안이 있습니다") !== null;
+  }
+
+  it("shows nothing when nothing waits", async () => {
+    expect(await shownFor(async () => [])).toBe(false);
+  });
+
+  it("shows nothing for an approval interrupted mid-run", async () => {
+    // It comes back as needs_check and is never re-run: nothing to approve (#759 review).
+    const interrupted = {
+      ...WAITING,
+      status: "approved" as PendingStatus,
+      needs_check: true,
+    };
+    expect(await shownFor(async () => [interrupted])).toBe(false);
+  });
+
+  it("shows nothing when the queue cannot be read", async () => {
+    expect(
+      await shownFor(async () => {
+        throw new Error("offline");
+      }),
+    ).toBe(false);
   });
 });

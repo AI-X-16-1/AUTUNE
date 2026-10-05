@@ -177,6 +177,14 @@ class ExtractionSettings(BaseSettings):
     then it sends only where a team connected Slack and the assignee linked
     their account."""
 
+    weekly_digest: bool = False
+    """``AUTUNE_EXTRACTION_WEEKLY_DIGEST``: whether each person is sent, on
+    Monday in Korea, a Slack DM listing their own open action items
+    (``reminders.build_weekly_digest``, the user, 2026-10-04). Off by default
+    for the reason ``due_reminders`` is; sends only where a team connected
+    Slack and the person linked their account.
+    """
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 

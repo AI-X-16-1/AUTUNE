@@ -29,6 +29,8 @@ from typing import Any
 
 from autune_contracts.enums import UtteranceKind
 
+from .reminders import slack_escape
+
 CONFIRMATION_TIMEOUT = timedelta(hours=72)
 """How long the speaker has before the question resolves itself as undecided.
 
@@ -106,7 +108,8 @@ def build_confirmation_dm(
     ``quoted_text`` is the utterance as stored, which is already PII-masked —
     transcript text is masked before it is written (invariant 11), so what comes
     out of the database is what may be sent. The outbound guard in the client
-    checks it again rather than trusting that.
+    checks it again rather than trusting that. Slack's three control
+    characters in it are sent as entities (``reminders.slack_escape``).
 
     Returns the fallback text and the blocks. The fallback carries no quotation:
     it is what Slack shows in a notification preview and on the lock screen of a
@@ -120,7 +123,10 @@ def build_confirmation_dm(
         },
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": f"> {quoted_text}"},
+            # Escaped: a transcript line is what someone said, and ``<!channel>``
+            # or ``<https://x|여기>`` in it must not go out as a mention or a
+            # disguised link under the bot's name (review of #751).
+            "text": {"type": "mrkdwn", "text": f"> {slack_escape(quoted_text)}"},
         },
         {
             "type": "context",
