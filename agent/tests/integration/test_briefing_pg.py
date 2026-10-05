@@ -199,14 +199,14 @@ def test_a_scheduled_meeting_gets_the_whole_brief_from_the_real_tools(db_session
     sections = {item["title"]: item["body"] for item in body["items"]}
     assert list(sections) == [
         "지난 회의에서 이어받는 결정",
-        "이번 회의에서 다룰 Jira 이슈",
+        "팀의 열린 Jira 이슈",
         "기한이 지났거나 다가온 액션 아이템",
         "지난 회의에서 닫히지 않은 갭",
     ]
     assert PAST_TITLE in sections["지난 회의에서 이어받는 결정"]
     assert f"{DECISION} (번복)" in sections["지난 회의에서 이어받는 결정"]
-    assert "AUT-7" in sections["이번 회의에서 다룰 Jira 이슈"]
-    assert LATE_ITEM in sections["이번 회의에서 다룰 Jira 이슈"]  # B's title reaches D's brief
+    assert "AUT-7" in sections["팀의 열린 Jira 이슈"]
+    assert LATE_ITEM in sections["팀의 열린 Jira 이슈"]  # B's title reaches D's brief
     assert f"• {GAP_TITLE}\n  ↳ {QUESTION}" in sections["지난 회의에서 닫히지 않은 갭"]
 
 
@@ -266,7 +266,7 @@ def test_before_d_composes_the_brief_the_agenda_and_late_work_still_come(
 
     sections = {item["title"]: item["body"] for item in body["items"]}
     assert "10분 전에 정해집니다" in sections["지난 회의"]
-    assert "이번 회의에서 다룰 Jira 이슈" in sections
+    assert "팀의 열린 Jira 이슈" in sections
     assert "닫히지 않은 갭" not in " ".join(sections)  # nothing to ask C about yet
 
 
