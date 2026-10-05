@@ -7,6 +7,8 @@ import { Button } from "@/shared/ui";
 import { assignSummaryProjects, placeActionItem, placeDecision } from "../api";
 import type { MeetingSummary, Project } from "../types";
 
+import { ProjectSend } from "./ProjectSend";
+
 const UNSORTED = "";
 
 /**
@@ -106,6 +108,7 @@ export function ProjectGroups({
           {note}
         </span>
       ) : null}
+      <ProjectSend meetingId={meetingId} />
       {groups.map(({ project, key }) => {
         const decisions = decisionsIn(key);
         const items = itemsIn(key);

@@ -245,6 +245,15 @@ def test_a_meeting_past_its_retention_window_is_not_kept(db_session: Session, te
     assert _rows(db_session, team) == {kept: (2, 1, 0)}
 
 
+def _others(db_session: Session, team: str, n: int) -> list[dict[str, Any]]:
+    """``n`` more meetings held yesterday, one confirmed item each, not done --
+    enough meetings for a total to be shown at all."""
+    return [
+        {"meeting_id": _meeting(db_session, team), "confirmed": 1, "done": 0, "overdue": 0}
+        for _ in range(n)
+    ]
+
+
 def test_the_dashboard_shows_the_teams_real_completion(db_session: Session, team: str) -> None:
     """Done over confirmed across the team's meetings, and the overdue total --
     not the confirmation rate the quality score keeps."""
@@ -268,6 +277,7 @@ def test_the_dashboard_shows_the_teams_real_completion(db_session: Session, team
             [
                 {"meeting_id": first, "confirmed": 5, "done": 2, "overdue": 1},
                 {"meeting_id": second, "confirmed": 3, "done": 3, "overdue": 0},
+                *_others(db_session, team, 1),
             ],
             as_of=now,
         ),
@@ -275,7 +285,8 @@ def test_the_dashboard_shows_the_teams_real_completion(db_session: Session, team
 
     dashboard = service.get_dashboard(db_session, team)
 
-    assert dashboard.action_item_completion_rate == pytest.approx(5 / 8)
+    assert dashboard.action_item_completion_rate == pytest.approx(5 / 9)
+    assert dashboard.action_completion_meeting_count == 3
     assert dashboard.overdue_action_items == 1
     assert dashboard.action_progress_as_of == now
     assert dashboard.action_item_confirmation_rate == pytest.approx(0.9)
@@ -297,6 +308,7 @@ def test_a_stale_or_missing_snapshot_is_unknown_not_zero(db_session: Session, te
 
     for dashboard in (never, stale):
         assert dashboard.action_item_completion_rate is None
+        assert dashboard.action_completion_meeting_count is None
         assert dashboard.overdue_action_items is None
         assert dashboard.action_progress_as_of is None
 
@@ -310,7 +322,35 @@ def test_a_fresh_snapshot_with_nothing_confirmed_has_no_rate_and_none_overdue(
     dashboard = service.get_dashboard(db_session, team)
 
     assert dashboard.action_item_completion_rate is None
+    assert dashboard.action_completion_meeting_count == 0
     assert dashboard.overdue_action_items == 0
+    assert dashboard.action_progress_as_of == now
+
+
+def test_a_total_from_fewer_than_three_meetings_is_not_shown(
+    db_session: Session, team: str
+) -> None:
+    """With one or two meetings a team total is those meetings' counts, and if
+    every item is one person's, that person's record (#800 review) -- the
+    heatmap's three-meeting floor."""
+    now = datetime.now(UTC)
+    service.store_action_progress(
+        db_session,
+        _snapshot(
+            team,
+            [
+                {"meeting_id": _meeting(db_session, team), "confirmed": 3, "done": 1, "overdue": 1},
+                {"meeting_id": _meeting(db_session, team), "confirmed": 2, "done": 2, "overdue": 0},
+            ],
+            as_of=now,
+        ),
+    )
+
+    dashboard = service.get_dashboard(db_session, team)
+
+    assert dashboard.action_item_completion_rate is None
+    assert dashboard.action_completion_meeting_count == 2
+    assert dashboard.overdue_action_items is None
     assert dashboard.action_progress_as_of == now
 
 
@@ -325,6 +365,7 @@ def test_a_meeting_that_expired_since_the_snapshot_leaves_the_totals(
             [
                 {"meeting_id": kept, "confirmed": 4, "done": 1, "overdue": 0},
                 {"meeting_id": expiring, "confirmed": 4, "done": 4, "overdue": 0},
+                *_others(db_session, team, 2),
             ],
             as_of=datetime.now(UTC),
         ),
@@ -333,12 +374,15 @@ def test_a_meeting_that_expired_since_the_snapshot_leaves_the_totals(
 
     dashboard = service.get_dashboard(db_session, team)
 
-    assert dashboard.action_item_completion_rate == pytest.approx(1 / 4)
+    assert dashboard.action_item_completion_rate == pytest.approx(1 / 6)
 
 
-def test_only_meetings_held_in_the_last_four_weeks_count(db_session: Session, team: str) -> None:
-    """A fixed window, the same for every team whatever its retention: a meeting
-    leaving it moves the rate for a reason the card states (최근 4주)."""
+def test_completion_counts_four_weeks_and_overdue_every_kept_meeting(
+    db_session: Session, team: str
+) -> None:
+    """The rate is how the team is doing now (최근 4주); an item past its due
+    date matters however old its meeting, so overdue counts every meeting B
+    listed that has not expired (#800 review)."""
     from autune_core import Meeting
 
     now = datetime.now(UTC)
@@ -353,8 +397,9 @@ def test_only_meetings_held_in_the_last_four_weeks_count(db_session: Session, te
             team,
             [
                 {"meeting_id": recent, "confirmed": 4, "done": 1, "overdue": 1},
-                {"meeting_id": older, "confirmed": 4, "done": 4, "overdue": 0},
+                {"meeting_id": older, "confirmed": 4, "done": 1, "overdue": 2},
                 {"meeting_id": unstarted.id, "confirmed": 4, "done": 1, "overdue": 0},
+                *_others(db_session, team, 1),
             ],
             as_of=now,
         ),
@@ -362,5 +407,6 @@ def test_only_meetings_held_in_the_last_four_weeks_count(db_session: Session, te
 
     dashboard = service.get_dashboard(db_session, team)
 
-    assert dashboard.action_item_completion_rate == pytest.approx(2 / 8)
-    assert dashboard.overdue_action_items == 1
+    assert dashboard.action_item_completion_rate == pytest.approx(2 / 9)
+    assert dashboard.action_completion_meeting_count == 3
+    assert dashboard.overdue_action_items == 3

@@ -102,6 +102,98 @@ class ExtProject(Base):
     )
 
 
+class ExtProjectSend(Base):
+    """Where a project's minutes for one meeting were sent, per tool (2026-10-04).
+
+    One row per (meeting, project, target): the Notion page id, the Slack
+    message as ``channel:ts``, or the Jira issue key. Sending again updates that
+    copy instead of making a second one. Holds addresses, no text; goes with the
+    meeting, and with the project -- each copied first to
+    ``ext_project_send_cleanup`` so the copy outside goes too.
+
+    ``external_id`` is empty only inside the transaction that claimed the row
+    to make the first copy: two people sending at once make one copy.
+
+    ``content_digest`` is ``service.source_digest`` over the minutes the copy
+    last received -- a hash, not the text. A refresh compares it with the
+    minutes as they are now and leaves a copy that already says them alone, so
+    refreshing is safe to do on every change and to repeat after a failure;
+    a copy whose write failed keeps its old digest and is still found stale
+    by the next one (#787 review).
+    """
+
+    __tablename__ = "ext_project_sends"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    target: Mapped[str] = mapped_column(String(16), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtProjectRefreshOwed(Base):
+    """A meeting whose project minutes outside still have to be brought in line
+    with what is confirmed now (#787 review).
+
+    A refresh happens after the change it follows is committed, and talks to
+    tools that can be down or disconnected. Without this a failed one was only
+    logged: a sentence its speaker had deleted stayed in the team's Slack,
+    Notion or Jira until the meeting's retention ran out. A refresh that leaves
+    any copy behind writes the meeting here, deleted speech writes it in the
+    transaction that drops the words, and
+    ``tasks.retry_project_minutes_refresh`` tries again until every copy is in
+    line. An id and a count, nothing said; goes with the meeting, whose copies
+    are then retracted through ``ext_project_send_cleanup`` instead.
+    """
+
+    __tablename__ = "ext_project_refresh_owed"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtProjectSendCleanup(Base):
+    """A copy of a project's minutes still to take out of a team's tool, after
+    the meeting or the project it belonged to was deleted (#787 review).
+
+    ``ext_project_sends`` goes with the meeting and with the project, so before
+    either goes its rows are copied here, and ``tasks.drain_project_send_cleanup``
+    retracts each with the team's own connection: the Notion page emptied and
+    trashed, the Slack message deleted, the Jira task emptied and closed.
+    Addresses only, no text. No meeting or project key: the row has to outlive
+    both. ``team_id`` cascades -- with the team goes every connection that
+    could reach the copy.
+    """
+
+    __tablename__ = "ext_project_send_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "target", "external_id", name="uq_ext_project_send_cleanup"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtActionItem(Base, TimestampMixin):
     """One trackable commitment, as the user will eventually accept it.
 
@@ -1073,6 +1165,67 @@ class ExtMeetingNote(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtMeetingSummary(Base):
+    """A meeting's summary written by a cloud model (#421 v2, ``summary_impl=llm``).
+
+    Model output over the meeting's consented, masked lines, names put back --
+    meeting content, shown to the team on the 요약 tab. ``source_digest`` is
+    ``service.source_digest`` over the lines it was written from: a summary
+    whose lines have changed since (a correction, a deletion, a change of
+    consent) no longer matches what the meeting says and is not shown
+    (``service.meeting_summary``); the next run writes a new one. Not showing
+    it is not enough for words a person took back, so the row itself goes:
+    deleted speech deletes it outright (``service.forget_speech``), and every
+    extraction and every ``summarize_meeting`` deletes one whose lines have
+    changed before anything else, whether or not a new one can be written
+    (``service.drop_stale_summary``). One per meeting, deleted with it, so it
+    keeps the meeting's retention.
+
+    ``points`` holds one sentence per line: each was checked to be one line.
+    """
+
+    __tablename__ = "ext_meeting_summaries"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    overview: Mapped[str] = mapped_column(Text, nullable=False)
+    points: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtForgottenUtterance(Base):
+    """An utterance its speaker deleted, until module A has removed the row
+    (#421 v2, review of #782).
+
+    B's speech hook commits before A deletes the utterances
+    (``tasks.forget_deleted_speech``), so for a moment a line B was told to
+    forget is still in the shared table. ``service.summary_lines`` leaves out
+    every utterance named here. A summary asked for in that moment is then not
+    written from the deleted words, and one the model was still writing when
+    the hook ran no longer matches the lines when it comes to be stored
+    (``service.store_meeting_summary``).
+
+    An id and a time, nothing that was said. The row goes with the utterance
+    (CASCADE), which is when it stops being needed. If A's deletion fails the
+    row stays and the line stays out of every summary: erring toward deleting
+    more, as the hook itself does.
+    """
+
+    __tablename__ = "ext_forgotten_utterances"
+
+    utterance_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), primary_key=True
+    )
+    forgotten_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
