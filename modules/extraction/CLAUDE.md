@@ -60,7 +60,8 @@ built from it.
 `ext_extraction_runs`, `ext_meeting_notes`, `ext_meeting_summaries`,
 `ext_forgotten_utterances`, `ext_weekly_digests`, `ext_daily_digests`,
 `ext_notification_pauses`, `ext_projects`,
-`ext_project_sends`, `ext_project_send_cleanup`, `ext_project_refresh_owed`.
+`ext_project_sends`, `ext_project_send_cleanup`, `ext_project_refresh_owed`,
+`ext_minutes_events`.
 
 The list in `/docs/modules/extraction.md` is the same set; keep the two together.
 This one drifted once already — the B/D boundary commit updated "Publishes" here
