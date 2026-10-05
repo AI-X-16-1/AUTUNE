@@ -1021,6 +1021,20 @@ class ExtCalendarCleanup(Base):
     )
 
 
+class ExtDueReminderOptOut(Base):
+    """A person who turned the due-date reminders off for themselves (review
+    of #751). On unless they did: a row means off, and turning them back on
+    deletes it. Only the person, never which items or teams; goes with the
+    account."""
+
+    __tablename__ = "ext_due_reminder_optouts"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtExternalCleanup(Base):
     """A deleted item's Notion page or Jira issue still owed its cleanup (#692).
 
