@@ -4820,15 +4820,14 @@ statement is not what it keeps."""
 
 
 def decisions_with_a_page(session: Session, decision_ids: Collection[str]) -> set[str]:
-    """The decisions among ``decision_ids`` whose Notion page is still there --
-    made when they were confirmed, and not retired since."""
+    """The decisions among ``decision_ids`` whose Notion page or Jira issue is
+    still there -- made when they were confirmed, and not retired since."""
     if not decision_ids:
         return set()
     return set(
         session.scalars(
             select(ExtDecisionRef.decision_id).where(
                 ExtDecisionRef.decision_id.in_(decision_ids),
-                ExtDecisionRef.system == NOTION,
                 ExtDecisionRef.external_id.is_not(None),
             )
         )
@@ -4837,14 +4836,15 @@ def decisions_with_a_page(session: Session, decision_ids: Collection[str]) -> se
 
 def decision_pages_without_a_decision(session: Session, meeting_id: str) -> list[str]:
     """Ids of this meeting's decisions that are gone and still have a Notion
-    page: a rerun dropped the decision (``build_decisions``), or a person
-    deleted their own. For the caller to queue ``sync_decision``, which
-    retires the page (#669). Ids only."""
+    page or a Jira issue: a rerun dropped the decision (``build_decisions``),
+    or a person deleted their own. For the caller to queue ``sync_decision``,
+    which retires both (#669). Ids only, each once."""
     return list(
         session.scalars(
-            select(ExtDecisionRef.decision_id).where(
+            select(ExtDecisionRef.decision_id)
+            .distinct()
+            .where(
                 ExtDecisionRef.meeting_id == meeting_id,
-                ExtDecisionRef.system == NOTION,
                 ExtDecisionRef.external_id.is_not(None),
                 ~select(ExtDecision.id)
                 .where(ExtDecision.id == ExtDecisionRef.decision_id)
@@ -4855,9 +4855,9 @@ def decision_pages_without_a_decision(session: Session, meeting_id: str) -> list
 
 
 def decision_has_page(session: Session, decision_id: str) -> bool:
-    """Whether the decision still has the page its confirmation made. A change
-    of verdict on such a decision has to reach Notion even when the new
-    verdict is not *confirmed* (#669)."""
+    """Whether the decision still has the page or issue its confirmation made.
+    A change of verdict on such a decision has to reach Notion and Jira even
+    when the new verdict is not *confirmed* (#669)."""
     return bool(decisions_with_a_page(session, [decision_id]))
 
 

@@ -502,7 +502,8 @@ class ExtExternalRef(Base):
 
 
 class ExtDecisionRef(Base):
-    """The page a confirmed decision became in an outside tool, once.
+    """The page -- or Jira issue -- a confirmed decision became in an outside
+    tool, once.
 
     The same rule as ``ExtExternalRef`` for action items: keyed by the decision and
     the system, claimed before the call, filled in after it. A separate table
@@ -529,6 +530,9 @@ class ExtDecisionRef(Base):
     )
     external_id: Mapped[str | None] = mapped_column(String(64))
     url: Mapped[str | None] = mapped_column(Text)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """For a Jira issue, the cloud id of the site it is on: a key is unique only
+    within a site, as for ``ExtExternalRef.site``. ``None`` for a Notion page."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
