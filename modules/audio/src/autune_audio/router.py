@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, UploadFile, status
+from fastapi import APIRouter, Depends, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.events import TRANSCRIPT_READY
@@ -211,8 +211,13 @@ def accept_invitation(
 
 
 @router.get("/meetings", response_model=list[MeetingSummary])
-def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary]:
-    """The meetings of the teams this person belongs to, newest first. S05's list.
+def list_meetings(
+    user: CurrentUser,
+    session: SessionDep,
+    team_id: Annotated[str | None, Query(max_length=64)] = None,
+) -> list[MeetingSummary]:
+    """The meetings of the teams this person belongs to, newest first -- with
+    ``team_id``, of that one team, and a 403 when they are not on it. S05's list.
 
     Declared above ``/meetings/{meeting_id}`` so the literal path is read before
     the parameterised one. Starlette matches in declaration order and
@@ -235,7 +240,7 @@ def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary
             status=meeting.status,
             started_at=meeting.started_at,
         )
-        for meeting in service.meetings_for(session, member=user)
+        for meeting in service.meetings_for(session, member=user, team_id=team_id)
     ]
 
 

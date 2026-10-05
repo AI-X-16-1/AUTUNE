@@ -76,7 +76,10 @@ export const restartTranscription = (meetingId: string) =>
  * action items and gaps belong to modules B and C, which A may not read. A row
  * links to the screens that own the rest.
  */
-export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
+export const listMeetings = (teamId?: string) =>
+  api.audio<MeetingSummary[]>(
+    teamId === undefined ? "/meetings" : `/meetings?team_id=${encodeURIComponent(teamId)}`,
+  );
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");

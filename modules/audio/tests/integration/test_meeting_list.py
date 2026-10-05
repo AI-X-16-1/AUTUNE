@@ -177,3 +177,75 @@ def test_a_person_on_no_team_gets_an_empty_list(app_for, outsider: User, meeting
 
 def test_listing_without_a_token_is_refused(app_for, meeting: str) -> None:
     assert app_for(None).get("/api/audio/meetings").status_code == 403
+
+
+# --- one team at a time (the user, 2026-10-05) ------------------------------------
+
+
+def _second_team(session: Session, member: User | None) -> str:
+    second = Team(name="Second Team")
+    session.add(second)
+    session.flush()
+    if member is not None:
+        session.add(TeamMember(team_id=second.id, user_id=member.id))
+        session.flush()
+    return second.id
+
+
+def test_a_team_id_narrows_the_list_to_that_team_of_theirs(
+    client: TestClient, db_session: Session, team: str, member: User, meeting: str
+) -> None:
+    """Somebody on two teams saw both teams' meetings in one list. With the
+    team named, each list is that team's and nothing of the other's."""
+    second = _second_team(db_session, member)
+    also_mine = _add_meeting(db_session, team_id=second, title="Second Team Meeting")
+
+    first = client.get("/api/audio/meetings", params={"team_id": team}).json()
+    other = client.get("/api/audio/meetings", params={"team_id": second}).json()
+
+    assert [row["meeting_id"] for row in first] == [meeting]
+    assert [row["meeting_id"] for row in other] == [also_mine]
+    assert set(first[0]) == {"meeting_id", "title", "status", "started_at"}, "still four fields"
+
+
+def test_a_team_of_theirs_with_no_meetings_is_an_empty_list(
+    client: TestClient, db_session: Session, member: User, meeting: str
+) -> None:
+    second = _second_team(db_session, member)
+
+    response = client.get("/api/audio/meetings", params={"team_id": second})
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_a_team_they_are_not_on_is_refused_not_emptied(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    """An empty list would be an answer about that team -- "it has no
+    meetings". The narrowing is not a second way to ask about a team."""
+    theirs = _second_team(db_session, None)
+    _add_meeting(db_session, team_id=theirs, title="Not Mine")
+
+    response = client.get("/api/audio/meetings", params={"team_id": theirs})
+
+    assert response.status_code == 403
+    assert "Not Mine" not in response.text
+
+
+def test_a_team_that_does_not_exist_is_refused_the_same_way(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    """The same answer as a real team they are not on: the route does not say
+    which ids are teams."""
+    theirs = _second_team(db_session, None)
+
+    missing = client.get("/api/audio/meetings", params={"team_id": "team_does_not_exist"})
+    real = client.get("/api/audio/meetings", params={"team_id": theirs})
+
+    assert missing.status_code == real.status_code == 403
+    assert missing.json() == real.json()
+
+
+def test_an_overlong_team_id_is_refused_before_the_database(client: TestClient) -> None:
+    assert client.get("/api/audio/meetings", params={"team_id": "t" * 65}).status_code == 422
