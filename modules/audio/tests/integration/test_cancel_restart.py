@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -119,11 +120,12 @@ def test_cancelling_a_running_job_fails_the_meeting_and_leaves_the_file_to_its_w
     job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(seconds=5))
     upload = _upload(settings, job.id)
 
-    meeting = service.cancel_transcription(
+    cancelled = service.cancel_transcription(
         db_session, meeting_id=analyzing, user=member, settings=settings
     )
 
-    assert meeting.status == "failed"
+    assert cancelled.meeting.status == "failed"
+    assert cancelled.orphan is None  # a live worker owns the file
     assert job.status == "cancelled"
     assert job.finished_at is not None
     assert upload.exists()  # the live worker's adopt() deletes it
@@ -141,17 +143,56 @@ def test_cancelling_a_queued_job_leaves_the_file_to_the_claim(
     assert upload.exists()  # claim_job declines it with owns_file=True
 
 
-def test_cancelling_a_stalled_job_deletes_the_file_at_once(
+def test_cancelling_a_stalled_job_hands_its_file_to_the_caller(
     db_session: Session, analyzing: str, member: User, settings: AudioSettings
 ) -> None:
-    """Its owner is gone; the API takes ownership rather than wait an hour
-    for the sweep."""
+    """Its owner is gone, so the API takes ownership -- but deletes only once
+    the cancel is committed. Deleted first, a failed commit would leave the
+    job `running` with nothing to run."""
     job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
     upload = _upload(settings, job.id)
 
-    service.cancel_transcription(db_session, meeting_id=analyzing, user=member, settings=settings)
+    cancelled = service.cancel_transcription(
+        db_session, meeting_id=analyzing, user=member, settings=settings
+    )
 
+    assert cancelled.orphan == upload
+    assert upload.exists()
+
+
+def test_the_cancel_route_deletes_a_stalled_jobs_file_after_the_commit(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    upload = _upload(settings, job.id)
+
+    response = client.post(f"/api/audio/meetings/{analyzing}/transcription/cancel")
+
+    assert response.status_code == 200
     assert not upload.exists()
+
+
+def test_a_cancel_whose_commit_fails_keeps_the_stalled_jobs_file(
+    client: TestClient,
+    db_session: Session,
+    analyzing: str,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The job is still `running` after a failed commit; a later cancel or
+    restart needs the file, and the sweep still bounds how long it stays."""
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    upload = _upload(settings, job.id)
+
+    def broken_commit() -> None:
+        raise RuntimeError("database went away")
+
+    monkeypatch.setattr(db_session, "commit", broken_commit)
+
+    with pytest.raises(RuntimeError):
+        client.post(f"/api/audio/meetings/{analyzing}/transcription/cancel")
+
+    assert upload.exists()
 
 
 @pytest.mark.parametrize("meeting_status", ["complete", "failed", "scheduled"])
@@ -567,12 +608,116 @@ def test_a_meeting_that_failed_on_its_own_is_not_called_cancelled(
     assert _detail(client, meeting)["cancelled"] is False
 
 
-def test_a_queued_job_is_never_stalled(
+def test_a_job_queued_for_long_is_stalled_and_restartable(
     client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
 ) -> None:
-    """A long queue and a lost message look the same from here."""
-    _job(db_session, analyzing, "queued", age=timedelta(hours=1))
+    """A message the broker lost leaves a job `queued` with nobody coming.
+    After fifteen minutes it is offered a restart; a waiting job restarted
+    by mistake only loses its place, because its late message is declined."""
+    job = _job(db_session, analyzing, "queued", age=timedelta(minutes=20))
+    _upload(settings, job.id)
+
+    body = _detail(client, analyzing)
+
+    assert (body["stalled"], body["restartable"], body["cancellable"]) == (True, True, True)
+
+
+def test_a_job_queued_briefly_is_not_stalled(
+    client: TestClient, db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    job = _job(db_session, analyzing, "queued", age=timedelta(minutes=5))
+    _upload(settings, job.id)
 
     body = _detail(client, analyzing)
 
     assert (body["stalled"], body["cancellable"]) == (False, True)
+
+
+def test_a_job_queued_for_long_restarts_from_the_same_upload(
+    db_session: Session, analyzing: str, member: User, settings: AudioSettings
+) -> None:
+    old = _job(db_session, analyzing, "queued", age=timedelta(minutes=20))
+    _upload(settings, old.id)
+
+    new = service.restart_transcription(
+        db_session, meeting_id=analyzing, user=member, settings=settings
+    )
+
+    assert old.status == "superseded"
+    assert (Path(settings.temp_dir) / f"{new.id}.upload").exists()
+
+
+# --- the restart window ---------------------------------------------------------
+
+
+def _uploaded_ago(settings: AudioSettings, job_id: str, age: timedelta) -> None:
+    path = Path(settings.temp_dir) / f"{job_id}.upload"
+    path.write_bytes(b"raw audio stand-in")
+    then = (datetime.now(tz=UTC) - age).timestamp()
+    os.utime(path, (then, then))
+
+
+def test_an_upload_with_three_hours_left_is_restartable(
+    db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    left = timedelta(hours=3, minutes=5)
+    _uploaded_ago(settings, job.id, timedelta(hours=settings.orphan_after_hours) - left)
+
+    assert service.recording_restartable(job.id, settings=settings, now=datetime.now(tz=UTC))
+
+
+def test_an_upload_with_less_than_three_hours_left_is_not_offered_a_restart(
+    db_session: Session, analyzing: str, settings: AudioSettings
+) -> None:
+    """The longest meeting the pipeline is sized for (two hours, about 1.27x
+    real time) needs about 2.5 h; a restart with less left would be swept
+    out from under its worker."""
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(minutes=10))
+    left = timedelta(hours=2, minutes=55)
+    _uploaded_ago(settings, job.id, timedelta(hours=settings.orphan_after_hours) - left)
+
+    assert not service.recording_restartable(job.id, settings=settings, now=datetime.now(tz=UTC))
+
+
+# --- one clock per timestamp ----------------------------------------------------
+
+
+class _HostClockADayAhead(datetime):
+    """This host's clock, a day off the database's."""
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return datetime.now(tz) + timedelta(days=1)
+
+
+def test_staleness_is_judged_on_the_databases_clock(
+    client: TestClient,
+    db_session: Session,
+    analyzing: str,
+    settings: AudioSettings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`heartbeat_at` is written by the database (`job_guard.beat_with`), so
+    it is compared with the database's now: an API host whose clock is off
+    must not call a live worker stalled."""
+    job = _job(db_session, analyzing, "running", heartbeat_age=timedelta(seconds=10))
+    _upload(settings, job.id)
+    monkeypatch.setattr(service, "datetime", _HostClockADayAhead)
+
+    body = _detail(client, analyzing)
+
+    assert body["stalled"] is False
+
+
+def test_a_claim_stamps_the_heartbeat_with_the_databases_clock(
+    db_session: Session, analyzing: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _job(db_session, analyzing, "queued")
+    monkeypatch.setattr(service, "datetime", _HostClockADayAhead)
+
+    service.claim_job(db_session, job_id=job.id)
+
+    db_now = db_session.scalar(sa.select(sa.func.now()))
+    assert job.heartbeat_at is not None
+    assert abs(job.heartbeat_at - db_now) < timedelta(minutes=1)

@@ -190,7 +190,10 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, utterances, consented=consented)
-    classified = service.verify_utterances(get_nli(), classified)
+    nli = get_nli()
+    # Step 4 sends text out too, when it is the ``llm`` one.
+    give_roster(nli, roster)
+    classified = service.verify_utterances(nli, classified)
 
     resolver = get_resolver()
     # The resolver sends text out too, when it is the ``llm`` one (#411).

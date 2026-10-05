@@ -82,6 +82,17 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
 /**
+ * Pin a team to the top of my own team list (up to three), or take the pin
+ * off. Both answer with the list as it now stands, pinned teams first. A
+ * fourth pin is a 409 `too_many_pinned_teams`.
+ */
+export const pinTeam = (teamId: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}/pin`, { method: "PUT" });
+
+export const unpinTeam = (teamId: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}/pin`, { method: "DELETE" });
+
+/**
  * The token for an invitation link, shown once, and when the link lapses.
  * `emailed` is whether Gmail took the mail `sendEmail` asked for.
  */
@@ -160,20 +171,34 @@ export const getSpeakers = (meetingId: string) =>
  * rendering in `useSpeakers`/`UnidentifiedSpeaker` from needing to
  * special-case the one call that cannot go through `request()`.
  */
-export async function assignSpeaker(
+export const assignSpeaker = (meetingId: string, speakerLabel: string, userId: string) =>
+  writeSpeaker(meetingId, speakerLabel, "", "POST", { user_id: userId });
+
+/**
+ * Name a speaker with no account on the team, for this meeting only. 204, no
+ * body, so it goes through `writeSpeaker` for the same reason as above. No
+ * person is attached and no voice is kept; a 409 means the label is already
+ * a team member's.
+ */
+export const nameSpeaker = (meetingId: string, speakerLabel: string, name: string) =>
+  writeSpeaker(meetingId, speakerLabel, "/name", "PUT", { name });
+
+async function writeSpeaker(
   meetingId: string,
   speakerLabel: string,
-  userId: string,
+  suffix: "" | "/name",
+  method: "POST" | "PUT",
+  payload: Record<string, string>,
 ): Promise<void> {
   // Same origin, like the upload below: a direct call to the API's own port is
   // cross-origin, so the browser sent a CORS preflight the API answers 405 and
   // the assignment never left the page.
   const response = await fetch(
-    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}`,
+    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}${suffix}`,
     {
-      method: "POST",
+      method,
       headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ user_id: userId }),
+      body: JSON.stringify(payload),
     },
   );
   if (!response.ok) {

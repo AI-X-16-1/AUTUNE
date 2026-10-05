@@ -82,7 +82,9 @@ def test_creating_a_team_makes_the_creator_a_member_with_their_role(
 def test_the_new_team_is_listed_for_its_creator(client: TestClient) -> None:
     team_id = client.post("/api/audio/teams", json={"name": "검색 스쿼드"}).json()["team_id"]
 
-    assert client.get("/api/audio/teams").json() == [{"team_id": team_id, "name": "검색 스쿼드"}]
+    assert client.get("/api/audio/teams").json() == [
+        {"team_id": team_id, "name": "검색 스쿼드", "pinned": False}
+    ]
 
 
 @pytest.mark.parametrize("name", ["", "a", " ", "x" * 41])
