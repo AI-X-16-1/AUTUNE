@@ -90,6 +90,7 @@ from .models import (
     ExtExternalRef,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtProject,
     ExtSyncFailure,
     ExtWeeklyDigest,
 )
@@ -122,6 +123,7 @@ from .schemas import (
     Outbound,
     OutboundBlocked,
     OutboundDecision,
+    ProjectRead,
     ReviewAmbiguous,
     ReviewDecision,
     SourceUtterance,
@@ -1126,6 +1128,7 @@ def read_model(
         status=item.status,
         confidence=item.confidence,
         origin=item.origin,
+        project_id=item.project_id,
         source_utterance_ids=source_ids,
         deleted_source_count=0 if hidden else len(item.sources) - len(source_ids),
         needs_reassignment=assignee_departed and item.status in _OPEN_STATUSES,
@@ -1912,6 +1915,20 @@ def delete_action_item(session: Session, item: ExtActionItem) -> None:
     session.flush()
 
     _record_edit(session, meeting_id=meeting_id, action_item_id=None, kind="deleted")
+
+
+def record_placement(session: Session, item: ExtActionItem) -> None:
+    """A person moved an item to a project (or out of one): a correction like
+    any edit. It is also what keeps the move -- ``build_action_items`` rebuilds
+    a meeting's model items only while nobody has corrected anything, and a
+    rebuilt item would come back with a new id and the rules' choice."""
+    _record_edit(
+        session,
+        meeting_id=item.meeting_id,
+        action_item_id=item.id,
+        kind="edited",
+        fields=("project_id",),
+    )
 
 
 def _record_edit(
@@ -3797,10 +3814,33 @@ def meeting_summary(
         )
     )
     note = session.get(ExtMeetingNote, meeting_id)
+    placed = {
+        decision_id: project_id
+        for decision_id, project_id in session.execute(
+            select(ExtDecision.id, ExtDecision.project_id).where(
+                ExtDecision.meeting_id == meeting_id
+            )
+        ).tuples()
+    }
+    meeting = session.get(Meeting, meeting_id)
+    team_projects = (
+        session.scalars(
+            select(ExtProject)
+            .where(ExtProject.team_id == meeting.team_id)
+            .order_by(ExtProject.created_at, ExtProject.id)
+        ).all()
+        if meeting is not None
+        else []
+    )
     return MeetingSummary(
         meeting_id=meeting_id,
         decisions=[
-            SummaryDecision(id=d.id, statement=d.statement, status=d.status)  # type: ignore[arg-type]
+            SummaryDecision(
+                id=d.id,
+                statement=d.statement,
+                status=d.status,  # type: ignore[arg-type]
+                project_id=placed.get(d.id),
+            )
             for d in kept
         ],
         action_items=list_action_items(session, meeting_id=meeting_id),
@@ -3810,6 +3850,16 @@ def meeting_summary(
         ),
         note=note.body if note is not None else None,
         note_updated_at=note.updated_at if note is not None else None,
+        projects=[project_read(p) for p in team_projects],
+    )
+
+
+def project_read(row: ExtProject) -> ProjectRead:
+    return ProjectRead(
+        id=row.id,
+        name=row.name,
+        aliases=[a for a in row.aliases.split("\n") if a],
+        jira_project_key=row.jira_project_key,
     )
 
 

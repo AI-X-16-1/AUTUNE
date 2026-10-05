@@ -29,7 +29,7 @@ from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import jira_issues, notion_connect, service, sync_state, tasks
+from . import jira_issues, notion_connect, projects, service, sync_state, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -53,6 +53,9 @@ from .schemas import (
     MeetingSummary,
     MyConfirmation,
     Outbound,
+    ProjectPlacement,
+    ProjectRead,
+    ProjectWrite,
     ReviewDecision,
 )
 
@@ -357,6 +360,98 @@ def put_summary_note(
     response = service.meeting_summary(session, meeting_id)
     session.commit()
     return response
+
+
+@router.post("/summary/{meeting_id}/projects/assign", response_model=MeetingSummary)
+def assign_summary_projects(
+    meeting_id: str, session: SessionDep, reader: CurrentUser
+) -> MeetingSummary:
+    """Place the meeting's decisions and items in the team's projects again, by
+    the rules (``projects.assign_meeting``) -- after a project was added or
+    renamed. What a person placed stays."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    projects.assign_meeting(session, meeting_id)
+    response = service.meeting_summary(session, meeting_id)
+    session.commit()
+    return response
+
+
+@router.get("/projects", response_model=list[ProjectRead])
+def list_projects(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> list[ProjectRead]:
+    """The team's projects, named by one of its meetings or by the team (S28)."""
+    team = _member_team(session, reader, meeting_id, team_id)
+    return [service.project_read(row) for row in projects.team_projects(session, team)]
+
+
+@router.post("/projects", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
+def create_project(
+    payload: ProjectWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> ProjectRead:
+    """Add a project to the team. Any member, as with the team's integrations."""
+    team = _member_team(session, reader, None, team_id)
+    row = projects.save_project(
+        session,
+        team,
+        name=payload.name,
+        aliases=payload.aliases,
+        jira_project_key=payload.jira_project_key,
+    )
+    response = service.project_read(row)
+    session.commit()
+    return response
+
+
+@router.put("/projects/{project_id}", response_model=ProjectRead)
+def update_project(
+    project_id: str, payload: ProjectWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> ProjectRead:
+    team = _member_team(session, reader, None, team_id)
+    row = projects.save_project(
+        session,
+        team,
+        name=payload.name,
+        aliases=payload.aliases,
+        jira_project_key=payload.jira_project_key,
+        project_id=project_id,
+    )
+    response = service.project_read(row)
+    session.commit()
+    return response
+
+
+@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(project_id: str, team_id: str, session: SessionDep, reader: CurrentUser) -> None:
+    """Delete a project; what was in it becomes 미분류."""
+    team = _member_team(session, reader, None, team_id)
+    projects.delete_project(session, team, project_id)
+    session.commit()
+
+
+@router.put("/action-items/{action_item_id}/project", response_model=ActionItemRead)
+def place_action_item(
+    action_item_id: str, payload: ProjectPlacement, session: SessionDep, reader: CurrentUser
+) -> ActionItemRead:
+    """Put an item in one of its team's projects, or none."""
+    item = service.readable_action_item(session, action_item_id, reader)
+    projects.place(session, item, payload.project_id)
+    response = service.read_one(session, item)
+    session.commit()
+    return response
+
+
+@router.put("/decisions/{decision_id}/project", status_code=status.HTTP_204_NO_CONTENT)
+def place_decision(
+    decision_id: str, payload: ProjectPlacement, session: SessionDep, reader: CurrentUser
+) -> None:
+    """Put a decision in one of its team's projects, or none."""
+    decision = service.readable_decision(session, decision_id, reader)
+    projects.place(session, decision, payload.project_id)
+    session.commit()
 
 
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)

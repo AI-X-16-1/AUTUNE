@@ -43,6 +43,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
         "meeting_title",
         "origin",
         "carried_meetings",
+        "project_id",
         "is_candidate",
         "sync_refs",
         "sync_failures",

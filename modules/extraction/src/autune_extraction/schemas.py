@@ -194,6 +194,8 @@ class ActionItemRead(BaseModel):
     """For an open item: how many of its team's meetings have been held since
     it was made (``service.meetings_since``). ``STALE_AFTER`` or more reads as
     stuck on the board."""
+    project_id: str | None = None
+    """The team's project this item is about (``ext_projects``), or ``None``."""
 
     source_utterance_ids: list[str]
     """The utterances this item was drawn from. Empty for a hand-added item.
@@ -312,6 +314,33 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class ProjectRead(BaseModel):
+    """One of a team's projects (``ext_projects``)."""
+
+    id: str
+    name: str
+    aliases: list[str]
+    jira_project_key: str | None = None
+
+
+class ProjectWrite(BaseModel):
+    """A project as a member types it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    aliases: list[str] = Field(default_factory=list)
+    jira_project_key: str | None = Field(default=None, max_length=32)
+
+
+class ProjectPlacement(BaseModel):
+    """A person puts a decision or an item in one of the team's projects, or none."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = None
+
+
 class SummaryDecision(BaseModel):
     """A decision as the summary tab lists it: the wording a person confirmed,
     or the model's while it is still pending."""
@@ -319,6 +348,7 @@ class SummaryDecision(BaseModel):
     id: str
     statement: str
     status: Literal["pending", "confirmed"]
+    project_id: str | None = None
 
 
 MAX_NOTE_CHARS = 2000
@@ -392,6 +422,9 @@ class MeetingSummary(BaseModel):
     the confirmation window."""
     note: str | None = None
     note_updated_at: datetime | None = None
+    projects: list[ProjectRead] = Field(default_factory=list)
+    """The team's projects, for grouping ``decisions`` and ``action_items`` by
+    their ``project_id`` -- one that is ``None`` is 미분류."""
 
 
 class ActionItemDetail(ActionItemRead):
