@@ -149,7 +149,8 @@ class DashboardRead(BaseModel):
     not here — they have their own endpoints (``/heatmap``, ``/predictions``).
 
     ``action_item_completion_rate`` is done over confirmed across the team's
-    meetings from B's latest ``TeamActionProgress``, and ``overdue_action_items``
+    meetings held in the last four weeks (``ACTION_COMPLETION_WINDOW``), from
+    B's latest ``TeamActionProgress``, and ``overdue_action_items``
     the overdue total from it (#605). Both are ``None`` with
     ``action_progress_as_of`` when that snapshot is missing or stale -- unknown,
     not zero; a fresh one with nothing confirmed has no rate and 0 overdue.

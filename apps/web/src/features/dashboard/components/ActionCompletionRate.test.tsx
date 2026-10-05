@@ -16,7 +16,7 @@ describe("ActionCompletionRate", () => {
 
     expect(screen.getByText("63%")).toBeTruthy();
     expect(screen.getByText("기한 지난 항목 2건")).toBeTruthy();
-    expect(screen.getByText(/기준$/)).toBeTruthy();
+    expect(screen.getByText(/최근 4주 회의 · .* 기준$/)).toBeTruthy();
   });
 
   it("says the counts did not arrive rather than showing 0%", () => {

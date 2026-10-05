@@ -205,8 +205,11 @@ foreign keys to another module's tables.
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
 
 **Action-item completion on the dashboard (#605).** `action_item_completion_rate`
-is done over confirmed, summed over the team's meetings in B's latest
-`TeamActionProgress`; `overdue_action_items` is the overdue total from it, and
+is done over confirmed, summed over the team's meetings held in the last four
+weeks (`ACTION_COMPLETION_WINDOW`) in B's latest `TeamActionProgress`. The
+window is fixed rather than the team's retention, so teams compare and the rate
+reads as "now"; the card says "최근 4주 회의". `overdue_action_items` is the
+overdue total over the same meetings, and
 `action_progress_as_of` when B counted. All three are `null` when no snapshot
 has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
 card says the counts did not arrive, never 0%. A fresh snapshot with nothing

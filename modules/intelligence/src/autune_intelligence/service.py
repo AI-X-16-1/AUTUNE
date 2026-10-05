@@ -1414,6 +1414,15 @@ def _not_expired(now: datetime) -> sa.ColumnElement[bool]:
     return sa.or_(Meeting.expires_at.is_(None), Meeting.expires_at > now)
 
 
+ACTION_COMPLETION_WINDOW: Final = timedelta(weeks=4)
+"""The dashboard's completion rate counts meetings held this recently.
+
+Fixed, not the team's retention: a team keeping 30 days and one keeping 90
+read the same span, so their rates compare, and the rate shows how the team is
+doing now rather than over a quarter. A meeting leaving the window moves the
+rate; the card names the window so that reads as what it is."""
+
+
 @dataclass(frozen=True)
 class ActionProgressTotals:
     """The team's totals from its latest snapshot, or ``None`` throughout when
@@ -1430,7 +1439,9 @@ class ActionProgressTotals:
 
 def _action_progress_totals(session: Session, team_id: str, now: datetime) -> ActionProgressTotals:
     """Done over confirmed, and the overdue count, summed over the team's meetings
-    -- team totals only, never one meeting's counts (the contract's usage rule)."""
+    held within ``ACTION_COMPLETION_WINDOW`` -- team totals only, never one
+    meeting's counts (the contract's usage rule). A meeting with no
+    ``started_at`` is dated by its creation, as A orders meetings."""
     as_of = session.scalar(
         sa.select(IntelActionProgress.as_of).where(IntelActionProgress.team_id == team_id)
     )
@@ -1443,7 +1454,11 @@ def _action_progress_totals(session: Session, team_id: str, now: datetime) -> Ac
             func.coalesce(func.sum(IntelActionProgressMeeting.overdue), 0),
         )
         .join(Meeting, Meeting.id == IntelActionProgressMeeting.meeting_id)
-        .where(IntelActionProgressMeeting.team_id == team_id, _not_expired(now))
+        .where(
+            IntelActionProgressMeeting.team_id == team_id,
+            _not_expired(now),
+            func.coalesce(Meeting.started_at, Meeting.created_at) >= now - ACTION_COMPLETION_WINDOW,
+        )
     ).one()
     return ActionProgressTotals(
         completion_rate=(done / confirmed) if confirmed else None,

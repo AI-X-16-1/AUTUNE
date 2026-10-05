@@ -22,8 +22,8 @@ export interface DashboardRead {
   average_score: number | null;
   average_grade: Grade | null;
   /**
-   * Done over confirmed across the team's meetings, from B's latest counts
-   * (#605). `null` with `action_progress_as_of` when those are missing or
+   * Done over confirmed across the team's meetings held in the last four
+   * weeks, from B's latest counts (#605). `null` with `action_progress_as_of` when those are missing or
    * stale; `null` alone when nothing is confirmed.
    */
   action_item_completion_rate: number | null;

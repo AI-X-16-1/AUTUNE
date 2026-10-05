@@ -2,7 +2,8 @@
 
 E keeps the latest ``TeamActionProgress`` per team: a header with ``as_of`` and
 one row per meeting. The dashboard shows the team's totals from it while it is
-fresh; a meeting past its retention window is neither kept nor counted.
+fresh, over the meetings held in the last four weeks; a meeting past its
+retention window is neither kept nor counted.
 """
 
 from __future__ import annotations
@@ -23,10 +24,15 @@ from autune_intelligence.models import IntelActionProgress, IntelActionProgressM
 AS_OF = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
 
 
-def _meeting(db_session: Session, team: str) -> str:
+def _meeting(db_session: Session, team: str, started_at: datetime | None = None) -> str:
+    """Held yesterday unless told otherwise -- inside the dashboard's four weeks."""
     from autune_core import Meeting
 
-    row = Meeting(team_id=team, title="회의", started_at=AS_OF - timedelta(days=1))
+    row = Meeting(
+        team_id=team,
+        title="회의",
+        started_at=started_at or datetime.now(UTC) - timedelta(days=1),
+    )
     db_session.add(row)
     db_session.flush()
     return row.id
@@ -328,3 +334,33 @@ def test_a_meeting_that_expired_since_the_snapshot_leaves_the_totals(
     dashboard = service.get_dashboard(db_session, team)
 
     assert dashboard.action_item_completion_rate == pytest.approx(1 / 4)
+
+
+def test_only_meetings_held_in_the_last_four_weeks_count(db_session: Session, team: str) -> None:
+    """A fixed window, the same for every team whatever its retention: a meeting
+    leaving it moves the rate for a reason the card states (최근 4주)."""
+    from autune_core import Meeting
+
+    now = datetime.now(UTC)
+    recent = _meeting(db_session, team, started_at=now - timedelta(days=27))
+    older = _meeting(db_session, team, started_at=now - timedelta(days=29))
+    unstarted = Meeting(team_id=team, title="녹음 업로드")  # no started_at: its creation counts
+    db_session.add(unstarted)
+    db_session.flush()
+    service.store_action_progress(
+        db_session,
+        _snapshot(
+            team,
+            [
+                {"meeting_id": recent, "confirmed": 4, "done": 1, "overdue": 1},
+                {"meeting_id": older, "confirmed": 4, "done": 4, "overdue": 0},
+                {"meeting_id": unstarted.id, "confirmed": 4, "done": 1, "overdue": 0},
+            ],
+            as_of=now,
+        ),
+    )
+
+    dashboard = service.get_dashboard(db_session, team)
+
+    assert dashboard.action_item_completion_rate == pytest.approx(2 / 8)
+    assert dashboard.overdue_action_items == 1

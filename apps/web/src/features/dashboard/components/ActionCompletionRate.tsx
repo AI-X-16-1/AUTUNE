@@ -2,7 +2,8 @@ import { DashboardCard } from "./DashboardCard";
 
 /**
  * The action-item completion rate stat on S26: done over confirmed across the
- * team's meetings, from B's latest counts (#605). Team totals only.
+ * team's meetings held in the last four weeks, from B's latest counts (#605).
+ * Team totals only. The window is the server's (`ACTION_COMPLETION_WINDOW`).
  *
  * `asOf` is `null` when those counts are missing or stale -- unknown, not 0%.
  * With `asOf` set and no `rate`, nothing is confirmed yet.
@@ -55,7 +56,7 @@ export function ActionCompletionRate({
             <span style={overdue ? { color: "var(--color-signal-critical)" } : undefined}>
               기한 지난 항목 {overdue ?? 0}건
             </span>
-            {` · ${formatTime(asOf)} 기준`}
+            {` · 최근 4주 회의 · ${formatTime(asOf)} 기준`}
           </p>
         </>
       )}
