@@ -54,11 +54,16 @@ The uploaded recording exists only for the duration of transcription.
   the file is actually gone.
 - A live recording lives in the recording tab's memory until its upload
   succeeds, then the tab drops it. **The one browser copy allowed:** when that
-  upload fails, the person who recorded may save the file to their own device
-  by pressing "파일로 저장" (`recordingFile.saveRecordingFile`). The server
-  never received that audio, and without the save closing the tab loses the
-  meeting. Nothing saves on its own, and nothing offers a copy once the server
-  has the recording.
+  upload fails and the server does not have the recording, the person who
+  recorded may save the file to their own device by pressing "파일로 저장"
+  (`recordingFile.saveRecordingFile`); without the save, closing the tab loses
+  the meeting. "Does not have" is checked, not assumed
+  (`recordingFile.serverHasRecording`): a 409 or a meeting already past
+  `recording` means the server took it, and the tab drops its copy as it does
+  after a success. Only when the tab cannot confirm that does it keep offering
+  the save. Nothing saves on its own. Autune cannot delete a saved file, which
+  holds the other attendees' voices too, so the screen asks the person to
+  delete it once it is uploaded.
 
 **Forbidden:**
 - Persisting the recording to object storage, a mounted volume, or a database

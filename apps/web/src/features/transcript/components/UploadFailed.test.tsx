@@ -22,6 +22,12 @@ describe("UploadFailed", () => {
     );
     expect(screen.getByRole("alert").textContent).toContain("이 탭에만");
 
+    expect(
+      screen.getByText(
+        /Autune에서 지울 수 없으니 회의에 올린 뒤 직접 지워 주세요/,
+      ),
+    ).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: "파일로 저장" }));
     expect(onSave).toHaveBeenCalledOnce();
     expect(onRetry).not.toHaveBeenCalled();

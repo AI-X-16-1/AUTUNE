@@ -37,6 +37,15 @@ export function UploadFailed({
           파일로 저장
         </Button>
       </div>
+      {/* Autune cannot reach a file on this computer, and it holds the other
+          attendees' voices: the person who saved it is the one who can delete
+          it (privacy.md section 1). */}
+      <p
+        className="mt-2 text-[var(--color-ink-muted)]"
+        style={{ fontSize: "var(--text-meta)" }}
+      >
+        저장한 파일은 Autune에서 지울 수 없으니 회의에 올린 뒤 직접 지워 주세요.
+      </p>
     </>
   );
 }
