@@ -26,6 +26,7 @@ Why it did not go is logged by id and reason, never with the address.
 from __future__ import annotations
 
 from datetime import datetime
+from email.utils import getaddresses
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -111,6 +112,15 @@ def _send(
     team = session.get(Team, team_id)
     if team is None:
         return "team_gone"
+    # The stored, normalised address: exactly the one the invitation names and
+    # the one ``accept`` compares (mkkim68, review of #760) -- and exactly one.
+    # The invitation's own check allows ``<x@y.com>`` or ``a@x.com,b``; as a
+    # ``To`` header those read as something else than the string stored, so
+    # the header must parse back to this one address or nothing is sent
+    # (PARKJAEKYUNG0525, review of #760). Before the grant is refreshed.
+    to = normalise(email)
+    if [address for _name, address in getaddresses([to])] != [to]:
+        return "unsendable"
 
     link = invitation_link(token)
     subject, body = compose(
@@ -122,9 +132,7 @@ def _send(
         )
         client = GmailClient(access)
         try:
-            # The stored, normalised address: exactly the one the invitation
-            # names and the one ``accept`` compares (mkkim68, review of #760).
-            client.send(to=normalise(email), subject=subject, body=body, unchecked=[link])
+            client.send(to=to, subject=subject, body=body, unchecked=[link])
         finally:
             client.close()
     except IntegrationError as exc:

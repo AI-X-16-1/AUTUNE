@@ -53,7 +53,10 @@ export function TeamInvite({
   canConnectMail?: boolean;
 }) {
   const [gmail, setGmail] = useState<Gmail | null>(null);
-  const [sendMail, setSendMail] = useState(true);
+  // Off until the inviter ticks it, each time: the API's own default, and
+  // privacy.md's "when they ask" -- an address and a link go to Google only by
+  // a choice made for this invitation (mkkim68, review of #760).
+  const [sendMail, setSendMail] = useState(false);
   const [mailNote, setMailNote] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [email, setEmail] = useState("");

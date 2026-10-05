@@ -133,11 +133,11 @@ describe("TeamInvite", () => {
   });
 
   describe("with the inviter's own Gmail", () => {
-    it("mails the link when Gmail is connected, and still shows it", async () => {
+    it("mails the link when Gmail is connected and the box is ticked, and still shows it", async () => {
       gmail.mockResolvedValue({ connected: true });
       invite.mockResolvedValue({ ...ISSUED, emailed: true });
       render(<TeamInvite teamId="team_1" />);
-      await screen.findByLabelText("내 Gmail로 초대 메일 보내기");
+      fireEvent.click(await screen.findByLabelText("내 Gmail로 초대 메일 보내기"));
 
       fireEvent.change(screen.getByLabelText("초대할 이메일 주소"), { target: { value: "a@example.com" } });
       fireEvent.click(screen.getByRole("button", { name: "초대 메일 보내기" }));
@@ -147,11 +147,12 @@ describe("TeamInvite", () => {
       expect(screen.getByLabelText("a@example.com 초대 링크")).toBeTruthy();
     });
 
-    it("makes only a link when the box is unticked", async () => {
+    it("starts with the box unticked and makes only a link: no address goes to Google unasked", async () => {
       gmail.mockResolvedValue({ connected: true });
       invite.mockResolvedValue(ISSUED);
       render(<TeamInvite teamId="team_1" />);
-      fireEvent.click(await screen.findByLabelText("내 Gmail로 초대 메일 보내기"));
+      const box = (await screen.findByLabelText("내 Gmail로 초대 메일 보내기")) as HTMLInputElement;
+      expect(box.checked).toBe(false);
 
       make("a@example.com");
 
@@ -164,7 +165,7 @@ describe("TeamInvite", () => {
       gmail.mockResolvedValue({ connected: true });
       invite.mockResolvedValue({ ...ISSUED, emailed: false });
       render(<TeamInvite teamId="team_1" />);
-      await screen.findByLabelText("내 Gmail로 초대 메일 보내기");
+      fireEvent.click(await screen.findByLabelText("내 Gmail로 초대 메일 보내기"));
 
       fireEvent.change(screen.getByLabelText("초대할 이메일 주소"), { target: { value: "a@example.com" } });
       fireEvent.click(screen.getByRole("button", { name: "초대 메일 보내기" }));

@@ -451,15 +451,19 @@ the feature needs.
     under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
   - **A person's Google grants themselves (#760 review):** a deleted
-    account's rows go, but the refresh tokens are not revoked at Google, for
-    the calendar or for `gmail_send`. Autune holds no copy any more, so
-    nothing can use them, and the person still sees Autune under their Google
-    account's third-party access until they remove it there. Revoking on
-    deletion is the follow-up (#763). Disconnecting in Autune does revoke, and a
+    account's refresh tokens are revoked at Google before its rows go, the
+    calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
+    `revoke_google_grants`, #763) -- best effort, as above: when Google does
+    not answer, Autune still holds no copy afterwards, so nothing can use the
+    token, and the person sees Autune under their Google account's
+    third-party access until they remove it there. Disconnecting in Autune
+    revokes too, and a
     revoke can end the person's other grant from the same Google account,
     which is then shown as needing a reconnect. Each grant asks for its own
     scope only, and a token that comes back carrying another grant's scope
-    is refused. A calendar connected before #760 may carry sign-in's scopes
+    is refused -- refused, not revoked: it is never stored, and it stays valid
+    at Google until the person connects again or removes Autune's access
+    there. A calendar connected before #760 may carry sign-in's scopes
     (`openid email profile`) through `include_granted_scopes`; nothing
     before #760 asked for `gmail.send`, so no stored grant carries both
     personal scopes. Reconnecting the calendar gives it a token with its own

@@ -162,6 +162,24 @@ def test_the_link_is_mailed_from_the_inviters_own_grant(
     assert pending(db_session, team) == 1
 
 
+@pytest.mark.parametrize("odd", ["<guest@example.com>", "guest@example.com,other"])
+def test_an_address_that_is_not_exactly_one_address_is_not_mailed(
+    client: TestClient, grants: dict[str, Any], inviter: User, team: str, odd: str
+) -> None:
+    """The invitation's own check lets these through (one ``@``, no space); as
+    a ``To`` header they are not the one address stored. The invitation is
+    still made -- the link works for whoever holds it -- and no mail goes, and
+    the grant is not even refreshed (PARKJAEKYUNG0525, review of #760)."""
+    connect(grants, inviter)
+
+    response = invite(client, team, send_email=True, email=odd)
+
+    assert response.status_code == 201
+    assert response.json()["emailed"] is False
+    assert FakeGmail.sent == []
+    assert grants["__refreshed__"] == []
+
+
 def test_without_a_grant_the_invitation_is_made_and_not_mailed(
     db_session: Session, client: TestClient, grants: dict[str, Any], team: str
 ) -> None:
