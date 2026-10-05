@@ -31,6 +31,7 @@ import autune_gap.models  # noqa: F401  (gap_ tables)
 from autune_agent import router as routes
 from autune_agent.models import AgentRun
 from autune_agent.subagents.briefing.graph import (
+    ACTIONS_TOOL,
     AGENDA_TOOL,
     GAPS_TOOL,
     RECAP_TOOL,
@@ -196,10 +197,10 @@ def test_a_scheduled_meeting_gets_the_whole_brief_from_the_real_tools(db_session
     assert body["outcome"] == "answered"
     assert (body["proposed"], body["executed"]) == (0, 0)
     sections = {item["title"]: item["body"] for item in body["items"]}
-    # B's section is missing today, see the xfail test below (#650).
     assert list(sections) == [
         "지난 회의에서 이어받는 결정",
         "이번 회의에서 다룰 Jira 이슈",
+        "기한이 지났거나 다가온 액션 아이템",
         "지난 회의에서 닫히지 않은 갭",
     ]
     assert PAST_TITLE in sections["지난 회의에서 이어받는 결정"]
@@ -209,10 +210,6 @@ def test_a_scheduled_meeting_gets_the_whole_brief_from_the_real_tools(db_session
     assert f"• {GAP_TITLE}\n  ↳ {QUESTION}" in sections["지난 회의에서 닫히지 않은 갭"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#650: B's list_action_items raises once an item has a Jira ref, so B's section is lost",
-)
 def test_the_late_action_item_comes_from_b_even_when_it_became_a_jira_issue(
     db_session: Session,
 ) -> None:
@@ -236,8 +233,7 @@ def test_the_run_row_keeps_tool_names_and_ids_and_none_of_the_brief(db_session: 
     db_session.expire_all()
     run = db_session.scalars(select(AgentRun).where(AgentRun.id == body["run_id"])).one()
     assert run.team_id == seed["team"]
-    # B's read is not recorded: it raises before it answers (#650).
-    assert [s["tool"] for s in run.steps][:3] == [RECAP_TOOL, AGENDA_TOOL, GAPS_TOOL]
+    assert [s["tool"] for s in run.steps][:4] == [RECAP_TOOL, AGENDA_TOOL, GAPS_TOOL, ACTIONS_TOOL]
     assert run.proposed == [] and run.actions == []
     stored = json.dumps([run.steps, run.proposed, run.actions], ensure_ascii=False)
     for text in (PAST_TITLE, DECISION, ISSUE, LATE_ITEM, GAP_TITLE, QUESTION, "AUT-7"):
