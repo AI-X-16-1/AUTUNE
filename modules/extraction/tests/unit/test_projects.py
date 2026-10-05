@@ -271,3 +271,12 @@ def test_the_summary_carries_the_projects_and_places_again_on_request(
     assert [p["id"] for p in summary["projects"]] == ["prj_a", "prj_b"]
     assert [d["project_id"] for d in summary["decisions"]] == ["prj_a"]
     assert [i["project_id"] for i in summary["action_items"]] == ["prj_a"]
+
+
+def test_mine_lists_the_projects_of_my_teams_only(client: TestClient, session: Session) -> None:
+    session.add(ExtProject(id="prj_x", team_id="team_2", name="남의 프로젝트", aliases=""))
+    session.flush()
+
+    mine = client.get(f"{PREFIX}/projects/mine").json()
+
+    assert [p["id"] for p in mine] == ["prj_a", "prj_b"]
