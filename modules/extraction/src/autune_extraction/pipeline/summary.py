@@ -223,7 +223,12 @@ class LlmSummarizer(GeminiClient):
         ``board`` is the run's own decisions and items, one per line
         (``service.summary_board``), given to the last call only. Its names go
         through the same substitution as the lines, so a person is one number
-        in both."""
+        in both.
+
+        A line too long for one call is in no call, the last one included
+        (``sections``). With a board the last call has less room, so a line
+        that would have fitted a section alone can be left out of a meeting
+        short enough for one call."""
         if not any(line.strip() for line in lines):
             return None
         texts = list(lines)
@@ -236,7 +241,13 @@ class LlmSummarizer(GeminiClient):
         current: list[str] = [line for line in scrubbed if line.strip()]
         source = "녹취록"
         while True:
-            if len(sections(current, last_budget)) <= 1:
+            fitting = sections(current, last_budget)
+            if len(fitting) <= 1:
+                # What the last call sends is the run that fits, not ``current``:
+                # ``sections`` leaves out a line too long for a call, and
+                # rendering ``current`` would put it back -- past the outbound
+                # limit, or out when it was meant to stay (#782 review).
+                current = fitting[0] if fitting else []
                 break
             parts = sections(current)
             if calls + len(parts) + 1 > MAX_CALLS:
@@ -251,6 +262,8 @@ class LlmSummarizer(GeminiClient):
             if not points:
                 return None
             current, source = points, "부분별 요약"
+        if not current:
+            return None  # every line was too long for a call: nothing to send
         calls += 1
         prompt = _FINAL_PROMPT.format(
             source=source, lines=_render(current), board=board_text, max_points=MAX_POINTS

@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select, update
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -88,6 +89,7 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
+    ExtForgottenUtterance,
     ExtMeetingNote,
     ExtMeetingSummary,
     ExtSyncFailure,
@@ -742,14 +744,24 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         return SpeechForgotten()
     # A written summary restates the meeting, deleted lines included, and is
     # model output nobody accepted: it goes, and the next run writes one from
-    # what is left (#421 v2).
-    session.execute(
-        delete(ExtMeetingSummary).where(
-            ExtMeetingSummary.meeting_id.in_(
-                select(Utterance.meeting_id).where(Utterance.id.in_(ids))
-            )
-        )
+    # what is left (#421 v2). Deleting the row is not the whole of it. This
+    # commits before A deletes the utterances, and a model may be writing a
+    # summary of them right now. So the lines are also marked forgotten, which
+    # takes them out of ``summary_lines`` from here on, and both happen under
+    # the lock ``store_meeting_summary`` takes: a summary stored before this
+    # is deleted by it, and one stored after it finds its lines changed and is
+    # not stored (#782 review). In id order, so two deletions cannot deadlock.
+    meeting_ids = sorted(
+        set(session.scalars(select(Utterance.meeting_id).where(Utterance.id.in_(ids))))
     )
+    for meeting_id in meeting_ids:
+        lock_summary(session, meeting_id)
+    session.execute(
+        _insert_if_absent_into(session, ExtForgottenUtterance)
+        .from_select(["utterance_id"], select(Utterance.id).where(Utterance.id.in_(ids)))
+        .on_conflict_do_nothing(index_elements=["utterance_id"])
+    )
+    session.execute(delete(ExtMeetingSummary).where(ExtMeetingSummary.meeting_id.in_(meeting_ids)))
     items = session.scalars(
         select(ExtActionItem)
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
@@ -3741,9 +3753,25 @@ def summary_lines(session: Session, meeting_id: str) -> list[str]:
     stored, masked lines of the speakers who consented, in spoken order, blank
     ones left out -- the same lines the classifier reads (privacy.md section 5).
     Also what ``ExtMeetingSummary.source_digest`` is taken over, so a summary is
-    shown only while these are still what it was written from."""
+    shown only while these are still what it was written from.
+
+    A line its speaker has deleted is out from the moment B's hook ran, though
+    A removes the row a little later (``ExtForgottenUtterance``)."""
     consented = consented_utterance_ids(session, meeting_id)
-    return [u.text for u in stored_transcript(session, meeting_id) if u.id in consented and u.text]
+    forgotten = set(
+        session.scalars(
+            select(ExtForgottenUtterance.utterance_id).where(
+                ExtForgottenUtterance.utterance_id.in_(
+                    select(Utterance.id).where(Utterance.meeting_id == meeting_id)
+                )
+            )
+        )
+    )
+    return [
+        u.text
+        for u in stored_transcript(session, meeting_id)
+        if u.id in consented and u.id not in forgotten and u.text
+    ]
 
 
 def summary_board(session: Session, meeting_id: str) -> list[str]:
@@ -3802,6 +3830,49 @@ def summary_is_current(session: Session, meeting_id: str, lines: Sequence[str]) 
     return written is not None and written.source_digest == source_digest(lines)
 
 
+def lock_summary(session: Session, meeting_id: str) -> None:
+    """Hold the meeting's summary lock for the rest of ``session``'s transaction.
+
+    What makes storing a summary and forgetting speech take turns
+    (``store_meeting_summary``, ``forget_speech``). A row lock cannot: a first
+    summary has no row yet for the deletion to wait on. Keyed in B's own
+    namespace, like ``notion_setup.lock_setup``. PostgreSQL only; SQLite (unit
+    tests) has no such lock and runs one writer anyway."""
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.execute(
+        sql_text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"extraction.meeting_summary:{meeting_id}"},
+    )
+
+
+def drop_stale_summary(
+    session: Session, meeting_id: str, lines: Sequence[str] | None = None
+) -> bool:
+    """Delete the meeting's stored summary unless it was written from exactly
+    the lines the meeting has now (``lines``, read here when not given).
+
+    ``meeting_summary`` already does not show such a summary, but hiding is not
+    removing: the text restates lines that were since corrected, re-masked or
+    withdrawn from analysis, and it would stay in the table for as long as no
+    new summary replaced it -- for good when the last consenting speaker
+    withdrew, the model failed, or ``summary_impl`` went back to ``none``. So
+    every extraction calls this in its own transaction, model or no model, and
+    ``summarize_meeting`` calls it before it asks (#782 review).
+
+    Returns whether a row was deleted."""
+    written = session.get(ExtMeetingSummary, meeting_id)
+    if written is None:
+        return False
+    if lines is None:
+        lines = summary_lines(session, meeting_id)
+    if written.source_digest == source_digest(lines):
+        return False
+    session.delete(written)
+    session.flush()
+    return True
+
+
 def store_meeting_summary(
     session: Session,
     meeting_id: str,
@@ -3810,9 +3881,25 @@ def store_meeting_summary(
     points: Sequence[str],
     model_version: str,
     lines: Sequence[str],
-) -> ExtMeetingSummary:
-    """Replace the meeting's written summary with this one, made from ``lines``."""
-    row = session.get(ExtMeetingSummary, meeting_id)
+) -> ExtMeetingSummary | None:
+    """Replace the meeting's written summary with this one, made from ``lines``
+    -- unless the meeting's lines are no longer ``lines``.
+
+    The model took seconds to answer, with no transaction open. A line may
+    have been corrected, withdrawn or deleted by its speaker meanwhile, and a
+    summary of the old lines must not be written after the fact: it would not
+    be shown, and it would still be stored. So the lines are read again here,
+    under the lock ``forget_speech`` holds while it marks lines forgotten, and
+    when they differ nothing is stored and whatever row there was is deleted
+    (#782 review). Returns the stored row, or ``None`` when it was not stored.
+    """
+    lock_summary(session, meeting_id)
+    row = session.get(ExtMeetingSummary, meeting_id, populate_existing=True)
+    if source_digest(summary_lines(session, meeting_id)) != source_digest(lines):
+        if row is not None:
+            session.delete(row)
+            session.flush()
+        return None
     if row is None:
         row = ExtMeetingSummary(meeting_id=meeting_id)
         session.add(row)

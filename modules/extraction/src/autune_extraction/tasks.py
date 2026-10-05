@@ -224,6 +224,12 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         # Pages of decisions this run dropped: their refs are kept so the
         # pages can be retired, not left live in Notion (#669).
         orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
+        # A written summary of lines this run no longer reads -- corrected,
+        # re-masked, their speaker's consent withdrawn -- goes with the run
+        # that noticed, not when a new one happens to replace it. Here and not
+        # only in ``summarize_meeting``: that task is not queued at all with
+        # ``summary_impl=none``, and may fail (#782 review).
+        service.drop_stale_summary(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)
@@ -261,8 +267,11 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
     # Its own task, so a provider that is down costs the 요약 tab its paragraph
-    # and never this run its rows (#421 v2). Only when a summarizer is on.
-    if get_summarizer() is not None:
+    # and never this run its rows (#421 v2). Only when a summarizer is on --
+    # asked of the setting, not by building the summarizer: one switched on
+    # without a key raises there, and this run's rows are already committed
+    # (#782 review). The task is where that is found and logged.
+    if get_settings().summary_impl != "none":
         try:
             summarize_meeting.delay(meeting_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
@@ -281,14 +290,28 @@ def summarize_meeting(meeting_id: str) -> bool:
     takes seconds. A failed or unusable answer leaves the tab as v1 built it and
     is logged by meeting id; nothing about it fails the meeting.
 
+    A stored summary of other lines than the meeting has now is deleted before
+    the model is asked, so none of the ways this can end without a new summary
+    -- no lines left, no summarizer, a failed call, an unusable answer -- leaves
+    the old one in the table. And the answer is stored only if the lines are
+    still the ones it was written from (``service.store_meeting_summary``):
+    speech deleted while the model was answering is not written back.
+
     Returns whether a summary was written.
     """
-    summarizer = get_summarizer()
-    if summarizer is None:
-        return False
+    try:
+        summarizer = get_summarizer()
+    except ValueError as exc:
+        # Switched on without what it needs (a key). Said here, by name of the
+        # error only; the stale summary below still goes.
+        log.error("extraction_summary_not_configured", error=type(exc).__name__)
+        summarizer = None
     with session_scope() as session:
         lines = service.summary_lines(session, meeting_id)
-        if not lines or service.summary_is_current(session, meeting_id, lines):
+        if service.summary_is_current(session, meeting_id, lines):
+            return False
+        service.drop_stale_summary(session, meeting_id, lines)
+        if summarizer is None or not lines:
             return False
         roster = service.team_roster(session, meeting_id)
         board = service.summary_board(session, meeting_id)
@@ -304,9 +327,10 @@ def summarize_meeting(meeting_id: str) -> bool:
     if written is None:
         return False
     with session_scope() as session:
-        # Written from the lines read above; if they changed while the model was
-        # answering, the digest says so and the tab does not show it.
-        service.store_meeting_summary(
+        # Written from the lines read above. If they changed while the model
+        # was answering -- a line corrected, or deleted by its speaker -- it is
+        # not stored; the run that follows the change asks again.
+        stored = service.store_meeting_summary(
             session,
             meeting_id,
             overview=written.overview,
@@ -314,6 +338,9 @@ def summarize_meeting(meeting_id: str) -> bool:
             model_version=written.model_version,
             lines=lines,
         )
+    if stored is None:
+        log.info("extraction_summary_discarded_lines_changed", meeting_id=meeting_id)
+        return False
     log.info("extraction_summary_stored", meeting_id=meeting_id, points=len(written.points))
     return True
 

@@ -1013,9 +1013,13 @@ class ExtMeetingSummary(Base):
     ``service.source_digest`` over the lines it was written from: a summary
     whose lines have changed since (a correction, a deletion, a change of
     consent) no longer matches what the meeting says and is not shown
-    (``service.meeting_summary``); the next run writes a new one. Deleted speech
-    deletes it outright (``service.forget_speech``). One per meeting, deleted
-    with it, so it keeps the meeting's retention.
+    (``service.meeting_summary``); the next run writes a new one. Not showing
+    it is not enough for words a person took back, so the row itself goes:
+    deleted speech deletes it outright (``service.forget_speech``), and every
+    extraction and every ``summarize_meeting`` deletes one whose lines have
+    changed before anything else, whether or not a new one can be written
+    (``service.drop_stale_summary``). One per meeting, deleted with it, so it
+    keeps the meeting's retention.
 
     ``points`` holds one sentence per line: each was checked to be one line.
     """
@@ -1031,6 +1035,34 @@ class ExtMeetingSummary(Base):
     model_version: Mapped[str] = mapped_column(String(128), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtForgottenUtterance(Base):
+    """An utterance its speaker deleted, until module A has removed the row
+    (#421 v2, review of #782).
+
+    B's speech hook commits before A deletes the utterances
+    (``tasks.forget_deleted_speech``), so for a moment a line B was told to
+    forget is still in the shared table. ``service.summary_lines`` leaves out
+    every utterance named here. A summary asked for in that moment is then not
+    written from the deleted words, and one the model was still writing when
+    the hook ran no longer matches the lines when it comes to be stored
+    (``service.store_meeting_summary``).
+
+    An id and a time, nothing that was said. The row goes with the utterance
+    (CASCADE), which is when it stops being needed. If A's deletion fails the
+    row stays and the line stays out of every summary: erring toward deleting
+    more, as the hook itself does.
+    """
+
+    __tablename__ = "ext_forgotten_utterances"
+
+    utterance_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), primary_key=True
+    )
+    forgotten_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
