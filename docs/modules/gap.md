@@ -1013,6 +1013,7 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/reports/{meeting_id}` | Full gap report |
 | GET | `/topics/{meeting_id}` | Topic graph for visualization |
 | GET | `/explanations/{meeting_id}` | Why each gap was raised: its basis, the utterances it rests on, its score breakdown |
+| GET | `/gaps?team_id=` | Every open gap across a team's meetings, newest meeting first (`severity` repeats, default `high`) |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | GET | `/templates` | Available domain templates |
@@ -1135,6 +1136,16 @@ service's own: an unknown gap and a gap on another team's meeting are the same
 404, and neither names the meeting. Both commit the mark and queue
 `autune.gap.publish_report`, so E stops quoting and scoring a gap the team
 called wrong (#471).
+
+`GET /gaps?team_id=` is the sidebar's "갭 리포트" (#550): every undismissed
+gap of the team's meetings, newest meeting first (started, else registered) and
+by risk within one, capped at `service.TEAM_GAPS_LIMIT` rows. `severity`
+repeats and defaults to `high`, the precision rule S20 keeps; the screen asks
+for the rest behind a toggle. It names a team, so the check is membership of
+it, and an unknown team is the same 404 as another team's. A row is the gap and
+its meeting's title and date — **no topics and no participation**: a list
+across every meeting is where reading silence along a person would be easiest
+(privacy.md section 3), and the why is one click away on the meeting's report.
 
 ### Sending E the report again
 
