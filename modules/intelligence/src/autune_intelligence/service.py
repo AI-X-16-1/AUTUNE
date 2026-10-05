@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, aliased
 
 from autune_contracts import (
+    ACTION_PROGRESS_STALE_AFTER,
     ActionItem,
     ActionStatus,
     ContextLinks,
@@ -607,6 +608,7 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
         s.action_item_completion_rate for s in scores if s.action_item_completion_rate is not None
     ]
     average_score = (sum(values) / len(values)) if values else None
+    progress = _action_progress_totals(session, team_id, datetime.now(UTC))
     gap_rows = session.execute(
         sa.select(IntelGapPattern.pattern_type, func.sum(IntelGapPattern.count))
         .where(IntelGapPattern.team_id == team_id, IntelGapPattern.classifier_version != "")
@@ -619,7 +621,11 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
         meeting_count=len(scores),
         average_score=average_score,
         average_grade=_grade_for(average_score) if average_score is not None else None,
-        action_item_completion_rate=(sum(rates) / len(rates)) if rates else None,
+        action_item_completion_rate=progress.completion_rate,
+        action_completion_meeting_count=progress.completion_meetings,
+        overdue_action_items=progress.overdue,
+        action_progress_as_of=progress.as_of,
+        action_item_confirmation_rate=(sum(rates) / len(rates)) if rates else None,
         recent_scores=[
             DashboardScoreEntry(
                 meeting_id=s.meeting_id, grade=s.grade, value=s.value, created_at=s.created_at
@@ -1344,7 +1350,7 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
     serialise on its row; when it is kept, the team's meeting rows are replaced
     wholesale. A meeting id that is not one of the team's meetings -- deleted
     since B counted, or another team's -- is not kept, so no row points outside
-    the team.
+    the team; nor is one past its retention window, which no one reads any more.
     """
     if session.get(Team, snapshot.team_id) is None:
         log.info("intelligence_action_progress_team_gone", team_id=snapshot.team_id)
@@ -1373,7 +1379,9 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
         set(
             session.scalars(
                 sa.select(Meeting.id).where(
-                    Meeting.team_id == snapshot.team_id, Meeting.id.in_(list(named))
+                    Meeting.team_id == snapshot.team_id,
+                    Meeting.id.in_(list(named)),
+                    _not_expired(datetime.now(UTC)),
                 )
             )
         )
@@ -1399,6 +1407,90 @@ def store_action_progress(session: Session, snapshot: TeamActionProgress) -> boo
         not_kept=len(named) - len(own),
     )
     return True
+
+
+def _not_expired(now: datetime) -> sa.ColumnElement[bool]:
+    """A meeting still inside its retention window. One past ``expires_at`` waits
+    for A's sweep, and nothing of it is read or shown until then."""
+    return sa.or_(Meeting.expires_at.is_(None), Meeting.expires_at > now)
+
+
+ACTION_COMPLETION_WINDOW: Final = timedelta(weeks=4)
+"""The dashboard's completion rate counts meetings held this recently.
+
+Fixed, not the team's retention: a team keeping 30 days and one keeping 90
+read the same span, so their rates compare, and the rate shows how the team is
+doing now rather than over a quarter. A meeting leaving the window moves the
+rate; the card names the window so that reads as what it is."""
+
+
+ACTION_PROGRESS_MIN_MEETINGS: Final = 3
+"""A total drawn from fewer meetings is not shown. With one or two, the team
+total is those meetings' counts, and when every item is one person's it is that
+person's completion record -- what the contract's usage rule forbids (#800
+review). The heatmap's floor (``MIN_MEETINGS_PER_HEATMAP_CELL``) for the same reason."""
+
+
+@dataclass(frozen=True)
+class ActionProgressTotals:
+    """The team's totals from its latest snapshot, or ``None`` throughout when
+    that snapshot is missing or older than ``ACTION_PROGRESS_STALE_AFTER``.
+
+    ``completion_rate`` is over the meetings held within
+    ``ACTION_COMPLETION_WINDOW`` (``completion_meetings`` of them); ``overdue``
+    over every meeting the snapshot listed that has not expired, since an item
+    past its due date matters however old its meeting is. Either is ``None``
+    when drawn from fewer than ``ACTION_PROGRESS_MIN_MEETINGS`` meetings. With
+    no meetings at all there is nothing to identify: no rate (no items is not
+    0% done) and 0 overdue.
+    """
+
+    completion_rate: float | None = None
+    completion_meetings: int | None = None
+    overdue: int | None = None
+    as_of: datetime | None = None
+
+
+def _shown(meetings: int) -> bool:
+    return meetings == 0 or meetings >= ACTION_PROGRESS_MIN_MEETINGS
+
+
+def _action_progress_totals(session: Session, team_id: str, now: datetime) -> ActionProgressTotals:
+    """Done over confirmed over the team's meetings held within
+    ``ACTION_COMPLETION_WINDOW``, and the overdue count over all of its kept
+    meetings -- team totals only, never one meeting's counts (the contract's
+    usage rule). A meeting with no ``started_at`` is dated by its creation, as
+    A orders meetings."""
+    as_of = session.scalar(
+        sa.select(IntelActionProgress.as_of).where(IntelActionProgress.team_id == team_id)
+    )
+    if as_of is None or as_of < now - ACTION_PROGRESS_STALE_AFTER:
+        return ActionProgressTotals()
+    recent = func.coalesce(Meeting.started_at, Meeting.created_at) >= (
+        now - ACTION_COMPLETION_WINDOW
+    )
+    row = IntelActionProgressMeeting
+    meetings, overdue, recent_meetings, confirmed, done = session.execute(
+        sa.select(
+            func.count(),
+            func.coalesce(func.sum(row.overdue), 0),
+            func.count().filter(recent),
+            func.coalesce(func.sum(row.confirmed).filter(recent), 0),
+            func.coalesce(func.sum(row.done).filter(recent), 0),
+        )
+        .join(Meeting, Meeting.id == row.meeting_id)
+        .where(row.team_id == team_id, _not_expired(now))
+    ).one()
+    return ActionProgressTotals(
+        completion_rate=(
+            done / confirmed
+            if confirmed and recent_meetings >= ACTION_PROGRESS_MIN_MEETINGS
+            else None
+        ),
+        completion_meetings=int(recent_meetings),
+        overdue=int(overdue) if _shown(meetings) else None,
+        as_of=as_of,
+    )
 
 
 # --- the dashboard's meeting-report card (10/2) --------------------------------------

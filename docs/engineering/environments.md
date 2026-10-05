@@ -162,6 +162,22 @@ browser cannot sign them in as whoever started it. Redis proves a state was
 issued; the cookie is what proves to whom.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
+**Google flows also carry PKCE** (#704). Sign-in and the personal connects
+send an S256 `code_challenge`; the verifier waits in the same Redis entry as
+the `state` and goes out only with the code exchange, so a code lifted off the
+redirect is worthless elsewhere, even with the client secret. Nothing to
+configure: Google accepts PKCE from a web client as it is. Atlassian, Notion
+and Slack are sent no challenge yet: whether each accepts one from a
+confidential client has to be checked against a real app per provider first,
+and until then `state` with the cookie above binds their callbacks.
+
+**A connect that stores a token checks the encryption key before it spends
+the code** (#593, #704). Calendar, Jira, Notion and Slack callbacks all fail
+on a missing or broken `AUTUNE_ENCRYPTION_KEY` before the provider is asked,
+so no grant is issued that nothing keeps; the screen shows the connect as
+failed. Their start endpoints check it too, so nobody is sent through a
+consent screen that cannot succeed.
+
 **Signing out ends the person's sessions on the server, on every device.**
 `POST /logout` writes the moment on the person's row
 (`users.sessions_valid_from`) and clears the cookie; from then on
@@ -243,6 +259,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting claim (`live/registry.py`) is per process: a second worker lets a second session onto the same meeting, and accepts an upload the other worker's open socket should have refused (409) |
 | `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
+| `AUTUNE_AUDIO_HEARTBEAT_INTERVAL_S` | A | How often a running transcription writes its heartbeat and checks whether it was cancelled. Default `30` |
+| `AUTUNE_AUDIO_STALL_AFTER_S` | A | A running transcription whose heartbeat is older than this has no worker and may be restarted. Default `120` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` | A | Exactly how many people spoke, when the room knows (#325). Unset by default: pyannote clusters freely, and a wrong number is worse than none. Deployment-wide for now; the per-meeting field comes with S10. Must be ≥ 1; the settings refuse to load otherwise |
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
@@ -269,6 +287,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `llm` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. `llm` is the Gemini API through the same `AUTUNE_EXTRACTION_LLM_*` settings as `CLASSIFIER_IMPL=llm`: opt-in, needs `LLM_API_KEY` and no checkpoint, sends the commitment and the lines around it with the team's names replaced, and a free-tier key is for dummy meetings only. **No `external`**, same reason as the classifier |
+| `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392` | B | `true` · `false`. Default `false`. Required, as `true`, for `CLASSIFIER_IMPL=llm` / `llm_checked` or `RESOLVER_IMPL=llm`: without it B's settings refuse to load (#392). Turns nothing on by itself — see below |
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_MODEL` | B | The model `RESOLVER_IMPL=llm` asks first. Default `gemini-3.5-flash-lite`. Its own setting, apart from `LLM_MODEL` (the classifier's) |
@@ -370,6 +389,18 @@ can set. Module B added `llm` as an opt-in after the 2026-09-23 mentoring, and
 the conversation is #392. Until #392 is settled:
 
 - `llm` is never the default, and nothing selects it for you.
+- **It has to be switched on twice.** With `AUTUNE_EXTRACTION_CLASSIFIER_IMPL`
+  set to `llm` or `llm_checked`, or `AUTUNE_EXTRACTION_RESOLVER_IMPL` set to
+  `llm`, module B's settings refuse to load unless
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — the worker and
+  the API do not start (the API with every other module, since it imports each
+  router), and the error names the variable.
+  "Dummy meetings only" and "a paid key" are rules the code cannot check; the
+  flag makes sending speech to a provider something a deployment says twice.
+  It turns nothing on by itself, and deleting it is the migration once #392 is
+  decided. It is not keyed on `AUTUNE_ENV`: `.env.example` ships
+  `AUTUNE_ENV=local`, so a deployment made from that file would be the one let
+  through.
 - Use it on dummy meetings only. A free-tier key may let the provider keep what
   it is sent; a real meeting needs a paid key and #392's answer.
 

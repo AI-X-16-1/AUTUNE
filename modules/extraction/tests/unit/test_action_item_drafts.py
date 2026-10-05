@@ -37,6 +37,8 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExtractionRun,
+    ExtMeetingSummary,
+    ExtProject,
 )
 from autune_extraction.pipeline import (
     FakeClassifier,
@@ -65,11 +67,14 @@ TABLES = [
     # Every run asks which pages a dropped decision left behind (#669).
     ExtDecisionRef.__table__,
     ExtActionItem.__table__,
+    ExtProject.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,
     # The task records which speech it read (#518).
     ExtExtractionRun.__table__,
+    # The run deletes a written summary its lines no longer match (#782 review).
+    ExtMeetingSummary.__table__,
 ]
 
 LINES = [

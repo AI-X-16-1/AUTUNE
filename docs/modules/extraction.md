@@ -159,8 +159,12 @@ agreement, and sync the result to Notion and Jira.
    makes a new one; if someone archives it, it is left archived (#403). The
    board does not say so yet: later edits to that item stop reaching Notion
    and only the log records it. S18's integration row is where an "archived in
-   Notion" state belongs once it exists. A team without Notion connected is
-   skipped. Not
+   Notion" state belongs once it exists. A create that timed out on our side
+   may still have made the page: when the item's last Notion copy failed as
+   `unreachable`, the next create first asks the database for a live page
+   with exactly the item's title made since shortly before that failure, and
+   keeps it if there is exactly one (review of #754). A team without Notion
+   connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
@@ -175,6 +179,9 @@ agreement, and sync the result to Notion and Jira.
    A retire that fails is tried again at the decision's next change, and for
    a decision that is gone only when the Notion backfill runs — on
    connecting Notion or by hand, not on a timer (#669).
+   A deleted action item's page is retitled "삭제된 액션아이템" the same way
+   before it goes to the trash (#768), at deletion and when
+   `drain_external_cleanup` retries it.
    A confirmed item with a due date also goes on its **assignee's own Google
    Calendar** as an all-day event with no attendees, through that person's grant
    in `user_integrations` (#435, #444); team work is not copied into anyone's
@@ -269,13 +276,25 @@ confirmation DM's quotation is #586's second part.
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
 | `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
+| `ext_external_cleanup` | A deleted item's Notion page or Jira issue the deleting request could not trash or close: team, system, page id or issue key, and Jira's site. Ids only. Retried by `drain_external_cleanup` every ten minutes; a team not connected now is kept, a transient failure counted up to five, a refusal or another site's key dropped (#692). `team_id` cascades |
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
+| `ext_sync_failures` | That an item's latest copy to Notion, Jira or a calendar failed: the system, one of four kinds (`privacy`, `reconnect`, `unreachable`, `rejected`) and the time (#680). Never the outside service's message, never what was being sent. Removed by the next copy that goes through; goes with the item |
+| `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
+| `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
+| `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결). On unless a row says off; the person and when, nothing else. Goes with the account |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
+| `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
+| `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
+| `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
+| `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
+| `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
+| `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
+| `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
 
 **The summary tab (S15 요약, #421, WBS 4.9).** B owns it. v1 is structured and
 uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
@@ -284,9 +303,13 @@ open questions were asked and how many ambiguous agreements still wait for
 their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
 memo, blank removes it). The tab reads it in three levels -- counts, then the
 decisions and items, then their source lines on the 액션 tab. Nothing leaves,
-so it serves real meetings whatever #392 decides. A prose summary by an LLM
-over the whole meeting -- chunk summaries under the outbound limit, then a
-summary of those -- is v2 and waits on #392.
+so it serves real meetings whatever #392 decides. v2 adds a prose summary by
+a cloud model over the whole meeting -- section summaries under the outbound
+limit, then a summary of those -- stored in `ext_meeting_summaries` and shown
+above v1's rows. It is off by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`)
+and, like every cloud implementation in this module, refused at start-up
+without `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until
+#392 is decided.
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,
@@ -396,6 +419,12 @@ other module's tables.
 
 - Action-item card thread posted to the meeting channel
 - A DM to each speaker with an ambiguous agreement, asking for confirmation
+- A DM to an item's assignee the day before its due date and once after it
+  passes (`reminders.py`, `autune.extraction.periodic.remind_due_items`, every
+  ten minutes, 09:00–20:00 Korea time). To the assignee's own linked account
+  and to nobody else; only for a confirmed, unfinished item whose assignee is
+  an account on the meeting's team. Off by default:
+  `AUTUNE_EXTRACTION_DUE_REMINDERS=true` turns it on
 - Role-specific reports (Phase 2)
 
 ## AI stack
@@ -613,7 +642,19 @@ versions.
   assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
+- A failed copy to an outside tool is remembered by its kind and its time
+  only (`ext_sync_failures`, #680): the service's own message may echo what
+  was sent and is not stored or logged. Notion and Jira are the team's
+  connections and their failures are shown to the team. A calendar is one
+  person's: what an item lacks (not confirmed, no date, no account for an
+  assignee) is said to anybody, and everything past that -- an event being
+  there, none being there, a failed calendar copy -- only to the assignee,
+  since each says whether that person connected a calendar.
 - Confirmation DMs go to the speaker, never to a channel.
+- Due-date reminders go to the item's assignee, never to a channel, a manager
+  or the person who made the item, and nothing counts or ranks what a person
+  has missed. The message carries the item's description, its due date, the
+  meeting's title and a link — no utterance.
 - `GET /action-items/{id}` is the only route in this module that returns
   utterances verbatim: the drawer asks for one item's quotation when it opens,
   and the list returns utterance ids. The list is still meeting content — an

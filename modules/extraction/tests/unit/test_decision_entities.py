@@ -373,6 +373,8 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
         "needs_recheck",
         "confidence",
         "origin",
+        "project_id",
+        "project_by_person",
         "created_at",
         "updated_at",
     }

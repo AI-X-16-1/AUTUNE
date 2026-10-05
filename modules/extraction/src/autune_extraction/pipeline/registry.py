@@ -16,6 +16,7 @@ from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, Local
 from .embedder import FakeEmbedder, LocalKureEmbedder
 from .nli import FakeNli, HostedNli, LocalNli
 from .resolver import FakeResolver, HostedResolver, LlmResolver, LocalQwenResolver
+from .summary import LlmSummarizer
 
 _CLASSIFIERS: dict[str, str] = {
     "local": "weights in this process",
@@ -198,6 +199,29 @@ def get_resolver() -> ReferenceResolver:
 
     raise ValueError(
         f"unknown AUTUNE_EXTRACTION_RESOLVER_IMPL={impl!r}; known: {sorted(_RESOLVERS)}"
+    )
+
+
+@lru_cache
+def get_summarizer() -> LlmSummarizer | None:
+    """The meeting summarizer (#421 v2), or ``None`` with ``summary_impl=none``."""
+    settings = get_settings()
+    impl = settings.summary_impl
+    if impl == "none":
+        return None
+    if impl != "llm":
+        raise ValueError(f"unknown AUTUNE_EXTRACTION_SUMMARY_IMPL={impl!r}; known: none, llm")
+    if not settings.llm_api_key:
+        raise ValueError(
+            "AUTUNE_EXTRACTION_SUMMARY_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY "
+            "(or the shared AUTUNE_LLM_API_KEY)"
+        )
+    return LlmSummarizer(
+        api_key=settings.llm_api_key.get_secret_value(),
+        model=settings.summary_model,
+        base_url=settings.llm_base_url,
+        timeout_sec=settings.llm_timeout_sec,
+        fallback_model=settings.summary_fallback_model,
     )
 
 

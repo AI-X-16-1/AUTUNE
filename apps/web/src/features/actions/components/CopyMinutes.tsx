@@ -6,6 +6,8 @@ import { Button } from "@/shared/ui";
 
 import { minutesText, titleOf } from "../minutes";
 import type { MeetingSummary } from "../types";
+import { ProjectFilter } from "./ProjectFilter";
+import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 
 /**
  * "회의록 복사" on the summary tab: the meeting's decisions and action items
@@ -30,7 +32,19 @@ export function CopyMinutes({ summary }: { summary: MeetingSummary }) {
   const [copied, setCopied] = useState<string | null>(null);
   const [manual, setManual] = useState(false);
   const fading = useRef<number | undefined>(undefined);
-  const text = minutesText(summary, titleOf(summary));
+  // One project's minutes, when the team lists projects (2026-10-04).
+  const [project, setProject] = useState<ProjectChoice>(ALL_PROJECTS);
+  const projects = summary.projects ?? [];
+  const chosen = projects.find((p) => p.id === project);
+  const title = titleOf(summary);
+  const text = minutesText(
+    {
+      ...summary,
+      decisions: inProject(summary.decisions, project),
+      action_items: inProject(summary.action_items, project),
+    },
+    chosen ? [title, chosen.name].filter(Boolean).join(" · ") : title,
+  );
 
   useEffect(() => () => window.clearTimeout(fading.current), []);
 
@@ -52,6 +66,7 @@ export function CopyMinutes({ summary }: { summary: MeetingSummary }) {
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-3">
+        <ProjectFilter projects={projects} value={project} onChange={setProject} />
         <Button tone="secondary" size="compact" onClick={() => void copy()}>
           회의록 복사
         </Button>

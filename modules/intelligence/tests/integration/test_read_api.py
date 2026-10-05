@@ -12,6 +12,7 @@ writes those rows is covered in test_aggregate.py and test_report.py.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 
@@ -22,7 +23,8 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from autune_core import AutuneError, get_session
+from autune_core import AutuneError, TeamMember, User, get_session
+from autune_core.auth import current_user
 from autune_intelligence.models import (
     IntelAlignment,
     IntelCompletion,
@@ -34,12 +36,12 @@ from autune_intelligence.models import (
 from autune_intelligence.router import router
 
 
-@pytest.fixture
-def client(db_session: Session) -> Iterator[TestClient]:
+def _app(db_session: Session, user: User | None) -> TestClient:
     """The intelligence router on a bare app, wired the way apps/api wires it.
 
     apps/api owns router registration and the error handler; this rebuilds just
     enough of it to test module E's surface without importing the app package.
+    ``user`` is who the token says is asking; ``None`` sends no token.
     """
     app = FastAPI()
 
@@ -49,7 +51,25 @@ def client(db_session: Session) -> Iterator[TestClient]:
 
     app.include_router(router, prefix="/api/intelligence")
     app.dependency_overrides[get_session] = lambda: db_session
-    yield TestClient(app)
+    if user is not None:
+        app.dependency_overrides[current_user] = lambda: user
+    return TestClient(app)
+
+
+def _user(db_session: Session, team: str | None) -> User:
+    user = User(email=f"reader-{uuid.uuid4().hex}@example.com", display_name="읽는 사람")
+    db_session.add(user)
+    db_session.flush()
+    if team is not None:
+        db_session.add(TeamMember(team_id=team, user_id=user.id))
+        db_session.flush()
+    return user
+
+
+@pytest.fixture
+def client(db_session: Session, team: str) -> Iterator[TestClient]:
+    """Asked by a member of ``team``."""
+    yield _app(db_session, _user(db_session, team))
 
 
 def _score(session: Session, meeting_id: str, team_id: str, **kw: object) -> IntelScore:
@@ -281,6 +301,10 @@ def test_dashboard_is_empty_for_a_team_with_no_scored_meetings(
         "average_score": None,
         "average_grade": None,
         "action_item_completion_rate": None,
+        "action_completion_meeting_count": None,
+        "overdue_action_items": None,
+        "action_progress_as_of": None,
+        "action_item_confirmation_rate": None,
         "recent_scores": [],
         "gap_distribution": {},
     }
@@ -325,7 +349,8 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
     assert body["meeting_count"] == 2
     assert body["average_score"] == pytest.approx(0.75)
     assert body["average_grade"] == "C"
-    assert body["action_item_completion_rate"] == pytest.approx(0.4)
+    assert body["action_item_confirmation_rate"] == pytest.approx(0.4)
+    assert body["action_item_completion_rate"] is None  # no counts from B yet
     assert [s["grade"] for s in body["recent_scores"]] == ["A", "C"]
     assert body["gap_distribution"] == {"ownership": 3}
 
@@ -631,3 +656,14 @@ def test_gap_titles_caps_the_list_per_pattern(
     body = client.get(f"/api/intelligence/gap-titles/{team}").json()
 
     assert len(body["budget"]) == 20
+
+
+@pytest.mark.parametrize("path", ["dashboard", "reports"])
+def test_a_teams_numbers_are_for_its_members(db_session: Session, team: str, path: str) -> None:
+    """Action-item completion and overdue counts go out on these routes (#800
+    review): no session and a person from another team are both refused -- 403,
+    core's ``PermissionDeniedError`` for either."""
+    outsider = _user(db_session, None)
+
+    assert _app(db_session, None).get(f"/api/intelligence/{path}/{team}").status_code == 403
+    assert _app(db_session, outsider).get(f"/api/intelligence/{path}/{team}").status_code == 403

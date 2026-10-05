@@ -45,6 +45,8 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExtractionRun,
+    ExtMeetingSummary,
+    ExtProject,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 
@@ -66,11 +68,14 @@ TABLES = [
     ExtDecisionReview.__table__,
     # The task drafts action items too (step 3).
     ExtActionItem.__table__,
+    ExtProject.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,
     # Which speech the run read, for the consent sweep (#518).
     ExtExtractionRun.__table__,
+    # The run deletes a written summary its lines no longer match (#782 review).
+    ExtMeetingSummary.__table__,
 ]
 
 # Endings the fake reads: 겠습니다 commitment, 기로 했 decision, 나요 question,

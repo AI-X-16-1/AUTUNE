@@ -7,6 +7,7 @@ import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CONFIRMED_NOTICE, confirms } from "../board";
@@ -347,11 +348,35 @@ export function ActionDetailDrawer({
             )}
           </section>
 
-          {item.sync_refs?.length ? (
+          {item.sync_refs?.length || quotation.dmUrl ? (
             <section className="mt-6">
               <SectionTitle>연동</SectionTitle>
               <div className="mt-2 grid gap-2">
-                {item.sync_refs.map((ref) => (
+                {quotation.dmUrl ? (
+                  // The reader's own confirmation DM: the server sends this to
+                  // the person it went to and nobody else (#680).
+                  <div
+                    className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    <StatusDot variant="confirmed" />
+                    <span className="text-[var(--color-ink-body)]">
+                      Slack 확인 DM
+                    </span>
+                    <span className="text-[var(--color-ink-muted)]">
+                      나에게 온 DM
+                    </span>
+                    <a
+                      href={quotation.dmUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto text-[var(--color-accent-text)]"
+                    >
+                      열기
+                    </a>
+                  </div>
+                ) : null}
+                {(item.sync_refs ?? []).map((ref) => (
                   <div
                     key={ref.system}
                     className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
@@ -386,6 +411,13 @@ export function ActionDetailDrawer({
                   </div>
                 ))}
               </div>
+            </section>
+          ) : null}
+
+          {(item.sync_failures?.length ?? 0) > 0 || quotation.calendar ? (
+            <section className="mt-6">
+              <SectionTitle>연동 상태</SectionTitle>
+              <SyncStatus item={item} calendar={quotation.calendar ?? null} />
             </section>
           ) : null}
 
@@ -502,6 +534,7 @@ const FIELD_LABELS: Record<string, string> = {
   assignee_label: "담당자",
   due_date: "기한",
   status: "상태",
+  project_id: "프로젝트",
 };
 
 function historyText(entry: EditHistoryEntry): string {
