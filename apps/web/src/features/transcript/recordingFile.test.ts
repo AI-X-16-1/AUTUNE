@@ -85,14 +85,32 @@ describe("recordingToSave", () => {
 });
 
 describe("serverHasRecording", () => {
-  it("takes a 409 as the server already having it", async () => {
+  it("after a 409, asks the meeting and finds it analyzing -- the server has it", async () => {
+    getMeeting.mockResolvedValue({ status: "analyzing" });
     await expect(
       serverHasRecording(
         "mtg_1",
         new ApiError(409, "conflict", "meeting is analyzing"),
       ),
     ).resolves.toBe(true);
-    expect(getMeeting).not.toHaveBeenCalled();
+    expect(getMeeting).toHaveBeenCalledWith("mtg_1");
+  });
+
+  it("keeps the copy for a 409 refused because the live session is still open", async () => {
+    // start_transcription answers 409 both for a meeting already past
+    // `recording` and for one whose live socket still holds its claim --
+    // the second has received nothing, and the same code says both.
+    getMeeting.mockResolvedValue({ status: "recording" });
+    await expect(
+      serverHasRecording(
+        "mtg_1",
+        new ApiError(
+          409,
+          "conflict",
+          "meeting mtg_1 has a live session open; stop it before uploading",
+        ),
+      ),
+    ).resolves.toBe(false);
   });
 
   it.each([
