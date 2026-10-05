@@ -1,4 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/shared/api/client";
@@ -12,7 +19,8 @@ vi.mock("../api", () => ({
   restartTranscription: (id: string) => restartTranscription(id),
 }));
 
-import { TranscriptionControls } from "./TranscriptionControls";
+import { ProcessingStages } from "./ProcessingStages";
+import { CancelTranscription, RestartNotice } from "./TranscriptionControls";
 
 afterEach(() => {
   cleanup();
@@ -37,21 +45,38 @@ function meeting(flags: Partial<MeetingDetail>): MeetingDetail {
   };
 }
 
+/** Both parts, as ProcessingStages mounts them. */
+function TranscriptionControls({ meeting }: { meeting: MeetingDetail }) {
+  return (
+    <>
+      <CancelTranscription meeting={meeting} />
+      <RestartNotice meeting={meeting} />
+    </>
+  );
+}
+
 describe("TranscriptionControls", () => {
   it("draws nothing when there is nothing to do", () => {
-    const { container } = render(<TranscriptionControls meeting={meeting({})} />);
+    const { container } = render(
+      <TranscriptionControls meeting={meeting({})} />,
+    );
     expect(container.innerHTML).toBe("");
   });
 
   it("asks before cancelling, then cancels", async () => {
-    cancelTranscription.mockResolvedValue({ meeting_id: "mtg_1", status: "failed" });
+    cancelTranscription.mockResolvedValue({
+      meeting_id: "mtg_1",
+      status: "failed",
+    });
     render(<TranscriptionControls meeting={meeting({ cancellable: true })} />);
 
     fireEvent.click(screen.getByRole("button", { name: "처리 중단" }));
     expect(cancelTranscription).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "중단하기" }));
 
-    await waitFor(() => expect(cancelTranscription).toHaveBeenCalledWith("mtg_1"));
+    await waitFor(() =>
+      expect(cancelTranscription).toHaveBeenCalledWith("mtg_1"),
+    );
   });
 
   it("lets the person back out of the confirmation", () => {
@@ -65,23 +90,36 @@ describe("TranscriptionControls", () => {
   });
 
   it("offers a restart for a stalled run whose upload is still there", async () => {
-    restartTranscription.mockResolvedValue({ meeting_id: "mtg_1", status: "analyzing" });
+    restartTranscription.mockResolvedValue({
+      meeting_id: "mtg_1",
+      status: "analyzing",
+    });
     render(
       <TranscriptionControls
-        meeting={meeting({ stalled: true, restartable: true, cancellable: true })}
+        meeting={meeting({
+          stalled: true,
+          restartable: true,
+          cancellable: true,
+        })}
       />,
     );
 
     expect(screen.getByRole("status").textContent).toContain("응답이 없");
     fireEvent.click(screen.getByRole("button", { name: "다시 시작" }));
 
-    await waitFor(() => expect(restartTranscription).toHaveBeenCalledWith("mtg_1"));
+    await waitFor(() =>
+      expect(restartTranscription).toHaveBeenCalledWith("mtg_1"),
+    );
   });
 
   it("says why a stalled run cannot restart, and offers only cancel", () => {
     render(
       <TranscriptionControls
-        meeting={meeting({ stalled: true, restartable: false, cancellable: true })}
+        meeting={meeting({
+          stalled: true,
+          restartable: false,
+          cancellable: true,
+        })}
       />,
     );
 
@@ -92,7 +130,11 @@ describe("TranscriptionControls", () => {
 
   it("shows Korean copy for the server's refusal, never its English message", async () => {
     cancelTranscription.mockRejectedValue(
-      new ApiError(409, "nothing_to_cancel", "meeting mtg_1 has no transcription in progress"),
+      new ApiError(
+        409,
+        "nothing_to_cancel",
+        "meeting mtg_1 has no transcription in progress",
+      ),
     );
     render(<TranscriptionControls meeting={meeting({ cancellable: true })} />);
 
@@ -111,14 +153,23 @@ describe("TranscriptionControls", () => {
     fireEvent.click(screen.getByRole("button", { name: "처리 중단" }));
     fireEvent.click(screen.getByRole("button", { name: "중단하기" }));
 
-    expect((await screen.findByRole("alert")).textContent).toContain("요청을 처리하지 못했습니다.");
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "요청을 처리하지 못했습니다.",
+    );
   });
 
   it("re-enables the buttons once the server's view changes", async () => {
-    restartTranscription.mockResolvedValue({ meeting_id: "mtg_1", status: "analyzing" });
+    restartTranscription.mockResolvedValue({
+      meeting_id: "mtg_1",
+      status: "analyzing",
+    });
     const { rerender } = render(
       <TranscriptionControls
-        meeting={meeting({ stalled: true, restartable: true, cancellable: true })}
+        meeting={meeting({
+          stalled: true,
+          restartable: true,
+          cancellable: true,
+        })}
       />,
     );
 
@@ -127,26 +178,86 @@ describe("TranscriptionControls", () => {
 
     rerender(
       <TranscriptionControls
-        meeting={meeting({ stalled: false, restartable: false, cancellable: true })}
+        meeting={meeting({
+          stalled: false,
+          restartable: false,
+          cancellable: true,
+        })}
       />,
     );
 
-    const button = screen.getByRole("button", { name: "처리 중단" }) as HTMLButtonElement;
+    const button = screen.getByRole("button", {
+      name: "처리 중단",
+    }) as HTMLButtonElement;
     expect(button.disabled).toBe(false);
   });
 
   it("clears an earlier refusal when the server's view changes", async () => {
-    cancelTranscription.mockRejectedValue(new ApiError(409, "nothing_to_cancel", "x"));
-    const { rerender } = render(<TranscriptionControls meeting={meeting({ cancellable: true })} />);
+    cancelTranscription.mockRejectedValue(
+      new ApiError(409, "nothing_to_cancel", "x"),
+    );
+    const { rerender } = render(
+      <TranscriptionControls meeting={meeting({ cancellable: true })} />,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "처리 중단" }));
     fireEvent.click(screen.getByRole("button", { name: "중단하기" }));
     await screen.findByRole("alert");
 
     rerender(
-      <TranscriptionControls meeting={meeting({ stalled: true, cancellable: true })} />,
+      <TranscriptionControls
+        meeting={meeting({ stalled: true, cancellable: true })}
+      />,
     );
 
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("names a long wait in the queue, not a silent worker, when nothing has started", () => {
+    render(
+      <TranscriptionControls
+        meeting={meeting({
+          stalled: true,
+          restartable: true,
+          cancellable: true,
+          stage: null,
+        })}
+      />,
+    );
+
+    const notice = screen.getByRole("status").textContent ?? "";
+    expect(notice).toContain("15분");
+    expect(notice).not.toContain("응답이 없");
+  });
+});
+
+describe("ProcessingStages", () => {
+  it("puts 처리 중단 in the header, beside the overall progress", () => {
+    const { container } = render(
+      <ProcessingStages
+        meeting={meeting({ cancellable: true, stage: "transcribing" })}
+      />,
+    );
+
+    const header = container.querySelector("header");
+    expect(header).not.toBeNull();
+    expect(
+      within(header as HTMLElement).getByRole("button", { name: "처리 중단" }),
+    ).toBeTruthy();
+    expect(
+      within(header as HTMLElement).getByLabelText("전체 진행률"),
+    ).toBeTruthy();
+  });
+
+  it("says a cancelled meeting's original is about to go, not already gone", () => {
+    render(
+      <ProcessingStages
+        meeting={meeting({ status: "failed", cancelled: true, stage: null })}
+      />,
+    );
+
+    const text = screen.getByRole("status").textContent ?? "";
+    expect(text).toContain("곧 삭제됩니다");
+    expect(text).not.toContain("삭제되었습니다");
   });
 });

@@ -524,8 +524,9 @@ def claim_job(session: Session, *, job_id: str) -> Claim:
     # Claiming is itself proof of life. Without this a job that waited in the
     # queue longer than ``stall_after_s`` would read as stalled until the guard
     # writes its first heartbeat, and a cancel in that window would delete the
-    # upload under a live worker.
-    job.heartbeat_at = datetime.now(tz=UTC)
+    # upload under a live worker. The database's clock, like every heartbeat
+    # (``job_guard.beat_with``), so staleness is judged on one clock.
+    job.heartbeat_at = db_now(session)
     session.flush()
     return Claim(job.meeting_id, run=True, owns_file=True)
 
@@ -711,22 +712,50 @@ def latest_job(session: Session, *, meeting_id: str, lock: bool = False) -> Tran
     return session.scalar(query)
 
 
+def db_now(session: Session) -> datetime:
+    """The database's clock: what stamps ``heartbeat_at`` and ``created_at``,
+    and so what their age is measured against. An API host whose clock is off
+    must not call a live worker stalled (#757 review). A file's mtime is the
+    host's clock and is measured against the host's (``recording_restartable``)."""
+    now = session.scalar(sa.select(sa.func.now()))
+    assert now is not None
+    return now
+
+
+QUEUE_STALL = timedelta(minutes=15)
+"""How long a job may wait in the queue before it counts as stalled. A message
+the broker lost leaves a job ``queued`` with nobody coming; one that is only
+waiting behind other meetings and is restarted anyway loses its place and
+nothing else, because ``claim_job`` declines its late message (#757 review)."""
+
+
 def is_stalled(job: TranscriptionJob, *, settings: AudioSettings, now: datetime) -> bool:
-    """A ``running`` job whose worker has stopped writing its heartbeat.
+    """A job nobody is working on: ``running`` with a stale heartbeat, or
+    ``queued`` for longer than ``QUEUE_STALL``. ``now`` is the database's
+    (``db_now``).
 
     Not progress: diarization and a remote STT call can report none for
     minutes on a healthy run. A job claimed before ``heartbeat_at`` existed
     falls back to ``created_at``, which is right: those workers were restarted by
     the deploy that added the column."""
+    if job.status == "queued":
+        return job.created_at < now - QUEUE_STALL
     if job.status != "running":
         return False
     last = job.heartbeat_at or job.created_at
     return last < now - timedelta(seconds=settings.stall_after_s)
 
 
+class Cancelled(NamedTuple):
+    meeting: Meeting
+    orphan: Path | None
+    """A stalled job's upload, for the caller to delete once the cancel is
+    committed -- ``None`` when a worker or the claim will."""
+
+
 def cancel_transcription(
     session: Session, *, meeting_id: str, user: User, settings: AudioSettings
-) -> Meeting:
+) -> Cancelled:
     """Stop the meeting's transcription and leave it ``failed``, which accepts
     a new upload.
 
@@ -737,9 +766,10 @@ def cancel_transcription(
 
     **Who deletes the upload.** A live worker does, through ``adopt``, once
     its guard hears the status; a ``queued`` job's file goes when
-    ``claim_job`` declines it. A stalled job's owner is gone, so this takes
-    ownership and deletes it now (privacy.md section 1). The sweep is the
-    backstop for all three.
+    ``claim_job`` declines it. A stalled job's owner is gone, so the API takes
+    ownership: this returns the file and the route deletes it after the
+    commit, so a failed commit leaves the job and its file together (#757
+    review; privacy.md section 1). The sweep is the backstop for all three.
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
@@ -749,16 +779,14 @@ def cancel_transcription(
     if meeting.status != "analyzing" or job is None or job.status not in ("queued", "running"):
         raise NothingToCancelError(f"meeting {meeting_id} has no transcription in progress")
 
-    now = datetime.now(tz=UTC)
+    now = db_now(session)
     stalled = is_stalled(job, settings=settings, now=now)
     job.status = "cancelled"
     job.finished_at = now
     meeting.status = "failed"
     session.flush()
-    if stalled:
-        storage.delete_orphan(storage.upload_path(job.id, settings))
     log.info("audio_transcription_cancelled", meeting_id=meeting_id, job_id=job.id, stalled=stalled)
-    return meeting
+    return Cancelled(meeting, storage.upload_path(job.id, settings) if stalled else None)
 
 
 class NotStalledError(ConflictError):
@@ -769,14 +797,17 @@ class RecordingGoneError(ConflictError):
     code = "recording_gone"
 
 
-RESTART_MARGIN = timedelta(minutes=10)
-"""How long before the sweep's deadline a restart stops being offered, so a
-restarted job is not swept out from under its worker."""
+RESTART_NEEDS = timedelta(hours=3)
+"""How much of the six-hour window a restart must still have. The longest
+meeting the pipeline is sized for -- two hours at about 1.27x real time --
+takes about 2.5 h; with less left, the sweep would fail the restarted job
+under its worker (#757 review). The window itself is not extended."""
 
 
 def recording_restartable(job_id: str, *, settings: AudioSettings, now: datetime) -> bool:
-    """The attempt's upload is still on disk and inside its six hours, less
-    ``RESTART_MARGIN``.
+    """The attempt's upload is still on disk with at least ``RESTART_NEEDS``
+    of its six hours left. ``now`` is this host's clock, the one that wrote the
+    file's mtime.
 
     By mtime, which a rename keeps: the window runs from the upload, so a
     restart cannot extend it (``sweep_orphans`` measures the same way). The
@@ -788,7 +819,8 @@ def recording_restartable(job_id: str, *, settings: AudioSettings, now: datetime
     except OSError:
         return False
     uploaded = datetime.fromtimestamp(mtime, tz=UTC)
-    return uploaded >= now - timedelta(hours=settings.orphan_after_hours) + RESTART_MARGIN
+    deadline = uploaded + timedelta(hours=settings.orphan_after_hours)
+    return deadline - now >= RESTART_NEEDS
 
 
 def restart_transcription(
@@ -814,14 +846,14 @@ def restart_transcription(
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=user.id, team_id=meeting.team_id)
     old = latest_job(session, meeting_id=meeting_id, lock=True)
-    now = datetime.now(tz=UTC)
+    now = db_now(session)
     if (
         meeting.status != "analyzing"
         or old is None
         or not is_stalled(old, settings=settings, now=now)
     ):
         raise NotStalledError(f"meeting {meeting_id} has no stalled transcription")
-    if not recording_restartable(old.id, settings=settings, now=now):
+    if not recording_restartable(old.id, settings=settings, now=datetime.now(tz=UTC)):
         raise RecordingGoneError(
             f"the recording for meeting {meeting_id} is no longer on the server"
         )
@@ -859,12 +891,12 @@ def transcription_controls(
     job = latest_job(session, meeting_id=meeting.id)
     if job is None:
         return TranscriptionControls(False, False, False, False)
-    now = datetime.now(tz=UTC)
     analyzing = meeting.status == "analyzing"
-    stalled = analyzing and is_stalled(job, settings=settings, now=now)
+    stalled = analyzing and is_stalled(job, settings=settings, now=db_now(session))
     return TranscriptionControls(
         stalled=stalled,
-        restartable=stalled and recording_restartable(job.id, settings=settings, now=now),
+        restartable=stalled
+        and recording_restartable(job.id, settings=settings, now=datetime.now(tz=UTC)),
         cancellable=analyzing and job.status in ("queued", "running"),
         cancelled=meeting.status == "failed" and job.status == "cancelled",
     )
