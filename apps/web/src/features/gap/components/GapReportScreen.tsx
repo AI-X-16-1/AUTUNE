@@ -233,7 +233,13 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     loading={railLoading}
                     error={railError}
                   >
-                    {() => <CoveredList items={covered} />}
+                    {() => (
+                      <CoveredList
+                        items={covered}
+                        explanations={explanations}
+                        meetingId={meetingId}
+                      />
+                    )}
                   </ReadSection>
                 ) : (
                   <ReadSection
