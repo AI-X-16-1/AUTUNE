@@ -89,3 +89,19 @@ the output readable. Word files are cached per run; a full pass over the corpus
 takes a few minutes.
 
 Findings from these scripts are recorded in issue #20.
+
+## Batched against single cloud resolver (#779)
+
+Not a script here but a module, so that it is tested:
+
+```bash
+AUTUNE_EXTRACTION_RESOLVER_IMPL=llm AUTUNE_EXTRACTION_LLM_API_KEY=... \
+AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true \
+  uv run python -m autune_extraction.eval.resolver_batch meetings.json --out side.json
+```
+
+It runs the same dummy meetings through the cloud resolver one item per call and
+batched. The console gets counts only: calls per model, items rewritten, and how
+many sentences the two modes agree on. `side.json` holds the sentences side by
+side for a person to read. The input format is in the module docstring. Use it on
+dummy meetings only (#392).
