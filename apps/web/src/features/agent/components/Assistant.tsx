@@ -115,11 +115,14 @@ export function Assistant({
 
   useEffect(() => {
     // Read on every page and after every turn: a turn can queue a proposal,
-    // and deciding one on 승인 대기 is a navigation away and back.
+    // and deciding one on 승인 대기 is a navigation away and back. Only rows
+    // still pending count: an approval interrupted mid-run (needs_check) is
+    // never re-run, so it is nothing to approve (#759 review).
     let current = true;
     listPending()
       .then((rows) => {
-        if (current) setQueued(rows.length);
+        if (current)
+          setQueued(rows.filter((r) => r.status === "pending").length);
       })
       .catch(() => {
         if (current) setQueued(0);

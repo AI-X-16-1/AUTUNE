@@ -8,6 +8,9 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
+import type { PendingAction } from "../types";
+
+type PendingStatus = PendingAction["status"];
 import { Assistant } from "./Assistant";
 
 // S34 header: "{meeting title} 보고 있음" on a meeting page, the page's name
@@ -80,7 +83,7 @@ describe("Assistant launcher alert", () => {
     subagent: "workload",
     kind: "reassign",
     tool: "extraction.reassign_action_item",
-    status: "pending" as const,
+    status: "pending" as PendingStatus,
     reject_reason: null,
     result_ok: null,
     created_at: "2026-10-03T00:00:00Z",
@@ -104,6 +107,18 @@ describe("Assistant launcher alert", () => {
     const listed = vi.spyOn(api, "listPending").mockResolvedValueOnce([]);
     render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
     await waitFor(() => expect(listed).toHaveBeenCalled());
+    expect(
+      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
+    ).toBeNull();
+    cleanup();
+
+    // An approval interrupted mid-run comes back as needs_check; it is never
+    // re-run, so there is nothing left to approve (#759 review).
+    listed.mockResolvedValueOnce([
+      { ...WAITING, status: "approved", needs_check: true },
+    ]);
+    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
+    await waitFor(() => expect(listed).toHaveBeenCalledTimes(2));
     expect(
       screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
     ).toBeNull();
