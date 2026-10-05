@@ -138,6 +138,50 @@ class ExtProjectSend(Base):
     )
 
 
+class ExtMinutesEvent(Base):
+    """A project's minutes as an all-day event on the meeting's day, in the
+    calendar of the person who sent them (2026-10-04).
+
+    Their own calendar, by their own click: team work is not copied into
+    anybody else's (``calendar_sync``). Kept so sending again updates the same
+    event, and so the event goes when the meeting expires or the person's
+    account is deleted (``tasks.queue_meeting_calendar_events``,
+    ``tasks.forget_user_calendar_events``) -- and when the project is deleted
+    (``projects.delete_project``) -- and the event follows what changes after
+    it was sent (``project_send.refresh``). The event id only, no text.
+
+    ``event_id`` is empty only inside the transaction that claimed the row to
+    make the event, so a double click makes one event.
+
+    **A calendar disconnected before the event goes cannot be reached.** The
+    grant is the only way into a person's calendar, so their minutes events
+    stay there -- in their own calendar, put there by their own click, where
+    they can delete them -- and the cleanup row is dropped with a log line
+    after its tries (``tasks.drain_calendar_cleanup``). Removing them at
+    disconnect needs a hook core does not have yet.
+    """
+
+    __tablename__ = "ext_minutes_events"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    """As ``ExtProjectSend.content_digest``: a hash of the minutes the event
+    last received, so a refresh leaves an event alone that already says them
+    and asks for its owner's grant only when there is something to write."""
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtProjectRefreshOwed(Base):
     """A meeting whose project minutes outside still have to be brought in line
     with what is confirmed now (#787 review).

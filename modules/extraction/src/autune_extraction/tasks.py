@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from celery import shared_task
 from sqlalchemy import select
@@ -81,6 +82,7 @@ from .models import (
     ExtDecisionRef,
     ExtExternalCleanup,
     ExtExternalRef,
+    ExtMinutesEvent,
     ExtProjectRefreshOwed,
     ExtProjectSendCleanup,
 )
@@ -406,18 +408,36 @@ def _close(clients: project_send.Clients) -> None:
 
 
 def send_project_minutes(
-    session: Session, meeting_id: str, targets: Sequence[str]
+    session: Session, meeting_id: str, targets: Sequence[str], *, sender_id: str
 ) -> tuple[list[project_send.Sent], int]:
     """The 요약 tab's "프로젝트별로 보내기" (2026-10-04): the team's tools built
     here, where every client is, and the minutes sent by ``project_send``. Runs
     in the request -- a person pressed the button and waits to see what went.
-    A tool the team has not connected is reported as such, not tried."""
+    A tool the team has not connected is reported as such, not tried.
+
+    The calendar is ``sender_id``'s own, through their own grant. No grant, or
+    one refused or issued to another client, is ``not_connected``; Google not
+    answering is ``failed`` -- a person told to connect a calendar they have
+    connected would look in the wrong place."""
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         return [], 0
     clients = _project_clients(session, meeting.team_id, targets)
     try:
-        return project_send.send(session, meeting_id, targets, clients)
+        if "calendar" not in targets:
+            return project_send.send(session, meeting_id, targets, clients)
+        with _calendars(session) as calendar_for:
+            try:
+                mine = calendar_for(sender_id)
+            except ReconnectRequiredError:
+                mine = None
+            except Exception as exc:  # noqa: BLE001 -- reported as failed, the rest goes
+                log.warning("extraction_project_calendar_unreachable", error=type(exc).__name__)
+                mine = None
+                clients.calendar_failed = True
+            if mine is not None:
+                clients.calendar = (mine[0], mine[1], sender_id)
+            return project_send.send(session, meeting_id, targets, clients)
     finally:
         _close(clients)
 
@@ -425,7 +445,8 @@ def send_project_minutes(
 def refresh_project_minutes(meeting_id: str) -> bool:
     """The copies of a meeting's project minutes, brought in line with what is
     confirmed now (``project_send.refresh``): after speech was deleted, a
-    decision taken back, an item deleted or edited, a line masked again.
+    decision taken back, an item deleted or edited, a line masked again --
+    in the team's tools and on the senders' own calendars.
 
     Called directly, in whatever process made the change -- the API has no
     Celery app to queue on -- and never raising: the change is committed
@@ -441,12 +462,13 @@ def refresh_project_minutes(meeting_id: str) -> bool:
         with session_scope() as session:
             targets = project_send.sent_targets(session, meeting_id)
             team_id = project_send.meeting_team(session, meeting_id)
-            if not targets or team_id is None:
+            if team_id is None or not (targets or project_send.has_events(session, meeting_id)):
                 project_send.settle_refresh(session, meeting_id)
                 return True
             clients = _project_clients(session, team_id, targets)
             try:
-                sent = project_send.refresh(session, meeting_id, clients)
+                with _calendars(session) as calendar_for:
+                    sent = project_send.refresh(session, meeting_id, clients, _quiet(calendar_for))
             finally:
                 _close(clients)
             if project_send.in_line(sent):
@@ -537,6 +559,19 @@ def retry_project_minutes_refresh() -> int:
                 session.delete(row)
     log.info("extraction_project_minutes_refresh_retried", owed=len(owed), in_line=done)
     return done
+
+
+def _quiet(calendar_for: calendar_sync.CalendarFor) -> project_send.CalendarFor:
+    """``calendar_for`` with a refused grant read as not connected: that
+    person's event cannot be reached now, and the others still can."""
+
+    def lookup(user_id: str) -> tuple[Any, str] | None:
+        try:
+            return calendar_for(user_id)
+        except ReconnectRequiredError:
+            return None
+
+    return lookup
 
 
 def _refresh_minutes_for(item_ids: Iterable[str] = (), decision_ids: Iterable[str] = ()) -> None:
@@ -1735,9 +1770,17 @@ def forget_user_calendar_events(user_id: str) -> None:
                     select(ExtCalendarCleanup).where(ExtCalendarCleanup.user_id == user_id)
                 )
             )
-            ids = [e.event_id for e in events if e.event_id] + [q.event_id for q in queued]
+            # The project minutes they sent to their own calendar, too.
+            minutes = list(
+                session.scalars(select(ExtMinutesEvent).where(ExtMinutesEvent.user_id == user_id))
+            )
+            ids = (
+                [e.event_id for e in events if e.event_id]
+                + [q.event_id for q in queued]
+                + [m.event_id for m in minutes]
+            )
             removed, failed = _remove_events(calendar_for, user_id, ids)
-            for row in [*events, *queued]:
+            for row in [*events, *queued, *minutes]:
                 session.delete(row)
         if failed:
             # Best effort (privacy.md section 4): the account goes on, and these

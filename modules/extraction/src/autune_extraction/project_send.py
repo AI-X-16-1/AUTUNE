@@ -18,6 +18,12 @@ belong to no project to send them as.
 - Slack: a message in the team's alert channel.
 - Jira: a task in the project's own Jira project, or the team's when the
   project names none.
+- Google Calendar: an all-day event on the meeting's day in the calendar of
+  **the person who pressed send** -- their own calendar, by their own click.
+  Team work is not copied into anybody else's (``calendar_sync``). The event
+  carries its own private tag, not the due-date events' one, so the due-date
+  read-back never takes it for an item. It goes when the meeting expires, the
+  person's account is deleted or the project is (``ext_minutes_events``).
 
 Sending again updates the same copy (``ext_project_sends``): the Slack message
 and the Jira task are rewritten; a Notion page's body cannot be replaced in one
@@ -49,9 +55,9 @@ and the person is told which copy went and which did not.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -65,7 +71,9 @@ from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
 from . import service
 from .models import (
     ExtActionItem,
+    ExtCalendarCleanup,
     ExtDecision,
+    ExtMinutesEvent,
     ExtProject,
     ExtProjectRefreshOwed,
     ExtProjectSend,
@@ -76,7 +84,11 @@ from .slots import meeting_day
 
 log = get_logger(__name__)
 
-TARGETS = ("notion", "slack", "jira")
+TARGETS = ("notion", "slack", "jira", "calendar")
+MINUTES_TAG = ("autune_minutes", "1")
+"""The private property on a minutes event. Not ``calendar_sync.TAG``: the
+due-date read-back asks Google for that one, and must not see these."""
+
 NOTION_TEXT_LIMIT = 2000
 """Notion's limit on one text object; a longer line is cut, never sent whole."""
 
@@ -141,7 +153,8 @@ class Sent:
     project_name: str
     target: str
     outcome: str
-    """``created``, ``updated``, ``retracted``, ``not_connected`` or ``failed``;
+    """``created``, ``updated``, ``retracted``, ``not_connected``, ``no_date``
+    (a calendar event for a meeting with no recorded day) or ``failed``;
     from ``refresh`` also ``unchanged``, a copy that already says the minutes."""
 
 
@@ -155,6 +168,12 @@ class Clients:
     """A ``SlackClient`` and the alert channel id."""
     jira: tuple[Any, str | None] | None = None
     """A ``JiraClient`` and the team's default project key."""
+    calendar: tuple[Any, str, str] | None = None
+    """A ``CalendarClient``, the calendar id, and whose calendar it is."""
+    calendar_failed: bool = False
+    """The sender's calendar could not be reached for a reason other than a
+    missing or refused grant -- a timeout, Google down: ``failed``, not
+    ``not_connected``."""
 
 
 def _item_line(item: Any) -> str:
@@ -410,6 +429,83 @@ class _PartialPageError(Exception):
         self.page_id = page_id
 
 
+def _event_body(m: Minutes) -> dict[str, Any]:
+    """An all-day event on the meeting's day that leaves the day free:
+    ``transparency: transparent`` -- minutes are a note, not a commitment, and
+    must not mark the sender busy. Google's all-day end date is exclusive."""
+    assert m.day is not None
+    return {
+        "summary": m.title,
+        "description": _fit(m.text),
+        "start": {"date": m.day.isoformat()},
+        "end": {"date": (m.day + timedelta(days=1)).isoformat()},
+        "transparency": "transparent",
+    }
+
+
+def _write_event(calendar: Any, calendar_id: str, m: Minutes, old: str) -> str:
+    """The event written over ``old`` when it is still there; otherwise a new
+    one, tagged. One deleted by hand -- 404, 410, or kept by Google as
+    ``cancelled`` -- is replaced, never revived (as ``update_all_day_event``)."""
+    body = _event_body(m)
+    if old:
+        try:
+            answer: dict[str, Any] | None = calendar.request(
+                "PATCH", f"/calendars/{calendar_id}/events/{old}", json=body
+            )
+        except PermanentIntegrationError as exc:
+            if exc.details.get("upstream_status") not in (404, 410):
+                raise
+            answer = None
+        if answer is not None and answer.get("status") != "cancelled":
+            return old
+    body["extendedProperties"] = {"private": {MINUTES_TAG[0]: MINUTES_TAG[1]}}
+    made = calendar.request("POST", f"/calendars/{calendar_id}/events", json=body)
+    return str(made.get("id", ""))
+
+
+def _to_calendar(session: Session, meeting_id: str, m: Minutes, clients: Clients) -> str:
+    """The minutes as an all-day event on the sender's own calendar, claimed
+    the same way as a team copy (``_send_one``): the row first, the event
+    after, in one savepoint -- a double click makes one event, and an event is
+    never made without a row that will take it out again."""
+    if clients.calendar_failed:
+        return "failed"
+    if clients.calendar is None:
+        return "not_connected"
+    if m.day is None:
+        return "no_date"
+    calendar, calendar_id, user_id = clients.calendar
+    key = {"meeting_id": meeting_id, "project_id": m.project_id, "user_id": user_id}
+    with session.begin_nested():
+        session.execute(
+            service._insert_if_absent_into(session, ExtMinutesEvent)
+            .values(**key, event_id="")
+            .on_conflict_do_nothing(index_elements=["meeting_id", "project_id", "user_id"])
+        )
+        row = session.execute(
+            select(ExtMinutesEvent)
+            .filter_by(**key)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one()
+        old = row.event_id
+        row.event_id = _write_event(calendar, calendar_id, m, old)
+        row.content_digest = _digest(m)
+        session.flush()
+    return "updated" if old else "created"
+
+
+def _retract_event(session: Session, row: ExtMinutesEvent, calendar: Any, calendar_id: str) -> str:
+    """A minutes event off its owner's calendar, and its row with it."""
+    with session.begin_nested():
+        if row.event_id:
+            calendar.delete_event(calendar_id, row.event_id)
+        session.delete(row)
+        session.flush()
+    return "retracted"
+
+
 def _send_one(session: Session, meeting_id: str, m: Minutes, target: str, clients: Clients) -> str:
     """One copy out, in its own savepoint; returns the outcome.
 
@@ -418,6 +514,8 @@ def _send_one(session: Session, meeting_id: str, m: Minutes, target: str, client
     moment waits for the first and updates the copy the first one made,
     instead of making another. A failure rolls back this copy's row only, and
     with it the digest: the copy still counts as not saying these minutes."""
+    if target == "calendar":
+        return _to_calendar(session, meeting_id, m, clients)
     if not _connected(target, m, clients):
         return "not_connected"
     key = {"meeting_id": meeting_id, "project_id": m.project_id, "target": target}
@@ -472,18 +570,42 @@ def _queue(session: Session, team_id: str | None, copies: Sequence[tuple[str, st
     return len(values)
 
 
+def _queue_events(session: Session, events: Sequence[tuple[str, str]]) -> int:
+    """Minutes events to take off their owners' calendars, into the due-date
+    events' own queue (``ext_calendar_cleanup``) -- each goes with its owner's
+    grant. Safe to run twice."""
+    values = [{"user_id": user, "event_id": event} for user, event in events if event]
+    if not values:
+        return 0
+    session.execute(
+        service._insert_if_absent_into(session, ExtCalendarCleanup)
+        .values(values)
+        .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
+    )
+    return len(values)
+
+
 def queue_meeting(session: Session, meeting_id: str) -> int:
-    """Before a meeting goes: every copy of its minutes, queued for retraction."""
+    """Before a meeting goes: every copy of its minutes, queued for retraction
+    -- the team's tools and the senders' own calendars."""
     rows = session.execute(
         select(ExtProjectSend.target, ExtProjectSend.external_id).where(
             ExtProjectSend.meeting_id == meeting_id
         )
     ).tuples()
-    return _queue(session, meeting_team(session, meeting_id), list(rows))
+    events = session.execute(
+        select(ExtMinutesEvent.user_id, ExtMinutesEvent.event_id).where(
+            ExtMinutesEvent.meeting_id == meeting_id
+        )
+    ).tuples()
+    return _queue(session, meeting_team(session, meeting_id), list(rows)) + _queue_events(
+        session, list(events)
+    )
 
 
 def queue_project(session: Session, project_id: str) -> int:
-    """Before a project goes: every copy of its minutes, queued for retraction."""
+    """Before a project goes: every copy of its minutes, queued for retraction
+    -- the team's tools and the senders' own calendars."""
     project = session.get(ExtProject, project_id)
     if project is None:
         return 0
@@ -492,7 +614,12 @@ def queue_project(session: Session, project_id: str) -> int:
             ExtProjectSend.project_id == project_id
         )
     ).tuples()
-    return _queue(session, project.team_id, list(rows))
+    events = session.execute(
+        select(ExtMinutesEvent.user_id, ExtMinutesEvent.event_id).where(
+            ExtMinutesEvent.project_id == project_id
+        )
+    ).tuples()
+    return _queue(session, project.team_id, list(rows)) + _queue_events(session, list(events))
 
 
 def _try(
@@ -593,17 +720,42 @@ def send(
                 lambda row=row: _retract_row(session, row, clients),
             )
         )
+    if "calendar" in chosen and clients.calendar is not None:
+        calendar, calendar_id, user_id = clients.calendar
+        kept = {m.project_id for m in projects if m.day is not None}
+        for event in _events(session, meeting_id, user_id=user_id):
+            if event.project_id in kept:
+                continue
+            out.append(
+                _try(
+                    session,
+                    meeting_id,
+                    (event.project_id, names.get(event.project_id, "")),
+                    "calendar",
+                    lambda event=event: _retract_event(session, event, calendar, calendar_id),
+                )
+            )
     log.info("extraction_project_minutes_sent", meeting_id=meeting_id, copies=len(out))
     return out, unsorted
 
 
+def _events(
+    session: Session, meeting_id: str, *, user_id: str | None = None
+) -> list[ExtMinutesEvent]:
+    query = select(ExtMinutesEvent).where(ExtMinutesEvent.meeting_id == meeting_id)
+    if user_id is not None:
+        query = query.where(ExtMinutesEvent.user_id == user_id)
+    return list(session.scalars(query.order_by(ExtMinutesEvent.user_id)))
+
+
 def _names(session: Session, meeting_id: str) -> dict[str, str]:
+    """The names of the meeting's team's projects, for the report."""
     return {
         project_id: name
         for project_id, name in session.execute(
-            select(ExtProject.id, ExtProject.name)
-            .join(ExtProjectSend, ExtProjectSend.project_id == ExtProject.id)
-            .where(ExtProjectSend.meeting_id == meeting_id)
+            select(ExtProject.id, ExtProject.name).where(
+                ExtProject.team_id == meeting_team(session, meeting_id)
+            )
         ).tuples()
     }
 
@@ -624,12 +776,29 @@ def meetings_with_sends(
         )
     if not meetings:
         return set()
-    return set(
+    sent = set(
         session.scalars(
             select(ExtProjectSend.meeting_id)
             .where(ExtProjectSend.meeting_id.in_(meetings))
             .distinct()
         )
+    )
+    return sent | set(
+        session.scalars(
+            select(ExtMinutesEvent.meeting_id)
+            .where(ExtMinutesEvent.meeting_id.in_(meetings))
+            .distinct()
+        )
+    )
+
+
+def has_events(session: Session, meeting_id: str) -> bool:
+    """Whether anyone put this meeting's minutes on their own calendar."""
+    return (
+        session.scalar(
+            select(ExtMinutesEvent.user_id).where(ExtMinutesEvent.meeting_id == meeting_id).limit(1)
+        )
+        is not None
     )
 
 
@@ -644,21 +813,36 @@ def sent_targets(session: Session, meeting_id: str) -> list[str]:
     )
 
 
-def refresh(session: Session, meeting_id: str, clients: Clients) -> list[Sent]:
+CalendarFor = Callable[[str], "tuple[Any, str] | None"]
+"""A person's own calendar client and calendar id, or ``None`` (tasks' ``_calendars``)."""
+
+
+def refresh(
+    session: Session,
+    meeting_id: str,
+    clients: Clients,
+    calendar_for: CalendarFor | None = None,
+) -> list[Sent]:
     """After the meeting's confirmed rows changed with nobody pressing send --
     speech deleted, a decision taken back, a line masked again: every copy it
     already has rewritten, or retracted when its project has nothing confirmed
     left. Makes no copy that was not there. A tool not connected keeps its
     copy until it is (it cannot be reached either way).
 
+    The minutes events on people's own calendars too, each through its owner's
+    grant (``calendar_for``): nobody else can touch another person's calendar,
+    so this is the only way an event there loses a deleted sentence.
+
     A copy that already says the minutes as they are now is left alone and
-    reported ``unchanged`` (``ExtProjectSend.content_digest``): nothing is
-    asked of its tool. So this can run after every change, and again after a
-    failure, without a new Notion page each time."""
+    reported ``unchanged`` (``content_digest`` on its row, an event's too):
+    nothing is asked of its tool, and no grant is asked for. So this can run
+    after every change, and again after a failure, without a new Notion page
+    each time."""
     existing = list(
         session.scalars(select(ExtProjectSend).where(ExtProjectSend.meeting_id == meeting_id))
     )
-    if not existing:
+    events = _events(session, meeting_id)
+    if not existing and not events:
         return []
     projects, _ = minutes(session, meeting_id)
     by_id = {m.project_id: m for m in projects}
@@ -689,8 +873,46 @@ def refresh(session: Session, meeting_id: str, clients: Clients) -> list[Sent]:
                     lambda m=m, row=row: _send_one(session, meeting_id, m, row.target, clients),
                 )
             )
+    for event in events:
+        project = (event.project_id, names.get(event.project_id, ""))
+        out.append(
+            _try(
+                session,
+                meeting_id,
+                project,
+                "calendar",
+                lambda event=event: _refresh_event(
+                    session, meeting_id, event, by_id.get(event.project_id), calendar_for
+                ),
+            )
+        )
     log.info("extraction_project_minutes_refreshed", meeting_id=meeting_id, copies=len(out))
     return out
+
+
+def _refresh_event(
+    session: Session,
+    meeting_id: str,
+    event: ExtMinutesEvent,
+    m: Minutes | None,
+    calendar_for: CalendarFor | None,
+) -> str:
+    if (
+        m is not None
+        and m.day is not None
+        and event.event_id
+        and event.content_digest == _digest(m)
+    ):
+        return "unchanged"
+    mine = calendar_for(event.user_id) if calendar_for is not None else None
+    if mine is None:
+        return "not_connected"
+    calendar, calendar_id = mine
+    if m is None or m.day is None:
+        return _retract_event(session, event, calendar, calendar_id)
+    return _to_calendar(
+        session, meeting_id, m, Clients(calendar=(calendar, calendar_id, event.user_id))
+    )
 
 
 def in_line(sent: Iterable[Sent]) -> bool:
