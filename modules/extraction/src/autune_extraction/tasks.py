@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any, cast
 
 from celery import shared_task
@@ -863,20 +864,19 @@ def send_weekly_digests() -> list[str]:
     sent: list[str] = []
     refused: list[str] = []
     not_linked = 0
-    away = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        if leave and _out_of_office(digest.user_id, now):
-            # Held back, not claimed: asked again next run, and sent then if
-            # they are back inside the sending hours.
-            away += 1
-            continue
+        # Asked by the service, last of all: only for a message that would
+        # otherwise go (review of #838).
+        away = partial(_out_of_office, digest.user_id, now) if leave else None
         try:
             with session_scope() as session:
-                went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
+                went = service.send_weekly_digest(
+                    session, SlackClient(secret), digest, now=now, away=away
+                )
         except PrivacyViolationError:
             refused.append(digest.user_id)
             # Reported once: the week's claim is kept, in its own transaction,
@@ -911,7 +911,6 @@ def send_weekly_digests() -> list[str]:
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
-            away=away,
         )
     if refused:
         raise PrivacyViolationError(
@@ -949,20 +948,19 @@ def send_daily_digests() -> list[str]:
     sent: list[str] = []
     refused: list[str] = []
     not_linked = 0
-    away = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        if leave and _out_of_office(digest.user_id, now):
-            # Held back, not claimed: asked again next run, and sent then if
-            # they are back inside the sending hours.
-            away += 1
-            continue
+        # Asked by the service, last of all: only for a message that would
+        # otherwise go (review of #838).
+        away = partial(_out_of_office, digest.user_id, now) if leave else None
         try:
             with session_scope() as session:
-                went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
+                went = service.send_daily_digest(
+                    session, SlackClient(secret), digest, now=now, away=away
+                )
         except PrivacyViolationError:
             refused.append(digest.user_id)
             # Reported once: the day's claim is kept, in its own transaction,
@@ -997,7 +995,6 @@ def send_daily_digests() -> list[str]:
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
-            away=away,
         )
     if refused:
         raise PrivacyViolationError(
@@ -1012,6 +1009,14 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
     right now (``days_off.away_now``) -- ``False`` for someone with no calendar
     connected, and ``False`` when it cannot be read.
 
+    **Nobody's calendar is read for a message that could not reach them.** A
+    person who has not linked a Slack account gets no DM whatever their
+    calendar says, so theirs is not asked about -- every ten minutes of a
+    morning, it would be (mkkim68, review of #838).
+
+    **Nothing here says who was away.** No count of held-back digests is
+    logged: with one person owed, a count of one is that person's absence.
+
     **Unknown is not away.** A digest is the person's own work sent to
     themselves; a grant that lapsed or a Google outage must not silence it.
     The failure is logged by type with the person's id, never with anything
@@ -1019,6 +1024,9 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
     """
     try:
         with session_scope() as session, _calendars(session) as calendar_for:
+            linked = load_user_integration(session, user_id, "slack")
+            if linked is None or not linked.config.get("slack_user_id"):
+                return False
             connection = calendar_for(user_id)
             if connection is None:
                 return False
@@ -1053,7 +1061,9 @@ def refresh_public_holidays() -> int:
     now = datetime.now(tz=UTC)
     try:
         days = days_off.fetch_public_holidays(today=reminders.korean_day(now))
-    except IntegrationError as exc:
+    except Exception as exc:  # noqa: BLE001 -- whatever the answer was, the last read stays
+        # Not only ``IntegrationError``: the answer is somebody else's file,
+        # and no shape of it may fail this task (review of #838).
         log.warning("extraction_public_holidays_not_read", reason=type(exc).__name__)
         return 0
     with session_scope() as session:

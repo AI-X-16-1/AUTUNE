@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -101,6 +102,42 @@ def test_every_day_of_an_event_is_a_holiday_and_its_end_is_exclusive() -> None:
     assert date(2026, 12, 24) not in days, "an observance is marked and worked"
 
 
+def test_an_event_at_the_end_of_the_calendar_breaks_nothing() -> None:
+    """9999-12-31 with no end: there is no day after it to count up to. It is
+    skipped, and the events around it are still read (review of #838)."""
+    text = (
+        "BEGIN:VEVENT\nDTSTART;VALUE=DATE:99991231\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nDTSTART;VALUE=DATE:99991225\nDTEND;VALUE=DATE:99991231\nEND:VEVENT\n"
+        "BEGIN:VEVENT\nDTSTART;VALUE=DATE:20261009\nDTEND;VALUE=DATE:20261010\nEND:VEVENT\n"
+    )
+
+    days = days_off.parse_holiday_ics(text)
+
+    assert date(2026, 10, 9) in days
+    assert date(9999, 12, 31) in days and date(9999, 12, 25) in days
+
+
+@pytest.mark.parametrize(
+    ("line", "day"),
+    [
+        pytest.param("DTSTART:20261008T150000Z", date(2026, 10, 9), id="utc-midnight-in-seoul"),
+        pytest.param("DTSTART:20261009T010000Z", date(2026, 10, 9), id="utc-morning"),
+        pytest.param("DTSTART:20261009T000000", date(2026, 10, 9), id="no-zone"),
+        pytest.param("DTSTART;VALUE=DATE:20261009", date(2026, 10, 9), id="a-date"),
+    ],
+)
+def test_a_day_is_the_day_it_is_in_korea(line: str, day: date) -> None:
+    text = f"BEGIN:VEVENT\n{line}\nEND:VEVENT\n"
+
+    assert days_off.parse_holiday_ics(text) == {day}
+
+
+def test_a_utc_event_ends_on_its_korean_day_too() -> None:
+    text = "BEGIN:VEVENT\nDTSTART:20261008T150000Z\nDTEND:20261009T150000Z\nEND:VEVENT\n"
+
+    assert days_off.parse_holiday_ics(text) == {date(2026, 10, 9)}
+
+
 def test_an_absurd_span_does_not_turn_months_into_holidays() -> None:
     text = "BEGIN:VEVENT\nDTSTART;VALUE=DATE:20261001\nDTEND;VALUE=DATE:20270401\nEND:VEVENT\n"
 
@@ -152,6 +189,18 @@ def test_an_answer_that_is_not_a_calendar_of_holidays_is_refused(
     with pytest.raises(error) as caught:
         days_off.fetch_public_holidays(today=TUESDAY, http=answering(status, text))
     assert "html" not in str(caught.value).lower(), "what Google said is not repeated"
+
+
+def test_an_answer_longer_than_any_calendar_is_given_up_on() -> None:
+    """Nothing says how long somebody else's file is until it is read."""
+    padding = "X-PAD:" + "x" * 1000 + "\r\n"
+    huge = ICS + padding * (days_off.MAX_ICS_BYTES // len(padding) + 1)
+
+    with pytest.raises(PermanentIntegrationError):
+        days_off.fetch_public_holidays(today=TUESDAY, http=answering(200, huge))
+    assert HANGUL_DAY in days_off.fetch_public_holidays(
+        today=TUESDAY, http=answering(200, ICS + padding * 10)
+    )
 
 
 def test_a_timeout_is_an_outage() -> None:
@@ -345,6 +394,8 @@ class World:
 
     slack: FakeSlack = field(default_factory=FakeSlack)
     calendars: dict[str, object] = field(default_factory=dict)
+    linked: set[str] = field(default_factory=lambda: {"user_kim", "user_lee"})
+    """Who linked a Slack account for DMs."""
     settings: dict[str, bool] = field(
         default_factory=lambda: {
             "daily_digest": True,
@@ -379,7 +430,13 @@ def world(session: Session, monkeypatch: pytest.MonkeyPatch) -> World:
 
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "_calendars", calendars)
+
+    def linked(_: Session, user_id: str, service: str) -> SimpleNamespace | None:
+        assert service == "slack"
+        return SimpleNamespace(config={"slack_user_id": "U1"}) if user_id in made.linked else None
+
     monkeypatch.setattr(tasks, "load_integration", lambda s, team, service: _Config("xoxb"))
+    monkeypatch.setattr(tasks, "load_user_integration", linked)
     monkeypatch.setattr(tasks, "SlackClient", lambda secret: made.slack)
     monkeypatch.setattr(tasks, "datetime", _Clock)
     monkeypatch.setattr(
@@ -459,6 +516,131 @@ def test_a_privacy_refusal_while_asking_is_raised_not_read_as_unknown(
         tasks.send_daily_digests()
 
 
+# --- asked last, about nobody it need not be, and nothing kept (review of #838) ------------
+
+
+class Spy:
+    def __init__(self, answer: bool) -> None:
+        self.answer = answer
+        self.calls = 0
+
+    def __call__(self) -> bool:
+        self.calls += 1
+        return self.answer
+
+
+def owed_kim(session: Session) -> service.DailyDigestOwed:
+    (found,) = [
+        d
+        for d in service.daily_digests_to_send(session, now=TUESDAY_10_KST)
+        if d.user_id == "user_kim"
+    ]
+    return found
+
+
+def test_the_calendar_is_asked_only_about_a_message_that_would_otherwise_go(
+    session: Session,
+) -> None:
+    """Every cheaper reason not to send comes first: a person who turned the
+    reminders off, paused the day, or has nothing to be told does not have
+    their calendar read to learn what is already known."""
+    owed, slack = owed_kim(session), FakeSlack()
+
+    off = Spy(True)
+    service.set_due_reminders(session, "user_kim", on=False, now=TUESDAY_10_KST)
+    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=off) is False
+    service.set_due_reminders(session, "user_kim", on=True, now=TUESDAY_10_KST)
+
+    paused = Spy(True)
+    service.set_notification_pause(
+        session, "user_kim", starts_on=TUESDAY, ends_on=TUESDAY, now=TUESDAY_10_KST
+    )
+    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=paused) is False
+    service.set_notification_pause(
+        session, "user_kim", starts_on=None, ends_on=None, now=TUESDAY_10_KST
+    )
+
+    nothing = Spy(True)
+    session.query(ExtActionItem).filter_by(assignee_id="user_kim").delete()
+    session.flush()
+    assert (
+        service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=nothing) is False
+    )
+
+    assert (off.calls, paused.calls, nothing.calls) == (0, 0, 0)
+    assert slack.sent == []
+
+
+def test_away_is_asked_once_before_anything_is_claimed(session: Session) -> None:
+    owed, slack = owed_kim(session), FakeSlack()
+
+    away = Spy(True)
+    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=away) is False
+    assert away.calls == 1
+    assert session.query(ExtDailyDigest).count() == 0 and slack.sent == []
+
+    back = Spy(False)
+    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=back) is True
+    assert back.calls == 1 and [m.channel for m in slack.sent] == ["user_kim"]
+
+
+def test_mondays_digest_asks_last_too(session: Session) -> None:
+    (owed, _other) = service.weekly_digests_to_send(session, now=PLAIN_MONDAY_10_KST)
+    slack = FakeSlack()
+
+    off = Spy(True)
+    service.set_due_reminders(session, owed.user_id, on=False, now=PLAIN_MONDAY_10_KST)
+    assert (
+        service.send_weekly_digest(session, slack, owed, now=PLAIN_MONDAY_10_KST, away=off) is False
+    )
+    service.set_due_reminders(session, owed.user_id, on=True, now=PLAIN_MONDAY_10_KST)
+    away = Spy(True)
+    assert (
+        service.send_weekly_digest(session, slack, owed, now=PLAIN_MONDAY_10_KST, away=away)
+        is False
+    )
+
+    assert (off.calls, away.calls) == (0, 1)
+    assert session.query(ExtWeeklyDigest).count() == 0 and slack.sent == []
+
+
+def test_nobodys_calendar_is_read_for_a_dm_that_cannot_reach_them(
+    session: Session, world: World
+) -> None:
+    """Somebody with no linked Slack account gets no DM whatever their calendar
+    says -- so it is not asked, this run or the seventeen after it."""
+    asked = Asked(away=[(TUESDAY, date(2026, 10, 8))])
+    world.calendars["user_kim"] = asked
+    world.linked.discard("user_kim")
+
+    for minute in (0, 10, 20):
+        _Clock.moment = kst(10, minute).astimezone(UTC)
+        tasks.send_daily_digests()
+
+    assert asked.asked == []
+
+
+def test_no_log_line_says_how_many_were_away(session: Session, world: World) -> None:
+    """With one person owed, a count of one is that person's absence
+    (mkkim68, review of #838). privacy.md says nothing is kept, so nothing is."""
+    world.calendars["user_kim"] = FakeCalendar(away=[(TUESDAY, date(2026, 10, 8))])
+    session.query(ExtActionItem).filter_by(assignee_id="user_lee").delete()
+    session.flush()
+
+    with capture_logs() as logs:
+        assert tasks.send_daily_digests() == []
+
+    (summary,) = [e for e in logs if e["event"] == "extraction_daily_digests_sent"]
+    assert summary == {
+        "event": "extraction_daily_digests_sent",
+        "log_level": "info",
+        "owed": 1,
+        "sent": 0,
+        "not_linked": 0,
+    }
+    assert "away" not in repr(logs)
+
+
 # --- the holiday read --------------------------------------------------------------------
 
 
@@ -490,13 +672,18 @@ def test_no_call_is_made_where_nothing_would_use_it(
     world: World, monkeypatch: pytest.MonkeyPatch, settings: dict[str, bool]
 ) -> None:
     world.settings.update(settings)
+    fetched: list[date] = []
 
     def fetch(*, today: date) -> set[date]:
-        raise AssertionError("the calendar was fetched")
+        # Recorded, not raised: the task takes any error as a read that did
+        # not happen, so an assertion in here would pass for the wrong reason.
+        fetched.append(today)
+        return {HANGUL_DAY}
 
     monkeypatch.setattr(days_off, "fetch_public_holidays", fetch)
 
     assert tasks.refresh_public_holidays() == 0
+    assert fetched == []
 
 
 def test_a_failed_read_keeps_the_last_good_one(
@@ -515,4 +702,26 @@ def test_a_failed_read_keeps_the_last_good_one(
     assert [row.day for row in session.query(ExtPublicHoliday)] == [HANGUL_DAY]
     assert [e["reason"] for e in logs if e["event"] == "extraction_public_holidays_not_read"] == [
         "TransientIntegrationError"
+    ]
+
+
+def test_no_shape_of_the_answer_fails_the_task(
+    session: Session, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The answer is somebody else's file. An error nobody listed -- the
+    review of #838 found an ``OverflowError`` -- is a read that did not
+    happen, not a task that died."""
+    days_off.store_public_holidays(session, {HANGUL_DAY}, now=TUESDAY_10_KST)
+
+    def fetch(*, today: date) -> set[date]:
+        raise OverflowError("date value out of range")
+
+    monkeypatch.setattr(days_off, "fetch_public_holidays", fetch)
+
+    with capture_logs() as logs:
+        assert tasks.refresh_public_holidays() == 0
+
+    assert [row.day for row in session.query(ExtPublicHoliday)] == [HANGUL_DAY]
+    assert [e["reason"] for e in logs if e["event"] == "extraction_public_holidays_not_read"] == [
+        "OverflowError"
     ]

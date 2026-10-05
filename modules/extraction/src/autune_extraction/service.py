@@ -3626,7 +3626,12 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
 
 
 def send_weekly_digest(
-    session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
+    session: Session,
+    slack: SlackApi,
+    digest: WeeklyDigest,
+    *,
+    now: datetime,
+    away: Callable[[], bool] | None = None,
 ) -> bool:
     """Claim the week's digest and send it, in that order -- or send nothing.
 
@@ -3647,6 +3652,11 @@ def send_weekly_digest(
         return False
     rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
     if not rows:
+        return False
+    # Last of the reasons not to send, because it is the one that reads
+    # something of the person's outside Autune: ``away`` is asked only about a
+    # digest that would otherwise go, and before anything is claimed.
+    if away is not None and away():
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtWeeklyDigest)
@@ -3948,7 +3958,12 @@ def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: dateti
 
 
 def send_daily_digest(
-    session: Session, slack: SlackApi, owed: DailyDigestOwed, *, now: datetime
+    session: Session,
+    slack: SlackApi,
+    owed: DailyDigestOwed,
+    *,
+    now: datetime,
+    away: Callable[[], bool] | None = None,
 ) -> bool:
     """Claim the day's morning DM and send it, in that order -- or send nothing.
 
@@ -3968,6 +3983,12 @@ def send_daily_digest(
         session, owed, since=_daily_since(session, owed, now=now), now=now
     )
     if content.empty:
+        return False
+    # ``away`` -- whether the person's own calendar marks them out of office
+    # (``tasks._out_of_office``) -- is asked last and only now: for a message
+    # that would otherwise go, never for one already stopped above, and before
+    # anything is claimed, so somebody back later in the morning still gets it.
+    if away is not None and away():
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtDailyDigest)
