@@ -108,6 +108,31 @@ x-python: &python
     AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL: ""
     AUTUNE_EXTRACTION_RESOLVER_IMPL: llm
     AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392: "true"
+    # Module B's two digests are on, on this site (decided by the user,
+    # 2026-10-05): a Slack DM to each person about their own action items.
+    #   - DAILY: Tuesday to Friday, 09:00-12:00 KST -- what changed on their
+    #     items since the last one, and what is theirs to do today.
+    #   - WEEKLY: Monday, the list of their open items. Without it a Monday
+    #     sends nothing, since the morning DM leaves Monday to it.
+    #
+    # WHO GETS ONE: a person with an open, confirmed item assigned to them, on
+    # a team that connected Slack, who linked their own Slack account. Each
+    # message goes to that person alone and through the outbound check. A
+    # person stops both with "마감 알림 받기" off, or for a while with their
+    # own leave dates.
+    #
+    # WHAT ELSE THIS STARTS: with a digest on, the worker reads Google's public
+    # calendar of Korea's holidays twice a day -- a GET with no credentials
+    # that carries nothing -- so that no digest goes on a public holiday.
+    #
+    # NOT TURNED ON, and not to be without its own decision: due-date reminders
+    # (AUTUNE_EXTRACTION_DUE_REMINDERS), and the read of a person's
+    # out-of-office time (AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR), which waits
+    # for #841 to be on this branch.
+    #
+    # TURNING THEM OFF is removing the two lines; nothing else depends on them.
+    AUTUNE_EXTRACTION_DAILY_DIGEST: "true"
+    AUTUNE_EXTRACTION_WEEKLY_DIGEST: "true"
     # The NLI implementations scripts/up.sh runs without --real-models, for
     # the reason it gives: both NLI checkpoints are a private repo (#172).
     AUTUNE_EXTRACTION_NLI_IMPL: fake
