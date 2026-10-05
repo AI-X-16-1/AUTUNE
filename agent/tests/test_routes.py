@@ -596,3 +596,23 @@ def test_a_meeting_the_caller_cannot_read_has_no_label(
 
     assert missing.status_code == unknown.status_code == 404
     assert team["meeting"] not in missing.text
+
+
+class _BusyRouter(FakeRouter):
+    def route(self, request: str, subagents: Any) -> str | None:
+        from autune_integrations.errors import TransientIntegrationError
+
+        raise TransientIntegrationError("agent-router returned 429")
+
+
+def test_a_model_out_of_quota_reads_as_busy_not_broken(
+    session: Session, team: dict[str, str]
+) -> None:
+    client = _client(session, team["member"], chat_router=_BusyRouter())
+
+    reply = client.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"})
+
+    assert reply.status_code == 503
+    assert reply.json()["error"]["code"] == "agent_busy"
+    run = session.query(AgentRun).one()
+    assert run.outcome == "failed"

@@ -27,6 +27,7 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemRelated,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
@@ -36,6 +37,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtSyncFailure,
 )
 from autune_extraction.pipeline import resolver as resolver_module
 from autune_extraction.pipeline.base import Resolution, ResolutionRequest
@@ -483,6 +485,9 @@ TABLES = [
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,
     ExtExternalRef.__table__,
+    # Every read of an item looks these up (#680): its failed copies, its event.
+    ExtCalendarEvent.__table__,
+    ExtSyncFailure.__table__,
 ]
 
 
