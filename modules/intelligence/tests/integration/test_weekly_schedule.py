@@ -326,3 +326,126 @@ def test_the_schedule_is_for_the_teams_members(db_session: Session, team: str) -
         assert client.get(url).status_code == 403
         body = {"weekday": 1, "hour": 9, "send_empty": False}
         assert client.put(url, json=body).status_code == 403
+
+
+# --- #821 review ---------------------------------------------------------------------
+
+
+def _second_team(db_session: Session) -> str:
+    from autune_core import Team, TeamIntegration
+    from autune_core.crypto import encrypt
+
+    other = Team(name="다른 팀")
+    db_session.add(other)
+    db_session.flush()
+    db_session.add(
+        TeamIntegration(
+            team_id=other.id, service="slack", secret=encrypt("xoxb-2"), config={"channel": "C2"}
+        )
+    )
+    db_session.flush()
+    return other.id
+
+
+def _due_now(db_session: Session, team: str) -> datetime:
+    """Set ``team``'s slot to the last hour passed, empty weeks posted; return it."""
+    slot = datetime.now(UTC).astimezone(KST).replace(minute=0, second=0, microsecond=0)
+    service.set_weekly_report_schedule(
+        db_session,
+        team,
+        weekday=slot.weekday(),
+        hour=slot.hour,
+        send_empty=True,
+        user_id=_member(db_session, team).id,
+    )
+    return slot
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_a_refused_post_is_not_retried_and_fails_the_task_after_the_rest(
+    db_session: Session, team: str, slack: object
+) -> None:
+    """The outbound check refusing a body is not a network blip: the week is set
+    aside as refused, the other teams still get theirs, and the task then fails
+    so it shows (#821 review; B's #769, C's #506)."""
+    from autune_core.errors import PrivacyViolationError
+
+    other = _second_team(db_session)
+    for t in (team, other):
+        _active(db_session, t)
+        slot = _due_now(db_session, t)
+
+    def post(channel: str, _body: str) -> None:
+        if channel == "C1":
+            raise PrivacyViolationError("refused by the outbound check")
+
+    slack.return_value.post_message.side_effect = post  # type: ignore[attr-defined]
+
+    with pytest.raises(PrivacyViolationError):
+        tasks.send_due_weekly_reports()
+    tasks.send_due_weekly_reports()  # the next tick
+
+    start, _ = service.weekly_period(slot)
+    refused = db_session.get(IntelReport, (team, start))
+    sent = db_session.get(IntelReport, (other, start))
+    assert refused is not None and refused.not_posted == "refused" and refused.posted_at is None
+    assert sent is not None and sent.posted_at is not None
+    channels = [c.args[0] for c in slack.return_value.post_message.call_args_list]  # type: ignore[attr-defined]
+    assert sorted(channels) == ["C1", "C2"]  # each once
+
+
+def test_moving_the_day_does_not_send_the_same_days_again(db_session: Session, team: str) -> None:
+    """Monday's report went out; moved to Sunday 23:00 the same morning, the
+    team is not sent a week overlapping it six days out of seven (#821 review).
+    The next report starts where the last one ended."""
+    _active(db_session, team)
+    monday = _kst(2026, 10, 5, 9, 10)
+    service.generate_weekly_report(db_session, team, date(2026, 9, 28), date(2026, 10, 5))
+    service.claim_weekly_report_post(db_session, team, date(2026, 9, 28), now=monday)
+
+    service.set_weekly_report_schedule(
+        db_session, team, weekday=6, hour=23, send_empty=True, user_id=_member(db_session, team).id
+    )
+
+    assert all(t != team for t, _, _ in service.due_weekly_reports(db_session, monday))
+    next_sunday = service.due_weekly_reports(db_session, _kst(2026, 10, 11, 23, 10))
+    assert (team, date(2026, 10, 5), date(2026, 10, 11)) in next_sunday
+
+
+def test_a_slot_caught_up_the_next_evening_still_states_the_counts(
+    db_session: Session, team: str
+) -> None:
+    """A Sunday 23:00 slot caught up on Monday evening is ~43 hours past its
+    week's end; B's counts are still today's (#821 review)."""
+    from unittest.mock import patch
+
+    from autune_contracts import TeamActionProgress
+
+    meetings = [Meeting(team_id=team, title="m") for _ in range(3)]
+    db_session.add_all(meetings)
+    db_session.flush()
+    service.store_action_progress(
+        db_session,
+        TeamActionProgress(
+            team_id=team,
+            as_of=datetime.now(UTC),
+            meetings=[
+                {"meeting_id": m.id, "confirmed": 1, "done": 0, "overdue": 1} for m in meetings
+            ],
+        ),
+    )
+    end = (datetime.now(UTC) - timedelta(hours=43)).astimezone(KST).date()
+    real = datetime.now(UTC)
+    shift = datetime.combine(end, datetime.min.time(), tzinfo=KST) + timedelta(hours=43) - real
+
+    class _Then(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[no-untyped-def, override]
+            moment = real + shift
+            return moment if tz is None else moment.astimezone(tz)
+
+    # Keep B's snapshot fresh relative to the shifted clock.
+    with patch.object(service, "datetime", _Then):
+        report = service.generate_weekly_report(db_session, team, end - timedelta(days=7), end)
+
+    assert report.metrics_json["action_progress_stated"] is True

@@ -134,10 +134,16 @@ See `../architecture/async-pipeline.md`.
    (the seven Korean days before the slot's day) if it is not written, and
    posts it once. A team with no meeting in 91 days is sent nothing.
    - **Once only:** the post is claimed (`posted_at`) and committed before it
-     is sent; a failed send gives the claim back for the next tick.
+     is sent; a failed send gives the claim back for the next tick. A body the
+     outbound check refuses is set aside (`not_posted = "refused"`) and the
+     task fails once the other teams are done, as B's and C's sweeps do.
+   - **Moving the day:** a week starts no earlier than the last report out
+     ended, so the next report after a change is shorter rather than repeating
+     days, and a slot inside the last week is skipped.
    - **Empty weeks:** "nothing to say" means no meeting analysed, and nothing
      overdue or carried over. On a team that did not ask for those, the row is
-     kept and marked `not_posted = "empty"`.
+     kept and marked `not_posted = "empty"`. A week set aside stays so: written
+     again by hand with something to say, it is still not posted.
    - **By hand:** `tasks.generate_weekly_report(team_id, period_end)` writes a
      week by hand and posts it under the same rule. `period_end` defaults to
      today in Korean time.

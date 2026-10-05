@@ -815,9 +815,11 @@ def _stated_progress(
     )
 
 
-_PROGRESS_REPORTED_WITHIN: Final = timedelta(days=1)
+_PROGRESS_REPORTED_WITHIN: Final = timedelta(days=2)
 """B's counts describe today. A report for a week that ended longer ago than
-this leaves them out rather than print today's numbers as that week's."""
+this leaves them out rather than print today's numbers as that week's. Two
+days, not one: a 23:00 slot caught up the next evening is ~47 hours past its
+week's end (``WEEKLY_REPORT_CATCH_UP``, #821 review)."""
 
 
 def generate_weekly_report(
@@ -956,9 +958,8 @@ WEEKLY_REPORT_DEFAULT_WEEKDAY: Final = 0
 WEEKLY_REPORT_DEFAULT_HOUR: Final = 9
 """09:00 Korean time: ui-spec S27's "Mondays 09:00"."""
 WEEKLY_REPORT_CATCH_UP: Final = timedelta(days=1)
-"""A slot older than this is not caught up. A worker that was down for a day
-does not post last week's report a week late, and a team that moves its day
-does not get the slot it just skipped."""
+"""A slot older than this is not caught up: a worker that was down for a day
+does not post last week's report a week late."""
 WEEKLY_REPORT_ACTIVE_WITHIN: Final = timedelta(days=91)
 """A team with no meeting created this recently is sent nothing at all -- B's
 ``ACTION_PROGRESS_WINDOW``, so a report still has counts to state."""
@@ -1058,7 +1059,11 @@ def due_weekly_reports(session: Session, now: datetime) -> list[DueWeeklyReport]
     """Teams whose latest slot passed within ``WEEKLY_REPORT_CATCH_UP`` and whose
     report for that week is not out yet: not written, or written and neither
     posted nor set aside. Only teams with a meeting in
-    ``WEEKLY_REPORT_ACTIVE_WITHIN``."""
+    ``WEEKLY_REPORT_ACTIVE_WITHIN``.
+
+    A week starts no earlier than the last report out ended, so a team that
+    moves its day is not sent the same days twice: the next report is shorter,
+    and a slot inside the last week is skipped (#821 review)."""
     active = session.scalars(
         sa.select(Meeting.team_id)
         .where(Meeting.created_at >= now - WEEKLY_REPORT_ACTIVE_WITHIN, _not_expired(now))
@@ -1071,6 +1076,17 @@ def due_weekly_reports(session: Session, now: datetime) -> list[DueWeeklyReport]
         if now - slot > WEEKLY_REPORT_CATCH_UP:
             continue
         start, end = weekly_period(slot)
+        last_out = session.scalar(
+            sa.select(func.max(IntelReport.period_end)).where(
+                IntelReport.team_id == team_id,
+                sa.or_(IntelReport.posted_at.is_not(None), IntelReport.not_posted.is_not(None)),
+                IntelReport.period_start != start,
+            )
+        )
+        if last_out is not None:
+            start = max(start, last_out)
+        if start >= end:
+            continue
         row = session.get(IntelReport, (team_id, start))
         if row is None or (row.posted_at is None and row.not_posted is None):
             due.append(DueWeeklyReport(team_id, start, end))
@@ -1112,8 +1128,18 @@ def claim_weekly_report_post(
     return row
 
 
+def refuse_weekly_report_post(session: Session, team_id: str, period_start: date) -> None:
+    """The outbound check refused the body: set the week aside for good
+    (``not_posted="refused"``). The same body would be refused again."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is not None:
+        row.posted_at = None
+        row.not_posted = "refused"
+        session.flush()
+
+
 def release_weekly_report_post(session: Session, team_id: str, period_start: date) -> None:
-    """A post that failed is tried again on the next tick."""
+    """A post that failed for another reason is tried again on the next tick."""
     row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
     if row is not None:
         row.posted_at = None

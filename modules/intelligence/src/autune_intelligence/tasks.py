@@ -29,7 +29,7 @@ from autune_contracts import (
     validate_major_version,
 )
 from autune_core import Meeting, get_logger, load_integration, periodic, publish, session_scope
-from autune_core.errors import ConflictError
+from autune_core.errors import ConflictError, PrivacyViolationError
 from autune_integrations import SlackClient
 
 from . import service
@@ -194,28 +194,43 @@ def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
 def send_due_weekly_reports() -> None:
     """Each team whose weekly slot has passed gets that week's report, written
     once and posted once (#227). Hourly, so a report goes out within the hour
-    after the team's chosen time; one team's failure does not hold the rest."""
+    after the team's chosen time. One team's failure does not hold the rest,
+    **except a privacy violation**, raised once the others are done, ids only,
+    as B's and C's sweeps do (#821 review)."""
     now = datetime.now(UTC)
     with session_scope() as session:
         due = service.due_weekly_reports(session, now)
+    refused: list[str] = []
     for team_id, start, end in due:
         try:
             with session_scope() as session:
                 if session.get(service.IntelReport, (team_id, start)) is None:
                     service.generate_weekly_report(session, team_id, start, end)
             _post_weekly_report(team_id, start)
-        except Exception:
-            log.exception(
-                "intelligence_weekly_report_failed", team_id=team_id, period_start=str(start)
+        except PrivacyViolationError:
+            refused.append(team_id)
+        except Exception as exc:  # noqa: BLE001 - one team must not stop the rest
+            # The class name only: a failed post's message can carry the body.
+            log.warning(
+                "intelligence_weekly_report_failed",
+                team_id=team_id,
+                period_start=str(start),
+                reason=type(exc).__name__,
             )
+    if refused:
+        raise PrivacyViolationError(
+            f"weekly report refused by the outbound check for {len(refused)} team(s): "
+            f"{', '.join(refused)}"
+        )
 
 
 def _post_weekly_report(team_id: str, start: date) -> None:
     """Post the stored report for the week starting ``start``, at most once.
 
     Skipped, and tried again on the next tick, without a connected Slack or a
-    channel. The post is claimed and committed before it is sent; a failed send
-    gives the claim back.
+    channel. The post is claimed and committed before it is sent. A send the
+    outbound check refuses sets the week aside (``not_posted="refused"``) and
+    raises; any other failure gives the claim back for the next tick.
     """
     with session_scope() as session:
         config = load_integration(session, team_id, "slack")
@@ -235,6 +250,10 @@ def _post_weekly_report(team_id: str, start: date) -> None:
         )
     try:
         SlackClient(secret).post_message(channel, body)
+    except PrivacyViolationError:
+        with session_scope() as session:
+            service.refuse_weekly_report_post(session, team_id, start)
+        raise
     except Exception:
         with session_scope() as session:
             service.release_weekly_report_post(session, team_id, start)
