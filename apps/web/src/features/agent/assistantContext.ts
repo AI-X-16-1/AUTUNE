@@ -42,7 +42,7 @@ export function contextFor(pathname: string): AssistantContext {
   if (pathname.startsWith("/actions"))
     return { label: "액션아이템", suggestions: TEAM_QUESTIONS };
   if (pathname.startsWith("/decisions"))
-    return { label: "결정 계보", suggestions: TEAM_QUESTIONS };
+    return { label: "결정 히스토리", suggestions: TEAM_QUESTIONS };
   if (pathname.startsWith("/dashboard"))
     return { label: "대시보드", suggestions: TEAM_QUESTIONS };
   if (pathname.startsWith("/approvals"))
