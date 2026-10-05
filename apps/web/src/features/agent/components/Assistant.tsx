@@ -12,7 +12,7 @@ import {
 import { ApiError } from "@/shared/api/client";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
-import { getMeetingLabel, sendChat } from "../api";
+import { getMeetingLabel, listPending, sendChat } from "../api";
 import { contextFor } from "../assistantContext";
 import type { ChatFinding, ChatReply } from "../types";
 import { ChatProposal } from "./ChatProposal";
@@ -43,6 +43,8 @@ const UNROUTED =
 const OFF = "에이전트가 꺼져 있어 답할 수 없습니다.";
 const FAILED = "답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const NOT_FOUND = "이 회의를 찾을 수 없습니다.";
+const BUSY =
+  "지금 AI 사용량이 많아 답하지 못했습니다. 1분쯤 뒤에 다시 물어봐 주세요.";
 const PRIVATE =
   "연락처나 계좌번호 같은 개인정보가 들어간 질문은 보낼 수 없습니다. 그 값을 빼고 다시 물어봐 주세요.";
 
@@ -55,6 +57,8 @@ function failure(e: unknown, onMeeting: boolean): string {
   // The layer answers 500 with `configuration_error` when it is off or has no
   // model key (autune_core.errors.ConfigurationError).
   if (e instanceof ApiError && e.code === "configuration_error") return OFF;
+  // The model is out of quota or down (#419): a minute later usually works.
+  if (e instanceof ApiError && e.code === "agent_busy") return BUSY;
   // The outbound guard refused the message itself: retrying cannot help.
   if (e instanceof ApiError && e.code === "privacy_violation") return PRIVATE;
   if (e instanceof ApiError && e.status === 404 && onMeeting) return NOT_FOUND;
@@ -80,6 +84,8 @@ export function Assistant({
   const context = contextFor(pathname);
   const meetingId = context.meetingId;
   // The meeting's own title for the header, once read; the page's name until then.
+  // Proposals waiting for this person: the launcher's dot (spec section 2, 9.7).
+  const [queued, setQueued] = useState(0);
   const [titled, setTitled] = useState<{ id: string; title: string } | null>(
     null,
   );
@@ -106,6 +112,25 @@ export function Assistant({
   useEffect(() => {
     if (open) input.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    // Read on every page and after every turn: a turn can queue a proposal,
+    // and deciding one on 승인 대기 is a navigation away and back. Only rows
+    // still pending count: an approval interrupted mid-run (needs_check) is
+    // never re-run, so it is nothing to approve (#759 review).
+    let current = true;
+    listPending()
+      .then((rows) => {
+        if (current)
+          setQueued(rows.filter((r) => r.status === "pending").length);
+      })
+      .catch(() => {
+        if (current) setQueued(0);
+      });
+    return () => {
+      current = false;
+    };
+  }, [pathname, turns.length]);
 
   useEffect(() => {
     if (!open || !meetingId || titled?.id === meetingId) return;
@@ -306,6 +331,14 @@ export function Assistant({
         >
           AT
         </span>
+        {queued > 0 && (
+          <span
+            role="status"
+            aria-label="승인을 기다리는 제안이 있습니다"
+            className="absolute rounded-full bg-[var(--color-signal-critical)]"
+            style={{ width: 6, height: 6, left: 32, top: 12 }}
+          />
+        )}
         비서
         <span
           aria-hidden

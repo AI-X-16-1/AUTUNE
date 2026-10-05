@@ -106,7 +106,6 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         return SpeechForgotten()
 
     replaced: set[str] = set()  # the originals, to find them in reports
-    removed_labels: set[str] = set()
     redacted_decisions: dict[str, str] = {}  # decision id -> its original statement
     texts = topics = 0
 
@@ -118,9 +117,12 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
                 completion.extraction_payload, gone, line_of, replaced, redacted_decisions
             )
             completion.extraction_payload, texts = payload, texts + n
+        # Labels are this meeting's own: another meeting forgotten in the same
+        # call may keep a topic under the same label, and its links with it.
+        removed_labels: set[str] = set()
         if completion.gap_payload is not None:
-            payload, n_topics, n_questions = _forget_gap(
-                completion.gap_payload, gone, replaced, removed_labels
+            payload, n_topics, n_questions, removed_labels = _forget_gap(
+                completion.gap_payload, gone, replaced
             )
             completion.gap_payload = payload
             topics, texts = topics + n_topics, texts + n_questions
@@ -199,8 +201,9 @@ def _forget_extraction(
 
 
 def _forget_gap(
-    payload: dict[str, Any], gone: set[str], replaced: set[str], removed_labels: set[str]
-) -> tuple[dict[str, Any], int, int]:
+    payload: dict[str, Any], gone: set[str], replaced: set[str]
+) -> tuple[dict[str, Any], int, int, set[str]]:
+    """Drop the topics only the deleted speech made; also return their labels."""
     out = dict(payload)
     removed: dict[str, str] = {}  # topic id -> label
     topics = []
@@ -211,13 +214,12 @@ def _forget_gap(
             continue
         topics.append({**topic, "utterance_ids": sorted(said - gone)})
     if not removed:
-        return payload, 0, 0
+        return payload, 0, 0, set()
     out["topics"] = topics
     out["participation"] = [
         p for p in payload.get("participation", []) if p.get("topic_id") not in removed
     ]
     labels = {label for label in removed.values() if label}
-    removed_labels |= labels
     questions = 0
     gaps = []
     for gap in payload.get("gaps", []):
@@ -230,7 +232,7 @@ def _forget_gap(
             questions += 1
         gaps.append(gap)
     out["gaps"] = gaps
-    return out, len(removed), questions
+    return out, len(removed), questions, labels
 
 
 def _forget_context(

@@ -42,6 +42,18 @@ def test_the_message_follows_the_slackblocks_rules() -> None:
     assert any("●" in str(block) for block in blocks)
 
 
+def test_a_quoted_line_cannot_mention_a_channel_or_disguise_a_link() -> None:
+    """Review of #751: the line is what someone said, and Slack reads ``<...>``
+    in mrkdwn as a mention or a link. Only the quotation is escaped; the link
+    the message adds itself still works."""
+    said = "<!channel> 이건 <https://evil.example|회의록> & 같이 보죠"
+    _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=said, answer_url=URL)
+
+    quoted = blocks[1]["text"]["text"]
+    assert quoted == ("> &lt;!channel&gt; 이건 &lt;https://evil.example|회의록&gt; &amp; 같이 보죠")
+    assert any(f"<{URL}|" in b.get("text", {}).get("text", "") for b in blocks)
+
+
 def test_the_answer_is_a_link_to_autune_not_a_button() -> None:
     """A deployed stack has no receiver for a Slack click yet (#585): a button
     there would do nothing when pressed. The speaker answers on the meeting's

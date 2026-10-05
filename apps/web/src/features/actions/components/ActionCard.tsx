@@ -1,5 +1,6 @@
 import { MaskedText, StatusDot } from "@/shared/ui";
 
+import { SYSTEM_LABEL } from "./SyncStatus";
 import { isOverdue } from "../dates";
 import { staleLabel } from "../stale";
 import { isCandidate } from "../types";
@@ -172,6 +173,16 @@ export function ActionCard({
           </span>
         ) : null}
       </div>
+
+      {item.sync_failures?.length ? (
+        // Red text, never a red fill (ui-spec section 0): a copy that failed.
+        <div
+          className="mt-2 text-[var(--color-signal-critical)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          연동 실패 · {item.sync_failures.map((f) => SYSTEM_LABEL[f.system]).join(", ")}
+        </div>
+      ) : null}
 
       {item.sync_refs?.length ? (
         <div

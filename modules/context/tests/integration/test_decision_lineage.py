@@ -317,6 +317,167 @@ def test_a_meeting_with_no_participants_records_nobody_absent(team_id: str) -> N
         assert v2.key_stakeholders_absent == []
 
 
+def _name_speakers(meeting_id: str, user_ids: list[str]) -> None:
+    """What a person confirming speakers in the app does (#370): module A fills
+    ``participants.user_id``, in the order the labels were spoken."""
+    with session_scope() as s:
+        rows = s.scalars(
+            select(Participant)
+            .where(Participant.meeting_id == meeting_id)
+            .order_by(Participant.speaker_label)
+        ).all()
+        assert len(rows) == len(user_ids)
+        for row, user_id in zip(rows, user_ids, strict=True):
+            row.user_id = user_id
+
+
+def _absent(meeting_id: str) -> list[str]:
+    with session_scope() as s:
+        return list(
+            s.scalars(
+                select(CtxDecisionVersion.key_stakeholders_absent).where(
+                    CtxDecisionVersion.meeting_id == meeting_id
+                )
+            ).one()
+        )
+
+
+def _refresh() -> int:
+    with session_scope() as s:
+        return service.refresh_absence(s)
+
+
+def test_absence_is_recorded_once_the_speakers_are_named_after_the_lineage(team_id: str) -> None:
+    """The order #360 is about: lineage first (every voice still NULL, so nobody
+    is called absent), a person naming the speakers later (#370). The refresh is
+    what turns the second into a recorded absence."""
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=0, present=[None])  # alice spoke, unnamed
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    assert _absent(second) == []
+
+    assert _refresh() == 0  # nobody has named the voice yet: nothing to say
+    assert _absent(second) == []
+
+    _name_speakers(second, [alice])
+
+    assert _refresh() == 1
+    assert _absent(second) == [bob]
+
+
+def test_a_refresh_computes_what_the_rechain_would(team_id: str) -> None:
+    """The refresh and ``_rethread`` share ``_absent_for``; if they ever drift
+    apart, a rederive would silently change the list the refresh wrote."""
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=0, present=[None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    _name_speakers(second, [alice])
+    _refresh()
+    refreshed = _absent(second)
+
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))  # re-chains
+
+    assert _absent(second) == refreshed == [bob]
+
+
+def test_a_second_refresh_changes_nothing(team_id: str) -> None:
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=0, present=[None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    _name_speakers(second, [alice])
+
+    assert _refresh() == 1
+    assert _refresh() == 0  # overlapping or repeated runs write the same list
+
+
+def test_one_unnamed_voice_still_leaves_nobody_absent(team_id: str) -> None:
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=0, present=[None, None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    with session_scope() as s:  # one of the two voices is named, the other is not
+        row = s.scalars(
+            select(Participant)
+            .where(Participant.meeting_id == second)
+            .order_by(Participant.speaker_label)
+        ).first()
+        assert row is not None
+        row.user_id = alice
+
+    assert _refresh() == 0
+    assert _absent(second) == []  # the unnamed voice could be bob
+
+
+def test_the_refresh_follows_a_speaker_being_identified_as_someone_else(team_id: str) -> None:
+    """A can move a label from one person to another. Recomputing from
+    ``participants`` each run follows it; a write-once fill would not."""
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=0, present=[None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    _name_speakers(second, [alice])
+    _refresh()
+    assert _absent(second) == [bob]
+
+    _name_speakers(second, [bob])  # it was bob who spoke
+
+    assert _refresh() == 1
+    assert _absent(second) == [alice]
+
+
+def test_a_refresh_never_names_someone_who_left_the_team(team_id: str) -> None:
+    alice = _user(team_id, "lineage-alice@x")
+    guest = _user_without_membership("lineage-guest@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, guest])
+    second = _meeting(team_id, days_ago=0, present=[None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    _name_speakers(second, [alice])
+
+    assert _refresh() == 0
+    assert _absent(second) == []
+
+
+def test_a_meeting_older_than_the_window_is_left_as_it_was(team_id: str) -> None:
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    old = service.ABSENCE_REFRESH_WINDOW.days + 5
+    first = _meeting(team_id, days_ago=old + 10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=old, present=[None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    _name_speakers(second, [alice])
+
+    assert _refresh() == 0
+    assert _absent(second) == []
+
+
+def test_the_task_sends_and_publishes_nothing(team_id: str, published: _CapturingApp) -> None:
+    """No ``ContextLinks`` again and no Slack message: the refresh corrects a
+    stored list and nothing else (``service.refresh_absence``)."""
+    alice, bob = _user(team_id, "lineage-alice@x"), _user(team_id, "lineage-bob@x")
+    first = _meeting(team_id, days_ago=10, present=[alice, bob])
+    second = _meeting(team_id, days_ago=0, present=[None])
+    service.build_decision_lineage(_extraction(first, [("dec_1", _D1, 0.9)]))
+    service.build_decision_lineage(_extraction(second, [("dec_2", _D1, 0.9)]))
+    _name_speakers(second, [alice])
+    published.sent.clear()
+
+    with patch.object(service, "publish_if_ready") as publish:
+        assert tasks.refresh_absence() == 1
+
+    publish.assert_not_called()
+    assert published.sent == []
+    assert _absent(second) == [bob]
+
+
 def test_rebuild_replaces_versions_and_leaves_no_orphan_threads(team_id: str) -> None:
     first = _meeting(team_id, days_ago=10)
     second = _meeting(team_id, days_ago=0)

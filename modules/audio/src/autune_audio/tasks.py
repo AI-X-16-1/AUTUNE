@@ -24,6 +24,7 @@ from autune_audio.config import get_settings
 from autune_audio.decoding import decode
 from autune_audio.diarization import get_diarizer, resolve_device
 from autune_audio.glossary import build_prompt
+from autune_audio.job_guard import JobGuard, JobStopped
 from autune_audio.live.embedder import Embedder, EmbedderDimensionMismatch
 from autune_audio.masking import mask
 from autune_audio.models import AudConsentAttestation, AudSpeakerEmbedding
@@ -164,100 +165,115 @@ def process_recording(job_id: str) -> None:
     log.info("audio_process_started", meeting_id=meeting_id, job_id=job_id)
     # What S12 reads to draw a percentage. Its writes are throttled and can
     # never fail this task (`progress.ProgressReporter`).
-    report = ProgressReporter(job_id)
+    with JobGuard(job_id, interval_s=settings.heartbeat_interval_s) as guard:
+        report = ProgressReporter(job_id, check=guard.check)
 
-    try:
-        with adopt(upload_path(job_id, settings)) as recording:
-            # First line of the block, before `decode`. Reached from `_load`
-            # instead, a device this process cannot use raises after
-            # `transcribe` -- about thirteen minutes of Whisper on the measured
-            # recording -- for a mistake that was knowable before the file was
-            # opened (@PARKJAEKYUNG0525, @lsh2217, @mminjae97, @kjfcvx12 on
-            # #394). One `torch.cuda.is_available()` here fails in
-            # milliseconds instead.
-            #
-            # Inside `adopt`, not in front of it. Outside, a failure left the
-            # upload on disk for the sweep to find -- but the sweep is for a
-            # task that was *lost*, and this one failed; a `failed` job is
-            # never re-run and recovery is a re-upload, which is a new job with
-            # a new file. So the old one had no reader and no owner, which is
-            # the durable copy invariant 11 exists to prevent
-            # (@PARKJAEKYUNG0525). In here, `adopt`'s `finally` deletes it.
-            resolve_device()
+        try:
+            with adopt(upload_path(job_id, settings)) as recording:
+                # First line of the block, before `decode`. Reached from `_load`
+                # instead, a device this process cannot use raises after
+                # `transcribe` -- about thirteen minutes of Whisper on the measured
+                # recording -- for a mistake that was knowable before the file was
+                # opened (@PARKJAEKYUNG0525, @lsh2217, @mminjae97, @kjfcvx12 on
+                # #394). One `torch.cuda.is_available()` here fails in
+                # milliseconds instead.
+                #
+                # Inside `adopt`, not in front of it. Outside, a failure left the
+                # upload on disk for the sweep to find -- but the sweep is for a
+                # task that was *lost*, and this one failed; a `failed` job is
+                # never re-run and recovery is a re-upload, which is a new job with
+                # a new file. So the old one had no reader and no owner, which is
+                # the durable copy invariant 11 exists to prevent
+                # (@PARKJAEKYUNG0525). In here, `adopt`'s `finally` deletes it.
+                resolve_device()
 
-            report.stage("decoding")
-            waveform = decode(recording.path)
-            report.stage("transcribing")
-            transcription = transcribe(waveform, glossary=build_prompt(), on_progress=report.update)
-            report.stage("diarizing")
-            named = rename_speakers(get_diarizer().diarize(waveform, on_progress=report.update))
-            # Two conditions, not one. Consent is the meeting's; the flag is
-            # the deployment's, and while it is off there is nothing an
-            # observation vector could be used for -- `assign_speaker` will
-            # not copy one into a profile. Collecting anyway would hold
-            # biometric data ahead of the question #92 Q4 asks about it, and
-            # would mean that turning the flag on later enrols voices recorded
-            # before anyone could consent to enrolment (@PARKJAEKYUNG0525,
-            # @lsh2217 on #370).
-            collect_vectors = consented and settings.voice_profiles_enabled
-            observations = _speaker_vectors(waveform, named) if collect_vectors else []
+                report.stage("decoding")
+                waveform = decode(recording.path)
+                report.stage("transcribing")
+                transcription = transcribe(
+                    waveform, glossary=build_prompt(), on_progress=report.update
+                )
+                report.stage("diarizing")
+                named = rename_speakers(get_diarizer().diarize(waveform, on_progress=report.update))
+                # Two conditions, not one. Consent is the meeting's; the flag is
+                # the deployment's, and while it is off there is nothing an
+                # observation vector could be used for -- `assign_speaker` will
+                # not copy one into a profile. Collecting anyway would hold
+                # biometric data ahead of the question #92 Q4 asks about it, and
+                # would mean that turning the flag on later enrols voices recorded
+                # before anyone could consent to enrolment (@PARKJAEKYUNG0525,
+                # @lsh2217 on #370).
+                collect_vectors = consented and settings.voice_profiles_enabled
+                observations = _speaker_vectors(waveform, named) if collect_vectors else []
 
-        # Before the write, not after: a collapsed transcript is not a
-        # transcript, and the recording is already gone so there is nothing to
-        # re-run.
-        detect_repetition(transcription).raise_if_collapsed()
+            # Before the write, not after: a collapsed transcript is not a
+            # transcript, and the recording is already gone so there is nothing to
+            # re-run.
+            detect_repetition(transcription).raise_if_collapsed()
 
-        # After `adopt` has closed: the recording is already deleted here.
-        report.stage("masking")
-        spoken = assign_speakers(transcription, named)
-        # The recogniser as well as the patterns: a number read out as words
-        # ("공일공 일이삼사...") matches no digit pattern, so without it the
-        # batch path stored in the clear what the live path masks (#484 review).
-        recogniser = get_recogniser()
-        # The team's own shapes too (S30): an employee number somebody
-        # reported once is masked in every later meeting of that team.
-        masked = tuple(
-            replace(
-                utterance,
-                text=masking_rules.apply(
-                    mask(utterance.text, recogniser=recogniser).text, team_shapes
-                ),
+            # After `adopt` has closed: the recording is already deleted here.
+            report.stage("masking")
+            spoken = assign_speakers(transcription, named)
+            # The recogniser as well as the patterns: a number read out as words
+            # ("공일공 일이삼사...") matches no digit pattern, so without it the
+            # batch path stored in the clear what the live path masks (#484 review).
+            recogniser = get_recogniser()
+            # The team's own shapes too (S30): an employee number somebody
+            # reported once is masked in every later meeting of that team.
+            masked = tuple(
+                replace(
+                    utterance,
+                    text=masking_rules.apply(
+                        mask(utterance.text, recogniser=recogniser).text, team_shapes
+                    ),
+                )
+                for utterance in spoken
             )
-            for utterance in spoken
-        )
-        _log_masking(meeting_id, spoken, masked)
+            _log_masking(meeting_id, spoken, masked)
 
-        report.stage("saving")
-        with session_scope() as session:
-            persist_transcript(
-                session,
+            report.stage("saving")
+            with session_scope() as session:
+                service.lock_running_job(session, job_id=job_id)
+                persist_transcript(
+                    session,
+                    meeting_id=meeting_id,
+                    utterances=masked,
+                    duration_seconds=transcription.duration,
+                    audio_deleted=recording.deleted,
+                )
+                # After persist_transcript, not before: that call is what takes
+                # the meeting row lock (#184) that serialises two redelivered
+                # runs of the same job. Writing this before the lock would let
+                # two concurrent runs each see no existing rows under READ
+                # COMMITTED and each insert their own -- doubled rows with
+                # nothing to catch it, since (meeting_id, speaker_label) carries
+                # no unique constraint.
+                _store_speaker_embeddings(session, meeting_id=meeting_id, observations=observations)
+                service.mark_complete(session, job_id=job_id)
+                payload = transcript_payload(session, meeting_id=meeting_id)
+        except JobStopped as stopped:
+            # Cancelled or superseded: whoever changed the status also set the
+            # meeting where it belongs. ``mark_failed`` here would undo a
+            # restart's ``analyzing``. ``adopt`` has already deleted the file.
+            log.info(
+                "audio_process_stopped",
                 meeting_id=meeting_id,
-                utterances=masked,
-                duration_seconds=transcription.duration,
-                audio_deleted=recording.deleted,
+                job_id=job_id,
+                status=stopped.status,
             )
-            # After persist_transcript, not before: that call is what takes
-            # the meeting row lock (#184) that serialises two redelivered
-            # runs of the same job. Writing this before the lock would let
-            # two concurrent runs each see no existing rows under READ
-            # COMMITTED and each insert their own -- doubled rows with
-            # nothing to catch it, since (meeting_id, speaker_label) carries
-            # no unique constraint.
-            _store_speaker_embeddings(session, meeting_id=meeting_id, observations=observations)
-            service.mark_complete(session, job_id=job_id)
-            payload = transcript_payload(session, meeting_id=meeting_id)
-    except Exception as error:
-        # A fresh session: whatever went wrong may have left the one above
-        # rolled back, and this write has to land regardless.
-        with session_scope() as session:
-            service.mark_failed(session, job_id=job_id)
-        log.warning(
-            "audio_process_failed",
-            meeting_id=meeting_id,
-            job_id=job_id,
-            error=type(error).__name__,
-        )
-        raise
+            return
+        except Exception as error:
+            # A fresh session: whatever went wrong may have left the one above
+            # rolled back, and this write has to land regardless.
+            with session_scope() as session:
+                service.mark_failed(session, job_id=job_id)
+            log.warning(
+                "audio_process_failed",
+                meeting_id=meeting_id,
+                job_id=job_id,
+                error=type(error).__name__,
+            )
+            raise
 
     # Three steps, three outcomes, and only the middle one may fail the
     # meeting. The publish is the moment the four consumers learn of it: if

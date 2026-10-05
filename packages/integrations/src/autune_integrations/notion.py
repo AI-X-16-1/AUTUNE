@@ -9,6 +9,7 @@ every value that leaves.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from .base import HttpClient
@@ -36,6 +37,36 @@ class NotionClient(HttpClient):
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str:
         body = {"parent": {"database_id": database_id}, "properties": properties}
         return str(self.request("POST", "/pages", json=body).get("id", ""))
+
+    def find_pages(
+        self, database_id: str, *, title_property: str, title: str, created_after: datetime
+    ) -> list[str]:
+        """Ids of the live pages in ``database_id`` whose title is exactly
+        ``title`` and that were made at or after ``created_after`` -- for a
+        caller whose create timed out and may have arrived (#754 review).
+
+        One page of results (at most 10): a caller that finds more than one
+        cannot tell which is its own and should not pick. The title is the
+        same text the create sent to the same workspace, and goes through the
+        outbound check like every other request."""
+        body = {
+            "filter": {
+                "and": [
+                    {"property": title_property, "title": {"equals": title}},
+                    {
+                        "timestamp": "created_time",
+                        "created_time": {"on_or_after": created_after.isoformat()},
+                    },
+                ]
+            },
+            "page_size": 10,
+        }
+        answer = self.request("POST", f"/databases/{database_id}/query", json=body)
+        return [
+            str(page["id"])
+            for page in answer.get("results", [])
+            if page.get("id") and not page.get("archived") and not page.get("in_trash")
+        ]
 
     def update_page(self, page_id: str, properties: dict[str, Any]) -> None:
         """Overwrite a page's properties -- everything named in ``properties``,
