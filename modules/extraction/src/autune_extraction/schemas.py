@@ -341,6 +341,29 @@ class ProjectPlacement(BaseModel):
     project_id: str | None = None
 
 
+class ProjectSendRequest(BaseModel):
+    """Which of the team's tools a project's minutes go to."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    targets: list[Literal["notion", "slack", "jira", "calendar"]] = Field(min_length=1)
+
+
+class ProjectSendResult(BaseModel):
+    project_id: str
+    project_name: str
+    target: Literal["notion", "slack", "jira", "calendar"]
+    outcome: Literal["created", "updated", "retracted", "not_connected", "no_date", "failed"]
+
+
+class ProjectSendReport(BaseModel):
+    """What happened to each copy, and how many confirmed rows were left out as
+    미분류 -- they belong to no project to be sent as."""
+
+    results: list[ProjectSendResult]
+    unsorted: int
+
+
 class SummaryDecision(BaseModel):
     """A decision as the summary tab lists it: the wording a person confirmed,
     or the model's while it is still pending."""

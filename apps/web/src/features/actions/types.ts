@@ -278,6 +278,26 @@ export interface Project {
   jira_project_key: string | null;
 }
 
+export type SendTarget = "notion" | "slack" | "jira" | "calendar";
+
+/** What happened to each project's minutes in each tool. */
+export interface ProjectSendReport {
+  results: {
+    project_id: string;
+    project_name: string;
+    target: SendTarget;
+    outcome:
+      | "created"
+      | "updated"
+      | "retracted"
+      | "not_connected"
+      | "no_date"
+      | "failed";
+  }[];
+  /** Confirmed rows with no project, left out. */
+  unsorted: number;
+}
+
 /** A project as a member types it. */
 export interface ProjectDraft {
   name: string;

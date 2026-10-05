@@ -102,6 +102,142 @@ class ExtProject(Base):
     )
 
 
+class ExtProjectSend(Base):
+    """Where a project's minutes for one meeting were sent, per tool (2026-10-04).
+
+    One row per (meeting, project, target): the Notion page id, the Slack
+    message as ``channel:ts``, or the Jira issue key. Sending again updates that
+    copy instead of making a second one. Holds addresses, no text; goes with the
+    meeting, and with the project -- each copied first to
+    ``ext_project_send_cleanup`` so the copy outside goes too.
+
+    ``external_id`` is empty only inside the transaction that claimed the row
+    to make the first copy: two people sending at once make one copy.
+
+    ``content_digest`` is ``service.source_digest`` over the minutes the copy
+    last received -- a hash, not the text. A refresh compares it with the
+    minutes as they are now and leaves a copy that already says them alone, so
+    refreshing is safe to do on every change and to repeat after a failure;
+    a copy whose write failed keeps its old digest and is still found stale
+    by the next one (#787 review).
+    """
+
+    __tablename__ = "ext_project_sends"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    target: Mapped[str] = mapped_column(String(16), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtMinutesEvent(Base):
+    """A project's minutes as an all-day event on the meeting's day, in the
+    calendar of the person who sent them (2026-10-04).
+
+    Their own calendar, by their own click: team work is not copied into
+    anybody else's (``calendar_sync``). Kept so sending again updates the same
+    event, and so the event goes when the meeting expires or the person's
+    account is deleted (``tasks.queue_meeting_calendar_events``,
+    ``tasks.forget_user_calendar_events``) -- and when the project is deleted
+    (``projects.delete_project``) -- and the event follows what changes after
+    it was sent (``project_send.refresh``). The event id only, no text.
+
+    ``event_id`` is empty only inside the transaction that claimed the row to
+    make the event, so a double click makes one event.
+
+    **A calendar disconnected before the event goes cannot be reached.** The
+    grant is the only way into a person's calendar, so their minutes events
+    stay there -- in their own calendar, put there by their own click, where
+    they can delete them -- and the cleanup row is dropped with a log line
+    after its tries (``tasks.drain_calendar_cleanup``). Removing them at
+    disconnect needs a hook core does not have yet.
+    """
+
+    __tablename__ = "ext_minutes_events"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    """As ``ExtProjectSend.content_digest``: a hash of the minutes the event
+    last received, so a refresh leaves an event alone that already says them
+    and asks for its owner's grant only when there is something to write."""
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtProjectRefreshOwed(Base):
+    """A meeting whose project minutes outside still have to be brought in line
+    with what is confirmed now (#787 review).
+
+    A refresh happens after the change it follows is committed, and talks to
+    tools that can be down or disconnected. Without this a failed one was only
+    logged: a sentence its speaker had deleted stayed in the team's Slack,
+    Notion or Jira until the meeting's retention ran out. A refresh that leaves
+    any copy behind writes the meeting here, deleted speech writes it in the
+    transaction that drops the words, and
+    ``tasks.retry_project_minutes_refresh`` tries again until every copy is in
+    line. An id and a count, nothing said; goes with the meeting, whose copies
+    are then retracted through ``ext_project_send_cleanup`` instead.
+    """
+
+    __tablename__ = "ext_project_refresh_owed"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtProjectSendCleanup(Base):
+    """A copy of a project's minutes still to take out of a team's tool, after
+    the meeting or the project it belonged to was deleted (#787 review).
+
+    ``ext_project_sends`` goes with the meeting and with the project, so before
+    either goes its rows are copied here, and ``tasks.drain_project_send_cleanup``
+    retracts each with the team's own connection: the Notion page emptied and
+    trashed, the Slack message deleted, the Jira task emptied and closed.
+    Addresses only, no text. No meeting or project key: the row has to outlive
+    both. ``team_id`` cascades -- with the team goes every connection that
+    could reach the copy.
+    """
+
+    __tablename__ = "ext_project_send_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "target", "external_id", name="uq_ext_project_send_cleanup"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtActionItem(Base, TimestampMixin):
     """One trackable commitment, as the user will eventually accept it.
 
