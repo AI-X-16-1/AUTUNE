@@ -45,7 +45,7 @@ def test_an_extending_template_names_both_files_in_its_version() -> None:
     thing ``template_version`` exists to keep apart.
     """
     assert template.get_template("general").version == "general.5"
-    assert template.get_template("feature_planning").version == "general.5+feature_planning.3"
+    assert template.get_template("feature_planning").version == "general.5+feature_planning.4"
 
 
 def test_every_shipped_item_can_raise_a_usable_gap() -> None:
@@ -197,6 +197,44 @@ def test_a_template_may_not_redefine_an_inherited_item() -> None:
         template._resolve("child", raw, seen=())
 
 
+def test_no_shipped_keyword_is_shared_between_items() -> None:
+    """One "실패" made both risk items partial while both carried the word."""
+    template.load_templates.cache_clear()
+
+    assert template.get_template("feature_planning")
+
+
+def test_a_keyword_two_items_share_is_refused() -> None:
+    raw = {
+        "t": {
+            "key": "t",
+            "name": "t",
+            "version": 1,
+            "items": [_raw("one", ["실패"]), _raw("two", ["실패", "에러"])],
+        }
+    }
+
+    with pytest.raises(ConfigurationError, match="one:실패 / two:실패"):
+        template._resolve("t", raw, seen=())
+
+
+def test_a_keyword_inside_another_items_keyword_is_refused_across_extends() -> None:
+    """``detect.match`` is containment, so "단계" matches "단계적" too."""
+    raw = {
+        "parent": {"key": "parent", "name": "p", "version": 1, "items": [_raw("a", ["단계"])]},
+        "child": {
+            "key": "child",
+            "name": "c",
+            "version": 1,
+            "extends": "parent",
+            "items": [_raw("b", ["단계적"])],
+        },
+    }
+
+    with pytest.raises(ConfigurationError, match="a:단계 / b:단계적"):
+        template._resolve("child", raw, seen=())
+
+
 def test_a_template_that_extends_itself_is_refused_with_the_chain() -> None:
     """Otherwise the recursion is a stack overflow with nothing in it to read."""
     raw = {
@@ -215,7 +253,7 @@ def test_extending_a_template_that_does_not_exist_is_refused() -> None:
         template._resolve("a", raw, seen=())
 
 
-def _raw(key: str) -> dict[str, object]:
+def _raw(key: str, keywords: list[str] | None = None) -> dict[str, object]:
     return {
         "key": key,
         "category": "measurement",
@@ -223,7 +261,7 @@ def _raw(key: str) -> dict[str, object]:
         "weight": 0.5,
         "question": "질문?",
         "question_about": "{topic}의 질문?",
-        "keywords": ["성능"],
+        "keywords": keywords or ["성능"],
     }
 
 
