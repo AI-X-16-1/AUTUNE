@@ -345,3 +345,54 @@ def test_a_run_nobody_asked_for_fills_in_no_user() -> None:
 
     assert result.ok is False and result.reason == "missing argument: user_id"
     assert seen == []
+
+
+ALL_TRACING = [
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING_V2",
+    "LANGSMITH_TRACING",
+    "LANGCHAIN_TRACING",
+]
+
+
+@pytest.mark.parametrize("variable", ALL_TRACING)
+def test_every_name_langsmith_reads_is_refused(variable: str) -> None:
+    # #803: LANGCHAIN_TRACING was missing, and LangSmith turns tracing on with it.
+    with pytest.raises(RuntimeError, match=variable):
+        refuse_tracing({variable: "true"})
+
+
+@pytest.mark.parametrize("variable", ALL_TRACING)
+def test_the_refusal_matches_what_langsmith_itself_switches_on(
+    variable: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Against the installed LangSmith, so a release that reads another name, or
+    # stops reading one, shows up here rather than in a trace that left the guard.
+    from langsmith import utils
+
+    for name in ALL_TRACING:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, "true")
+    getattr(utils.get_env_var, "cache_clear", lambda: None)()
+
+    assert utils.tracing_is_enabled() is True
+    with pytest.raises(RuntimeError):
+        refuse_tracing()
+
+
+def test_building_the_main_graph_refuses_tracing(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #803: deleting the call in build_main_graph used to fail no test.
+    from autune_agent.main import build_main_graph
+    from autune_agent.testing import FakeRouter
+
+    monkeypatch.setenv("LANGCHAIN_TRACING", "true")
+
+    with pytest.raises(RuntimeError, match="LANGCHAIN_TRACING"):
+        build_main_graph(
+            session=SESSION,
+            router=FakeRouter(),
+            subagents={},
+            tools={},
+            budget=CallBudget(),
+            scope=SCOPE,
+        )
