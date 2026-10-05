@@ -57,6 +57,19 @@ describe("SyncStatus", () => {
     expect(line.className).toContain("color-signal-critical");
   });
 
+  it.each([
+    ["notion", "Notion에서 먼저 확인"],
+    ["jira", "Jira에서 먼저 확인"],
+    ["calendar", "캘린더에서 먼저 확인"],
+  ] as const)("after no answer, asks to look in %s first: the copy may be there", (system, words) => {
+    // A create that timed out may have arrived; a retry would make a second
+    // (review of #754).
+    const failure: SyncFailure = { ...JIRA_DOWN, system, kind: "unreachable" };
+    render(<SyncStatus item={item([failure])} calendar={null} />);
+
+    expect(screen.getByText(/응답이 없었습니다/).textContent).toContain(words);
+  });
+
   it("queues the sync again and says only that it was sent", async () => {
     retry.mockResolvedValue({ queued: true });
     render(<SyncStatus item={item([JIRA_DOWN])} calendar={null} />);

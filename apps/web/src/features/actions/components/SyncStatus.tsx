@@ -38,13 +38,25 @@ export const SYSTEM_LABEL: Record<SyncFailure["system"], string> = {
   calendar: "캘린더",
 };
 
-const WHAT_FAILED: Record<SyncFailure["kind"], string> = {
+const WHAT_FAILED: Record<Exclude<SyncFailure["kind"], "unreachable">, string> = {
   privacy:
     "개인정보로 보이는 값이 있어 보내지 않았습니다. 설명을 고친 뒤 다시 시도해 주세요.",
   reconnect: "연결이 끊어졌습니다. 다시 연결한 뒤 다시 시도해 주세요.",
-  unreachable: "응답이 없었습니다. 잠시 후 다시 시도해 주세요.",
   rejected: "요청이 거절되었습니다.",
 };
+
+/**
+ * No answer is not "nothing arrived": a create that timed out on our side may
+ * have reached the service, and sending again would make a second page, issue
+ * or event (review of #754). So it asks the person to look there first.
+ */
+export function whatFailed(failure: SyncFailure): string {
+  if (failure.kind === "unreachable") {
+    const where = SYSTEM_LABEL[failure.system];
+    return `응답이 없었습니다. 이미 만들어졌을 수 있으니, 다시 시도하기 전에 ${where}에서 먼저 확인해 주세요.`;
+  }
+  return WHAT_FAILED[failure.kind];
+}
 
 const NO_EVENT: Record<NonNullable<CalendarState["reason"]>, string> = {
   not_confirmed: "확정되면 담당자의 캘린더에 올라갑니다.",
@@ -108,7 +120,7 @@ export function SyncStatus({
           className="text-[var(--color-signal-critical)]"
           style={meta}
         >
-          {SYSTEM_LABEL[failure.system]} 연동 실패 · {WHAT_FAILED[failure.kind]}
+          {SYSTEM_LABEL[failure.system]} 연동 실패 · {whatFailed(failure)}
         </p>
       ))}
 
