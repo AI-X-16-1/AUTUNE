@@ -41,11 +41,13 @@ class FakeAtlassian:
         self.tokens = AtlassianTokens("access", "refresh-1", frozenset({"offline_access"}))
         self.site_list = [JiraSite("cloud-1", "https://acme.atlassian.net", "acme")]
         self.project_list = [JiraProject("AUT", "Autune")]
+        self.exchanged = 0
 
     def authorization_url(self, *, state: str) -> str:
         return f"https://auth.atlassian.com/authorize?state={state}"
 
     def exchange_code(self, code: str) -> AtlassianTokens:
+        self.exchanged += 1
         return self.tokens
 
     def sites(self, access_token: str) -> list[JiraSite]:
@@ -87,6 +89,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(auth_router_module, "save_integration", save)
     monkeypatch.setattr(auth_router_module, "load_integration", load)
+    # This test stores no encrypted secret; the check is its own test.
+    monkeypatch.setattr(auth_router_module, "ensure_configured", lambda: None)
     monkeypatch.setattr(
         auth_router_module, "disconnect_integration", lambda _s, t, _svc: saved.pop(t)
     )
@@ -184,6 +188,43 @@ def test_a_callback_from_another_browser_stores_nothing(world: dict[str, Any]) -
     state = start(signed_in(world))
     assert finish(signed_in(world), state).status_code == 403  # no state cookie
     assert world["saved"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_grant_fails_before_the_code_is_spent(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#704: the key is checked before Atlassian issues a grant nothing keeps."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    client = signed_in(world)
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = finish(client, state)
+
+    assert response.headers["location"].endswith("?jira=failed")
+    assert world["atlassian"].exchanged == 0, "Atlassian was not asked"
+    assert world["saved"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_grant_sends_nobody_to_atlassian(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = signed_in(world).get(
+        f"/api/auth/jira/start?meeting_id={MEETING}&redirect_to=/meetings/{MEETING}/actions"
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith(f"/meetings/{MEETING}/actions?jira=failed")
+    assert world["store"]._entries == {}
 
 
 def test_status_and_disconnect_are_for_members_only(world: dict[str, Any]) -> None:

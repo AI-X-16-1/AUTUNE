@@ -190,6 +190,16 @@ export const createDecision = (meetingId: string, statement: string) =>
  */
 export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeURIComponent(id)}`);
 
+/**
+ * Send one item to the team's connected tools again -- "다시 시도" beside a
+ * failed copy (#680). Answers before the sync runs: `queued` is false for an
+ * item that was never confirmed, which has nothing outside to retry.
+ */
+export const retrySync = (id: string) =>
+  api.extraction<{ queued: boolean }>(`/action-items/${encodeURIComponent(id)}/sync`, {
+    method: "POST",
+  });
+
 /** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>
   api.extraction<void>(`/results/${meetingId}/sync`, { method: "POST" });

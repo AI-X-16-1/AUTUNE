@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
+from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service, sync_state
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
@@ -142,9 +142,7 @@ def _follow_corrections(corrections: service.SourceCorrections) -> None:
     is logged: the rows are already right, and the next edit sends them."""
     try:
         for action_item_id in corrections.changed_items:
-            sync_action_item.delay(action_item_id)
-            sync_action_item_jira.delay(action_item_id)
-            sync_action_item_calendar.delay(action_item_id)
+            sync_item_copies.delay(action_item_id)
         for decision_id in corrections.changed_decisions:
             sync_decision.delay(decision_id)
     except Exception as exc:  # noqa: BLE001 -- the correction itself is committed
@@ -443,6 +441,71 @@ def ask_confirmations() -> list[str]:
     return asked
 
 
+@shared_task(name="autune.extraction.periodic.send_weekly_digests")
+@periodic(timedelta(minutes=10))
+def send_weekly_digests() -> list[str]:
+    """Monday's digest of each person's own open items, by Slack DM to that
+    person alone (the user, 2026-10-04; ``service.weekly_digests_to_send``).
+    Returns the user ids a digest went to.
+
+    The shape of ``remind_due_items``: each digest claimed and sent in its own
+    transaction, a team without Slack or a person without a linked account
+    skipped and looked at again next run, an unexpected error that one
+    digest's, and a privacy refusal never swallowed -- raised after the rest
+    are sent. Every ten minutes; outside a Monday's sending hours in Korea it
+    finds nothing owed.
+    """
+    if not get_settings().weekly_digest:
+        return []
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = service.weekly_digests_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({d.team_id for d in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent: list[str] = []
+    refused: list[str] = []
+    not_linked = 0
+    for digest in owed:
+        secret = secrets[digest.team_id]
+        if secret is None:
+            continue
+        try:
+            with session_scope() as session:
+                went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
+        except PrivacyViolationError:
+            refused.append(digest.user_id)
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one digest's; logged by type, ids only
+            log.warning(
+                "extraction_weekly_digest_failed",
+                user_id=digest.user_id,
+                team_id=digest.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent.append(digest.user_id)
+    if owed:
+        log.info(
+            "extraction_weekly_digests_sent",
+            owed=len(owed),
+            sent=len(sent),
+            not_linked=not_linked,
+        )
+    if refused:
+        raise PrivacyViolationError(
+            f"weekly digest refused by the outbound check for {len(refused)} person(s): "
+            f"{', '.join(refused)}"
+        )
+    return sent
+
+
 @shared_task(name="autune.extraction.periodic.remind_due_items")
 @periodic(timedelta(minutes=10))
 def remind_due_items() -> list[str]:
@@ -453,7 +516,9 @@ def remind_due_items() -> list[str]:
     team that held the meeting, to the account they linked. Nobody else is
     told. Each reminder is claimed and sent in its own transaction
     (``send_due_reminder``): a failed send takes the claim back and the next
-    run tries again, and a claim another run holds sends nothing. A team
+    run tries again, and a claim another run holds sends nothing. A send the
+    outbound check refused keeps its claim (``settle_refused_due_reminder``),
+    so the refusal is reported once rather than every run. A team
     with no Slack connection and an assignee who has not linked a Slack
     account are skipped and looked at again next time, while the reminder
     is still owed. **A privacy violation is never swallowed, and never
@@ -488,6 +553,17 @@ def remind_due_items() -> list[str]:
                 went = service.send_due_reminder(session, SlackClient(secret), reminder, now=now)
         except PrivacyViolationError:
             violations.append(reminder.action_item_id)
+            # Reported once: the claim is kept, in its own transaction, so the
+            # next run does not refuse the same text again (review of #751).
+            try:
+                with session_scope() as session:
+                    service.settle_refused_due_reminder(session, reminder, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_due_reminder_refusal_not_kept",
+                    action_item_id=reminder.action_item_id,
+                    reason=type(exc).__name__,
+                )
             continue
         except SlackRecipientNotLinkedError:
             # Counted, not logged one by one: it is the same person every run
@@ -638,32 +714,112 @@ def sync_after_confirmation(action_item_id: str) -> None:
     """
     try:
         sync_action_item(action_item_id)
-    except IntegrationError:
+    except IntegrationError as exc:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
-    except PrivacyViolationError:
+        _sync_failed(action_item_id, sync_state.NOTION, exc)
+    except PrivacyViolationError as exc:
         log.warning(
             "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+        _sync_failed(action_item_id, sync_state.NOTION, exc)
+    else:
+        _sync_went(action_item_id, sync_state.NOTION)
     # Separately, so a Notion failure never costs the calendar its event and
     # the other way round.
     try:
         sync_action_item_calendar(action_item_id)
-    except IntegrationError:
+    except IntegrationError as exc:
         log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
-    except PrivacyViolationError:
+        _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    except PrivacyViolationError as exc:
         log.warning(
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+        _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    else:
+        _sync_went(action_item_id, sync_state.CALENDAR)
     # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
     # (``JiraReconnectRequiredError``) as well as integration errors.
     try:
-        sync_action_item_jira(action_item_id)
+        outcome = sync_action_item_jira(action_item_id)
     except AutuneError as exc:
         log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
+        _sync_failed(action_item_id, sync_state.JIRA, exc)
+    else:
+        if outcome == JIRA_NEEDS_RECONNECT:
+            # Skipped, but not because there was nothing to send: the grant was
+            # refused once (raised above, the first time) and ``jira_access``
+            # answers ``None`` from then on. Clearing here let one "다시 시도"
+            # take the red mark off an item Jira never got (PARKJAEKYUNG0525,
+            # review of #754).
+            _record_failure(action_item_id, sync_state.JIRA, sync_state.RECONNECT)
+        else:
+            _sync_went(action_item_id, sync_state.JIRA)
+
+
+@shared_task(name="autune.extraction.sync_item_copies", acks_late=True)
+def sync_item_copies(action_item_id: str) -> None:
+    """``sync_after_confirmation`` on the worker: an item's Notion page, Jira
+    issue and calendar event, each failure kept and each success clearing it
+    (#680).
+
+    For the paths that change an item outside a person's edit -- a corrected
+    line (``_follow_corrections``) and deleted speech
+    (``forget_deleted_speech``). They used to queue the three syncs directly,
+    so a failure there was neither recorded nor cleared (PARKJAEKYUNG0525,
+    review of #754). One task, the three in turn, as an edit runs them."""
+    sync_after_confirmation(action_item_id)
+
+
+def _sync_failed(action_item_id: str, system: str, exc: BaseException) -> None:
+    """Keep that this copy failed, by kind (#680), so the board can say so.
+
+    In its own transaction: the failed attempt's is already rolled back. Only
+    the class of ``exc`` is read. **Never raises** -- this is bookkeeping after
+    a failure that has already been handled and logged, and a database
+    hiccup here must not turn into a crashed background task; it is logged by
+    type and the card simply goes on saying nothing."""
+    _record_failure(action_item_id, system, sync_state.kind_of(exc))
+
+
+def _record_failure(action_item_id: str, system: str, kind: str) -> None:
+    """``_sync_failed``'s write, for a kind known without an exception. Never
+    raises, for the reason ``_sync_failed`` gives."""
+    try:
+        with session_scope() as session:
+            sync_state.record_failure(session, action_item_id, system, kind)
+    except Exception as error:  # noqa: BLE001 -- see ``_sync_failed``
+        log.warning(
+            "extraction_sync_failure_not_recorded",
+            action_item_id=action_item_id,
+            system=system,
+            reason=type(error).__name__,
+        )
+
+
+def _sync_went(action_item_id: str, system: str) -> None:
+    """The copy went through, or there was nothing to copy: whatever failure
+    stood for it is over. Never raises, for the reason ``_sync_failed`` gives."""
+    try:
+        with session_scope() as session:
+            sync_state.clear_failure(session, action_item_id, system)
+    except Exception as error:  # noqa: BLE001 -- see ``_sync_failed``
+        log.warning(
+            "extraction_sync_failure_not_cleared",
+            action_item_id=action_item_id,
+            system=system,
+            reason=type(error).__name__,
+        )
+
+
+JIRA_SENT, JIRA_SKIPPED, JIRA_NEEDS_RECONNECT = "sent", "skipped", "needs_reconnect"
+"""What ``sync_action_item_jira`` did, for ``sync_after_confirmation`` to keep
+or clear the board's failure: a skip because the team's grant needs a person to
+reconnect is not a skip because there was nothing to send (review of #754)."""
 
 
 @shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)
-def sync_action_item_jira(action_item_id: str) -> None:
+def sync_action_item_jira(action_item_id: str) -> str:
     """Step 7's Jira half (#82): the item as one issue in the team's chosen
     project -- ``jira_sync.sync_action_item_to_jira``.
 
@@ -678,14 +834,17 @@ def sync_action_item_jira(action_item_id: str) -> None:
         item = session.get(ExtActionItem, action_item_id)
         meeting = session.get(Meeting, item.meeting_id) if item is not None else None
         if item is None or meeting is None:
-            return
+            return JIRA_SKIPPED
         # ``check_project``: a project deleted in Jira comes back as no project,
         # recorded for the screen to ask for a new one (#458).
         access = jira_access(meeting.team_id, check_project=True)
-        if access is None or not access.project_key:
-            log.info("extraction_jira_not_connected", action_item_id=action_item_id)
-            return
         config = load_integration(session, meeting.team_id, jira_sync.JIRA)
+        if access is None or not access.project_key:
+            if config is not None and config.config.get("needs_reconnect"):
+                log.info("extraction_jira_needs_reconnect", action_item_id=action_item_id)
+                return JIRA_NEEDS_RECONNECT
+            log.info("extraction_jira_not_connected", action_item_id=action_item_id)
+            return JIRA_SKIPPED
         client = JiraClient.for_cloud(access.access_token, access.cloud_id)
         try:
             jira_sync.sync_action_item_to_jira(
@@ -698,6 +857,7 @@ def sync_action_item_jira(action_item_id: str) -> None:
             )
         finally:
             client.close()
+    return JIRA_SENT
 
 
 @contextmanager
@@ -1434,9 +1594,7 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         done = service.forget_speech(session, utterance_ids)
     try:
         for action_item_id in done.changed_items:
-            sync_action_item.delay(action_item_id)
-            sync_action_item_jira.delay(action_item_id)
-            sync_action_item_calendar.delay(action_item_id)
+            sync_item_copies.delay(action_item_id)
         for decision_id in done.changed_decisions:
             sync_decision.delay(decision_id)
     except Exception as exc:  # noqa: BLE001 -- the deletion must go on; the rows changed
