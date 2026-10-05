@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Utterance } from "@autune/contracts";
 
 import { getToken, liveSocketUrl, uploadRecording } from "../api";
-import { saveRecordingFile } from "../recordingFile";
+import { recordingToSave, saveRecordingFile, serverHasRecording } from "../recordingFile";
 import type { LiveRow } from "../types";
 
 export type LivePhase =
@@ -161,16 +161,26 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       blob.current = null;
       setPhase("done");
     } catch (caught) {
+      // A lost response is not a lost upload: if the server has the
+      // recording, the tab drops its copy as it does after a success, and
+      // there is nothing left to retry or save (`serverHasRecording`).
+      if (await serverHasRecording(meetingId, caught)) {
+        blob.current = null;
+        setPhase("done");
+        return;
+      }
       setError(caught instanceof Error ? caught.message : "업로드에 실패했습니다.");
       setPhase("upload_failed");
     }
   }, [meetingId]);
 
-  /** Save the recording to this computer, only after an upload failed: the
-   * one moment the tab holds audio the server never received (`recordingFile`). */
+  /** Save the recording to this computer -- only after a failed upload the
+   * server does not have, the one moment the tab holds the only copy
+   * (`recordingFile`). Checked here, not only by which button is drawn. */
   const saveRecording = useCallback(() => {
-    if (blob.current) saveRecordingFile(blob.current, meetingId);
-  }, [meetingId]);
+    const recording = recordingToSave(phase, blob.current);
+    if (recording) saveRecordingFile(recording, meetingId);
+  }, [meetingId, phase]);
 
   const start = useCallback(async () => {
     // Already connecting or connected: never open a second socket/recorder
