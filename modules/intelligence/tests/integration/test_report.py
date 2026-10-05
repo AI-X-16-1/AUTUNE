@@ -122,3 +122,157 @@ def test_calling_twice_updates_the_same_row_instead_of_duplicating(
     )
     assert len(rows) == 1
     assert rows[0].metrics_json["meeting_count"] == 2
+
+
+# --- action-item completion from B's counts (#605 step 5) -------------------------
+
+
+def _held(session: Session, team_id: str, days_ago: int) -> str:
+    from datetime import timedelta
+
+    from autune_core import Meeting
+
+    row = Meeting(
+        team_id=team_id, title="m", started_at=datetime.now(UTC) - timedelta(days=days_ago)
+    )
+    session.add(row)
+    session.flush()
+    return row.id
+
+
+def _progress(
+    session: Session, team_id: str, meetings: list[dict[str, object]], *, minutes_ago: int = 0
+) -> None:
+    from datetime import timedelta
+
+    from autune_contracts import TeamActionProgress
+
+    service.store_action_progress(
+        session,
+        TeamActionProgress(
+            team_id=team_id,
+            as_of=datetime.now(UTC) - timedelta(minutes=minutes_ago),
+            meetings=meetings,
+        ),
+    )
+
+
+def _this_week() -> tuple[date, date]:
+    from datetime import timedelta
+
+    end = datetime.now(UTC).date()
+    return end - timedelta(days=7), end
+
+
+def test_the_weeks_report_shows_completion_overdue_and_carried_over(
+    db_session: Session, team: str
+) -> None:
+    """Completion as the dashboard counts it (최근 4주 회의), not the quality
+    score's confirmation rate; carried over is what meetings before this week
+    left undone."""
+    start, end = _this_week()
+    this_week, a, b = (_held(db_session, team, days) for days in (2, 10, 14))
+    old = _held(db_session, team, 40)  # outside the rate's four weeks, inside B's window
+    _score(
+        db_session,
+        this_week,
+        team,
+        action_item_completion_rate=0.9,
+        created_at=datetime.combine(start, datetime.min.time(), tzinfo=UTC),
+    )
+    _progress(
+        db_session,
+        team,
+        [
+            {"meeting_id": this_week, "confirmed": 4, "done": 1, "overdue": 0},
+            {"meeting_id": a, "confirmed": 4, "done": 2, "overdue": 1},
+            {"meeting_id": b, "confirmed": 2, "done": 1, "overdue": 0},
+            {"meeting_id": old, "confirmed": 2, "done": 0, "overdue": 1},
+        ],
+    )
+
+    report = service.generate_weekly_report(db_session, team, start, end)
+
+    metrics = report.metrics_json
+    assert metrics["action_item_completion_rate"] == pytest.approx(4 / 10)
+    assert metrics["overdue_action_items"] == 2  # the old meeting's too
+    assert metrics["carried_over_action_items"] == 5
+    assert metrics["action_item_confirmation_rate"] == pytest.approx(0.9)
+    assert metrics["action_progress_as_of"] is not None
+    assert "액션 아이템 완료율 (최근 4주 회의): 40%" in report.body_markdown
+    assert "기한 지난 항목 2건" in report.body_markdown
+    assert "이월된 항목 5건" in report.body_markdown
+    assert "90%" not in report.body_markdown  # the confirmation rate is not 완료율
+
+
+def test_items_left_undone_are_reported_in_a_week_without_meetings(
+    db_session: Session, team: str
+) -> None:
+    start, end = _this_week()
+    earlier = _held(db_session, team, 10)
+    others = [_held(db_session, team, days) for days in (11, 12)]
+    _progress(
+        db_session,
+        team,
+        [
+            {"meeting_id": earlier, "confirmed": 3, "done": 0, "overdue": 2},
+            *({"meeting_id": m, "confirmed": 1, "done": 0, "overdue": 0} for m in others),
+        ],
+    )
+
+    report = service.generate_weekly_report(db_session, team, start, end)
+
+    assert "분석된 회의가 없습니다" in report.body_markdown
+    assert "이월된 항목 5건" in report.body_markdown
+    assert "기한 지난 항목 2건" in report.body_markdown
+
+
+def test_counts_from_fewer_than_three_meetings_are_left_out(db_session: Session, team: str) -> None:
+    """The dashboard's floor (#812): one or two meetings' counts are no team total."""
+    start, end = _this_week()
+    meetings = [_held(db_session, team, days) for days in (2, 10)]
+    _progress(
+        db_session,
+        team,
+        [{"meeting_id": m, "confirmed": 2, "done": 1, "overdue": 1} for m in meetings],
+    )
+
+    report = service.generate_weekly_report(db_session, team, start, end)
+
+    assert "최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다." in report.body_markdown
+    assert "기한 지난 항목" not in report.body_markdown
+    assert "이월된 항목" not in report.body_markdown
+    assert report.metrics_json["action_item_completion_rate"] is None
+    assert report.metrics_json["carried_over_action_items"] is None
+
+
+def test_counts_that_did_not_arrive_are_said_so_not_shown_as_zero(
+    db_session: Session, team: str
+) -> None:
+    start, end = _this_week()
+    meeting = _held(db_session, team, 2)
+    _progress(
+        db_session,
+        team,
+        [{"meeting_id": meeting, "confirmed": 2, "done": 2, "overdue": 0}],
+        minutes_ago=31,
+    )
+
+    report = service.generate_weekly_report(db_session, team, start, end)
+
+    assert report.metrics_json["action_item_completion_rate"] is None
+    assert report.metrics_json["overdue_action_items"] is None
+    assert "액션 아이템 완료 현황을 받지 못했습니다" in report.body_markdown
+
+
+def test_a_past_weeks_report_leaves_todays_counts_out(db_session: Session, team: str) -> None:
+    """B's counts are today's; printed in a report for an older week they would
+    read as that week's."""
+    meeting = _held(db_session, team, 2)
+    _progress(db_session, team, [{"meeting_id": meeting, "confirmed": 2, "done": 1, "overdue": 0}])
+
+    report = service.generate_weekly_report(db_session, team, PERIOD_START, PERIOD_END)
+
+    assert report.metrics_json["action_item_completion_rate"] is None
+    assert "완료" not in report.body_markdown
+    assert "이월" not in report.body_markdown

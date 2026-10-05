@@ -111,7 +111,8 @@ See `../architecture/async-pipeline.md`.
    only once the team has four weeks of history and three scored meetings
    (#27). Prophet trend forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
-   `intel_gap_patterns` for a team over `[period_start, period_end)` into one
+   `intel_gap_patterns` for a team over `[period_start, period_end)`, plus B's
+   current action-item counts (below), into one
    `intel_reports` row (upserted by `(team_id, period_start)`), and
    `tasks.generate_weekly_report` posts it to the team's Slack channel.
    `period_end` defaults to today, `period_start` is 7 days before it. The
@@ -222,8 +223,20 @@ card says the counts did not arrive, never 0%. A fresh snapshot with nothing
 confirmed has no rate and 0 overdue. Team totals only, never one meeting's
 counts. A meeting past `expires_at` is neither stored nor counted.
 `action_item_confirmation_rate` is the quality score's rate averaged over
-scored meetings; the agent tool `team_trend` names both (확정률, 완료율). The
-weekly report still reads the confirmation rate; moving it is the next step.
+scored meetings; the agent tool `team_trend` names both (확정률, 완료율).
+
+**Action items in the weekly report (#605).** The report states the same
+completion rate and overdue count, plus **carried over**: confirmed items not
+done from every kept meeting held before `period_start`. Each follows the
+three-meeting floor, so a line built from one or two meetings is left out. It
+also says when B counted ("… 기준"). These are B's counts as of generation, so a report for a
+week that ended more than a day before it is generated leaves them out rather
+than print today's numbers as that week's. Missing or stale counts read
+"액션 아이템 완료 현황을 받지 못했습니다". A week with no scored meeting still
+reports what earlier meetings carry. They are team totals in the team's
+channel -- never a direct message, never one meeting's counts (the contract's
+usage rule). `metrics_json` keeps the quality score's confirmation rate as
+`action_item_confirmation_rate`; the body does not show it.
 
 **Meeting reports on the dashboard (#642, #674).** Every post goes through
 approval (L2), a person's edit included: a report goes out under the bot's name

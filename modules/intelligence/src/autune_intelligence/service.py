@@ -723,10 +723,14 @@ def _report_body_markdown(
     average_value: float | None,
     grade_distribution: dict[str, int],
     gap_distribution: dict[str, int],
-    action_item_completion_rate: float | None,
     partial_meeting_count: int,
+    progress: ActionProgressTotals | None = None,
 ) -> str:
     """The report's Slack/markdown body — a template, not an LLM.
+
+    ``progress`` is B's action-item counts as the dashboard reads them (#605):
+    ``None`` leaves them out (a report for a week that ended before today), and
+    totals without ``as_of`` say the counts did not arrive.
 
     Every value here is already computed in intel_scores/intel_gap_patterns;
     this only arranges them into readable sentences. `../architecture/privacy.md`
@@ -739,7 +743,9 @@ def _report_body_markdown(
     """
     header = f"*{period_start.isoformat()} ~ {period_end.isoformat()} 주간 리포트*"
     if meeting_count == 0:
-        return f"{header}\n\n이번 주 분석된 회의가 없습니다."
+        return "\n".join(
+            [header, "", "이번 주 분석된 회의가 없습니다.", *_progress_lines(progress)]
+        )
 
     lines = [header, "", f"이번 주 분석된 회의 {meeting_count}건."]
     if partial_meeting_count:
@@ -752,9 +758,39 @@ def _report_body_markdown(
     if gap_distribution:
         top_type, top_count = max(gap_distribution.items(), key=lambda kv: kv[1])
         lines.append(f"가장 잦은 갭 유형: {top_type} ({top_count}건)")
-    if action_item_completion_rate is not None:
-        lines.append(f"액션 아이템 완료율: {action_item_completion_rate:.0%}")
+    lines.extend(_progress_lines(progress))
     return "\n".join(lines)
+
+
+def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
+    """Team totals only, as the dashboard shows them -- never one meeting's."""
+    if progress is None:
+        return []
+    if progress.as_of is None:
+        return ["액션 아이템 완료 현황을 받지 못했습니다."]
+    counted = progress.as_of.astimezone(_KST)
+    if progress.completion_rate is not None:
+        lines = [f"액션 아이템 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
+    elif progress.completion_meetings:
+        lines = ["최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
+    else:
+        lines = ["최근 4주 회의에서 확정된 액션 아이템이 없습니다."]
+    counts = []
+    if progress.overdue is not None:
+        counts.append(f"기한 지난 항목 {progress.overdue}건")
+    if progress.carried_over is not None:
+        counts.append(
+            f"이월된 항목 {progress.carried_over}건 (이번 주 전 회의에서 아직 끝나지 않은 것)"
+        )
+    if counts:
+        lines.append(" · ".join(counts))
+    lines.append(f"액션 아이템 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
+    return lines
+
+
+_PROGRESS_REPORTED_WITHIN: Final = timedelta(days=1)
+"""B's counts describe today. A report for a week that ended longer ago than
+this leaves them out rather than print today's numbers as that week's."""
 
 
 def generate_weekly_report(
@@ -766,6 +802,12 @@ def generate_weekly_report(
     The period is anchored to when E scored a meeting (``IntelScore.created_at``)
     — the same recency signal the dashboard's recent-scores strip already uses.
     E does not track when a meeting itself happened, only when it was analyzed.
+
+    Action items come from B's latest counts as the dashboard reads them --
+    completion and overdue over the last four weeks' meetings, and what
+    meetings held before ``period_start`` left undone -- for a week ending
+    within ``_PROGRESS_REPORTED_WITHIN`` of now only (#605). The quality
+    score's confirmation rate stays in ``metrics_json`` and out of the body.
 
     Returns a transient ``IntelReport`` carrying the values just written — not
     the tracked row — so the caller (a Celery task, delivering the body to
@@ -803,7 +845,13 @@ def generate_weekly_report(
         gap_distribution = {pattern: int(total) for pattern, total in gap_rows}
 
     average_value = (sum(values) / len(values)) if values else None
-    action_item_completion_rate = (sum(rates) / len(rates)) if rates else None
+    now = datetime.now(UTC)
+    progress = (
+        _action_progress_totals(session, team_id, now, carried_before=start)
+        if now - end <= _PROGRESS_REPORTED_WITHIN
+        else None
+    )
+    shown = progress or ActionProgressTotals()
 
     body_markdown = _report_body_markdown(
         period_start=period_start,
@@ -812,15 +860,19 @@ def generate_weekly_report(
         average_value=average_value,
         grade_distribution=grade_distribution,
         gap_distribution=gap_distribution,
-        action_item_completion_rate=action_item_completion_rate,
         partial_meeting_count=partial_meeting_count,
+        progress=progress,
     )
     metrics_json = {
         "meeting_count": len(scores),
         "average_score": average_value,
         "grade_distribution": grade_distribution,
         "gap_distribution": gap_distribution,
-        "action_item_completion_rate": action_item_completion_rate,
+        "action_item_completion_rate": shown.completion_rate,
+        "overdue_action_items": shown.overdue,
+        "carried_over_action_items": shown.carried_over,
+        "action_progress_as_of": shown.as_of.isoformat() if shown.as_of else None,
+        "action_item_confirmation_rate": (sum(rates) / len(rates)) if rates else None,
         "partial_meeting_count": partial_meeting_count,
     }
 
@@ -1442,45 +1494,57 @@ class ActionProgressTotals:
     past its due date matters however old its meeting is. Either is ``None``
     when drawn from fewer than ``ACTION_PROGRESS_MIN_MEETINGS`` meetings. With
     no meetings at all there is nothing to identify: no rate (no items is not
-    0% done) and 0 overdue.
+    0% done) and 0 overdue. ``carried_over``, asked for by the weekly report
+    only, is the confirmed items not done from kept meetings held before a
+    cutoff, under the same floor.
     """
 
     completion_rate: float | None = None
     completion_meetings: int | None = None
     overdue: int | None = None
     as_of: datetime | None = None
+    carried_over: int | None = None
 
 
 def _shown(meetings: int) -> bool:
     return meetings == 0 or meetings >= ACTION_PROGRESS_MIN_MEETINGS
 
 
-def _action_progress_totals(session: Session, team_id: str, now: datetime) -> ActionProgressTotals:
+def _action_progress_totals(
+    session: Session, team_id: str, now: datetime, *, carried_before: datetime | None = None
+) -> ActionProgressTotals:
     """Done over confirmed over the team's meetings held within
     ``ACTION_COMPLETION_WINDOW``, and the overdue count over all of its kept
     meetings -- team totals only, never one meeting's counts (the contract's
     usage rule). A meeting with no ``started_at`` is dated by its creation, as
-    A orders meetings."""
+    A orders meetings.
+
+    With ``carried_before``, also the confirmed items not done from kept
+    meetings held before it: what earlier meetings carry into the week."""
     as_of = session.scalar(
         sa.select(IntelActionProgress.as_of).where(IntelActionProgress.team_id == team_id)
     )
     if as_of is None or as_of < now - ACTION_PROGRESS_STALE_AFTER:
         return ActionProgressTotals()
-    recent = func.coalesce(Meeting.started_at, Meeting.created_at) >= (
-        now - ACTION_COMPLETION_WINDOW
-    )
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    recent = held >= now - ACTION_COMPLETION_WINDOW
+    earlier = held < (carried_before or now)
     row = IntelActionProgressMeeting
-    meetings, overdue, recent_meetings, confirmed, done = session.execute(
-        sa.select(
-            func.count(),
-            func.coalesce(func.sum(row.overdue), 0),
-            func.count().filter(recent),
-            func.coalesce(func.sum(row.confirmed).filter(recent), 0),
-            func.coalesce(func.sum(row.done).filter(recent), 0),
-        )
-        .join(Meeting, Meeting.id == row.meeting_id)
-        .where(row.team_id == team_id, _not_expired(now))
-    ).one()
+    meetings, overdue, recent_meetings, confirmed, done, earlier_meetings, carried = (
+        session.execute(
+            sa.select(
+                func.count(),
+                func.coalesce(func.sum(row.overdue), 0),
+                func.count().filter(recent),
+                func.coalesce(func.sum(row.confirmed).filter(recent), 0),
+                func.coalesce(func.sum(row.done).filter(recent), 0),
+                func.count().filter(earlier),
+                func.coalesce(func.sum(row.confirmed - row.done).filter(earlier), 0),
+            )
+            .join(Meeting, Meeting.id == row.meeting_id)
+            .where(row.team_id == team_id, _not_expired(now))
+        ).one()
+    )
     return ActionProgressTotals(
         completion_rate=(
             done / confirmed
@@ -1490,6 +1554,9 @@ def _action_progress_totals(session: Session, team_id: str, now: datetime) -> Ac
         completion_meetings=int(recent_meetings),
         overdue=int(overdue) if _shown(meetings) else None,
         as_of=as_of,
+        carried_over=(
+            int(carried) if carried_before is not None and _shown(earlier_meetings) else None
+        ),
     )
 
 
