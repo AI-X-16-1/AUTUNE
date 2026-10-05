@@ -137,10 +137,23 @@ One `ProposedAction`, with:
   잡기" itself, records the item as Follow-up's (`origin="followup"`) rather
   than a person's, and starts it unconfirmed. Not `add_action_item`: that is
   B's chat-draft write and L1 since #576, so it would run without the lead.
-- `arguments`: `{}` on a triggered run, whose scope binds the meeting when the
-  action runs; `{"meeting_id": M}` on a chat run that picked M itself. No
-  assignee, no due date: the lead fills them on the board after approving, and
-  the due date is what puts the meeting on a calendar (#441).
+- `arguments`: `{"due_date": D}` on a triggered run, whose scope binds the
+  meeting when the action runs; `{"meeting_id": M, "due_date": D}` on a chat
+  run that picked M itself. No assignee: the lead picks one on the board after
+  approving. D is a suggested date (below), stored as the item's due date, so
+  the lead sees it on the card and moves it on the board; the due date is what
+  puts the meeting on a calendar (#441).
+
+**The suggested date** (`rules.suggest_date`, asked for by the owner on
+2026-10-05). The team's usual gap between meetings -- the median of the gaps
+between its recent meetings' start days, one to 14 days -- after its latest
+meeting, never before the next business day, a weekend moved to Monday. With
+fewer than two meeting days, or an unreadable list, it is three business days
+from today; holidays are not known. It reads `audio.recent_meetings`'
+`started_at` and nothing else: no calendar and nobody's availability, so
+section 6 holds. Free time in the lead's own calendar is the card's to show,
+from the lead's own connection when the lead opens it (#435's rule that a
+personal grant serves only its owner).
 - `evidence`: the gap ids the rule fired on, highest risk first.
 
 **What the lead sees.** Plan mode renders a preview from read tools when the

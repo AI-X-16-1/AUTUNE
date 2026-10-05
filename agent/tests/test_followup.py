@@ -6,14 +6,16 @@ B's ``unresolved_questions`` and ``open_followup_item`` (#561) return.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
+import pytest
 from sqlalchemy.orm import Session
 
 from autune_agent.main import CallBudget, RunScope, Toolbox, collect_actions, collect_subagents
 from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import Tool
-from autune_agent.subagents.followup import SUBAGENT, rules
+from autune_agent.subagents.followup import SUBAGENT, graph, rules
 from autune_agent.subagents.followup.graph import (
     OPEN_GAPS,
     OPEN_ITEM,
@@ -25,6 +27,13 @@ from autune_agent.subagents.followup.graph import (
 from autune_contracts import INTELLIGENCE_COMPLETED
 
 QUESTION_TEXT = "결제 실패하면 누가 책임지죠?"
+MONDAY = date(2026, 10, 5)
+
+
+@pytest.fixture(autouse=True)
+def _monday(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every run is on Monday 2026-10-05, so a suggested date is fixed."""
+    monkeypatch.setattr(graph, "_today", lambda: MONDAY)
 
 
 def gap(gid: str, severity: str = "high", key: str = "risk") -> dict[str, Any]:
@@ -155,18 +164,21 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     (proposal,) = outcome.proposed
     assert (proposal.level, proposal.tool, proposal.kind) == ("L2", WRITE, "followup_meeting")
     # The trigger's meeting is the run's: the action is bound to it when it runs.
-    assert proposal.arguments == {}
+    # No meeting days to read, so three business days from Monday.
+    assert proposal.arguments == {"due_date": "2026-10-08"}
     assert proposal.evidence == ["gap_now"]
     assert "다시 열린 항목 1개" in outcome.result.summary
-    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
+    assert "10월 8일(목)" in outcome.result.summary
+    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, RECENT]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
-def test_the_write_is_one_b_declares_l2_and_takes_only_the_meeting() -> None:
-    """A proposal cannot demote a write, but an L1 one would run with no lead at all."""
+def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_and_a_date() -> None:
+    """A proposal cannot demote a write, but an L1 one would run with no lead at all.
+    And an argument the write does not take fails the approval (``bind_scope``)."""
     write = collect_actions(["extraction"])[WRITE]
     assert write.level == "L2"
-    assert write.parameters == {"team_id", "meeting_id"}
+    assert write.parameters == {"team_id", "meeting_id", "due_date"}
 
 
 def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:
@@ -280,9 +292,10 @@ def test_a_chat_run_takes_the_latest_analysed_meeting(session, team) -> None:
 
     (proposal,) = outcome.proposed
     # A chat run's scope has no meeting, so the proposal names the one it read.
-    assert proposal.arguments == {"meeting_id": team["meeting"]}
+    assert proposal.arguments == {"meeting_id": team["meeting"], "due_date": "2026-10-08"}
     assert arguments_ok(proposal.arguments)
     # The first open_gaps is refused by the scope (no meeting) before it reaches C.
+    # The meeting list it read to pick M also gives the date: no second read.
     assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
@@ -329,3 +342,77 @@ def test_evidence_stops_at_five() -> None:
 
     assert len(verdict.evidence) == rules.MAX_EVIDENCE
     assert verdict.evidence == [f"gap_{n}" for n in range(5)]
+
+
+def held(*days: str) -> list[dict[str, Any]]:
+    return [
+        {"title": "주간 회의", "meeting_id": f"mtg_{n}", "status": "complete", "started_at": day}
+        for n, day in enumerate(days)
+    ]
+
+
+def test_the_date_follows_the_teams_weekly_rhythm(session, team) -> None:
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        recent=held(
+            "2026-10-02T01:00:00+00:00",
+            "2026-09-25T01:00:00+00:00",
+            "2026-09-18T01:00:00+00:00",
+        ),
+    )
+
+    (proposal,) = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).proposed
+
+    # Friday meetings a week apart: the Friday after the latest.
+    assert proposal.arguments == {"due_date": "2026-10-09"}
+    assert arguments_ok(proposal.arguments)
+    assert "추천 날짜 10월 9일(금)" in proposal.rationale
+
+
+def test_an_unreadable_meeting_list_still_proposes_with_the_default_date(session, team) -> None:
+    tools = tools_for(recurring=[carried("gap_1")], recent_ok=False)
+
+    (proposal,) = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).proposed
+
+    assert proposal.arguments == {"due_date": "2026-10-08"}
+
+
+def test_a_meeting_list_with_no_start_times_proposes_with_the_default_date(session, team) -> None:
+    recent = [{"title": "회의", "meeting_id": "mtg_a", "status": "complete"}] * 3
+    tools = tools_for(recurring=[carried("gap_1")], recent=recent)
+
+    (proposal,) = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).proposed
+
+    assert proposal.arguments == {"due_date": "2026-10-08"}
+
+
+@pytest.mark.parametrize(
+    ("held_days", "today", "expected"),
+    [
+        # Fewer than two meetings: three business days, over the weekend.
+        ([], date(2026, 10, 9), date(2026, 10, 14)),
+        ([date(2026, 10, 2)], date(2026, 10, 5), date(2026, 10, 8)),
+        # Every two days: the latest plus two.
+        (
+            [date(2026, 10, 1), date(2026, 9, 29), date(2026, 9, 27)],
+            date(2026, 10, 1),
+            date(2026, 10, 5),
+        ),
+        # A monthly team waits at most two weeks.
+        ([date(2026, 10, 1), date(2026, 9, 1)], date(2026, 10, 1), date(2026, 10, 15)),
+        # Never today or earlier: the rhythm says the 6th, but it is the 7th.
+        ([date(2026, 10, 5), date(2026, 10, 4)], date(2026, 10, 7), date(2026, 10, 8)),
+        # A Saturday moves to Monday.
+        ([date(2026, 10, 3), date(2026, 9, 26)], date(2026, 10, 5), date(2026, 10, 12)),
+        # Two meetings on one day are one day.
+        ([date(2026, 10, 1), date(2026, 10, 1)], date(2026, 10, 1), date(2026, 10, 6)),
+    ],
+)
+def test_suggest_date(held_days: list[date], today: date, expected: date) -> None:
+    assert rules.suggest_date(held_days, today) == expected
