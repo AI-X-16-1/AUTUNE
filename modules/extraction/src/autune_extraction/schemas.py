@@ -190,6 +190,10 @@ class ActionItemRead(BaseModel):
     status: str
     confidence: float
     origin: str
+    carried_meetings: int = 0
+    """For an open item: how many of its team's meetings have been held since
+    it was made (``service.meetings_since``). ``STALE_AFTER`` or more reads as
+    stuck on the board."""
     project_id: str | None = None
     """The team's project this item is about (``ext_projects``), or ``None``."""
 
@@ -395,6 +399,18 @@ class MeetingNoteUpdate(BaseModel):
     body: str = Field(max_length=MAX_NOTE_CHARS)
 
 
+class GeneratedSummary(BaseModel):
+    """A meeting's summary written by a cloud model (#421 v2), shown on the 요약
+    tab above B's own rows and marked as a model's. Present only with
+    ``summary_impl=llm`` and only while the lines it was written from are
+    unchanged."""
+
+    overview: str
+    points: list[str]
+    model_version: str
+    created_at: datetime
+
+
 class MeetingSummary(BaseModel):
     """S15's 요약 tab, v1 (#421, WBS 4.9): B's own rows in three levels, no model.
 
@@ -418,6 +434,9 @@ class MeetingSummary(BaseModel):
     the confirmation window."""
     note: str | None = None
     note_updated_at: datetime | None = None
+    generated: GeneratedSummary | None = None
+    """v2: a model's summary of the whole meeting, or ``None`` when none is
+    written or the meeting has changed since."""
     projects: list[ProjectRead] = Field(default_factory=list)
     """The team's projects, for grouping ``decisions`` and ``action_items`` by
     their ``project_id`` -- one that is ``None`` is 미분류."""
@@ -539,6 +558,8 @@ class CarriedOver(BaseModel):
 
     open: int
     overdue: int
+    stale: int = 0
+    """Open items carried through ``STALE_AFTER`` or more meetings."""
     items: list[CarriedOverItem]
 
 
