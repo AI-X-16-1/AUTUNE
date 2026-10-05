@@ -46,6 +46,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExtractionRun,
     ExtMeetingSummary,
+    ExtProject,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 
@@ -67,6 +68,7 @@ TABLES = [
     ExtDecisionReview.__table__,
     # The task drafts action items too (step 3).
     ExtActionItem.__table__,
+    ExtProject.__table__,
     ExtActionItemSource.__table__,
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,

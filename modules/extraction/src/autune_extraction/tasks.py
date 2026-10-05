@@ -59,7 +59,15 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service, sync_state
+from . import (
+    calendar_sync,
+    jira_sync,
+    notion_backfill,
+    notion_setup,
+    projects,
+    service,
+    sync_state,
+)
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
@@ -231,6 +239,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         # only in ``summarize_meeting``: that task is not queued at all with
         # ``summary_impl=none``, and may fail (#782 review).
         service.drop_stale_summary(session, meeting_id)
+        # Which of the team's projects each row is about, by what was said.
+        # Rows a person placed keep their project.
+        projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)

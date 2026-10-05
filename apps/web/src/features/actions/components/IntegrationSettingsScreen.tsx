@@ -8,6 +8,7 @@ import { CalendarConnect } from "./CalendarConnect";
 import { DueReminderSetting } from "./DueReminderSetting";
 import { JiraConnect } from "./JiraConnect";
 import { NotionConnect } from "./NotionConnect";
+import { ProjectSettings } from "./ProjectSettings";
 import { SlackConnect } from "./SlackConnect";
 
 type Team = SessionUser["teams"][number];
@@ -102,6 +103,13 @@ export function IntegrationSettingsScreen() {
             <SlackConnect key={`slack-${teamId}`} teamId={teamId} />
             <JiraConnect key={`jira-${teamId}`} teamId={teamId} />
             <NotionConnect key={`notion-${teamId}`} teamId={teamId} />
+            <h3
+              className="mt-4 text-[var(--color-ink-strong)]"
+              style={heading}
+            >
+              프로젝트
+            </h3>
+            <ProjectSettings key={`projects-${teamId}`} teamId={teamId} />
           </>
         )}
         <p className="text-[var(--color-ink-muted)]" style={meta}>
