@@ -72,6 +72,7 @@ describe("Assistant when the model is busy", () => {
       await screen.findByText(/1분쯤 뒤에 다시 물어봐 주세요/),
     ).toBeTruthy();
   });
+});
 
 describe("Assistant launcher alert", () => {
   // agent-assistant.md section 2: a 6px signal.critical dot when the assistant
