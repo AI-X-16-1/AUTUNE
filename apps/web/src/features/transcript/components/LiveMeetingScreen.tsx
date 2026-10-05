@@ -13,6 +13,7 @@ import { useMicrophone, type Microphone } from "../hooks/useMicrophone";
 import type { RecordingState } from "../types";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
+import { UploadFailed } from "./UploadFailed";
 
 /** The phases in which closing the tab loses audio that is not yet uploaded. */
 const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
@@ -250,14 +251,11 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           {live.phase === "uploading" ? "녹음을 올리는 중입니다…" : "업로드에 실패했습니다."}
         </p>
         {live.phase === "upload_failed" && (
-          <>
-            <p role="alert" style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-attention)" }}>
-              {live.error} 녹음은 아직 이 탭에 있습니다. 탭을 닫지 마세요.
-            </p>
-            <Button tone="primary" onClick={() => void live.retryUpload()}>
-              다시 올리기
-            </Button>
-          </>
+          <UploadFailed
+            error={live.error}
+            onRetry={() => void live.retryUpload()}
+            onSave={live.saveRecording}
+          />
         )}
       </main>,
     );
