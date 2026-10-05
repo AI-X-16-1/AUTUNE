@@ -29,7 +29,7 @@ from autune_contracts import (
     validate_major_version,
 )
 from autune_core import Meeting, get_logger, load_integration, periodic, publish, session_scope
-from autune_core.errors import ConflictError
+from autune_core.errors import ConflictError, PrivacyViolationError
 from autune_integrations import SlackClient
 
 from . import service
@@ -168,38 +168,101 @@ def send_personal_feedback(meeting_id: str) -> None:
 
 @shared_task(name="autune.intelligence.generate_weekly_report", acks_late=True)
 def generate_weekly_report(team_id: str, period_end: str | None = None) -> None:
-    """Aggregate the trailing 7 days into one ``intel_reports`` row and post it
-    to the team's Slack channel.
+    """Write the team's report for the seven days before ``period_end`` and post
+    it to the team's Slack channel, once.
 
-    ``period_end`` is an ISO date string (JSON-safe for a Celery arg), defaulting
-    to today; ``period_start`` is 7 days before it. Unlike
-    ``send_personal_feedback``, the report is generated and persisted whether or
-    not Slack is connected — it is also served by ``GET /reports/{team_id}``, so
-    a team without Slack still sees it on the dashboard. Only the channel post is
-    skipped: without a connected Slack, or without a ``channel`` configured on
-    it. There is no ``apps/worker`` beat schedule calling this yet — see
-    docs/modules/intelligence.md step 6.
+    For a person or a script asking by hand; the hourly
+    ``send_due_weekly_reports`` sends each team's on its own day (#227).
+    ``period_end`` is an ISO date string (JSON-safe for a Celery arg),
+    defaulting to today in Korean time. Asked again, the report is written
+    again but a week already posted is not posted twice. The row is kept
+    whether or not Slack is connected -- ``GET /reports/{team_id}`` serves it.
     """
-    end = date.fromisoformat(period_end) if period_end is not None else date.today()
+    end = (
+        date.fromisoformat(period_end)
+        if period_end is not None
+        else datetime.now(UTC).astimezone(service._KST).date()
+    )
     start = end - timedelta(days=7)
-
     with session_scope() as session:
-        report = service.generate_weekly_report(session, team_id, start, end)
-        config = load_integration(session, team_id, "slack")
+        service.generate_weekly_report(session, team_id, start, end)
+    _post_weekly_report(team_id, start)
 
-    if config is None:
-        log.info("intelligence_weekly_report_no_slack", team_id=team_id, period_start=str(start))
-        return
-    channel = config.config.get("channel")
-    if channel is None:
-        log.info("intelligence_weekly_report_no_channel", team_id=team_id, period_start=str(start))
-        return
-    SlackClient(config.require_secret()).post_message(channel, report.body_markdown)
+
+@shared_task(name="autune.intelligence.periodic.weekly_reports")
+@periodic(timedelta(hours=1))
+def send_due_weekly_reports() -> None:
+    """Each team whose weekly slot has passed gets that week's report, written
+    once and posted once (#227). Hourly, so a report goes out within the hour
+    after the team's chosen time. One team's failure does not hold the rest,
+    **except a privacy violation**, raised once the others are done, ids only,
+    as B's and C's sweeps do (#821 review)."""
+    now = datetime.now(UTC)
+    with session_scope() as session:
+        due = service.due_weekly_reports(session, now)
+    refused: list[str] = []
+    for team_id, start, end in due:
+        try:
+            with session_scope() as session:
+                if session.get(service.IntelReport, (team_id, start)) is None:
+                    service.generate_weekly_report(session, team_id, start, end)
+            _post_weekly_report(team_id, start)
+        except PrivacyViolationError:
+            refused.append(team_id)
+        except Exception as exc:  # noqa: BLE001 - one team must not stop the rest
+            # The class name only: a failed post's message can carry the body.
+            log.warning(
+                "intelligence_weekly_report_failed",
+                team_id=team_id,
+                period_start=str(start),
+                reason=type(exc).__name__,
+            )
+    if refused:
+        raise PrivacyViolationError(
+            f"weekly report refused by the outbound check for {len(refused)} team(s): "
+            f"{', '.join(refused)}"
+        )
+
+
+def _post_weekly_report(team_id: str, start: date) -> None:
+    """Post the stored report for the week starting ``start``, at most once.
+
+    Skipped, and tried again on the next tick, without a connected Slack or a
+    channel. The post is claimed and committed before it is sent. A send the
+    outbound check refuses sets the week aside (``not_posted="refused"``) and
+    raises; any other failure gives the claim back for the next tick.
+    """
+    with session_scope() as session:
+        config = load_integration(session, team_id, "slack")
+        channel = config.config.get("channel") if config is not None else None
+        if config is None or channel is None:
+            log.info(
+                "intelligence_weekly_report_no_channel", team_id=team_id, period_start=str(start)
+            )
+            return
+        report = service.claim_weekly_report_post(session, team_id, start, now=datetime.now(UTC))
+        if report is None:
+            return
+        body, meetings, secret = (
+            report.body_markdown,
+            report.metrics_json["meeting_count"],
+            config.require_secret(),
+        )
+    try:
+        SlackClient(secret).post_message(channel, body)
+    except PrivacyViolationError:
+        with session_scope() as session:
+            service.refuse_weekly_report_post(session, team_id, start)
+        raise
+    except Exception:
+        with session_scope() as session:
+            service.release_weekly_report_post(session, team_id, start)
+        raise
     log.info(
         "intelligence_weekly_report_sent",
         team_id=team_id,
         period_start=str(start),
-        meeting_count=report.metrics_json["meeting_count"],
+        meeting_count=meetings,
     )
 
 

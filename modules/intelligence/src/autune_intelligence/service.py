@@ -17,7 +17,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
-from typing import Final, Literal
+from typing import Any, Final, Literal, NamedTuple
 
 import sqlalchemy as sa
 from sqlalchemy import func, text
@@ -83,6 +83,7 @@ from .models import (
     IntelPrediction,
     IntelReport,
     IntelScore,
+    IntelTeamSettings,
 )
 from .pipeline import get_gap_classifier, get_misalignment_predictor
 from .pipeline.base import Classification
@@ -814,9 +815,11 @@ def _stated_progress(
     )
 
 
-_PROGRESS_REPORTED_WITHIN: Final = timedelta(days=1)
+_PROGRESS_REPORTED_WITHIN: Final = timedelta(days=2)
 """B's counts describe today. A report for a week that ended longer ago than
-this leaves them out rather than print today's numbers as that week's."""
+this leaves them out rather than print today's numbers as that week's. Two
+days, not one: a 23:00 slot caught up the next evening is ~47 hours past its
+week's end (``WEEKLY_REPORT_CATCH_UP``, #821 review)."""
 
 
 def generate_weekly_report(
@@ -832,8 +835,9 @@ def generate_weekly_report(
     it and as B counts "today" (``ACTION_PROGRESS_TODAY_ZONE``).
 
     Action items come from B's latest counts as the dashboard reads them --
-    completion and overdue over the last four weeks' meetings, and what
-    meetings held before ``period_start`` left undone -- for a week ending
+    completion over the last four weeks' meetings, overdue over every kept
+    meeting, and what kept meetings held before ``period_start`` left undone
+    -- each under the three-meeting floor -- for a week ending
     within ``_PROGRESS_REPORTED_WITHIN`` of now only (#605); written again
     later, a week keeps the counts it first stated. "Before ``period_start``"
     goes by when a meeting was held, while the week's meetings are those
@@ -942,6 +946,205 @@ def generate_weekly_report(
         metrics_json=metrics_json,
         source_meeting_ids=meeting_ids,
     )
+
+
+# --- When the weekly report goes out (#227) ---------------------------------------
+#
+# A team picks a weekday and an hour (Korean time); an hourly task writes each
+# team's report once that slot has passed and posts it once. Nothing in apps/:
+# the task declares its own period (``autune_core.periodic``, #374).
+
+WEEKLY_REPORT_DEFAULT_WEEKDAY: Final = 0
+"""Monday, as ``date.weekday`` counts."""
+WEEKLY_REPORT_DEFAULT_HOUR: Final = 9
+"""09:00 Korean time: ui-spec S27's "Mondays 09:00"."""
+WEEKLY_REPORT_CATCH_UP: Final = timedelta(days=1)
+"""A slot older than this is not caught up: a worker that was down for a day
+does not post last week's report a week late."""
+WEEKLY_REPORT_ACTIVE_WITHIN: Final = timedelta(days=91)
+"""A team with no meeting created this recently is sent nothing at all -- B's
+``ACTION_PROGRESS_WINDOW``, so a report still has counts to state."""
+
+
+@dataclass(frozen=True)
+class WeeklyReportSchedule:
+    weekday: int
+    hour: int
+    send_empty: bool
+    updated_by_name: str | None = None
+    updated_at: datetime | None = None
+
+
+def weekly_report_schedule(session: Session, team_id: str) -> WeeklyReportSchedule:
+    """The team's setting, or the defaults when it has never changed them."""
+    row = session.get(IntelTeamSettings, team_id)
+    if row is None:
+        return WeeklyReportSchedule(
+            weekday=WEEKLY_REPORT_DEFAULT_WEEKDAY,
+            hour=WEEKLY_REPORT_DEFAULT_HOUR,
+            send_empty=False,
+        )
+    by = session.get(User, row.updated_by) if row.updated_by else None
+    return WeeklyReportSchedule(
+        weekday=row.weekly_report_weekday,
+        hour=row.weekly_report_hour,
+        send_empty=row.weekly_report_send_empty,
+        updated_by_name=by.display_name if by is not None else None,
+        updated_at=row.updated_at,
+    )
+
+
+def set_weekly_report_schedule(
+    session: Session, team_id: str, *, weekday: int, hour: int, send_empty: bool, user_id: str
+) -> WeeklyReportSchedule:
+    """A member sets when the team's report goes out. Logged with who did it."""
+    require_team_member(session, user_id=user_id, team_id=team_id)
+    if not 0 <= weekday <= 6:
+        raise ValidationError("weekday must be 0 (Monday) to 6 (Sunday)")
+    if not 0 <= hour <= 23:
+        raise ValidationError("hour must be 0 to 23")
+    statement = pg_insert(IntelTeamSettings).values(
+        team_id=team_id,
+        weekly_report_weekday=weekday,
+        weekly_report_hour=hour,
+        weekly_report_send_empty=send_empty,
+        updated_by=user_id,
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[IntelTeamSettings.team_id],
+            set_={
+                "weekly_report_weekday": weekday,
+                "weekly_report_hour": hour,
+                "weekly_report_send_empty": send_empty,
+                "updated_by": user_id,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    session.flush()
+    session.expire_all()
+    log.info(
+        "intelligence_weekly_report_schedule_set",
+        team_id=team_id,
+        by=user_id,
+        weekday=weekday,
+        hour=hour,
+        send_empty=send_empty,
+    )
+    return weekly_report_schedule(session, team_id)
+
+
+def latest_weekly_slot(*, weekday: int, hour: int, now: datetime) -> datetime:
+    """The last ``weekday`` at ``hour`` (Korean time) at or before ``now``."""
+    local = now.astimezone(_KST)
+    slot = local.replace(hour=hour, minute=0, second=0, microsecond=0) - timedelta(
+        days=(local.weekday() - weekday) % 7
+    )
+    return slot if slot <= local else slot - timedelta(days=7)
+
+
+def weekly_period(slot: datetime) -> tuple[date, date]:
+    """The seven Korean days before the slot's day: ``[start, end)``."""
+    end = slot.astimezone(_KST).date()
+    return end - timedelta(days=7), end
+
+
+class DueWeeklyReport(NamedTuple):
+    team_id: str
+    period_start: date
+    period_end: date
+
+
+def due_weekly_reports(session: Session, now: datetime) -> list[DueWeeklyReport]:
+    """Teams whose latest slot passed within ``WEEKLY_REPORT_CATCH_UP`` and whose
+    report for that week is not out yet: not written, or written and neither
+    posted nor set aside. Only teams with a meeting in
+    ``WEEKLY_REPORT_ACTIVE_WITHIN``.
+
+    A week starts no earlier than the last report out ended, so a team that
+    moves its day is not sent the same days twice: the next report is shorter,
+    and a slot inside the last week is skipped (#821 review)."""
+    active = session.scalars(
+        sa.select(Meeting.team_id)
+        .where(Meeting.created_at >= now - WEEKLY_REPORT_ACTIVE_WITHIN, _not_expired(now))
+        .distinct()
+    ).all()
+    due = []
+    for team_id in sorted(active):
+        schedule = weekly_report_schedule(session, team_id)
+        slot = latest_weekly_slot(weekday=schedule.weekday, hour=schedule.hour, now=now)
+        if now - slot > WEEKLY_REPORT_CATCH_UP:
+            continue
+        start, end = weekly_period(slot)
+        last_out = session.scalar(
+            sa.select(func.max(IntelReport.period_end)).where(
+                IntelReport.team_id == team_id,
+                sa.or_(IntelReport.posted_at.is_not(None), IntelReport.not_posted.is_not(None)),
+                IntelReport.period_start != start,
+            )
+        )
+        if last_out is not None:
+            start = max(start, last_out)
+        if start >= end:
+            continue
+        row = session.get(IntelReport, (team_id, start))
+        if row is None or (row.posted_at is None and row.not_posted is None):
+            due.append(DueWeeklyReport(team_id, start, end))
+    return due
+
+
+def weekly_report_is_empty(metrics: dict[str, Any]) -> bool:
+    """Nothing to say: no meeting analysed that week, and no item overdue or
+    carried over (or none known)."""
+    return (
+        not metrics.get("meeting_count")
+        and not metrics.get("overdue_action_items")
+        and not metrics.get("carried_over_action_items")
+    )
+
+
+def claim_weekly_report_post(
+    session: Session, team_id: str, period_start: date, *, now: datetime
+) -> IntelReport | None:
+    """The report to post, its post claimed; ``None`` when it is out already,
+    set aside, or missing. An empty week on a team that did not ask for those
+    is set aside (``not_posted="empty"``) and never claimed. The caller
+    commits before posting, and gives the claim back if posting fails."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is None or row.posted_at is not None or row.not_posted is not None:
+        return None
+    if (
+        weekly_report_is_empty(row.metrics_json)
+        and not weekly_report_schedule(session, team_id).send_empty
+    ):
+        row.not_posted = "empty"
+        session.flush()
+        log.info(
+            "intelligence_weekly_report_empty", team_id=team_id, period_start=str(period_start)
+        )
+        return None
+    row.posted_at = now
+    session.flush()
+    return row
+
+
+def refuse_weekly_report_post(session: Session, team_id: str, period_start: date) -> None:
+    """The outbound check refused the body: set the week aside for good
+    (``not_posted="refused"``). The same body would be refused again."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is not None:
+        row.posted_at = None
+        row.not_posted = "refused"
+        session.flush()
+
+
+def release_weekly_report_post(session: Session, team_id: str, period_start: date) -> None:
+    """A post that failed for another reason is tried again on the next tick."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is not None:
+        row.posted_at = None
+        session.flush()
 
 
 # --- Meeting report (agent layer, #260/#261) --------------------------------
