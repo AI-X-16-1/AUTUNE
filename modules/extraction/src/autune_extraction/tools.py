@@ -254,6 +254,118 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     )
 
 
+STALLED_UNCONFIRMED_DAYS = 3
+"""How long an item may wait for confirmation before ``stalled_action_items``
+counts it, unless the caller says otherwise (the user, 2026-10-05, #856)."""
+
+
+def stalled_action_items(
+    session: Session, team_id: str, *, unconfirmed_days: int = STALLED_UNCONFIRMED_DAYS
+) -> dict[str, Any]:
+    """Use this when deciding which of a team's action items somebody should
+    be asked to look at again -- work that has stopped moving. Do not use it
+    for what is due soon -- that is ``open_action_items`` -- or for one
+    meeting's review -- that is ``review_state``.
+
+    Returns the team's items that are stalled in one of three ways, most
+    pressing first (at most five), each saying which in ``stalled``, with a
+    count of each in ``summary``:
+
+    - ``overdue`` -- confirmed, unfinished, and past its due date;
+    - ``carried`` -- confirmed, unfinished, and carried through
+      ``service.STALE_AFTER`` or more of the team's later meetings (the board's
+      own mark, #794);
+    - ``unconfirmed`` -- still waiting for a person's confirmation
+      ``unconfirmed_days`` or more after it was made (a whole number from 1 to
+      365; 3 unless given).
+
+    An unconfirmed item is given by id, meeting and how long it has waited --
+    never its text, its assignee or its date: nothing a model drafted is
+    quoted before a person has confirmed it (#261 rule 3). It is about items,
+    not people: nothing here counts or ranks what a person has left undone.
+    """
+    window = _whole_days(unconfirmed_days, low=1)
+    if window is None:
+        return _not_a_day_count("unconfirmed_days")
+    meeting_ids = set(
+        session.scalars(
+            select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
+        )
+    )
+    if not meeting_ids:
+        return _result(summary="이 팀의 회의가 없습니다.", items=[], evidence=[])
+
+    today = date.today()
+    open_items = [
+        i
+        for status in _OPEN
+        for i in service.list_action_items(session, status=status)
+        if i.meeting_id in meeting_ids
+    ]
+    confirmed: list[tuple[ActionItemRead, list[str]]] = []
+    for i in open_items:
+        ways = [
+            way
+            for way, is_so in (
+                ("overdue", _overdue(i, today)),
+                ("carried", i.carried_meetings >= service.STALE_AFTER),
+            )
+            if is_so
+        ]
+        if ways:
+            confirmed.append((i, ways))
+    # Both ways before one; late before carried; then the longer carried.
+    confirmed.sort(key=lambda pair: (len(pair[1]), "overdue" in pair[1], pair[0].carried_meetings))
+    confirmed.reverse()
+
+    now = datetime.now(tz=UTC)
+    waiting: list[tuple[int, str, str]] = []
+    for item_id, meeting_id, made in session.execute(
+        select(ExtActionItem.id, ExtActionItem.meeting_id, ExtActionItem.created_at).where(
+            ExtActionItem.meeting_id.in_(meeting_ids),
+            ExtActionItem.status == ActionStatus.NEEDS_CONFIRMATION.value,
+        )
+    ).tuples():
+        days = (now - (made if made.tzinfo else made.replace(tzinfo=UTC))).days
+        if days >= window:
+            waiting.append((days, item_id, meeting_id))
+    waiting.sort(reverse=True)
+
+    items: list[dict[str, Any]] = [
+        {
+            **_item_finding(i, today),
+            "score": 0.9 if "overdue" in ways else 0.7,
+            "stalled": ways,
+            "carried_meetings": i.carried_meetings,
+        }
+        for i, ways in confirmed
+    ]
+    items += [
+        {
+            "title": "액션아이템 확인 대기",
+            "body": f"{days}일째 확인 대기",
+            "score": 0.5,
+            "id": item_id,
+            "meeting_id": meeting_id,
+            "stalled": ["unconfirmed"],
+            "waiting_days": days,
+        }
+        for days, item_id, meeting_id in waiting
+    ]
+    overdue = sum("overdue" in ways for _, ways in confirmed)
+    carried = sum("carried" in ways for _, ways in confirmed)
+    return _result(
+        summary=(
+            f"멈춰 있는 액션아이템: 기한 지남 {overdue}건, "
+            f"회의 {service.STALE_AFTER}번 이상 이월 {carried}건, "
+            f"{window}일 넘게 확인 대기 {len(waiting)}건."
+        ),
+        items=items,
+        # Only what a person has confirmed is quoted, so only that is sourced.
+        evidence=[u for i, _ in confirmed[:MAX_ITEMS] for u in i.source_utterance_ids],
+    )
+
+
 @dataclass(eq=False)
 class _Load:
     """One person's confirmed work, counted -- or, with ``user_id`` ``None``, the
@@ -651,6 +763,7 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
 TOOLS = [
     meeting_action_items,
     open_action_items,
+    stalled_action_items,
     workload_by_owner,
     unresolved_questions,
     review_state,
