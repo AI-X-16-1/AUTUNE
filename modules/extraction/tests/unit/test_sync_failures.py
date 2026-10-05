@@ -243,8 +243,8 @@ def test_a_jira_skipped_for_a_refused_grant_is_kept_even_the_first_time(
     ("config", "expected"),
     [
         pytest.param({"needs_reconnect": True}, tasks.JIRA_NEEDS_RECONNECT, id="refused-grant"),
-        pytest.param({"needs_reconnect": False}, tasks.JIRA_SKIPPED, id="no-project"),
-        pytest.param(None, tasks.JIRA_SKIPPED, id="never-connected"),
+        pytest.param({"needs_reconnect": False}, tasks.COPY_NOT_CONNECTED, id="no-project"),
+        pytest.param(None, tasks.COPY_NOT_CONNECTED, id="never-connected"),
     ],
 )
 def test_the_jira_sync_says_which_skip_it_was(
@@ -307,12 +307,102 @@ def test_two_first_failures_at_once_keep_the_latest_and_lose_nothing(session: Se
     assert (row.kind, row.failed_at.replace(tzinfo=UTC)) == ("reconnect", later)
 
 
-def test_a_team_without_jira_has_nothing_to_keep(session: Session, sends: dict) -> None:
+@pytest.mark.parametrize("system", ["notion", "jira"])
+def test_a_copy_skipped_because_the_team_is_not_connected_keeps_its_failure(
+    session: Session, sends: dict, system: str
+) -> None:
+    """mkkim68, review of #774: a skip is not "the copy went". A team that
+    disconnected the tool may still have the item's page or issue there, saying
+    what it said -- after deleted speech, the deleted sentence -- and the red
+    mark used to come off the card all the same."""
+    item(session)
+    sends[system] = TransientIntegrationError("down")
+    tasks.sync_after_confirmation("act_1")
+    assert kept(session) == {system: "unreachable"}
+
+    sends[system] = tasks.COPY_NOT_CONNECTED
+    tasks.sync_after_confirmation("act_1")
+
+    assert kept(session) == {system: "unreachable"}
+
+
+def test_a_team_that_never_connected_has_no_mark_made_for_it(session: Session, sends: dict) -> None:
+    """Keeping is not making: nothing failed here, and nothing is outside."""
+    item(session)
+    sends["notion"] = tasks.COPY_NOT_CONNECTED
+    sends["jira"] = tasks.COPY_NOT_CONNECTED
+
+    tasks.sync_after_confirmation("act_1")
+
+    assert kept(session) == {}
+
+
+def test_reconnecting_and_sending_clears_what_the_skip_kept(session: Session, sends: dict) -> None:
     item(session)
     sends["jira"] = TransientIntegrationError("down")
     tasks.sync_after_confirmation("act_1")
+    sends["jira"] = tasks.COPY_NOT_CONNECTED
+    tasks.sync_after_confirmation("act_1")
 
-    sends["jira"] = tasks.JIRA_SKIPPED
+    sends["jira"] = tasks.JIRA_SENT
+    tasks.sync_after_confirmation("act_1")
+
+    assert kept(session) == {}
+
+
+def test_the_notion_sync_says_when_the_team_is_not_connected(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real ``sync_action_item``: the tests above only stub its answer."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+
+    item(session)
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "load_integration", lambda _s, _team, _svc: None)
+
+    assert tasks.sync_action_item("act_1") == tasks.COPY_NOT_CONNECTED
+    assert tasks.sync_action_item("act_never_was") == tasks.COPY_GONE
+
+
+# --- each copy on its own, whatever it raises (#774 review) ---------------------------
+
+
+@pytest.mark.parametrize("broken", ["notion", "calendar", "jira"])
+def test_a_copy_that_breaks_in_an_unforeseen_way_costs_the_others_nothing(
+    session: Session, sends: dict, broken: str
+) -> None:
+    """mkkim68, review of #774: the three run in one task since #754, each
+    catching only what a tool raises. A database error or a lost race in the
+    first used to leave the task there -- the two after it never ran and
+    nothing was recorded for any of them. After deleted speech that is a
+    deleted sentence left in Jira or on a calendar with no mark on the card."""
+    item(session)
+    others = [s for s in ("notion", "calendar", "jira") if s != broken]
+    sends[broken] = RuntimeError(ECHO)
+    for system in others:
+        sends[system] = TransientIntegrationError("down")  # proof that it ran
+
+    with capture_logs() as logs:
+        tasks.sync_after_confirmation("act_1")  # does not raise
+
+    assert kept(session) == {broken: "rejected", **dict.fromkeys(others, "unreachable")}
+    (said,) = [e for e in logs if e["event"] == "extraction_copy_sync_broke"]
+    assert (said["system"], said["error"]) == (broken, "RuntimeError")
+    assert ECHO not in repr(logs), "the class of the error, never its message"
+
+
+def test_a_copy_that_broke_is_cleared_by_the_next_one_that_goes(
+    session: Session, sends: dict
+) -> None:
+    item(session)
+    sends["calendar"] = RuntimeError("lost a race")
+    tasks.sync_after_confirmation("act_1")
+    assert kept(session) == {"calendar": "rejected"}
+
+    sends["calendar"] = None
     tasks.sync_after_confirmation("act_1")
 
     assert kept(session) == {}
