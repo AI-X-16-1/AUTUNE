@@ -17,6 +17,8 @@ import type {
   MyConfirmation,
   Project,
   ProjectDraft,
+  ProjectSendReport,
+  SendTarget,
 } from "./types";
 
 export { api };
@@ -227,6 +229,16 @@ export const placeDecision = (id: string, projectId: string | null) =>
     method: "PUT",
     body: JSON.stringify({ project_id: projectId }),
   });
+
+/**
+ * Send each project's confirmed decisions and items, as "팀-프로젝트-날짜", to
+ * the chosen tools. Sending again updates the same copies.
+ */
+export const sendSummaryProjects = (meetingId: string, targets: SendTarget[]) =>
+  api.extraction<ProjectSendReport>(
+    `/summary/${encodeURIComponent(meetingId)}/projects/send`,
+    { method: "POST", body: JSON.stringify({ targets }) },
+  );
 
 /** Place the meeting's rows in the team's projects again, by the rules. */
 export const assignSummaryProjects = (meetingId: string) =>

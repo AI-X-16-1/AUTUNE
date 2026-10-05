@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 from autune_core import Meeting, TeamMember, User, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
-from . import service
+from . import project_send, service
 from .models import (
     ExtActionItem,
     ExtActionItemSource,
@@ -261,10 +261,13 @@ def save_project(
 
 
 def delete_project(session: Session, team_id: str, project_id: str) -> None:
-    """Delete one of this team's projects; its rows become unassigned."""
+    """Delete one of this team's projects; its rows become unassigned, and the
+    copies of its minutes are queued to be taken out of the team's tools."""
     row = session.get(ExtProject, project_id)
     if row is None or row.team_id != team_id:
         raise NotFoundError("project", project_id)
+    # Its minutes' copies go with it: queued before the rows cascade away.
+    project_send.queue_project(session, project_id)
     for item in session.scalars(
         select(ExtActionItem).where(ExtActionItem.project_id == project_id)
     ):
