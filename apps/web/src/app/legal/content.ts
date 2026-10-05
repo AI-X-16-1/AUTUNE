@@ -25,11 +25,32 @@
  *   that confirmation at upload, and any member of the team can record it
  *   (privacy 제9조). Unconfirmed speech is stored and is not analysed.
  * - what goes to a language model is listed for EVERY caller on main -- B's
- *   classifier and resolver, C's verifier and relation assistant, D's judge,
- *   the agent's router, Research and the ask loop (#677: per item it sends the
- *   title and the start of the body, masked utterances among them) -- not for
- *   the one that sends least (privacy 제6조). A new caller means rereading
- *   that row.
+ *   classifier, resolver and meeting summary (#782: the whole meeting's
+ *   consenting lines, in sections), C's verifier and relation assistant, D's
+ *   judge, the agent's router, Research and the ask loop (#677: per item it
+ *   sends the title and the start of the body, masked utterances among them)
+ *   -- not for the one that sends least (privacy 제6조). A new caller means
+ *   rereading that row.
+ * - 제6조 ③ ("only where the operator turned it on") is true in two different
+ *   ways. Module B's cloud models need a second switch as well
+ *   (AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392, #750); the agent's is on as soon
+ *   as it has a key (router_impl defaults to gemini). OPERATING CONDITION,
+ *   which the page cannot state as a promise: until #392 is decided no cloud
+ *   model is to see a real meeting -- demo meetings only.
+ * - what leaves to Slack, Notion and Jira is listed from the code that sends
+ *   it, per recipient (privacy 제5조): Jira also gets the assignee's e-mail
+ *   address, to find their account (jira_sync); a person's own due-date
+ *   reminder (#751) and Monday digest (#792) carry the item, its date, the
+ *   meeting's title and a link, and are sent only where the operator turned
+ *   them on -- the deployment, not the team; a project's minutes (#787) go to
+ *   all three when a member presses send.
+ * - the reminders can be turned off by the person (#771); on main that does
+ *   NOT yet stop the Monday digest, and the row says exactly that much.
+ * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
+ *   item's or a decision's page stays as the team's record; a deleted item's
+ *   page is trashed and its issue closed, retried (#764); a project's minutes
+ *   are retracted with the meeting and rewritten when their content changes
+ *   (#787); a withdrawn account's calendar grant is revoked at Google (#766).
  * - the application stores no IP address. What a server's own access log
  *   keeps is the hosting environment's, and nobody has checked its retention
  *   (제2조 says exactly that much).
@@ -274,8 +295,11 @@ const PRIVACY: LegalDocument = {
           "⑤ 이용자 또는 팀이 연결한 외부 서비스에 전달된 사본의 처리는 다음과 같습니다.",
         ),
         ol(
-          "Notion 및 Jira에 전달된 항목은 해당 팀의 기록으로서 보유 기간의 만료 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
+          "Notion 및 Jira에 전달된 액션 아이템 및 결정 사항은 해당 팀의 기록으로서 보유 기간의 만료 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
+          "이용자가 액션 아이템을 삭제한 경우 해당 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리하며, 외부 서비스의 응답이 없어 처리하지 못한 사본은 기록해 두었다가 다시 시도합니다. 거듭 실패한 사본은 해당 서비스에 남을 수 있습니다.",
+          "Slack, Notion 및 Jira에 보낸 프로젝트별 회의록은 해당 회의가 삭제되거나 보유 기간이 만료된 경우 회수(내용을 비우고 삭제 또는 종료)를 요청하고, 그 회의록에 포함된 내용이 삭제·정정·확정 취소된 경우 사본을 다시 작성합니다. 외부 서비스의 응답이 없으면 일정 기간 다시 시도하며, 그래도 처리하지 못한 사본은 해당 서비스에 남을 수 있습니다.",
           "담당자 본인의 Google Calendar에 등록된 일정은 삭제를 요청하며, Google의 응답이 없는 경우 일정이 남을 수 있습니다.",
+          "회원이 탈퇴하는 경우 해당 회원이 Google Calendar 연결을 위하여 부여한 권한의 해지를 Google에 요청합니다. Google의 응답이 없는 경우 그 권한은 이용자가 Google 계정에서 직접 해제할 때까지 남을 수 있으며, 회사는 탈퇴 후 해당 권한의 사본을 보관하지 않습니다.",
         ),
       ],
     },
@@ -298,23 +322,23 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수. 팀 채널에 보내는 회의 리포트, 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭, 회의 전 브리핑(이전 회의의 요약 및 예정 안건)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수. 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림 및 매주 월요일의 본인 할 일 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 이용자는 본인에게 오는 마감 알림을 끌 수 있습니다). 팀 채널에 보내는 회의 리포트, 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭, 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Notion Labs, Inc. (Notion)",
-            "확정된 액션 아이템 및 결정 사항(내용, 담당자, 기한, 상태, 회의 제목)",
+            "확정된 액션 아이템 및 결정 사항(내용, 담당자, 기한, 상태, 회의 제목). 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "팀의 업무 기록 작성",
-            "팀이 Notion을 연결하고 이용자가 항목을 확정한 때",
+            "팀이 Notion을 연결하고 이용자가 항목을 확정한 때. 프로젝트별 회의록은 팀 구성원이 보내기를 선택한 때",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Atlassian Pty Ltd (Jira)",
-            "확정된 액션 아이템(내용, 기한, 담당자의 Jira 계정)",
+            "확정된 액션 아이템(내용, 기한, 담당자의 Jira 계정) 및 담당자의 Jira 계정을 찾기 위한 담당자의 전자우편 주소. 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "팀의 업무 항목 등록",
-            "팀이 Jira를 연결하고 이용자가 항목을 확정한 때",
+            "팀이 Jira를 연결하고 이용자가 항목을 확정한 때. 프로젝트별 회의록은 팀 구성원이 보내기를 선택한 때",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
@@ -346,8 +370,8 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Google LLC (Gemini API)",
-            "언어 모델을 이용한 발화 분류, 발화의 맥락 해석 및 논의 누락 확인",
-            "가림 처리된 회의 문장(해당 발화와 그 전후 문장)",
+            "언어 모델을 이용한 발화 분류, 발화의 맥락 해석, 회의 요약 작성 및 논의 누락 확인",
+            "가림 처리된 회의 문장(해당 발화와 그 전후 문장). 회의 요약 작성의 경우 분석에 동의한 화자의 가림 처리된 회의 문장 전체와 그 회의에서 추출된 결정 사항 및 액션 아이템",
           ],
           [
             blank("회의 간 연결 판단에 쓰는 언어 모델 제공자"),
@@ -361,7 +385,7 @@ const PRIVACY: LegalDocument = {
           ],
         ),
         p(
-          "② 언어 모델을 이용한 발화 분류 및 발화의 맥락 해석에서는 팀 구성원 명단에 등록된 성명을 전송 전에 식별할 수 없는 표지로 치환합니다. 명단에 등록되지 않은 성명은 치환되지 않으며, 그 밖의 기능(논의 누락 확인, 회의 간 연결 판단, AI 비서)에서는 문장 및 항목에 포함된 성명을 치환하지 않습니다.",
+          "② 언어 모델을 이용한 발화 분류, 발화의 맥락 해석 및 회의 요약 작성에서는 팀 구성원 명단에 등록된 성명을 전송 전에 식별할 수 없는 표지로 치환합니다. 명단에 등록되지 않은 성명은 치환되지 않으며, 그 밖의 기능(논의 누락 확인, 회의 간 연결 판단, AI 비서)에서는 문장 및 항목에 포함된 성명을 치환하지 않습니다.",
         ),
         p(
           "③ 언어 모델을 이용한 기능은 회사가 해당 기능을 활성화한 경우에 한하여 제공됩니다. 음성 녹음은 언어 모델에 전송하지 않습니다.",
@@ -751,13 +775,13 @@ const TERMS: LegalDocument = {
       heading: "제13조(외부 서비스 연동)",
       blocks: [
         p(
-          "① 이용자 또는 팀이 외부 서비스를 연결한 경우, 확정된 액션 아이템 및 결정 사항과 알림이 해당 외부 서비스로 전달됩니다.",
+          "① 이용자 또는 팀이 외부 서비스를 연결한 경우, 확정된 액션 아이템 및 결정 사항, 팀 구성원이 보내기를 선택한 프로젝트별 회의록과 알림이 해당 외부 서비스로 전달됩니다.",
         ),
         p(
           "② 외부 서비스에 전달된 사본에는 해당 외부 서비스의 약관 및 정책이 적용됩니다.",
         ),
         p(
-          "③ Notion 및 Jira에 전달된 사본은 해당 팀의 기록으로서, 서비스에서 회의가 삭제되거나 이용자가 탈퇴한 후에도 남습니다.",
+          "③ Notion 및 Jira에 전달된 액션 아이템 및 결정 사항의 사본은 해당 팀의 기록으로서, 서비스에서 회의가 삭제되거나 이용자가 탈퇴한 후에도 남습니다. 프로젝트별 회의록의 사본은 회의가 삭제되거나 보유 기간이 만료되면 회사가 해당 외부 서비스에 회수를 요청하며, 외부 서비스의 응답이 없는 경우 남을 수 있습니다.",
         ),
         p(
           "④ 회사는 외부 서비스의 장애 또는 정책 변경으로 연동이 중단된 경우 이에 대한 책임을 지지 않습니다. 다만, 회사의 고의 또는 중대한 과실이 있는 경우에는 그러하지 아니합니다.",
