@@ -70,7 +70,11 @@
  *   nobody's personal data; the Slack row says only that no digest goes then.
  * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
  *   item's or a decision's page stays as the team's record; a deleted item's
- *   page is trashed and its issue closed, retried (#764); a project's minutes
+ *   page is trashed and its issue closed, retried (#764); a decision whose
+ *   confirmation is taken back, or that is deleted, has its statement taken
+ *   off its page and its issue before the page is trashed and the issue
+ *   closed (#669, #796) -- Notion's own page history is out of reach; a
+ *   project's minutes
  *   are retracted with the meeting and rewritten when their content changes
  *   (#787); a withdrawn account's calendar and Gmail grants are revoked at
  *   Google (#766, #760).
@@ -348,7 +352,7 @@ const PRIVACY: LegalDocument = {
         ),
         ol(
           "Notion 및 Jira에 전달된 액션 아이템 및 결정 사항은 해당 팀의 기록으로서 보유 기간의 만료 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
-          "이용자가 액션 아이템을 삭제한 경우 해당 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리하며, 외부 서비스의 응답이 없어 처리하지 못한 사본은 기록해 두었다가 다시 시도합니다. 거듭 실패한 사본은 해당 서비스에 남을 수 있습니다.",
+          "이용자가 액션 아이템을 삭제한 경우 해당 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다. 이용자가 결정 사항의 확정을 취소하거나 결정 사항을 삭제한 경우에는 해당 Notion 페이지와 Jira 항목에서 결정 사항의 문장을 지운 뒤 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다(Jira 항목은 삭제하지 않습니다). 외부 서비스의 응답이 없어 처리하지 못한 사본은 기록해 두었다가 다시 시도하며, 거듭 실패한 사본은 해당 서비스에 남을 수 있습니다. Notion이 자체적으로 보관하는 페이지 변경 이력에는 지우기 전의 문장이 남을 수 있습니다.",
           "Slack, Notion 및 Jira에 보낸 프로젝트별 회의록은 해당 회의가 삭제되거나 보유 기간이 만료된 경우 회수(내용을 비우고 삭제 또는 종료)를 요청하고, 그 회의록에 포함된 내용이 삭제·정정·확정 취소된 경우 사본을 다시 작성합니다. 외부 서비스의 응답이 없으면 일정 기간 다시 시도하며, 그래도 처리하지 못한 사본은 해당 서비스에 남을 수 있습니다.",
           "담당자 본인의 Google Calendar에 등록된 일정은 삭제를 요청하며, Google의 응답이 없는 경우 일정이 남을 수 있습니다.",
           "회원이 탈퇴하는 경우 해당 회원이 Google Calendar 연결 및 Gmail을 통한 초대 메일 발송을 위하여 부여한 권한의 해지를 Google에 요청합니다. Google의 응답이 없는 경우 그 권한은 이용자가 Google 계정에서 직접 해제할 때까지 남을 수 있으며, 회사는 탈퇴 후 해당 권한의 사본을 보관하지 않습니다.",
@@ -477,7 +481,7 @@ const PRIVACY: LegalDocument = {
             "미국",
             "로그인하는 때, 캘린더에 일정을 등록하는 때, Gmail로 초대 메일을 보내는 때, 언어 모델을 이용한 기능을 사용하는 때에 정보통신망을 통하여 전송",
             "제5조 및 제6조에 기재한 항목",
-            "본인 인증, 일정 등록, 언어 모델을 이용한 분석 및 AI 비서 응답 생성",
+            "본인 인증, 일정 등록, 팀 초대 메일의 발송, 언어 모델을 이용한 분석 및 AI 비서 응답 생성",
             "제5조 및 제6조에 기재한 기간",
           ],
           [
