@@ -194,10 +194,10 @@ foreign keys to another module's tables.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/dashboard/{team_id}` | Dashboard data; action-item completion from B's current counts (below). **Team members only** |
-| GET | `/scores/{meeting_id}` | One meeting's quality score |
-| GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out |
-| GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
-| GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
+| GET | `/scores/{meeting_id}` | One meeting's quality score. **Its team only**; anyone else gets the same 404 as a meeting with no score |
+| GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out. **Team members only** |
+| GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears. **Team members only** |
+| GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count. **Team members only** |
 | GET | `/reports/{team_id}` | Weekly reports. **Team members only** |
 | GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
 | PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer says a person edited it (the name is added from `edited_by` when read or posted, never stored), and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. Committed, then announced on `autune.intelligence.meeting_report_changed`; the Report subagent proposes the edited draft's post for approval. Nothing is posted from the card. 409 once posted, 422 with categories for personal data or over 3,000 characters as Slack receives it, 404 for anyone outside the team |

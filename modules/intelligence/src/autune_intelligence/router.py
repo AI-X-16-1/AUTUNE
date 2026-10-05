@@ -5,19 +5,14 @@ here — it cannot be reused by ``tasks.py`` if it lives in a route.
 
 The prefix ``/api/intelligence`` is applied by apps/api; declare paths relative to it.
 
-Every route here is read-only but the edit of a meeting report, and the two
-``/meeting-reports`` routes authenticate and check team membership: a report is
-meeting text, and one of them changes it. ``/dashboard`` and ``/reports`` do too:
-they carry the team's action-item completion and overdue counts (#605, #800
-review). Nothing here posts. Elsewhere auth is not enforced yet — apps/api has no
-auth middleware wired (#156, #189). The rest are team-level aggregates (quality,
-alignment, gap distribution) that carry no per-person data, so the gap is
-tolerable until then. ``/gap-titles`` is the
-exception: it returns gap *title text*, not a number, to anyone who knows a
-``team_id`` — narrower than a transcript, but real content, not an aggregate.
-Tracked in #156/#189 rather than solved here. ``/me/speaking-ratio`` is the one
-route that must authorise on the subject regardless of when the rest gets auth,
-and it is not built here.
+Every route here is read-only but the edit of a meeting report, and every
+route but ``/health`` authenticates and checks team membership (#800, #812
+reviews): apps/api has no auth middleware (#156, #189), so each route does it
+itself. A team route refuses anyone not on the team; ``/scores/{meeting_id}``
+answers another team's person with the same 404 as a meeting with no score, so
+whether a meeting exists does not leak. What they carry: action-item counts,
+gap *title text* (meeting content), meeting reports. Nothing here posts.
+``/me/speaking-ratio`` authorises on the subject, not the team.
 """
 
 from __future__ import annotations
@@ -56,9 +51,9 @@ def health() -> dict[str, str]:
 
 
 @router.get("/scores/{meeting_id}", response_model=ScoreRead)
-def get_score(meeting_id: str, session: SessionDep) -> IntelScore:
-    """One meeting's quality score and the components behind it."""
-    return service.get_score(session, meeting_id)
+def get_score(meeting_id: str, user: CurrentUser, session: SessionDep) -> IntelScore:
+    """One meeting's quality score and the components behind it. Its team only."""
+    return service.get_score(session, meeting_id, user_id=user.id)
 
 
 @router.get("/dashboard/{team_id}", response_model=DashboardRead)
@@ -70,24 +65,27 @@ def get_dashboard(team_id: str, user: CurrentUser, session: SessionDep) -> Dashb
 
 
 @router.get("/gap-titles/{team_id}", response_model=dict[str, list[str]])
-def get_gap_titles(team_id: str, session: SessionDep) -> dict[str, list[str]]:
+def get_gap_titles(team_id: str, user: CurrentUser, session: SessionDep) -> dict[str, list[str]]:
     """The high-severity gap titles behind each pattern in the gap distribution.
 
-    Unlike this router's other routes, the response is content text, not an
-    aggregate number — see the module docstring's auth note.
+    Content text, not an aggregate number. Members only.
     """
+    service.require_team_member(session, user_id=user.id, team_id=team_id)
     return service.gap_titles_by_pattern(session, team_id)
 
 
 @router.get("/heatmap/{team_id}", response_model=list[HeatmapCell])
-def get_heatmap(team_id: str, session: SessionDep) -> list[HeatmapCell]:
-    """Cross-role alignment, averaged across the team's meetings."""
+def get_heatmap(team_id: str, user: CurrentUser, session: SessionDep) -> list[HeatmapCell]:
+    """Cross-role alignment, averaged across the team's meetings. Members only."""
+    service.require_team_member(session, user_id=user.id, team_id=team_id)
     return service.get_heatmap(session, team_id)
 
 
 @router.get("/predictions/{team_id}", response_model=PredictionsRead)
-def get_predictions(team_id: str, session: SessionDep) -> PredictionsRead:
-    """The team's latest misalignment prediction, withheld until #27's gate clears."""
+def get_predictions(team_id: str, user: CurrentUser, session: SessionDep) -> PredictionsRead:
+    """The team's latest misalignment prediction, withheld until #27's gate clears.
+    Members only."""
+    service.require_team_member(session, user_id=user.id, team_id=team_id)
     return service.get_predictions(session, team_id)
 
 
