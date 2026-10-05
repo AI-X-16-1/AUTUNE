@@ -43,6 +43,8 @@ const UNROUTED =
 const OFF = "에이전트가 꺼져 있어 답할 수 없습니다.";
 const FAILED = "답을 받지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const NOT_FOUND = "이 회의를 찾을 수 없습니다.";
+const BUSY =
+  "지금 AI 사용량이 많아 답하지 못했습니다. 1분쯤 뒤에 다시 물어봐 주세요.";
 const PRIVATE =
   "연락처나 계좌번호 같은 개인정보가 들어간 질문은 보낼 수 없습니다. 그 값을 빼고 다시 물어봐 주세요.";
 
@@ -55,6 +57,8 @@ function failure(e: unknown, onMeeting: boolean): string {
   // The layer answers 500 with `configuration_error` when it is off or has no
   // model key (autune_core.errors.ConfigurationError).
   if (e instanceof ApiError && e.code === "configuration_error") return OFF;
+  // The model is out of quota or down (#419): a minute later usually works.
+  if (e instanceof ApiError && e.code === "agent_busy") return BUSY;
   // The outbound guard refused the message itself: retrying cannot help.
   if (e instanceof ApiError && e.code === "privacy_violation") return PRIVATE;
   if (e instanceof ApiError && e.status === 404 && onMeeting) return NOT_FOUND;
