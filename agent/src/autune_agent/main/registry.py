@@ -34,10 +34,19 @@ PERSONAL_ONLY_BACKSTOP = "speakingratio"
 """Caught in a tool name with case, ``_`` and ``-`` removed, when a module forgot
 to declare the tool. The declaration below is the rule; this is the net."""
 
-TRACING_VARIABLES = ("LANGSMITH_TRACING", "LANGSMITH_TRACING_V2", "LANGCHAIN_TRACING_V2")
+TRACING_VARIABLES = tuple(
+    f"{prefix}_{switch}"
+    for prefix in ("LANGSMITH", "LANGCHAIN")
+    for switch in ("TRACING_V2", "TRACING")
+)
 """langsmith arrives with langgraph. Any of these set sends the graph's state --
 requests and tool results -- to LangSmith, outside ``packages/integrations`` and
-its privacy guard. Refused, not warned about."""
+its privacy guard. Refused, not warned about.
+
+Built from the names LangSmith itself reads (``langsmith.utils.tracing_is_enabled``:
+``TRACING_V2`` under either prefix, then ``TRACING``), so none is left out --
+``LANGCHAIN_TRACING`` was (#803). ``test_registry`` checks the list against the
+installed LangSmith."""
 
 
 def is_personal_only(name: str) -> bool:
