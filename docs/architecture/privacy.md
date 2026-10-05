@@ -367,8 +367,9 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune moves its page to Notion's trash, where the
-    team can restore it for 30 days. Retention and meeting deletion do not
+    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    and then moves it to Notion's trash, where the team can restore it for
+    30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
     the page is retitled first and trashed second, so what the trash holds
     for those 30 days is not the statement (#669). One exception: when the

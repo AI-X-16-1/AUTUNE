@@ -4021,6 +4021,41 @@ none. Raised in review of #294.
 """
 
 
+ITEM_DELETED_TEXT = "삭제된 액션아이템"
+"""What a deleted item's page is retitled to before it goes to Notion's trash
+(#768), as a decision's is (``DECISION_PUT_BACK_TEXT``, #669): the trash keeps
+a page restorable for 30 days, and with this title the item's sentence is not
+what it keeps."""
+
+
+def trash_item_page(
+    notion: NotionPages, page_id: str, property_names: Mapping[str, str] | None
+) -> None:
+    """A deleted item's Notion page, retitled to ``ITEM_DELETED_TEXT`` and then
+    moved to the trash (#768).
+
+    A page Notion refuses to edit -- already archived or deleted by a person --
+    is trashed as it is: ``trash_page`` treats that as done. A team map with no
+    ``title`` names nothing to retitle, so the page goes as it is, said loudly,
+    the rule decisions follow (#679). A transient failure of either call is
+    the caller's: the deleting request owes the page to
+    ``ext_external_cleanup``, and the retry retitles first again. Notion's own
+    page history, on a plan that keeps it, still shows the earlier title
+    (``privacy.md`` section 6)."""
+    names = property_names or NOTION_PROPERTIES
+    if "title" in names:
+        retitled = {
+            names["title"]: {"title": [{"type": "text", "text": {"content": ITEM_DELETED_TEXT}}]}
+        }
+        try:
+            notion.update_page(page_id, retitled)
+        except PermanentIntegrationError:
+            log.info("extraction_notion_item_page_not_retitled", page_id=page_id)
+    else:
+        log.warning("extraction_notion_item_trashed_without_retitle", page_id=page_id)
+    notion.trash_page(page_id)
+
+
 NOTION_STATUS_LABELS: Mapping[str, str] = {
     ActionStatus.NEEDS_CONFIRMATION.value: "확인 필요",
     ActionStatus.TODO.value: "진행 전",

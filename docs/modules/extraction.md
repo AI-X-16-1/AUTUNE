@@ -179,6 +179,9 @@ agreement, and sync the result to Notion and Jira.
    A retire that fails is tried again at the decision's next change, and for
    a decision that is gone only when the Notion backfill runs — on
    connecting Notion or by hand, not on a timer (#669).
+   A deleted action item's page is retitled "삭제된 액션아이템" the same way
+   before it goes to the trash (#768), at deletion and when
+   `drain_external_cleanup` retries it.
    A confirmed item with a due date also goes on its **assignee's own Google
    Calendar** as an all-day event with no attendees, through that person's grant
    in `user_integrations` (#435, #444); team work is not copied into anyone's
