@@ -1173,14 +1173,26 @@ def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[
     return set(rows)
 
 
-def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
-    """``read_model`` for a single item a route just wrote, with its assignee
-    looked up. No summary or sync refs -- the routes that write never sent
-    them."""
+def read_one(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemRead:
+    """``read_model`` for a single item a route just wrote, read the way the list
+    reads it -- assignee, summary, copies outside and standing failures.
+
+    The board replaces its copy of the item with this answer. Without the
+    summary, the copies and the failures, an edit made the card's link and its
+    red "연동 실패" disappear until the next reload (review of #754).
+    ``reader_id`` is the caller, for the failure a calendar shows only to its
+    assignee (``sync_state.failures_for``)."""
     name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
     return read_model(
         item,
         assignee_name=name,
+        summary=action_item_summaries(session, [item]).get(item.id),
+        sync_refs=action_item_external_refs(session, [item.id]).get(item.id, []),
+        sync_failures=sync_state.failures_for(session, [item], reader_id=reader_id).get(
+            item.id, []
+        ),
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
     )

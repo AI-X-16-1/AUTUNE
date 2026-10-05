@@ -364,6 +364,45 @@ def test_the_list_and_the_detail_carry_the_failure(client: TestClient, session: 
         assert entry["failed_at"].startswith("2026-10-02T01:00:00")
 
 
+def test_an_edit_answers_with_the_failure_and_the_copy_still_there(
+    client: TestClient, session: Session
+) -> None:
+    """Review of #754: the board replaces its card with the edit's answer, so an
+    answer without them made the link and the red mark vanish until a reload."""
+    item(session)
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_1",
+            system="notion",
+            meeting_id=MEETING,
+            external_id="page-1",
+            url="https://www.notion.so/page1",
+        )
+    )
+    session.commit()
+    failure(session)
+
+    edited = client.patch(
+        f"{PREFIX}/action-items/act_1", json={"description": "스펙 초안 공유하기"}
+    )
+
+    assert edited.status_code == 200
+    body = edited.json()
+    assert [(f["system"], f["kind"]) for f in body["sync_failures"]] == [("jira", "reconnect")]
+    assert [r["system"] for r in body["sync_refs"]] == ["notion"]
+
+
+def test_an_edit_shows_a_calendar_failure_to_its_assignee_only(
+    client: TestClient, session: Session
+) -> None:
+    item(session)  # assigned to KIM, not the reader
+    failure(session, system="calendar", kind="reconnect")
+
+    body = client.patch(f"{PREFIX}/action-items/act_1", json={"description": "고침"}).json()
+
+    assert body["sync_failures"] == []
+
+
 def test_a_draft_with_nothing_outside_shows_no_failure(
     client: TestClient, session: Session
 ) -> None:
