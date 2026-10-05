@@ -53,6 +53,7 @@ from .schemas import (
     MeetingSummary,
     MyConfirmation,
     NameSuggestion,
+    NotificationPause,
     Outbound,
     ProjectPlacement,
     ProjectRead,
@@ -629,6 +630,36 @@ def set_my_due_reminders(
     on = service.set_due_reminders(session, reader.id, on=payload.on, now=datetime.now(tz=UTC))
     session.commit()
     return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
+
+
+@router.get("/me/notification-pause", response_model=NotificationPause)
+def my_notification_pause(session: SessionDep, reader: CurrentUser) -> NotificationPause:
+    """The days the caller asked for no morning DM and no Monday digest.
+    Their own only: there is no parameter naming anybody else, and no route
+    that shows one person's dates to another."""
+    pause = service.notification_pause(session, reader.id)
+    if pause is None:
+        return NotificationPause()
+    return NotificationPause(starts_on=pause.starts_on, ends_on=pause.ends_on)
+
+
+@router.put("/me/notification-pause", response_model=NotificationPause)
+def set_my_notification_pause(
+    payload: NotificationPause, session: SessionDep, reader: CurrentUser
+) -> NotificationPause:
+    """Set, replace or -- with both days ``null`` -- clear the caller's own
+    pause (the user, 2026-10-05)."""
+    pause = service.set_notification_pause(
+        session,
+        reader.id,
+        starts_on=payload.starts_on,
+        ends_on=payload.ends_on,
+        now=datetime.now(tz=UTC),
+    )
+    session.commit()
+    if pause is None:
+        return NotificationPause()
+    return NotificationPause(starts_on=pause.starts_on, ends_on=pause.ends_on)
 
 
 @router.post("/jira/backfill")

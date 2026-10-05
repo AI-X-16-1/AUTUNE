@@ -436,6 +436,24 @@ the feature needs.
     (`ext_due_reminder_optouts`, which goes with the account); the same
     switch stops Monday's DM of that person's own open items (#792), which
     carries the same things about each item and goes to nobody else either.
+  - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
+    direct message to a person about their own items on one team: what
+    changed since the last one (items of theirs now done, items they newly
+    hold) and today's work (late, due today, in progress; the rest as a
+    count). It carries what a reminder carries about each item -- its
+    description, a late item's due date, the meeting's title -- and a link to
+    the board; no utterance, and nobody else's items. "What changed" is read
+    from `ext_edit_events`, which holds that an item was edited, which fields
+    and when: the message never says who made a change, and it counts
+    nothing about a person -- it is a list of that person's own work sent to
+    that person. Autune keeps only that the day's message went
+    (`ext_daily_digests`), not its text. The reminder switch above stops it.
+  - **A person's own leave dates:** a person may set one range of days on
+    which the morning DM and Monday's DM are not sent
+    (`ext_notification_pauses`). When someone is away is theirs alone: only
+    they can read or write it, no screen or route shows it to a teammate or
+    an admin, nothing is derived from it, and it is deleted once its last
+    day has passed. Due-date reminders do not read it.
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes

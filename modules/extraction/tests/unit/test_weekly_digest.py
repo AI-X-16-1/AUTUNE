@@ -76,7 +76,13 @@ def session() -> Iterator[Session]:
         t
         for name, t in Base.metadata.tables.items()
         if name in shared
-        or name in ("ext_action_items", "ext_weekly_digests", "ext_due_reminder_optouts")
+        or name
+        in (
+            "ext_action_items",
+            "ext_weekly_digests",
+            "ext_due_reminder_optouts",
+            "ext_notification_pauses",
+        )
     ]
     Base.metadata.create_all(engine, tables=tables)
     with Session(engine) as s:
