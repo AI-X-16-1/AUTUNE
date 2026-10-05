@@ -54,6 +54,7 @@ from .models import ExtActionItem, ExtDecision
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
 from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, DecisionReviewUpdate
+from .slots import KST
 
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in B's tables."""
@@ -846,10 +847,21 @@ def add_action_item(
     return _acted("액션아이템 초안을 만들었습니다 (확인 대기).", new_id)
 
 
-def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
+def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None) -> dict[str, Any]:
     """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
     after a meeting that left topics open (#561). It starts waiting for
     confirmation, so it reaches nobody until someone confirms it.
+
+    ``due_date`` (``YYYY-MM-DD``, optional) is the day Follow-up recommends
+    for that meeting, which the team lead saw on the card they approved
+    (#853). It becomes the item's due date and nothing else: no assignee is
+    set, so nothing goes to anybody's calendar and nobody is reminded until a
+    person confirms the item and gives it to someone -- from there it is an
+    ordinary item with a date. Text that is not a date is refused. A date
+    that has already passed, in Korea, is left off and the item is made
+    without one: the approval was for the item, a recommendation that is no
+    longer one should not fail it, and an item born overdue would be the
+    first thing its assignee is reminded about.
 
     L2 -- runs only after a person (the team lead, for Follow-up) approves. B
     writes the text, so the proposal carries ids only. Recorded as Follow-up's
@@ -859,6 +871,13 @@ def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
     -- even two approved at the same instant: the check and the insert run under
     the team's lock (``_lock_followups``).
     """
+    try:
+        due = _as_date(due_date)
+    except ValueError:
+        return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
+    passed = due is not None and due < datetime.now(tz=KST).date()
+    if passed:
+        due = None
     with session_scope() as session:
         if _team_of(session, meeting_id) != team_id:
             return _not_found("meeting", meeting_id)
@@ -870,10 +889,16 @@ def add_followup_item(team_id: str, meeting_id: str) -> dict[str, Any]:
             )
         row = service.create_action_item(
             session,
-            ActionItemCreate(meeting_id=meeting_id, description=FOLLOWUP_DESCRIPTION),
+            ActionItemCreate(meeting_id=meeting_id, description=FOLLOWUP_DESCRIPTION, due_date=due),
             origin="followup",
         )
         new_id = row.id
+    if passed:
+        return _acted(
+            "후속 회의 항목을 추가했습니다 (확인 대기). "
+            "추천 날짜가 이미 지나 기한은 넣지 않았습니다.",
+            new_id,
+        )
     return _acted("후속 회의 항목을 추가했습니다 (확인 대기).", new_id)
 
 
