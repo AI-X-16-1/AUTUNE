@@ -191,6 +191,12 @@ export const putSummaryNote = (meetingId: string, body: string) =>
 export const listProjects = (scope: IntegrationScope) =>
   api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
 
+/** Words said often in the team's meetings that no project has yet. */
+export const listProjectSuggestions = (teamId: string) =>
+  api.extraction<{ word: string; count: number }[]>(
+    `/projects/suggestions?team_id=${encodeURIComponent(teamId)}`,
+  );
+
 /** Every project of every team the reader is on, for the board across meetings. */
 export const listMyProjects = () => api.extraction<Project[]>("/projects/mine");
 
