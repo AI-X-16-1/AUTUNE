@@ -35,6 +35,7 @@ from autune_extraction.models import (
     ExtSyncFailure,
 )
 from autune_extraction.schemas import ActionItemCreate
+from autune_extraction.slots import KST
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
@@ -720,6 +721,93 @@ def test_a_second_followup_item_is_refused_while_one_is_open(
     row.status = "done"
     session.flush()
     assert tools.add_followup_item(TEAM, MEETING)["ok"] is True  # a closed one does not block
+
+
+# --- the day Follow-up recommends becomes the item's due date (#853) -------------------
+
+KOREA_TODAY = datetime.now(tz=KST).date()
+
+
+def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """The date the team lead saw on the card. No assignee is set and the item
+    still waits, so nothing goes to a calendar and nobody is reminded."""
+    day = KOREA_TODAY + timedelta(days=3)
+
+    result = tools.add_followup_item(TEAM, MEETING, day.isoformat())
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert (row.due_date, row.assignee_id, row.status, row.origin) == (
+        day,
+        None,
+        "needs_confirmation",
+        "followup",
+    )
+    assert row.description == tools.FOLLOWUP_DESCRIPTION
+    assert acting["items"] == []
+    assert session.query(ExtEditEvent).count() == 0
+
+
+def test_a_date_of_today_is_still_a_date(session: Session, acting: dict[str, list[str]]) -> None:
+    assert tools.add_followup_item(TEAM, MEETING, KOREA_TODAY.isoformat())["ok"] is True
+
+    assert session.query(ExtActionItem).one().due_date == KOREA_TODAY
+
+
+@pytest.mark.parametrize("text", ["2026-13-45", "2026-02-30", "내일", "next week", ""])
+def test_text_that_is_not_a_date_is_refused_and_makes_no_item(
+    session: Session, acting: dict[str, list[str]], text: str
+) -> None:
+    """``2026-13-45`` passes a ``YYYY-MM-DD`` pattern and is no day (#853)."""
+    result = tools.add_followup_item(TEAM, MEETING, text)
+
+    assert result["ok"] is False and "not a date" in result["reason"]
+    assert session.query(ExtActionItem).count() == 0
+
+
+def test_a_date_that_has_passed_is_left_off_and_the_item_is_still_made(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """The approval was for the item. A recommendation approved after its day
+    must not fail it, and must not make an item that is born overdue."""
+    yesterday = KOREA_TODAY - timedelta(days=1)
+
+    result = tools.add_followup_item(TEAM, MEETING, yesterday.isoformat())
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert row.due_date is None
+    assert "기한은 넣지 않았습니다" in result["summary"]
+
+
+def test_once_confirmed_it_is_an_ordinary_item_with_a_date(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """From here the date does what any item's date does: the copies that
+    follow a confirmation (the board's sync, the assignee's calendar) are
+    queued for it."""
+    day = KOREA_TODAY + timedelta(days=3)
+    tools.add_followup_item(TEAM, MEETING, day.isoformat())
+    (row,) = session.query(ExtActionItem).all()
+
+    assert tools.set_action_item_status(TEAM, row.id, "todo")["ok"] is True
+
+    session.refresh(row)
+    assert (row.status, row.due_date) == ("todo", day)
+    assert acting["items"] == [row.id]
+
+
+def test_a_second_followup_item_is_refused_whatever_date_it_brings(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    tools.add_followup_item(TEAM, MEETING)
+
+    refused = tools.add_followup_item(TEAM, MEETING, (KOREA_TODAY + timedelta(days=3)).isoformat())
+
+    assert refused["ok"] is False and "already has an open follow-up item" in refused["reason"]
+    assert session.query(ExtActionItem).one().due_date is None
 
 
 def test_a_followup_item_only_on_the_teams_own_meeting(
