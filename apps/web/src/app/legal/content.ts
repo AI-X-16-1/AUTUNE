@@ -72,7 +72,10 @@
  *   privacy.md): a reminder's mark goes with its item, a digest's with the
  *   account or the team, and no code deletes them sooner (제2조, 제3조).
  *   Public holidays come from a public calendar with no credentials and are
- *   nobody's personal data; the Slack row says only that no digest goes then.
+ *   nobody's personal data; the Slack row says only that no digest goes then,
+ *   and that a week whose Monday is one gets its Monday digest on its first
+ *   Monday-to-Friday that is not, a day that then has no morning DM (#850).
+ *   The digest keeps the name "월요일 요약", which is what the settings call it.
  * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
  *   item's or a decision's page stays as the team's record; a deleted item's
  *   page is trashed and its issue closed, retried (#764); a decision whose
@@ -393,7 +396,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수. 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭, 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수. 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭, 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",
