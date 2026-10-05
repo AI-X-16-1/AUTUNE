@@ -111,7 +111,8 @@ See `../architecture/async-pipeline.md`.
    only once the team has four weeks of history and three scored meetings
    (#27). Prophet trend forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
-   `intel_gap_patterns` for a team over `[period_start, period_end)` into one
+   `intel_gap_patterns` for a team over `[period_start, period_end)`, plus B's
+   current action-item counts (below), into one
    `intel_reports` row (upserted by `(team_id, period_start)`), and
    `tasks.generate_weekly_report` posts it to the team's Slack channel.
    `period_end` defaults to today, `period_start` is 7 days before it. The
@@ -212,18 +213,35 @@ reads as "now"; the card says "최근 4주 회의". `overdue_action_items` is th
 overdue total over **every** meeting the snapshot listed that has not expired:
 an item past its due date matters however old its meeting is (#800 review).
 `action_completion_meeting_count` is the number of meetings in the four-week
-window, and `action_progress_as_of` when B counted. **A total from fewer than
+window that have a confirmed item (B lists no other), and `action_progress_as_of` when B counted. **A total from fewer than
 three meetings is not shown** (`ACTION_PROGRESS_MIN_MEETINGS`): with one or
 two, the team total is those meetings' counts, and when every item is one
 person's it is that person's record -- the heatmap's floor, for the same
-reason. The card then says the window holds fewer than three meetings. All three are `null` when no snapshot
+reason. The card then says the window holds fewer than three meetings with a
+confirmed item. All four are `null` when no snapshot
 has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
 card says the counts did not arrive, never 0%. A fresh snapshot with nothing
 confirmed has no rate and 0 overdue. Team totals only, never one meeting's
 counts. A meeting past `expires_at` is neither stored nor counted.
 `action_item_confirmation_rate` is the quality score's rate averaged over
-scored meetings; the agent tool `team_trend` names both (확정률, 완료율). The
-weekly report still reads the confirmation rate; moving it is the next step.
+scored meetings; the agent tool `team_trend` names both (확정률, 완료율).
+
+**Action items in the weekly report (#605).** The report states the same
+completion rate and overdue count, plus **carried over**: confirmed items not
+done from every kept meeting held before `period_start`. Each follows the
+three-meeting floor, so a line built from one or two meetings is left out. It
+also says when B counted ("… 기준"). These are B's counts as of generation, so a report for a
+week that ended more than a day before it is generated does not read them
+again: written again later, it keeps the counts it first stated, and a week
+never stated stays without them, rather than print today's numbers as that
+week's. Weeks run from midnight KST. "Before `period_start`" goes by when a
+meeting was held, while the week's meetings are those *scored* in it, so a
+meeting held on the eve and scored the next morning counts in both. Missing or stale counts read
+"액션 아이템 완료 현황을 받지 못했습니다". A week with no scored meeting still
+reports what earlier meetings carry. They are team totals in the team's
+channel -- never a direct message, never one meeting's counts (the contract's
+usage rule). `metrics_json` keeps the quality score's confirmation rate as
+`action_item_confirmation_rate`; the body does not show it.
 
 **Meeting reports on the dashboard (#642, #674).** Every post goes through
 approval (L2), a person's edit included: a report goes out under the bot's name

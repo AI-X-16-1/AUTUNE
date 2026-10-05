@@ -27,7 +27,10 @@ export interface DashboardRead {
    * stale; `null` alone when nothing is confirmed.
    */
   action_item_completion_rate: number | null;
-  /** Meetings in the four-week window; under three, the rate is withheld. */
+  /**
+   * Meetings in the four-week window with a confirmed item (B lists no other);
+   * under three, the rate is withheld.
+   */
   action_completion_meeting_count: number | null;
   /** Over every kept meeting, not only the window; `null` under the same floor. */
   overdue_action_items: number | null;
