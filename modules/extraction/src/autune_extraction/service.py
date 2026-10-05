@@ -3499,8 +3499,9 @@ def send_due_reminder(
 
 
 def due_reminders_on(session: Session, user_id: str) -> bool:
-    """Whether this person gets due-date reminders: yes unless they turned them
-    off (``ExtDueReminderOptOut``)."""
+    """Whether this person gets due-date reminders, and Monday's digest of
+    their open items with them: yes unless they turned them off
+    (``ExtDueReminderOptOut``)."""
     return session.get(ExtDueReminderOptOut, user_id) is None
 
 
@@ -3590,14 +3591,18 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
     one per person and team that has an open item assigned to that person on
     that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
     Who counts is who ``due_reminders_to_send`` would remind: an account on the
-    meeting's team -- a typed name has nobody to tell."""
+    meeting's team -- a typed name has nobody to tell -- that has not turned
+    its own reminders off. "마감 알림 받기" is the one switch a person has
+    for Autune's DMs about their items; off means this one too (follow-up to
+    #771, the user's call 2026-10-05)."""
     week = reminders.digest_week(now)
     if week is None:
         return []
+    off = set(session.scalars(select(ExtDueReminderOptOut.user_id)))
     owners = {
         (item.assignee_id, team)
         for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
-        if item.assignee_id
+        if item.assignee_id and item.assignee_id not in off
     }
     sent = set(
         session.execute(
@@ -3624,7 +3629,13 @@ def send_weekly_digest(
     absent, in the caller's transaction with the send, so two runs cannot both
     send and a failed send takes the claim back -- ``send_due_reminder``'s
     shape. It goes to ``digest.user_id`` and nobody else.
+
+    Whether the person still wants it is read again too: someone who turned
+    their reminders off after the list was made is sent nothing and claims
+    nothing, as ``send_due_reminder`` treats them.
     """
+    if not due_reminders_on(session, digest.user_id):
+        return False
     rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
     if not rows:
         return False

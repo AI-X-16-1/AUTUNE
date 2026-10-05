@@ -1057,9 +1057,10 @@ class ExtCalendarCleanup(Base):
 
 class ExtDueReminderOptOut(Base):
     """A person who turned the due-date reminders off for themselves (review
-    of #751). On unless they did: a row means off, and turning them back on
-    deletes it. Only the person, never which items or teams; goes with the
-    account."""
+    of #751) -- and with them Monday's digest of their own open items (#792):
+    one switch for Autune's DMs about a person's items. On unless they did:
+    a row means off, and turning them back on deletes it. Only the person,
+    never which items or teams; goes with the account."""
 
     __tablename__ = "ext_due_reminder_optouts"
 

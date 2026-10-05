@@ -56,7 +56,8 @@ export function DueReminderSetting() {
           disabled={saving}
           onChange={(event) => change(event.target.checked)}
         />
-        마감 알림 받기 (마감 전날과 마감이 지난 뒤 한 번, Slack DM)
+        마감 알림 받기 (마감 전날과 마감이 지난 뒤 한 번, 월요일의 내 할 일
+        요약 · Slack DM)
       </label>
       {!setting.sent_here && (
         <span className="text-[var(--color-ink-muted)]" style={meta}>

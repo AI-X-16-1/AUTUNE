@@ -424,7 +424,9 @@ the feature needs.
     the item. A reminder the outbound check refuses is not sent, is
     reported once, and keeps that same row so it is not tried again. Each
     person can turn their own reminders off, and only their own
-    (`ext_due_reminder_optouts`, which goes with the account).
+    (`ext_due_reminder_optouts`, which goes with the account); the same
+    switch stops Monday's DM of that person's own open items (#792), which
+    carries the same things about each item and goes to nobody else either.
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes
