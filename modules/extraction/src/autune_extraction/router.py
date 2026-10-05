@@ -16,7 +16,7 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -29,7 +29,7 @@ from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import jira_issues, notion_connect, service, tasks
+from . import jira_issues, notion_connect, service, sync_state, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -38,11 +38,15 @@ from .schemas import (
     ActionItemRead,
     ActionItemUpdate,
     Assignable,
+    BulkActionItems,
+    BulkActionResult,
     CarriedOver,
     ConfirmationAnswerIn,
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
+    DueReminderSetting,
+    DueReminderSettingIn,
     JiraProjectIssues,
     MeetingNoteUpdate,
     MeetingReview,
@@ -140,6 +144,33 @@ def get_action_item(
     return service.read_detail(session, item, reader_id=reader.id)
 
 
+@router.post("/action-items/{action_item_id}/sync", status_code=status.HTTP_202_ACCEPTED)
+def retry_action_item_sync(
+    action_item_id: str,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
+) -> dict[str, bool]:
+    """Send the item to the team's connected tools again -- the "다시 시도" beside
+    a failed copy (#680). The same call an edit queues, after the response;
+    what it does is decided there (create, update, or nothing to send).
+    Members of the meeting's team only. An item that was never confirmed has
+    nothing outside to retry and queues nothing."""
+    item = service.readable_action_item(session, action_item_id, reader)
+    queued = service.copies_follow(session, item)
+    if queued:
+        # A second press within ``RETRY_COOLDOWN`` is refused (429) rather than
+        # running the three syncs again (lsh2217, review of #754).
+        if not sync_state.claim_retry(session, item.id):
+            raise sync_state.RetryTooSoonError(
+                "this item was sent again a moment ago",
+                retry_after_seconds=int(sync_state.RETRY_COOLDOWN.total_seconds()),
+            )
+        session.commit()
+        background.add_task(tasks.sync_after_confirmation, item.id)
+    return {"queued": queued}
+
+
 @router.post("/action-items", response_model=ActionItemRead, status_code=status.HTTP_201_CREATED)
 def create_action_item(
     payload: ActionItemCreate,
@@ -164,7 +195,7 @@ def create_action_item(
     # used to fail here after the item was already saved: the client got a 500
     # for a write that had happened, and a retry made a second item. Failing
     # first lets ``get_session`` roll it back.
-    response = service.read_one(session, item)
+    response = service.read_one(session, item, reader_id=reader.id)
     session.commit()
     if service.copies_follow(session, item):
         background.add_task(tasks.sync_after_confirmation, item.id)
@@ -187,7 +218,7 @@ def update_action_item(
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
     # in edit cost when the client retries.
-    response = service.read_one(session, item)
+    response = service.read_one(session, item, reader_id=reader.id)
     session.commit()
     # After the response, so the sync reads the committed row and the board is
     # not held on Notion. Confirming or any later edit queues the same task --
@@ -199,6 +230,51 @@ def update_action_item(
     if service.copies_follow(session, item):
         background.add_task(tasks.sync_after_confirmation, item.id)
     return response
+
+
+@router.post("/action-items/bulk", response_model=BulkActionResult)
+def bulk_action_items(
+    payload: BulkActionItems,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
+) -> BulkActionResult:
+    """Confirm or delete several items in one go (the user, 2026-10-04).
+
+    Only items still in 확인 필요 are touched: this is the triage of what the
+    model drafted, not a way to move or delete the board. Each item goes
+    through the path a single one takes -- ``service.update_action_item``
+    records a confirmation as an edit and queues the item's calendar event,
+    Notion page and Jira issue after the commit; a deletion closes its outside
+    copies first, as ``delete_action_item`` does. An id the reader cannot read,
+    or one past 확인 필요, is reported as skipped, the same for both: telling
+    them apart would say which ids exist on other teams.
+    """
+    confirmed: list[str] = []
+    deleted: list[str] = []
+    skipped: list[str] = []
+    for action_item_id in dict.fromkeys(payload.ids):
+        try:
+            item = service.readable_action_item(session, action_item_id, reader)
+        except NotFoundError:
+            skipped.append(action_item_id)
+            continue
+        if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            skipped.append(action_item_id)
+            continue
+        if payload.action == "confirm":
+            service.update_action_item(session, item, ActionItemUpdate(status=ActionStatus.TODO))
+            confirmed.append(item.id)
+        else:
+            tasks.remove_calendar_event(item.id)
+            tasks.close_jira_issue(item.id)
+            tasks.trash_notion_page(item.id)
+            service.delete_action_item(session, item)
+            deleted.append(action_item_id)
+    session.commit()
+    for action_item_id in confirmed:
+        background.add_task(tasks.sync_after_confirmation, action_item_id)
+    return BulkActionResult(confirmed=confirmed, deleted=deleted, skipped=skipped)
 
 
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -363,6 +439,25 @@ def answer_confirmation(
     if payload.answer == "commitment":
         background.add_task(tasks.summarise_confirmed_draft.delay, utterance_id)
     return response
+
+
+@router.get("/me/due-reminders", response_model=DueReminderSetting)
+def my_due_reminders(session: SessionDep, reader: CurrentUser) -> DueReminderSetting:
+    """Whether the caller gets due-date reminders by Slack DM. Their own only:
+    there is no parameter naming anybody else."""
+    return DueReminderSetting(
+        on=service.due_reminders_on(session, reader.id), sent_here=get_settings().due_reminders
+    )
+
+
+@router.put("/me/due-reminders", response_model=DueReminderSetting)
+def set_my_due_reminders(
+    payload: DueReminderSettingIn, session: SessionDep, reader: CurrentUser
+) -> DueReminderSetting:
+    """Turn the caller's own due-date reminders on or off (review of #751)."""
+    on = service.set_due_reminders(session, reader.id, on=payload.on, now=datetime.now(tz=UTC))
+    session.commit()
+    return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
 
 
 @router.post("/jira/backfill")

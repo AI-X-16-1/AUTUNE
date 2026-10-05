@@ -87,3 +87,46 @@ def test_trashing_a_page_already_in_the_trash_is_done() -> None:
         base_url="https://api.notion.com/v1", transport=httpx.MockTransport(handler)
     )
     assert client.trash_page("page_1") is True
+
+
+# --- find_pages: a create that timed out may have arrived (#754 review) ----------------
+
+
+def test_find_pages_asks_for_this_title_made_since_and_keeps_only_live_pages() -> None:
+    from datetime import UTC, datetime
+
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/v1/databases/db_1/query"
+        seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"id": "page_live"},
+                    {"id": "page_trashed", "in_trash": True},
+                    {"id": "page_archived", "archived": True},
+                ]
+            },
+        )
+
+    client = NotionClient("token")
+    client._client = httpx.Client(
+        base_url="https://api.notion.com/v1", transport=httpx.MockTransport(handler)
+    )
+    since = datetime(2026, 10, 3, 1, 0, tzinfo=UTC)
+
+    found = client.find_pages(
+        "db_1", title_property="작업", title="릴리스 노트 정리", created_after=since
+    )
+
+    assert found == ["page_live"]
+    (body,) = seen
+    assert body["filter"]["and"][0] == {"property": "작업", "title": {"equals": "릴리스 노트 정리"}}
+    assert body["filter"]["and"][1] == {
+        "timestamp": "created_time",
+        "created_time": {"on_or_after": "2026-10-03T01:00:00+00:00"},
+    }
+    assert body["page_size"] == 10

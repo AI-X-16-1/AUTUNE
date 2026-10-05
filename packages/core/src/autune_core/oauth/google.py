@@ -9,6 +9,12 @@ Authorization Code flow, confidential client:
 3. ``verify`` checks that ID token's signature against Google's JWKS and its
    ``aud`` / ``iss`` / ``exp`` / ``nonce`` claims, then hands back the identity.
 
+**PKCE** (#704, RFC 7636, S256): every request carries a ``code_challenge``
+and the exchange sends the verifier kept in the state store, so a code taken
+off the redirect cannot be redeemed by anyone who does not hold that verifier
+-- even with the client secret. ``state`` and ``nonce`` already bound the
+callback to this browser and the ID token to this request; PKCE binds the code.
+
 No Google access token is kept — sign-in needs the ID token and nothing else.
 
 **Calendar is a second request** (#435): a signed-in person asks for
@@ -21,7 +27,10 @@ callback finishes both.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
+import secrets
 from functools import lru_cache
 from typing import Any
 from urllib.parse import urlencode
@@ -55,6 +64,15 @@ CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 Not ``calendar``: nothing here manages calendars or sharing."""
 
 REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
+
+
+def pkce_pair() -> tuple[str, str]:
+    """A fresh ``(verifier, challenge)``: 43 url-safe characters of randomness
+    and their S256 challenge (RFC 7636 section 4)."""
+    verifier = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 class GoogleGrant:
@@ -114,7 +132,13 @@ class GoogleOAuthClient:
         return self._client_id
 
     def authorization_url(
-        self, *, state: str, nonce: str, scope: str = SCOPE, offline: bool = False
+        self,
+        *,
+        state: str,
+        nonce: str,
+        scope: str = SCOPE,
+        offline: bool = False,
+        code_challenge: str | None = None,
     ) -> str:
         """Sign-in by default. ``offline`` asks for a refresh token as well:
         ``prompt=consent`` because Google hands one out only on a consent screen,
@@ -132,26 +156,35 @@ class GoogleOAuthClient:
         }
         if offline:
             params["include_granted_scopes"] = "true"
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
         return f"{AUTHORIZE_ENDPOINT}?{urlencode(params)}"
 
-    def exchange_code(self, code: str) -> str:
+    def exchange_code(self, code: str, *, code_verifier: str | None = None) -> str:
         """Trade an authorization code for an ID token (a signed JWT string)."""
-        return self.exchange_grant(code).id_token
+        return self.exchange_grant(code, code_verifier=code_verifier).id_token
 
-    def exchange_grant(self, code: str) -> GoogleGrant:
+    def exchange_grant(self, code: str, *, code_verifier: str | None = None) -> GoogleGrant:
         """Trade an authorization code for everything the exchange returns that we
         use: the ID token, a refresh token when one was asked for, and the scopes
-        the person actually granted -- Google lets them untick one."""
+        the person actually granted -- Google lets them untick one.
+
+        ``code_verifier`` answers the challenge the authorization request
+        carried; Google refuses the code without it (``invalid_grant``)."""
+        data = {
+            "code": code,
+            "client_id": self._client_id,
+            "client_secret": self._client_secret,
+            "redirect_uri": self._redirect_uri,
+            "grant_type": "authorization_code",
+        }
+        if code_verifier:
+            data["code_verifier"] = code_verifier
         try:
             response = self._http.post(
                 TOKEN_ENDPOINT,
-                data={
-                    "code": code,
-                    "client_id": self._client_id,
-                    "client_secret": self._client_secret,
-                    "redirect_uri": self._redirect_uri,
-                    "grant_type": "authorization_code",
-                },
+                data=data,
                 headers={"Accept": "application/json"},
             )
         except httpx.HTTPError as exc:
@@ -184,11 +217,7 @@ class GoogleOAuthClient:
     def revoke(self, token: str) -> bool:
         """Revoke a grant at Google. ``False`` when Google could not be reached or
         refused -- a disconnect removes our copy either way, and says so."""
-        try:
-            response = self._http.post(REVOKE_ENDPOINT, data={"token": token})
-        except httpx.HTTPError:
-            return False
-        return response.status_code == httpx.codes.OK
+        return revoke_token(token, http=self._http)
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
         """Who signed in: a verified ID token that also names an email -- the
@@ -233,6 +262,22 @@ class GoogleOAuthClient:
         if claims.get("nonce") != nonce:
             raise PermissionDeniedError("Google ID token nonce does not match the request")
         return claims
+
+
+def revoke_token(token: str, *, http: httpx.Client | None = None) -> bool:
+    """Revoke a grant at Google by one of its tokens. The endpoint takes the
+    token alone, no client credentials, so this needs no configured client --
+    which an account deletion may not have (#763). Revoking a refresh token
+    ends the whole grant: every scope that account gave that client."""
+    client = http or httpx.Client(timeout=10.0)
+    try:
+        response = client.post(REVOKE_ENDPOINT, data={"token": token})
+    except httpx.HTTPError:
+        return False
+    finally:
+        if http is None:
+            client.close()
+    return response.status_code == httpx.codes.OK
 
 
 def _oauth_error(response: httpx.Response) -> str:

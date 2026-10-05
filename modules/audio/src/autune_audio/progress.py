@@ -14,7 +14,9 @@ loops:
   fraction moved by at least ``min_step``. Thousands of calls cost a few dozen
   ``UPDATE``s.
 - **Never fails the job.** Progress is a courtesy to the person watching. A
-  write that raises is logged and dropped; the transcription carries on.
+  write that raises is logged and dropped; the transcription carries on. ``check``
+  is the exception: it is how a cancel stops the job, and it raises outside the
+  write's ``try``.
 
 Nothing written here is meeting content: a step name and a number.
 """
@@ -61,23 +63,30 @@ class ProgressReporter:
         clock: Callable[[], float] = time.monotonic,
         min_interval: float = 1.0,
         min_step: float = 0.01,
+        check: Callable[[], None] | None = None,
     ) -> None:
         self._job_id = job_id
         self._write = write or _write_to_job(job_id)
         self._clock = clock
         self._min_interval = min_interval
         self._min_step = min_step
+        self._check = check or (lambda: None)
         self._stage: str | None = None
         self._last_at = 0.0
         self._last_value = 0.0
 
     def stage(self, name: str) -> None:
-        """Enter a step. Written immediately, at 0."""
+        """Enter a step. Written immediately, at 0. Asks ``check`` first, so a
+        cancelled job stops before it starts the next step."""
+        self._check()
         self._stage = name
         self._emit(0.0)
 
     def update(self, fraction: float) -> None:
-        """How far through the current step, 0..1. Throttled."""
+        """How far through the current step, 0..1. Throttled -- the write,
+        not the check: a cancel is heard at the next callback, not the next
+        write."""
+        self._check()
         if self._stage is None:
             return
         value = min(1.0, max(0.0, fraction))
