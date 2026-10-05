@@ -93,7 +93,7 @@ Connecting a topic in the current meeting to the past meetings where it was
 discussed. Hybrid retrieval (BM25 + Sentence-BERT) with cross-encoder
 re-ranking.
 
-**Decision lineage (결정 계보)**
+**Decision lineage (결정 히스토리)**
 The chain of versions a single decision passed through across meetings. Each
 version records what changed, when, in which meeting, and who was present.
 
