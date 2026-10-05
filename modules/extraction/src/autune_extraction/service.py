@@ -56,6 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
+from . import reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -83,10 +84,12 @@ from .models import (
     ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
+    ExtDueReminder,
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtWeeklyDigest,
 )
 from .noun_form import tidy
 from .pipeline.base import (
@@ -121,6 +124,7 @@ from .schemas import (
     ReviewDecision,
     SourceUtterance,
     SummaryDecision,
+    SyncFailureRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -861,6 +865,15 @@ def create_action_item(
     ``confidence`` is 1.0 and ``origin`` is ``user``: a person typing an item is
     the certainty, and the origin is what edit cost is measured against.
 
+    **A person's own item is confirmed as it is written** -- ``todo``, not
+    ``needs_confirmation``. Confirmation is a person checking what the model
+    drafted (ADR 0006, #246); a person who typed the item has done that
+    already, and asking them to confirm their own words kept a typed due date
+    off their calendar until a second click nobody expected (decided with the
+    user, 2026-10-04). ``router.create_action_item`` then queues the outside
+    copies as a confirmation does. An item the agent adds (``AGENT_ORIGINS``)
+    still waits for the board: the chat drafted it.
+
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
@@ -910,7 +923,9 @@ def create_action_item(
         assignee_id=payload.assignee_id,
         assignee_label=payload.assignee_label,
         due_date=payload.due_date,
-        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        status=(
+            ActionStatus.TODO.value if origin == "user" else ActionStatus.NEEDS_CONFIRMATION.value
+        ),
         confidence=1.0,
         origin=origin,
     )
@@ -1048,6 +1063,7 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
 ) -> ActionItemRead:
@@ -1114,6 +1130,7 @@ def read_model(
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+        sync_failures=sync_failures or [],
     )
 
 
@@ -1264,6 +1281,17 @@ def _refuse(kind: str, ident: str, reader: User, reason: str) -> NotFoundError:
     return NotFoundError(kind, ident)
 
 
+def team_ids_of(session: Session, user_id: str) -> list[str]:
+    """The teams this person is a member of, in a fixed order."""
+    return list(
+        session.scalars(
+            select(TeamMember.team_id)
+            .where(TeamMember.user_id == user_id)
+            .order_by(TeamMember.team_id)
+        )
+    )
+
+
 def _require_member_of_meeting(
     session: Session, meeting_id: str, reader: User, *, kind: str, ident: str
 ) -> None:
@@ -1364,6 +1392,9 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    # ``visible_to`` is the reader on the route; B's own callers pass none and
+    # so get no calendar failure, which is one person's to see.
+    failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
     return [
         read_model(
@@ -1371,6 +1402,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
         )
@@ -1542,8 +1574,13 @@ def related_utterances(session: Session, item_id: str) -> list[SourceUtterance]:
     return [SourceUtterance(id=uid, text=text) for uid, text in rows]
 
 
-def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
+def read_detail(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
+
+    ``reader_id`` gets the reader their own confirmation DM about one of the
+    item's lines, when there is one (``confirmation_dm_url``).
 
     The only route in this module that returns the full *set* of sources
     verbatim. It is here and not on the list because the drawer is the one
@@ -1555,6 +1592,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    failures = sync_state.failures_for(session, [item], reader_id=reader_id).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
     hidden = originals_hidden(item)
     return ActionItemDetail(
@@ -1563,16 +1601,61 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             assignee_name=name,
             summary=summary,
             sync_refs=refs,
+            sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
+        # Why there is no calendar event, where there is none (#680). What is
+        # missing from the item is said to any reader; anything about the
+        # assignee's calendar only to the assignee.
+        calendar=sync_state.calendar_state(session, item, reader_id=reader_id),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]
         if hidden
         else context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
         related=[] if hidden else related_utterances(session, item.id),
         history=edit_history(session, item.id),
+        confirmation_dm_url=confirmation_dm_url(session, item, reader_id) if reader_id else None,
     )
+
+
+SLACK_OPEN = "https://slack.com/app_redirect?team={team}&channel={channel}"
+"""Slack's documented redirect: opens a conversation in the app or the browser."""
+
+
+def confirmation_dm_url(session: Session, item: ExtActionItem, reader_id: str) -> str | None:
+    """Where the reader's own confirmation DM about one of the item's lines is
+    (#680, the user, 2026-10-04) -- or ``None``.
+
+    **Only for the person the DM went to**: the speaker of the line, by its
+    participant. Slack opens a DM for its two members only, so a link shown to
+    anyone else would lead nowhere -- and would tell them a DM exists. The
+    place (``dm_channel``) is what #609 stores; the workspace is the team's
+    Slack connection's. A DM sent but not placed, or a team no longer on Slack,
+    is no link.
+    """
+    source_ids = [s.utterance_id for s in item.sources if s.utterance_id]
+    if not source_ids:
+        return None
+    channel = session.scalar(
+        select(ExtConfirmation.dm_channel)
+        .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtConfirmation.utterance_id.in_(source_ids),
+            ExtConfirmation.dm_channel.is_not(None),
+            Participant.user_id == reader_id,
+        )
+        .limit(1)
+    )
+    if not channel:
+        return None
+    meeting = session.get(Meeting, item.meeting_id)
+    slack = load_integration(session, meeting.team_id, "slack") if meeting else None
+    team = slack.config.get("workspace_id") if slack is not None else None
+    if not team:
+        return None
+    return SLACK_OPEN.format(team=team, channel=channel)
 
 
 def action_item_external_refs(
@@ -3146,6 +3229,252 @@ def unasked_confirmations(session: Session, meeting_id: str) -> list[ExtConfirma
             .order_by(ExtConfirmation.utterance_id)
         )
     )
+
+
+@dataclass(frozen=True)
+class DueReminder:
+    """One reminder owed: which item, which kind, and who it is for. The
+    recipient is the item's assignee and nothing else -- there is no field a
+    caller could put another person in."""
+
+    action_item_id: str
+    meeting_id: str
+    team_id: str
+    assignee_id: str
+    kind: str
+    due_date: date
+    description: str
+    meeting_title: str | None
+
+
+def due_reminders_to_send(session: Session, *, now: datetime) -> list[DueReminder]:
+    """The reminders owed at ``now`` and not yet sent (``reminders``).
+
+    An item is owed one when it is confirmed and not done, has a due date
+    that puts it a day ahead or up to ``OVERDUE_DAYS`` behind in Korea's
+    calendar, and its assignee is an account on the meeting's team -- the
+    same person ``calendar_sync._calendar_owner`` acts for. A typed name has
+    nobody to tell; someone who left the team is not told about its work
+    (ADR 0007). A meeting past its retention window is left out even before
+    the sweep removes it. Nothing at all outside the sending hours.
+    """
+    if not reminders.sending_hours(now):
+        return []
+    today = reminders.korean_day(now)
+    rows = session.execute(
+        select(ExtActionItem, Meeting.team_id, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == ExtActionItem.assignee_id,
+            ),
+        )
+        .where(
+            ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            ExtActionItem.due_date.is_not(None),
+            ExtActionItem.due_date >= today - timedelta(days=reminders.OVERDUE_DAYS),
+            ExtActionItem.due_date <= today + timedelta(days=1),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.due_date, ExtActionItem.id)
+    ).all()
+    sent = {
+        (item_id, kind, due)
+        for item_id, kind, due in session.execute(
+            select(
+                ExtDueReminder.action_item_id, ExtDueReminder.kind, ExtDueReminder.due_date
+            ).where(ExtDueReminder.action_item_id.in_([item.id for item, _, _ in rows]))
+        )
+    }
+    owed: list[DueReminder] = []
+    for item, team_id, title in rows:
+        kind = reminders.kind_for(item.due_date, today)
+        if kind is None or (item.id, kind, item.due_date) in sent:
+            continue
+        owed.append(
+            DueReminder(
+                action_item_id=item.id,
+                meeting_id=item.meeting_id,
+                team_id=team_id,
+                assignee_id=item.assignee_id,
+                kind=kind,
+                due_date=item.due_date,
+                description=item.description,
+                meeting_title=title,
+            )
+        )
+    return owed
+
+
+def send_due_reminder(
+    session: Session, slack: SlackApi, reminder: DueReminder, *, now: datetime
+) -> bool:
+    """Claim the reminder and send it, in that order -- or send nothing.
+
+    **The item is read again first, and locked.** The list this reminder came
+    from was read in another transaction, seconds or more ago. Since then
+    the item may have been given to somebody else -- the message would go to
+    the person who no longer holds it -- finished, moved to another date, or
+    deleted. It is sent only if the item is still open, still due on that
+    date, and still assigned to the same account on the meeting's team
+    (review of #751). Anything else sends nothing and claims nothing; the
+    next run reads the item as it now is.
+
+    The claim is the row in ``ext_due_reminders``, inserted only if absent, so
+    two runs cannot both send: the second finds the row and returns false.
+    The send is inside the caller's transaction with the claim, so a failed
+    send takes the claim back and the next run tries again -- the shape
+    ``ask_for_confirmation`` uses for its DM. It goes to the item's assignee,
+    whom the reminder carries; there is no other recipient to pass.
+    """
+    item = session.scalar(
+        select(ExtActionItem).where(ExtActionItem.id == reminder.action_item_id).with_for_update()
+    )
+    if (
+        item is None
+        or item.status not in (ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value)
+        or item.due_date != reminder.due_date
+        or item.assignee_id != reminder.assignee_id
+        or not _is_team_member(session, user_id=reminder.assignee_id, team_id=reminder.team_id)
+    ):
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtDueReminder)
+        .values(
+            action_item_id=reminder.action_item_id,
+            kind=reminder.kind,
+            due_date=reminder.due_date,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["action_item_id", "kind", "due_date"])
+        .returning(ExtDueReminder.action_item_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        reminder.assignee_id,
+        reminders.build_due_reminder(
+            reminder.kind,
+            # As it reads now, not as it read when the list was made.
+            description=item.description,
+            due_date=reminder.due_date,
+            meeting_title=reminder.meeting_title,
+            board_url=answer_url(reminder.meeting_id),
+        ),
+    )
+    return True
+
+
+@dataclass(frozen=True)
+class WeeklyDigest:
+    """One digest owed: whose, through which team's Slack, for which week. The
+    recipient is the person whose items they are -- there is no field a caller
+    could put another person in."""
+
+    user_id: str
+    team_id: str
+    week_start: date
+
+
+def _open_items_of(
+    session: Session, *, user_id: str | None, team_id: str | None, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]]:
+    """Open items with their team and meeting title, assigned to an account
+    that is on the meeting's team -- narrowed to one person and team when
+    given. A meeting past its retention window is left out."""
+    query = (
+        select(ExtActionItem, Meeting.team_id, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == ExtActionItem.assignee_id,
+            ),
+        )
+        .where(
+            ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.due_date, ExtActionItem.id)
+    )
+    if user_id is not None:
+        query = query.where(ExtActionItem.assignee_id == user_id)
+    if team_id is not None:
+        query = query.where(Meeting.team_id == team_id)
+    return [(item, team, title) for item, team, title in session.execute(query).tuples()]
+
+
+def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDigest]:
+    """The digests owed at ``now`` and not yet sent (the user, 2026-10-04):
+    one per person and team that has an open item assigned to that person on
+    that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
+    Who counts is who ``due_reminders_to_send`` would remind: an account on the
+    meeting's team -- a typed name has nobody to tell."""
+    week = reminders.digest_week(now)
+    if week is None:
+        return []
+    owners = {
+        (item.assignee_id, team)
+        for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
+        if item.assignee_id
+    }
+    sent = set(
+        session.execute(
+            select(ExtWeeklyDigest.user_id, ExtWeeklyDigest.team_id).where(
+                ExtWeeklyDigest.week_start == week
+            )
+        ).tuples()
+    )
+    return [
+        WeeklyDigest(user_id=user, team_id=team, week_start=week)
+        for user, team in sorted(owners)
+        if (user, team) not in sent
+    ]
+
+
+def send_weekly_digest(
+    session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
+) -> bool:
+    """Claim the week's digest and send it, in that order -- or send nothing.
+
+    The person's items are read again here, as they are now: one finished or
+    given away since the list was made is not in it, and a person with none
+    left is sent nothing and claims nothing. The claim is inserted only if
+    absent, in the caller's transaction with the send, so two runs cannot both
+    send and a failed send takes the claim back -- ``send_due_reminder``'s
+    shape. It goes to ``digest.user_id`` and nobody else.
+    """
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    if not rows:
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtWeeklyDigest)
+        .values(
+            user_id=digest.user_id,
+            team_id=digest.team_id,
+            week_start=digest.week_start,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "week_start"])
+        .returning(ExtWeeklyDigest.user_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        digest.user_id,
+        reminders.build_weekly_digest(
+            [
+                reminders.DigestLine(item.description, item.due_date, title)
+                for item, _, title in rows
+            ],
+            today=digest.week_start,
+            board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
+        ),
+    )
+    return True
 
 
 @dataclass(frozen=True)
