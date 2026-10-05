@@ -7,10 +7,12 @@ The prefix ``/api/intelligence`` is applied by apps/api; declare paths relative 
 
 Every route here is read-only but the edit of a meeting report, and the two
 ``/meeting-reports`` routes authenticate and check team membership: a report is
-meeting text, and one of them changes it. Nothing here posts. Elsewhere auth is not
-enforced yet — apps/api has no auth middleware wired (#156, #189). Most of these
-are team-level aggregates (quality, alignment, gap distribution) that carry no
-per-person data, so the gap is tolerable until then. ``/gap-titles`` is the
+meeting text, and one of them changes it. ``/dashboard`` and ``/reports`` do too:
+they carry the team's action-item completion and overdue counts (#605, #800
+review). Nothing here posts. Elsewhere auth is not enforced yet — apps/api has no
+auth middleware wired (#156, #189). The rest are team-level aggregates (quality,
+alignment, gap distribution) that carry no per-person data, so the gap is
+tolerable until then. ``/gap-titles`` is the
 exception: it returns gap *title text*, not a number, to anyone who knows a
 ``team_id`` — narrower than a transcript, but real content, not an aggregate.
 Tracked in #156/#189 rather than solved here. ``/me/speaking-ratio`` is the one
@@ -60,8 +62,10 @@ def get_score(meeting_id: str, session: SessionDep) -> IntelScore:
 
 
 @router.get("/dashboard/{team_id}", response_model=DashboardRead)
-def get_dashboard(team_id: str, session: SessionDep) -> DashboardRead:
-    """Team rollup: quality trend, gap-type distribution, action completion."""
+def get_dashboard(team_id: str, user: CurrentUser, session: SessionDep) -> DashboardRead:
+    """Team rollup: quality trend, gap-type distribution, action completion.
+    Members only."""
+    service.require_team_member(session, user_id=user.id, team_id=team_id)
     return service.get_dashboard(session, team_id)
 
 
@@ -88,8 +92,9 @@ def get_predictions(team_id: str, session: SessionDep) -> PredictionsRead:
 
 
 @router.get("/reports/{team_id}", response_model=list[ReportRead])
-def list_reports(team_id: str, session: SessionDep) -> list[IntelReport]:
-    """The team's generated weekly reports, newest period first."""
+def list_reports(team_id: str, user: CurrentUser, session: SessionDep) -> list[IntelReport]:
+    """The team's generated weekly reports, newest period first. Members only."""
+    service.require_team_member(session, user_id=user.id, team_id=team_id)
     return service.list_reports(session, team_id)
 
 
