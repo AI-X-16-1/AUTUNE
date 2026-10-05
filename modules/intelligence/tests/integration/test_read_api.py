@@ -658,12 +658,24 @@ def test_gap_titles_caps_the_list_per_pattern(
     assert len(body["budget"]) == 20
 
 
-@pytest.mark.parametrize("path", ["dashboard", "reports"])
+@pytest.mark.parametrize("path", ["dashboard", "reports", "gap-titles", "heatmap", "predictions"])
 def test_a_teams_numbers_are_for_its_members(db_session: Session, team: str, path: str) -> None:
-    """Action-item completion and overdue counts go out on these routes (#800
-    review): no session and a person from another team are both refused -- 403,
-    core's ``PermissionDeniedError`` for either."""
+    """Every team route is members only (#800, #812 reviews): completion counts,
+    gap titles -- meeting content -- and the rest. No session and a person from
+    another team are both refused -- 403, core's ``PermissionDeniedError``."""
     outsider = _user(db_session, None)
 
     assert _app(db_session, None).get(f"/api/intelligence/{path}/{team}").status_code == 403
     assert _app(db_session, outsider).get(f"/api/intelligence/{path}/{team}").status_code == 403
+
+
+def test_a_score_is_for_its_meetings_team(db_session: Session, meeting: str, team: str) -> None:
+    """Asked by meeting id, so another team's person gets the same 404 as for a
+    meeting with no score: whether the meeting exists does not leak."""
+    _score(db_session, meeting, team)
+    outsider = _user(db_session, None)
+
+    assert _app(db_session, None).get(f"/api/intelligence/scores/{meeting}").status_code == 403
+    response = _app(db_session, outsider).get(f"/api/intelligence/scores/{meeting}")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"

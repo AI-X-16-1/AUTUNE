@@ -37,7 +37,7 @@ edits a report's draft, for the Report subagent to propose its post (#674).
 
 `intel_scores`, `intel_gap_patterns`, `intel_alignment`, `intel_predictions`,
 `intel_reports`, `intel_completion`, `intel_meeting_reports`,
-`intel_action_progress`, `intel_action_progress_meetings`.
+`intel_action_progress`, `intel_action_progress_meetings`, `intel_team_settings`.
 
 Reference B's and C's outputs by plain string ID columns — never a foreign key
 into another module's tables.

@@ -11,7 +11,8 @@ export type MeetingsState =
   | { status: "ready"; meetings: MeetingSummary[] };
 
 /**
- * Every meeting this person may see. The home screen's data.
+ * The meetings this person may see -- one team's when `teamId` is given, as
+ * the home screen gives it. The home screen's data.
  *
  * Three states and no fourth, the same shape as `useTranscript`. **An empty
  * list is `ready` with no rows, not an error and not a spinner that never
@@ -29,14 +30,14 @@ export type MeetingsState =
  * The request is abandoned if the component goes away before it lands, so a
  * fast navigation cannot set state on something that is no longer mounted.
  */
-export function useMeetings(): MeetingsState {
+export function useMeetings(teamId?: string): MeetingsState {
   const [state, setState] = useState<MeetingsState>({ status: "loading" });
 
   useEffect(() => {
     let current = true;
     setState({ status: "loading" });
 
-    listMeetings()
+    listMeetings(teamId)
       .then((meetings) => {
         if (current) setState({ status: "ready", meetings });
       })
@@ -52,7 +53,9 @@ export function useMeetings(): MeetingsState {
     return () => {
       current = false;
     };
-  }, []);
+    // Another team is another list: asked for again, and an answer for the
+    // team just left is dropped by `current`.
+  }, [teamId]);
 
   return state;
 }

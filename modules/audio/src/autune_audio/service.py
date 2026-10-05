@@ -22,12 +22,13 @@ from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import user_for_token
 from autune_core.deletion import on_user_deleted
+from autune_core.entities import team_order
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
 
 from . import identification, storage
 from .config import AudioSettings, get_settings
 from .job_guard import JobStopped
-from .models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
+from .models import AudConsentAttestation, AudSpeakerEmbedding, AudSpeakerName, TranscriptionJob
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
 from .speakers import UNIDENTIFIED
@@ -142,8 +143,9 @@ def running_stage(session: Session, *, meeting_id: str) -> tuple[str | None, flo
     return (row.stage, row.stage_progress) if row else (None, None)
 
 
-def meetings_for(session: Session, *, member: User) -> list[Meeting]:
-    """Every meeting ``member`` may see, newest first. The home screen's list (S05).
+def meetings_for(session: Session, *, member: User, team_id: str | None = None) -> list[Meeting]:
+    """Every meeting ``member`` may see, newest first -- or, with ``team_id``,
+    those of that one team of theirs. The home screen's list (S05).
 
     **The membership join is the authorisation, and that is the whole point of
     this function.** Every other read in this module is handed a meeting id and
@@ -154,12 +156,16 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
     database to whoever holds a token. There is no branch in this function for
     that reason: no ``all`` flag, no admin path, no "if no teams then".
 
-    **No ``team_id`` filter, deliberately.** The home screen shows what the
-    person can see, and a browser that wants one team's meetings already has
-    them here -- it knows which team each row belongs to as soon as it needs to.
-    A parameter would be a second authorisation path (a team id the caller is
-    not on has to be refused, not quietly emptied) for a narrowing nothing asks
-    for yet. S05's per-team view adds it when there is a screen behind it.
+    **``team_id`` narrows; it does not authorise.** The home screen now shows
+    one team at a time (the user, 2026-10-05: somebody on several teams saw
+    every team's meetings in one list), and the rows carry no team for a
+    browser to sort them by -- ``MeetingSummary`` has four fields -- so the
+    narrowing is done here. A team the caller is not on is refused
+    (``require_team_member``), not quietly emptied: an empty list would say
+    "that team has no meetings", which is an answer about a team they may not
+    ask about. And the membership join below stays in the query either way, so
+    the filter is a second condition on rows the join already allowed, never a
+    replacement for it.
 
     **Ordered by ``coalesce(started_at, created_at)``.** ``started_at`` is null
     for a recording uploaded after the fact (``create_meeting``), and ordering on
@@ -175,18 +181,20 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
     counts: see ``MeetingSummary``.
     """
     ordering = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
-    return list(
-        session.scalars(
-            sa.select(Meeting)
-            .join(TeamMember, TeamMember.team_id == Meeting.team_id)
-            .where(TeamMember.user_id == member.id)
-            .order_by(ordering.desc(), Meeting.id.desc())
-        )
+    query = (
+        sa.select(Meeting)
+        .join(TeamMember, TeamMember.team_id == Meeting.team_id)
+        .where(TeamMember.user_id == member.id)
     )
+    if team_id is not None:
+        require_team_member(session, user_id=member.id, team_id=team_id)
+        query = query.where(Meeting.team_id == team_id)
+    return list(session.scalars(query.order_by(ordering.desc(), Meeting.id.desc())))
 
 
 def teams_for(session: Session, *, member: User) -> list[Team]:
-    """The teams ``member`` belongs to, in the order they joined them.
+    """The teams ``member`` belongs to: the ones they pinned, then the rest in
+    the order they joined them.
 
     ``MeetingCreate`` takes a ``team_id`` and a browser holding only a token has
     no way to learn one; this is that way. Read-only over shared entities,
@@ -197,15 +205,84 @@ def teams_for(session: Session, *, member: User) -> list[Team]:
     invitation to a team whose name sorts earlier silently made that team the
     default, so a person's next meeting went to the team they had just joined
     rather than their own. Joining a team now adds it to the end.
+
+    **Pinned teams come before all of that** (``pin_team``), in the order they
+    were pinned -- so the default is something a person can choose, and the
+    order is ``team_order``, the one ``GET /api/auth/me`` uses too.
     """
     return list(
         session.scalars(
             sa.select(Team)
             .join(TeamMember, TeamMember.team_id == Team.id)
             .where(TeamMember.user_id == member.id)
-            .order_by(TeamMember.id)
+            .order_by(*team_order())
         )
     )
+
+
+MAX_PINNED_TEAMS = 3
+"""How many teams a person may pin (decided with the user, 2026-10-02). A pin
+says "these first"; with every team pinned it says nothing."""
+
+
+class TooManyPinnedTeamsError(ConflictError):
+    """A fourth pin. Its own code, so the screen can say "unpin one first"
+    rather than "try again"."""
+
+    code = "too_many_pinned_teams"
+
+
+def pinned_team_ids(session: Session, *, member: User) -> set[str]:
+    """The teams ``member`` has pinned. Their own pins only."""
+    return set(
+        session.scalars(
+            sa.select(TeamMember.team_id).where(
+                TeamMember.user_id == member.id, TeamMember.pinned_at.is_not(None)
+            )
+        )
+    )
+
+
+def pin_team(session: Session, *, team_id: str, member: User, now: datetime | None = None) -> None:
+    """Put ``team_id`` at the top of ``member``'s own team list.
+
+    The pin is on their membership row: it changes nobody else's list, it is
+    not in what another member can read, and it goes when the membership
+    does. Pinning a team that is already pinned keeps its place -- a second
+    click must not reorder the list. At most ``MAX_PINNED_TEAMS``.
+
+    Every membership of the person is locked first, so two pins sent at once
+    are counted one after the other and cannot both be the third.
+    """
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.user_id == member.id).with_for_update()
+        )
+    )
+    row = next(r for r in rows if r.team_id == team_id)
+    if row.pinned_at is not None:
+        return
+    if sum(1 for r in rows if r.pinned_at is not None) >= MAX_PINNED_TEAMS:
+        raise TooManyPinnedTeamsError(
+            f"at most {MAX_PINNED_TEAMS} teams can be pinned", limit=MAX_PINNED_TEAMS
+        )
+    row.pinned_at = now or datetime.now(tz=UTC)
+    session.flush()
+    log.info("team_pinned", team_id=team_id, user_id=member.id)
+
+
+def unpin_team(session: Session, *, team_id: str, member: User) -> None:
+    """Take the pin off. The team goes back to where the order of joining puts
+    it. Unpinning a team that is not pinned is not an error."""
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    session.execute(
+        sa.update(TeamMember)
+        .where(TeamMember.user_id == member.id, TeamMember.team_id == team_id)
+        .values(pinned_at=None)
+    )
+    session.flush()
+    log.info("team_unpinned", team_id=team_id, user_id=member.id)
 
 
 def create_team(
@@ -453,8 +530,9 @@ def claim_job(session: Session, *, job_id: str) -> Claim:
     # Claiming is itself proof of life. Without this a job that waited in the
     # queue longer than ``stall_after_s`` would read as stalled until the guard
     # writes its first heartbeat, and a cancel in that window would delete the
-    # upload under a live worker.
-    job.heartbeat_at = datetime.now(tz=UTC)
+    # upload under a live worker. The database's clock, like every heartbeat
+    # (``job_guard.beat_with``), so staleness is judged on one clock.
+    job.heartbeat_at = db_now(session)
     session.flush()
     return Claim(job.meeting_id, run=True, owns_file=True)
 
@@ -640,22 +718,50 @@ def latest_job(session: Session, *, meeting_id: str, lock: bool = False) -> Tran
     return session.scalar(query)
 
 
+def db_now(session: Session) -> datetime:
+    """The database's clock: what stamps ``heartbeat_at`` and ``created_at``,
+    and so what their age is measured against. An API host whose clock is off
+    must not call a live worker stalled (#757 review). A file's mtime is the
+    host's clock and is measured against the host's (``recording_restartable``)."""
+    now = session.scalar(sa.select(sa.func.now()))
+    assert now is not None
+    return now
+
+
+QUEUE_STALL = timedelta(minutes=15)
+"""How long a job may wait in the queue before it counts as stalled. A message
+the broker lost leaves a job ``queued`` with nobody coming; one that is only
+waiting behind other meetings and is restarted anyway loses its place and
+nothing else, because ``claim_job`` declines its late message (#757 review)."""
+
+
 def is_stalled(job: TranscriptionJob, *, settings: AudioSettings, now: datetime) -> bool:
-    """A ``running`` job whose worker has stopped writing its heartbeat.
+    """A job nobody is working on: ``running`` with a stale heartbeat, or
+    ``queued`` for longer than ``QUEUE_STALL``. ``now`` is the database's
+    (``db_now``).
 
     Not progress: diarization and a remote STT call can report none for
     minutes on a healthy run. A job claimed before ``heartbeat_at`` existed
     falls back to ``created_at``, which is right: those workers were restarted by
     the deploy that added the column."""
+    if job.status == "queued":
+        return job.created_at < now - QUEUE_STALL
     if job.status != "running":
         return False
     last = job.heartbeat_at or job.created_at
     return last < now - timedelta(seconds=settings.stall_after_s)
 
 
+class Cancelled(NamedTuple):
+    meeting: Meeting
+    orphan: Path | None
+    """A stalled job's upload, for the caller to delete once the cancel is
+    committed -- ``None`` when a worker or the claim will."""
+
+
 def cancel_transcription(
     session: Session, *, meeting_id: str, user: User, settings: AudioSettings
-) -> Meeting:
+) -> Cancelled:
     """Stop the meeting's transcription and leave it ``failed``, which accepts
     a new upload.
 
@@ -666,9 +772,10 @@ def cancel_transcription(
 
     **Who deletes the upload.** A live worker does, through ``adopt``, once
     its guard hears the status; a ``queued`` job's file goes when
-    ``claim_job`` declines it. A stalled job's owner is gone, so this takes
-    ownership and deletes it now (privacy.md section 1). The sweep is the
-    backstop for all three.
+    ``claim_job`` declines it. A stalled job's owner is gone, so the API takes
+    ownership: this returns the file and the route deletes it after the
+    commit, so a failed commit leaves the job and its file together (#757
+    review; privacy.md section 1). The sweep is the backstop for all three.
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
@@ -678,16 +785,14 @@ def cancel_transcription(
     if meeting.status != "analyzing" or job is None or job.status not in ("queued", "running"):
         raise NothingToCancelError(f"meeting {meeting_id} has no transcription in progress")
 
-    now = datetime.now(tz=UTC)
+    now = db_now(session)
     stalled = is_stalled(job, settings=settings, now=now)
     job.status = "cancelled"
     job.finished_at = now
     meeting.status = "failed"
     session.flush()
-    if stalled:
-        storage.delete_orphan(storage.upload_path(job.id, settings))
     log.info("audio_transcription_cancelled", meeting_id=meeting_id, job_id=job.id, stalled=stalled)
-    return meeting
+    return Cancelled(meeting, storage.upload_path(job.id, settings) if stalled else None)
 
 
 class NotStalledError(ConflictError):
@@ -698,14 +803,17 @@ class RecordingGoneError(ConflictError):
     code = "recording_gone"
 
 
-RESTART_MARGIN = timedelta(minutes=10)
-"""How long before the sweep's deadline a restart stops being offered, so a
-restarted job is not swept out from under its worker."""
+RESTART_NEEDS = timedelta(hours=3)
+"""How much of the six-hour window a restart must still have. The longest
+meeting the pipeline is sized for -- two hours at about 1.27x real time --
+takes about 2.5 h; with less left, the sweep would fail the restarted job
+under its worker (#757 review). The window itself is not extended."""
 
 
 def recording_restartable(job_id: str, *, settings: AudioSettings, now: datetime) -> bool:
-    """The attempt's upload is still on disk and inside its six hours, less
-    ``RESTART_MARGIN``.
+    """The attempt's upload is still on disk with at least ``RESTART_NEEDS``
+    of its six hours left. ``now`` is this host's clock, the one that wrote the
+    file's mtime.
 
     By mtime, which a rename keeps: the window runs from the upload, so a
     restart cannot extend it (``sweep_orphans`` measures the same way). The
@@ -717,7 +825,8 @@ def recording_restartable(job_id: str, *, settings: AudioSettings, now: datetime
     except OSError:
         return False
     uploaded = datetime.fromtimestamp(mtime, tz=UTC)
-    return uploaded >= now - timedelta(hours=settings.orphan_after_hours) + RESTART_MARGIN
+    deadline = uploaded + timedelta(hours=settings.orphan_after_hours)
+    return deadline - now >= RESTART_NEEDS
 
 
 def restart_transcription(
@@ -743,14 +852,14 @@ def restart_transcription(
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=user.id, team_id=meeting.team_id)
     old = latest_job(session, meeting_id=meeting_id, lock=True)
-    now = datetime.now(tz=UTC)
+    now = db_now(session)
     if (
         meeting.status != "analyzing"
         or old is None
         or not is_stalled(old, settings=settings, now=now)
     ):
         raise NotStalledError(f"meeting {meeting_id} has no stalled transcription")
-    if not recording_restartable(old.id, settings=settings, now=now):
+    if not recording_restartable(old.id, settings=settings, now=datetime.now(tz=UTC)):
         raise RecordingGoneError(
             f"the recording for meeting {meeting_id} is no longer on the server"
         )
@@ -788,12 +897,12 @@ def transcription_controls(
     job = latest_job(session, meeting_id=meeting.id)
     if job is None:
         return TranscriptionControls(False, False, False, False)
-    now = datetime.now(tz=UTC)
     analyzing = meeting.status == "analyzing"
-    stalled = analyzing and is_stalled(job, settings=settings, now=now)
+    stalled = analyzing and is_stalled(job, settings=settings, now=db_now(session))
     return TranscriptionControls(
         stalled=stalled,
-        restartable=stalled and recording_restartable(job.id, settings=settings, now=now),
+        restartable=stalled
+        and recording_restartable(job.id, settings=settings, now=datetime.now(tz=UTC)),
         cancellable=analyzing and job.status in ("queued", "running"),
         cancelled=meeting.status == "failed" and job.status == "cancelled",
     )
@@ -1051,6 +1160,12 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
     }
     profiles = _profiles_of_team(session, team_id=meeting.team_id)
     threshold = get_settings().identification_threshold
+    names = {
+        row.speaker_label: row.name
+        for row in session.scalars(
+            sa.select(AudSpeakerName).where(AudSpeakerName.meeting_id == meeting_id)
+        )
+    }
 
     entries = []
     for participant in participants:
@@ -1072,6 +1187,7 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
                 speaker_label=participant.speaker_label,
                 user_id=participant.user_id,
                 candidate=candidate,
+                display_name=names.get(participant.speaker_label),
             )
         )
     entries.sort(key=_speaker_order)
@@ -1198,6 +1314,14 @@ def assign_speaker(
     if participant is None:
         raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
     participant.user_id = user_id
+    # A label is a member or a typed name, never both: once it is a member,
+    # a name typed earlier must not resurface if the assignment is undone.
+    session.execute(
+        sa.delete(AudSpeakerName).where(
+            AudSpeakerName.meeting_id == meeting_id,
+            AudSpeakerName.speaker_label == speaker_label,
+        )
+    )
     session.flush()
 
     observation = session.scalar(
@@ -1269,6 +1393,55 @@ def assign_speaker(
     # a meeting with no observation; ``reason`` is what a debugging session
     # actually needs.
     log.info("speaker_assigned", meeting_id=meeting_id, learned=learned, reason=reason)
+
+
+def name_speaker(
+    session: Session,
+    *,
+    meeting_id: str,
+    speaker_label: str,
+    name: str,
+    named_by: User,
+) -> None:
+    """ "``화자 2`` is called this, in this meeting" -- for a voice with no
+    account on the team.
+
+    Writes the name and nothing else. The participant keeps ``user_id = NULL``,
+    so the published transcript carries no ``speaker_id`` and no other module
+    learns the name; no voice profile is written, whatever
+    ``voice_profiles_enabled`` says, because there is nobody to file it under
+    and nobody who could later ask for it to be deleted.
+
+    A speaker already assigned to a member is refused (409) rather than
+    quietly un-assigned: undoing an assignment also has to undo the voice
+    profile it may have produced, and that is ``assign_speaker``'s job, not a
+    side effect of typing a name.
+
+    The name is never logged: it is a third party's.
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=named_by.id, team_id=meeting.team_id)
+
+    participant = session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting_id,
+            Participant.speaker_label == speaker_label,
+        )
+    )
+    if participant is None:
+        raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
+    if participant.user_id is not None:
+        raise ConflictError("this speaker is already assigned to a team member")
+
+    row = session.get(AudSpeakerName, (meeting_id, speaker_label))
+    if row is None:
+        session.add(AudSpeakerName(meeting_id=meeting_id, speaker_label=speaker_label, name=name))
+    else:
+        row.name = name
+    session.flush()
+    log.info("speaker_named", meeting_id=meeting_id)
 
 
 def _delete_observations_owned_by(session: Session, *, user_id: str) -> int:

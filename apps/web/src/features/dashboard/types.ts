@@ -27,7 +27,10 @@ export interface DashboardRead {
    * stale; `null` alone when nothing is confirmed.
    */
   action_item_completion_rate: number | null;
-  /** Meetings in the four-week window; under three, the rate is withheld. */
+  /**
+   * Meetings in the four-week window with a confirmed item (B lists no other);
+   * under three, the rate is withheld.
+   */
   action_completion_meeting_count: number | null;
   /** Over every kept meeting, not only the window; `null` under the same floor. */
   overdue_action_items: number | null;
@@ -60,6 +63,19 @@ export interface HeatmapCell {
  * meeting's payload never arrived is simply absent, not an error.
  */
 export type GapTitlesByPattern = Record<string, string[]>;
+
+/**
+ * When the team's weekly report goes out (#227) — `WeeklyReportScheduleRead`.
+ * `weekday` 0 is Monday; `hour` is Korean time. `updated_by_name` is `null`
+ * until a member changes the defaults (Monday 09:00, empty weeks not posted).
+ */
+export interface WeeklyReportSchedule {
+  weekday: number;
+  hour: number;
+  send_empty: boolean;
+  updated_by_name: string | null;
+  updated_at: string | null;
+}
 
 /** One stored prediction — `PredictionRead` in the module's schemas.py. */
 export interface PredictionRead {

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Response, UploadFile, status
+from fastapi import APIRouter, Depends, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import Utterance
-from autune_core import CurrentUser, get_logger, get_session
+from autune_core import CurrentUser, User, get_logger, get_session
 from autune_core.auth import clear_session_cookie
 from autune_core.errors import AutuneError
 from autune_core.events import publish
@@ -52,6 +52,7 @@ from .schemas import (
     PiiReported,
     SpeakerAssignment,
     SpeakerEntry,
+    SpeakerName,
     SpeechDeleted,
     TeamCreate,
     TeamMemberSummary,
@@ -122,11 +123,33 @@ def get_transcript(meeting_id: str, user: CurrentUser, session: SessionDep) -> l
 
 @router.get("/teams", response_model=list[TeamSummary])
 def list_teams(user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
-    """The teams this person may open a meeting for. Feeds ``POST /meetings``."""
+    """The teams this person may open a meeting for. Feeds ``POST /meetings``.
+    Pinned ones first, then in the order joined; the first is the default."""
+    return _my_teams(session, user)
+
+
+def _my_teams(session: Session, user: User) -> list[TeamSummary]:
+    pinned = service.pinned_team_ids(session, member=user)
     return [
-        TeamSummary(team_id=team.id, name=team.name)
+        TeamSummary(team_id=team.id, name=team.name, pinned=team.id in pinned)
         for team in service.teams_for(session, member=user)
     ]
+
+
+@router.put("/teams/{team_id}/pin", response_model=list[TeamSummary])
+def pin_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """Pin a team to the top of the caller's own list -- up to three -- and
+    answer with the list as it now stands. Members of the team only. A fourth
+    pin is a 409 ``too_many_pinned_teams``."""
+    service.pin_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
+
+
+@router.delete("/teams/{team_id}/pin", response_model=list[TeamSummary])
+def unpin_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """Take the pin off, and answer with the list as it now stands."""
+    service.unpin_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
 
 
 @router.post("/teams", response_model=TeamSummary, status_code=status.HTTP_201_CREATED)
@@ -188,8 +211,13 @@ def accept_invitation(
 
 
 @router.get("/meetings", response_model=list[MeetingSummary])
-def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary]:
-    """The meetings of the teams this person belongs to, newest first. S05's list.
+def list_meetings(
+    user: CurrentUser,
+    session: SessionDep,
+    team_id: Annotated[str | None, Query(max_length=64)] = None,
+) -> list[MeetingSummary]:
+    """The meetings of the teams this person belongs to, newest first -- with
+    ``team_id``, of that one team, and a 403 when they are not on it. S05's list.
 
     Declared above ``/meetings/{meeting_id}`` so the literal path is read before
     the parameterised one. Starlette matches in declaration order and
@@ -212,7 +240,7 @@ def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary
             status=meeting.status,
             started_at=meeting.started_at,
         )
-        for meeting in service.meetings_for(session, member=user)
+        for meeting in service.meetings_for(session, member=user, team_id=team_id)
     ]
 
 
@@ -333,10 +361,14 @@ def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep
     """Stop the meeting's transcription (S12 "처리 중단"). The meeting is
     ``failed`` on return and accepts a new upload; the worker stops within one
     heartbeat. 409 ``nothing_to_cancel`` when nothing is running."""
-    meeting = service.cancel_transcription(
+    cancelled = service.cancel_transcription(
         session, meeting_id=meeting_id, user=user, settings=get_audio_settings()
     )
     session.commit()
+    # A stalled job's upload, deleted only now that the cancel is committed.
+    if cancelled.orphan is not None:
+        storage.delete_orphan(cancelled.orphan)
+    meeting = cancelled.meeting
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
 
 
@@ -426,6 +458,28 @@ def assign_speaker(
         speaker_label=speaker_label,
         user_id=body.user_id,
         confirmed_by=user,
+    )
+
+
+@router.put(
+    "/meetings/{meeting_id}/speakers/{speaker_label}/name",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def name_speaker(
+    meeting_id: str,
+    speaker_label: str,
+    body: SpeakerName,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    """Name a speaker who has no account on the team, for this meeting only.
+    No person is attached and no voice is kept."""
+    service.name_speaker(
+        session,
+        meeting_id=meeting_id,
+        speaker_label=speaker_label,
+        name=body.name,
+        named_by=user,
     )
 
 

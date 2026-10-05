@@ -51,7 +51,7 @@ const NAV: NavItem[] = [
   { label: "회의", href: "/", isCurrent: (p) => p.startsWith("/meetings") },
   { label: "액션아이템", href: "/actions", isCurrent: (p) => p === "/actions" },
   { label: "갭 리포트", href: "/gaps", isCurrent: (p) => p === "/gaps" },
-  { label: "결정 계보", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
+  { label: "결정 히스토리", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
   { label: "자료", phase2: true },
   { label: "대시보드", href: "/dashboard", isCurrent: (p) => p.startsWith("/dashboard") },
   // The agent layer's approval queue: L2 proposals wait here for a person.

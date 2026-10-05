@@ -26,7 +26,7 @@ absence of a prefix is what marks a table as shared.
 | --- | --- |
 | `users` | A person with an account |
 | `teams` | An organization or squad |
-| `team_members` | User ↔ team membership and role |
+| `team_members` | User ↔ team membership and role, and whether the person pinned the team to the top of their own list (`pinned_at`) |
 | `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
 | `user_integrations` | One person's own Google grants: their calendar, and sending mail as them (`gmail_send`, #552) |
 | `user_consents` | One person's agreement to one version of the terms or the privacy policy |
@@ -162,7 +162,7 @@ Every table a module owns is named `<prefix>_<name>`.
 
 | Module | Prefix | Examples |
 | --- | --- | --- |
-| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_consent_attestations`, `aud_team_invitations` |
+| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_consent_attestations`, `aud_team_invitations`, `aud_speaker_names` |
 | B. extraction | `ext_` | `ext_classifications`, `ext_action_items`, `ext_external_refs` |
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |

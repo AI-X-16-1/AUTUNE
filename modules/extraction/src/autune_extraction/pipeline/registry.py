@@ -33,8 +33,10 @@ _NLI: dict[str, str] = {
     "local": "weights in this process",
     "hosted": "our own inference server",
     "fake": "deterministic, for tests",
+    "llm": "a cloud LLM API, masked ambiguous utterances only (pipeline.nli_llm)",
 }
-"""Same shape as ``_CLASSIFIERS``, for step 4's model (#12)."""
+"""Same shape as ``_CLASSIFIERS``, for step 4's model (#12). ``llm`` leaves our
+infrastructure -- opt-in and never the default."""
 
 _RESOLVERS: dict[str, str] = {k: v for k, v in _CLASSIFIERS.items() if k != "llm_checked"}
 """Same names, same meaning, for the reference resolver (#175). ``llm_checked``
@@ -140,6 +142,21 @@ def get_nli() -> NliModel:
         return HostedNli(settings.nli_endpoint, settings.nli_checkpoint)
     if impl == "fake":
         return FakeNli()
+    if impl == "llm":
+        if not settings.llm_api_key:
+            raise ValueError(
+                "AUTUNE_EXTRACTION_NLI_IMPL=llm needs AUTUNE_EXTRACTION_LLM_API_KEY "
+                "(or the shared AUTUNE_LLM_API_KEY)"
+            )
+        from .nli_llm import LlmNli  # noqa: PLC0415 - only a worker that opted in pays for it
+
+        return LlmNli(
+            api_key=settings.llm_api_key.get_secret_value(),
+            model=settings.nli_model,
+            base_url=settings.llm_base_url,
+            timeout_sec=settings.llm_timeout_sec,
+            fallback_model=settings.nli_fallback_model,
+        )
 
     raise ValueError(f"unknown AUTUNE_EXTRACTION_NLI_IMPL={impl!r}; known: {sorted(_NLI)}")
 

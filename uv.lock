@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -504,6 +504,7 @@ dependencies = [
     { name = "autune-integrations" },
     { name = "celery" },
     { name = "fastapi" },
+    { name = "holidays" },
     { name = "httpx" },
 ]
 
@@ -528,6 +529,7 @@ requires-dist = [
     { name = "autune-integrations", editable = "packages/integrations" },
     { name = "celery", specifier = ">=5.4" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "holidays", specifier = ">=0.58" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
@@ -1350,6 +1352,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ab/5f/311725e2a905534dfee2dcb5b08414f249147f1f12252bfc2bd24caa075c/hf_xet-1.6.0-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:8fb4f71cba6129110c3374a33f919001ff130488fc23553698e34cc1c2a1198c", size = 4675937, upload-time = "2026-08-03T22:33:08.616Z" },
     { url = "https://files.pythonhosted.org/packages/98/b7/8c59a66d15205024662f1d66968136f13893f96df1ddc5087e2e281fc95f/hf_xet-1.6.0-cp38-abi3-win_amd64.whl", hash = "sha256:fb4fadde1b2b70bf4c0c14a6dccbe7194b1c28947fefd5bbe3fed9d940676c3b", size = 4033128, upload-time = "2026-08-03T22:33:10.171Z" },
     { url = "https://files.pythonhosted.org/packages/73/63/ca511b6f802f28cf3489b280fe77475bcca8de85e81a6299d7916b5b5555/hf_xet-1.6.0-cp38-abi3-win_arm64.whl", hash = "sha256:3dc3e35441ba395006af5aaacc40ef2e603c51ef46c3530b9156185f00935ea3", size = 3859359, upload-time = "2026-08-03T22:33:11.725Z" },
+]
+
+[[package]]
+name = "holidays"
+version = "0.105"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/b7/b0563bf091ff8089a8a4299068236d277c299e13b5809afeaa99b0c11280/holidays-0.105.tar.gz", hash = "sha256:fc9abc0c187b62e955f92aa12dbe7ed1998cc94712f295ec9244db788594d662", size = 1039659, upload-time = "2026-09-21T21:32:01.423Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9e/d0/dbc6c50f190ed0c32e4ebca037bff252280b0707049ee95825f4e8c3cc19/holidays-0.105-py3-none-any.whl", hash = "sha256:7fbd87770f1128eb24514fbb4c3ec6afa1c72d65c346713dbc13c2d0297df481", size = 1637790, upload-time = "2026-09-21T21:31:59.345Z" },
 ]
 
 [[package]]
