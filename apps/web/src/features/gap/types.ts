@@ -202,6 +202,29 @@ export interface GapExplanations {
 }
 
 /** How far the meeting got with one checklist item. */
+/**
+ * One open gap on the team-wide list, as `GET /api/gap/gaps?team_id=` returns
+ * it — `TeamGapRead` in `modules/gap/src/autune_gap/schemas.py` (#550).
+ *
+ * Module C's own response, mirrored by hand; `test_web_mirror.py` pins the
+ * field set. **No topics and no participation**: a list across every meeting is
+ * where silence read along a person would be easiest to total, and the why is
+ * on the meeting's own report.
+ */
+export interface TeamGap {
+  gap_id: string;
+  meeting_id: string;
+  meeting_title: string;
+  /** When the meeting started, or when it was registered if it never did. */
+  meeting_date: string;
+  category: string;
+  title: string;
+  severity: GapSeverity;
+  risk_score: number;
+  template_item?: string | null;
+  suggested_question?: string | null;
+}
+
 export type Coverage = "covered" | "partial" | "missing";
 
 export const COVERAGE_LABELS: Record<Coverage, string> = {

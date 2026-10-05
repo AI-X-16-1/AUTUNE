@@ -8,6 +8,9 @@
  */
 export { GapReportScreen } from "./components";
 
+/** The sidebar's "갭 리포트": a team's open gaps across its meetings (#550). */
+export { TeamGapList } from "./components";
+
 /**
  * S20 with a fixture meeting behind it, for the temporary `/dev-gap` route.
  * Not part of the product: the route it serves 404s outside development.
