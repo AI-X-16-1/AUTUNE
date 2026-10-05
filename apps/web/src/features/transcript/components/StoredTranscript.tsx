@@ -87,6 +87,7 @@ export function StoredTranscript({
     members,
     membersError,
     assign,
+    name,
     assignError,
     pending,
   } = useSpeakers(meetingId, teamId);
@@ -153,10 +154,12 @@ export function StoredTranscript({
           key={entry.speaker_label}
           speaker={entry.speaker_label}
           candidate={entry.candidate}
+          displayName={entry.display_name}
           members={members}
           membersError={membersError}
           pending={pending}
           onAssign={(userId) => void assign(entry.speaker_label, userId)}
+          onName={(typed) => void name(entry.speaker_label, typed)}
         />
       ))}
 
@@ -224,17 +227,22 @@ export function StoredTranscript({
  *
  * The label's current assignment wins over the row's stored `speaker_id`,
  * which is only as fresh as the transcript read. A person no longer on the
- * team has no name to show; the line keeps its label.
+ * team has no name to show; the line keeps its label. A label with no person
+ * but a name typed for this meeting (`display_name`) shows that name.
  */
-function speakerNames(
+export function speakerNames(
   speakers: SpeakerEntry[],
   members: TeamMember[],
 ): (label: string, storedId: string | null | undefined) => string | null {
   const nameById = new Map(members.map((member) => [member.user_id, member.name]));
   const idByLabel = new Map(speakers.map((entry) => [entry.speaker_label, entry.user_id]));
+  const typedByLabel = new Map(
+    speakers.flatMap((entry) => (entry.display_name ? [[entry.speaker_label, entry.display_name]] : [])),
+  );
   return (label, storedId) => {
     const id = idByLabel.has(label) ? idByLabel.get(label) : storedId;
-    return id ? (nameById.get(id) ?? null) : null;
+    if (id) return nameById.get(id) ?? null;
+    return typedByLabel.get(label) ?? null;
   };
 }
 

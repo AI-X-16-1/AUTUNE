@@ -82,6 +82,7 @@ assigned by similarity alone. Design:
 | `aud_masking_events` | Planned, not built. Would count masked spans by category, for the recall metric — **never the masked content** |
 | `aud_corrections` | Planned, not built. Would hold user corrections to speaker attribution and text, for accuracy improvement |
 | `aud_team_invitations` | A pending invitation to a team (#552): the team, the invited address, who invited, when it lapses, and the SHA-256 of the link's token. Not a membership — `invitations.accept` is the only place a row becomes one, and the row goes when it does |
+| `aud_speaker_names` | A name typed for a speaker with no account on the team (a guest), for one meeting only. No user id, no voice profile, and not published in `TranscriptReady` — other modules see an unidentified speaker. Cascades with the meeting |
 
 Plus the shared entities in `packages/core`, which A writes.
 
@@ -100,6 +101,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | PATCH | `/utterances/{id}` | Correct speaker or text (planned — no route exists yet; would back `aud_corrections`) |
 | GET | `/meetings/{meeting_id}/speakers` | Each speaker label in the meeting, and the nearest candidate profile above `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD`, if any |
 | POST | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member confirms who a speaker is; fills `Participant.user_id` and copies the vector into that person's profile |
+| PUT | `/meetings/{meeting_id}/speakers/{speaker_label}/name` | Names a speaker with no account on the team, for this meeting only. No user id, no voice profile, not published |
 | DELETE | `/me/voice-profile` | Deletes every profile row for the caller |
 | GET | `/me/data` | S29 "내 데이터": counts of the caller's own speech, voice profile and consent attestations (`account.my_data`) |
 | GET | `/me/export` | S29 download: the caller's own utterances (masked, as stored), voice-profile metadata (never the vector), consents and teams, as a JSON attachment |
