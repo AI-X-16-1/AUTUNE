@@ -52,7 +52,7 @@ export const getTranscript = (meetingId: string) =>
 export const getMeeting = (meetingId: string) =>
   api.audio<MeetingDetail>(`/meetings/${meetingId}`);
 
-/** S12 "처리 취소". The meeting is `failed` on return and takes a new upload. */
+/** S12 "처리 중단". The meeting is `failed` on return and takes a new upload. */
 export const cancelTranscription = (meetingId: string) =>
   api.audio<{ meeting_id: string; status: string }>(
     `/meetings/${meetingId}/transcription/cancel`,

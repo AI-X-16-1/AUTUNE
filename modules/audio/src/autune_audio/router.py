@@ -307,7 +307,7 @@ def upload_recording(
 
 @router.post("/meetings/{meeting_id}/transcription/cancel", response_model=MeetingState)
 def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingState:
-    """Stop the meeting's transcription (S12 "처리 취소"). The meeting is
+    """Stop the meeting's transcription (S12 "처리 중단"). The meeting is
     ``failed`` on return and accepts a new upload; the worker stops within one
     heartbeat. 409 ``nothing_to_cancel`` when nothing is running."""
     meeting = service.cancel_transcription(
