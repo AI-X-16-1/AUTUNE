@@ -51,6 +51,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtSyncFailure,
 )
 from autune_extraction.router import router
 from autune_extraction.schemas import ActionItemCreate, ExternalRefRead
@@ -80,6 +81,8 @@ TABLES = [
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    # Every read of an item looks these up (#680): its failed copies, its event.
+    ExtSyncFailure.__table__,
     ExtNotionTarget.__table__,
     # ``has_copy_outside`` counts a calendar event as a copy (#672).
     ExtCalendarEvent.__table__,
@@ -490,7 +493,7 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     assert {
         k: v
         for k, v in detail.items()
-        if k not in ("sources", "context", "related", "history", "confirmation_dm_url")
+        if k not in ("sources", "context", "related", "history", "calendar", "confirmation_dm_url")
     } == listed
 
 

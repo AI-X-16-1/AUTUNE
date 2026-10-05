@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import reminders
+from . import reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -124,6 +124,7 @@ from .schemas import (
     ReviewDecision,
     SourceUtterance,
     SummaryDecision,
+    SyncFailureRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -1062,6 +1063,7 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
 ) -> ActionItemRead:
@@ -1128,6 +1130,7 @@ def read_model(
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+        sync_failures=sync_failures or [],
     )
 
 
@@ -1389,6 +1392,9 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    # ``visible_to`` is the reader on the route; B's own callers pass none and
+    # so get no calendar failure, which is one person's to see.
+    failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
     return [
         read_model(
@@ -1396,6 +1402,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
         )
@@ -1585,6 +1592,7 @@ def read_detail(
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    failures = sync_state.failures_for(session, [item], reader_id=reader_id).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
     hidden = originals_hidden(item)
     return ActionItemDetail(
@@ -1593,9 +1601,14 @@ def read_detail(
             assignee_name=name,
             summary=summary,
             sync_refs=refs,
+            sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
+        # Why there is no calendar event, where there is none (#680). What is
+        # missing from the item is said to any reader; anything about the
+        # assignee's calendar only to the assignee.
+        calendar=sync_state.calendar_state(session, item, reader_id=reader_id),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]
         if hidden

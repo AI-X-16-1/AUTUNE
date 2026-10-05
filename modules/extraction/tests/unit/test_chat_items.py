@@ -25,10 +25,12 @@ from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemRelated,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
     ExtEditEvent,
     ExtExternalRef,
+    ExtSyncFailure,
 )
 from autune_extraction.noun_form import tidy
 from autune_extraction.pipeline.base import Resolution, ResolutionRequest
@@ -57,6 +59,9 @@ TABLES = [
     ExtEditEvent.__table__,
     ExtConfirmation.__table__,
     ExtExternalRef.__table__,
+    # Every read of an item looks these up (#680): its failed copies, its event.
+    ExtCalendarEvent.__table__,
+    ExtSyncFailure.__table__,
 ]
 
 

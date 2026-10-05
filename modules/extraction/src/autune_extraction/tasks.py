@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service
+from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service, sync_state
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
@@ -703,32 +703,98 @@ def sync_after_confirmation(action_item_id: str) -> None:
     """
     try:
         sync_action_item(action_item_id)
-    except IntegrationError:
+    except IntegrationError as exc:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
-    except PrivacyViolationError:
+        _sync_failed(action_item_id, sync_state.NOTION, exc)
+    except PrivacyViolationError as exc:
         log.warning(
             "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+        _sync_failed(action_item_id, sync_state.NOTION, exc)
+    else:
+        _sync_went(action_item_id, sync_state.NOTION)
     # Separately, so a Notion failure never costs the calendar its event and
     # the other way round.
     try:
         sync_action_item_calendar(action_item_id)
-    except IntegrationError:
+    except IntegrationError as exc:
         log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
-    except PrivacyViolationError:
+        _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    except PrivacyViolationError as exc:
         log.warning(
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
+        _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    else:
+        _sync_went(action_item_id, sync_state.CALENDAR)
     # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
     # (``JiraReconnectRequiredError``) as well as integration errors.
     try:
-        sync_action_item_jira(action_item_id)
+        outcome = sync_action_item_jira(action_item_id)
     except AutuneError as exc:
         log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
+        _sync_failed(action_item_id, sync_state.JIRA, exc)
+    else:
+        if outcome == JIRA_NEEDS_RECONNECT:
+            # Skipped, but not because there was nothing to send: the grant was
+            # refused once (raised above, the first time) and ``jira_access``
+            # answers ``None`` from then on. Clearing here let one "다시 시도"
+            # take the red mark off an item Jira never got (PARKJAEKYUNG0525,
+            # review of #754).
+            _record_failure(action_item_id, sync_state.JIRA, sync_state.RECONNECT)
+        else:
+            _sync_went(action_item_id, sync_state.JIRA)
+
+
+def _sync_failed(action_item_id: str, system: str, exc: BaseException) -> None:
+    """Keep that this copy failed, by kind (#680), so the board can say so.
+
+    In its own transaction: the failed attempt's is already rolled back. Only
+    the class of ``exc`` is read. **Never raises** -- this is bookkeeping after
+    a failure that has already been handled and logged, and a database
+    hiccup here must not turn into a crashed background task; it is logged by
+    type and the card simply goes on saying nothing."""
+    _record_failure(action_item_id, system, sync_state.kind_of(exc))
+
+
+def _record_failure(action_item_id: str, system: str, kind: str) -> None:
+    """``_sync_failed``'s write, for a kind known without an exception. Never
+    raises, for the reason ``_sync_failed`` gives."""
+    try:
+        with session_scope() as session:
+            sync_state.record_failure(session, action_item_id, system, kind)
+    except Exception as error:  # noqa: BLE001 -- see ``_sync_failed``
+        log.warning(
+            "extraction_sync_failure_not_recorded",
+            action_item_id=action_item_id,
+            system=system,
+            reason=type(error).__name__,
+        )
+
+
+def _sync_went(action_item_id: str, system: str) -> None:
+    """The copy went through, or there was nothing to copy: whatever failure
+    stood for it is over. Never raises, for the reason ``_sync_failed`` gives."""
+    try:
+        with session_scope() as session:
+            sync_state.clear_failure(session, action_item_id, system)
+    except Exception as error:  # noqa: BLE001 -- see ``_sync_failed``
+        log.warning(
+            "extraction_sync_failure_not_cleared",
+            action_item_id=action_item_id,
+            system=system,
+            reason=type(error).__name__,
+        )
+
+
+JIRA_SENT, JIRA_SKIPPED, JIRA_NEEDS_RECONNECT = "sent", "skipped", "needs_reconnect"
+"""What ``sync_action_item_jira`` did, for ``sync_after_confirmation`` to keep
+or clear the board's failure: a skip because the team's grant needs a person to
+reconnect is not a skip because there was nothing to send (review of #754)."""
 
 
 @shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)
-def sync_action_item_jira(action_item_id: str) -> None:
+def sync_action_item_jira(action_item_id: str) -> str:
     """Step 7's Jira half (#82): the item as one issue in the team's chosen
     project -- ``jira_sync.sync_action_item_to_jira``.
 
@@ -743,14 +809,17 @@ def sync_action_item_jira(action_item_id: str) -> None:
         item = session.get(ExtActionItem, action_item_id)
         meeting = session.get(Meeting, item.meeting_id) if item is not None else None
         if item is None or meeting is None:
-            return
+            return JIRA_SKIPPED
         # ``check_project``: a project deleted in Jira comes back as no project,
         # recorded for the screen to ask for a new one (#458).
         access = jira_access(meeting.team_id, check_project=True)
-        if access is None or not access.project_key:
-            log.info("extraction_jira_not_connected", action_item_id=action_item_id)
-            return
         config = load_integration(session, meeting.team_id, jira_sync.JIRA)
+        if access is None or not access.project_key:
+            if config is not None and config.config.get("needs_reconnect"):
+                log.info("extraction_jira_needs_reconnect", action_item_id=action_item_id)
+                return JIRA_NEEDS_RECONNECT
+            log.info("extraction_jira_not_connected", action_item_id=action_item_id)
+            return JIRA_SKIPPED
         client = JiraClient.for_cloud(access.access_token, access.cloud_id)
         try:
             jira_sync.sync_action_item_to_jira(
@@ -763,6 +832,7 @@ def sync_action_item_jira(action_item_id: str) -> None:
             )
         finally:
             client.close()
+    return JIRA_SENT
 
 
 @contextmanager
