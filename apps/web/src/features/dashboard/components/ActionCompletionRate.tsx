@@ -64,7 +64,7 @@ export function ActionCompletionRate({
         </>
       ) : (
         <p style={metaStyle}>
-          {meetings
+          {meetings != null && meetings > 0 && meetings < MIN_MEETINGS
             ? "최근 4주 회의가 3건 미만이라 완료율을 표시하지 않습니다."
             : "최근 4주 회의에서 확정된 액션 아이템이 없습니다."}
         </p>
@@ -93,5 +93,12 @@ function formatTime(iso: string): string {
     minute: "2-digit",
   });
 }
+
+/**
+ * The server's `ACTION_PROGRESS_MIN_MEETINGS`. B lists only meetings with a
+ * confirmed item, so a window with three or more always has a rate; the bound
+ * is still checked here so the copy says what it means (#812 review).
+ */
+const MIN_MEETINGS = 3;
 
 const metaStyle = { margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" };

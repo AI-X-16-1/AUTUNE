@@ -42,4 +42,11 @@ describe("ActionCompletionRate", () => {
     ).toBeTruthy();
     expect(screen.queryByText(/기한 지난 항목/)).toBeNull();
   });
+
+  it("does not blame the floor when the window holds three meetings or more", () => {
+    render(<ActionCompletionRate rate={null} meetings={4} overdue={0} asOf={AS_OF} />);
+
+    expect(screen.getByText("최근 4주 회의에서 확정된 액션 아이템이 없습니다.")).toBeTruthy();
+    expect(screen.queryByText(/3건 미만/)).toBeNull();
+  });
 });
