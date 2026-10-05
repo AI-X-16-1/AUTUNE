@@ -34,6 +34,7 @@ from autune_core.errors import (
     PermissionDeniedError,
     PrivacyViolationError,
 )
+from autune_integrations.errors import TransientIntegrationError
 
 from .config import get_agent_settings
 from .main.actions import collect_actions
@@ -106,6 +107,16 @@ class ChatRequest(BaseModel):
         if self.team_id is None and self.meeting_id is None:
             raise ValueError("team_id or meeting_id is required")
         return self
+
+
+class AgentBusyError(AutuneError):
+    """The model is out of quota or down: try again in a minute (#419)."""
+
+    code = "agent_busy"
+    status_code = 503
+
+    def __init__(self) -> None:
+        super().__init__("the language model is busy; try again shortly")
 
 
 class ChatMeetingNotFoundError(NotFoundError):
@@ -227,16 +238,20 @@ def chat(
         team_id = meeting.team_id
     assert team_id is not None  # ChatRequest requires one of the two
     _require_member(session, team_id, user.id)
-    row, state = run_and_record(
-        body.message,
-        session=session,
-        router=chat_router,
-        team_id=team_id,
-        meeting_id=body.meeting_id,
-        requested_by=user.id,
-        trigger={"kind": "chat"},
-        asker=tool_model,
-    )
+    try:
+        row, state = run_and_record(
+            body.message,
+            session=session,
+            router=chat_router,
+            team_id=team_id,
+            meeting_id=body.meeting_id,
+            requested_by=user.id,
+            trigger={"kind": "chat"},
+            asker=tool_model,
+        )
+    except TransientIntegrationError as exc:
+        # The run is already recorded as failed; the person is told it is busy.
+        raise AgentBusyError() from exc
     scopes = approver_scopes(session, team_id, user.id)
     waiting = session.scalars(
         select(AgentPendingAction).where(

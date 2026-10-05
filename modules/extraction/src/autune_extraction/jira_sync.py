@@ -388,18 +388,23 @@ def close_for_deleted_item(
     if ref.site != site:
         log.info("extraction_jira_other_site", action_item_id=action_item_id)
         return False
-    key = str(ref.external_id)
-    try:
-        if not jira.move_to_category(key, "done"):
-            log.info(
-                "extraction_jira_no_transition", action_item_id=action_item_id, category="done"
-            )
-        jira.add_comment(key, DELETED_NOTE)
-    except PermanentIntegrationError as exc:
-        # Already gone -- deleted in Jira, or with its project. Nothing to close.
-        if exc.details.get("upstream_status") != 404:
-            raise
+    if not close_issue(jira, str(ref.external_id)):
         log.info("extraction_jira_already_gone", action_item_id=action_item_id)
         return False
     log.info("extraction_jira_closed_with_item", action_item_id=action_item_id)
+    return True
+
+
+def close_issue(jira: JiraIssues, key: str) -> bool:
+    """Move an issue to done and leave ``DELETED_NOTE`` on it. ``False`` when it
+    is already gone -- deleted in Jira, or with its project. Shared by the
+    deletion itself and ``tasks.drain_external_cleanup``'s retry (#692)."""
+    try:
+        if not jira.move_to_category(key, "done"):
+            log.info("extraction_jira_no_transition", category="done")
+        jira.add_comment(key, DELETED_NOTE)
+    except PermanentIntegrationError as exc:
+        if exc.details.get("upstream_status") != 404:
+            raise
+        return False
     return True

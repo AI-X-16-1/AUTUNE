@@ -52,6 +52,32 @@ export interface ExternalRefRead {
 }
 
 /**
+ * The last attempt to copy the item to `system` failed (#680). A kind and a
+ * time are all the server keeps: no message from the outside service.
+ */
+export interface SyncFailure {
+  system: "notion" | "jira" | "calendar";
+  kind: "privacy" | "reconnect" | "unreachable" | "rejected";
+  failed_at: string;
+}
+
+/**
+ * What this reader may be told about the item and its assignee's calendar.
+ * The four reasons about the item go to any reader; `sent`, a bare `none` and
+ * `not_connected` are about one person's calendar and go only to the assignee.
+ */
+export interface CalendarState {
+  state: "sent" | "none";
+  reason:
+    | "not_confirmed"
+    | "no_due_date"
+    | "no_account"
+    | "not_on_team"
+    | "not_connected"
+    | null;
+}
+
+/**
  * One item as `/api/extraction` returns it — `ActionItemRead` in
  * `modules/extraction/src/autune_extraction/schemas.py`.
  *
@@ -92,6 +118,11 @@ export interface ActionItemRead extends ActionItem {
    * this stricter one.
    */
   sync_refs: ExternalRefRead[];
+  /**
+   * Systems whose last copy of this item failed (#680). A `calendar` failure
+   * is sent only to the item's assignee. Empty when none did.
+   */
+  sync_failures?: SyncFailure[];
   /**
    * A one-line preview of the item's sources beyond `description` itself.
    * Rule-based, not a model: the longest source utterance, truncated, and only
@@ -179,6 +210,13 @@ export interface ActionItemDetail extends ActionItemRead {
   related?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
+  /** Where the item stands on its assignee's calendar, and why it has no event. */
+  calendar?: CalendarState | null;
+  /**
+   * The reader's own Slack confirmation DM about one of this item's lines —
+   * only for the person it went to, since nobody else can open it (#680).
+   */
+  confirmation_dm_url?: string | null;
 }
 
 /** `CarriedOverItem`: an open item from an earlier meeting of the same team. */

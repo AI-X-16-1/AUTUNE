@@ -198,6 +198,16 @@ describe("ActionBoard, dragging a card", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("does not drag the card whose detail window is open", async () => {
+    const onMove = vi.fn(() => Promise.resolve());
+    render(<ActionBoard items={ITEMS} selectedId="a" onMove={onMove} />);
+
+    expect(card("a").getAttribute("draggable")).toBe("false");
+    expect(card("c").getAttribute("draggable")).toBe("true");
+    await drag("a", "진행 중");
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
   it("is not draggable at all on a board that was given no way to move a card", () => {
     render(<ActionBoard items={ITEMS} />);
 

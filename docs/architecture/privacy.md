@@ -406,15 +406,25 @@ the feature needs.
     utterance. A message already delivered stays in that person's Slack
     when the item or the meeting is deleted; Autune keeps only that a
     reminder of that kind went (`ext_due_reminders`), and that goes with
-    the item. Each person can turn their own reminders off, and only their
-    own (`ext_due_reminder_optouts`, which goes with the account).
+    the item. A reminder the outbound check refuses is not sent, is
+    reported once, and keeps that same row so it is not tried again. Each
+    person can turn their own reminders off, and only their own
+    (`ext_due_reminder_optouts`, which goes with the account).
+  - **A copy that failed (#680):** Autune keeps, per item and system, only
+    the kind of the latest failure and its time (`ext_sync_failures`) --
+    never the outside service's message or what was being sent. It goes
+    when the next copy goes through, and with the item. A failed copy to a
+    person's own calendar is shown only to that person.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
     yet: its rows cascade in the database with no call to each person's
-    calendar (a deletion hook is the follow-up). A deleted account cannot: its
-    grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
-    is left to reach the calendar with. Each event is only the item's
+    calendar (a deletion hook is the follow-up). A deleted account has its
+    events removed first, by B's user hook, with the person's own grant; then
+    the grant is revoked at Google (#763), and the row goes with the account
+    (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
+    unreachable Google leaves the events on the calendar and the grant listed
+    under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
 
 ## 7. Review checklist

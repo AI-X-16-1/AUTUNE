@@ -611,6 +611,24 @@ def _utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
+class ExtWeeklyDigest(Base):
+    """That a person was sent the weekly digest of their open items for one
+    week, through one team's Slack (the user, 2026-10-04). The primary key is
+    the "once", as ``ext_due_reminders``'s is. No text: the message is not
+    kept. Goes with the person and with the team."""
+
+    __tablename__ = "ext_weekly_digests"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtDueReminder(Base):
     """That an item's assignee was sent a due-date reminder of one kind for one
     due date (``reminders``). The primary key is the "once": a second run, a
@@ -618,7 +636,10 @@ class ExtDueReminder(Base):
 
     No text and no person: the message is not kept, and who it went to is
     the item's assignee at the time, which the item already says. Goes with
-    the item, and so with its meeting."""
+    the item, and so with its meeting.
+
+    A row also stands for a reminder the outbound check refused: it is
+    settled, reported once, and not tried again (review of #751)."""
 
     __tablename__ = "ext_due_reminders"
     __table_args__ = (
@@ -633,6 +654,8 @@ class ExtDueReminder(Base):
     """The date the reminder was about. A due date moved later is a new date,
     and the item is owed a reminder for it."""
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    """When the reminder was settled: sent, or, for a refusal, when the outbound
+    check refused it. Named for the common case."""
 
 
 class ExtConfirmation(Base, TimestampMixin):
@@ -773,6 +796,51 @@ class ExtEditEvent(Base):
     )
 
 
+class ExtSyncFailure(Base):
+    """That the last attempt to copy an item to one outside system failed, what
+    kind of failure it was, and when (#680).
+
+    The claim in ``ext_external_refs`` is rolled back when a send fails, so a
+    failure left no trace and the board could only say "sent" or "sending".
+    This row is the trace. **A kind and a time, nothing else**: not the
+    outside service's message, which may echo what was sent, and not what
+    was being sent. One row per item and system -- the latest failure --
+    removed by the next attempt that succeeds, and gone with the item.
+    """
+
+    __tablename__ = "ext_sync_failures"
+    __table_args__ = (
+        CheckConstraint(
+            "system IN ('notion','jira','calendar')", name="ck_ext_sync_failures_system"
+        ),
+        CheckConstraint(
+            "kind IN ('privacy','reconnect','unreachable','rejected')",
+            name="ck_ext_sync_failures_kind",
+        ),
+    )
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    system: Mapped[str] = mapped_column(String(16), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtSyncRetry(Base):
+    """When a person last pressed "다시 시도" for an item (#680, lsh2217's review
+    of #754). Each press runs Notion, the calendar and Jira once more, so a
+    second press inside ``sync_state.RETRY_COOLDOWN`` is refused. One time per
+    item, nothing else; gone with the item."""
+
+    __tablename__ = "ext_sync_retries"
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    retried_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtCalendarEvent(Base):
     """The all-day event a confirmed item's due date became on its assignee's
     own Google Calendar (#435).
@@ -850,6 +918,41 @@ class ExtDueReminderOptOut(Base):
         String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtExternalCleanup(Base):
+    """A deleted item's Notion page or Jira issue still owed its cleanup (#692).
+
+    Deleting an item trashes its page and closes its issue in the deleting
+    request, best effort (``tasks.trash_notion_page``, ``tasks.close_jira_issue``).
+    When that call cannot get through, the item and its ``ext_external_refs``
+    row go regardless, so the request records here what it could not do and
+    ``tasks.drain_external_cleanup`` retries it. Ids only -- never what the item
+    said. Keyed to the team, which cascades: a deleted team has nothing left to
+    reach the page with.
+    """
+
+    __tablename__ = "ext_external_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "system", "external_id", name="uq_ext_external_cleanup"),
+        CheckConstraint("system IN ('notion','jira')", name="ck_ext_external_cleanup_system"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("teams.id", ondelete="CASCADE", name="fk_ext_external_cleanup_team"),
+        nullable=False,
+        index=True,
+    )
+    system: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """Jira's cloud id the key is from; a key on another site is someone else's issue."""
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class ExtCalendarPoll(Base):

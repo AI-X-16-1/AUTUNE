@@ -401,8 +401,8 @@ def test_a_privacy_violation_is_raised_after_the_others_are_sent(
     session: Session, slack: FakeSlack
 ) -> None:
     """A description somebody typed a phone number into is refused by the
-    outbound check. The other reminder still goes; the refusal is not swallowed
-    and leaves no claim."""
+    outbound check. The other reminder still goes; the refusal is not swallowed,
+    and its claim is kept so it is reported once."""
     item(session, "act_bad", description="010-1234-5678로 전화하기")
     item(session, "act_ok", assignee=PARK, description="스펙 초안 공유")
 
@@ -410,7 +410,49 @@ def test_a_privacy_violation_is_raised_after_the_others_are_sent(
         tasks.remind_due_items()
 
     assert [m.channel for m in slack.sent] == [PARK]
-    assert reminded(session) == [("act_ok", "due_soon", TOMORROW)]
+    assert reminded(session) == [
+        ("act_bad", "due_soon", TOMORROW),
+        ("act_ok", "due_soon", TOMORROW),
+    ]
+
+
+def test_a_refused_reminder_is_not_tried_again_every_run(
+    session: Session, slack: FakeSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review of #751: the refused claim used to roll back, so the same text was
+    refused -- and the same violation raised -- every ten minutes for days."""
+    item(session, "act_bad", description="010-1234-5678로 전화하기")
+    tried: list[str] = []
+    real = slack.send_dm
+
+    def counting(user_id: str, text: str, blocks=None) -> str:  # type: ignore[no-untyped-def]
+        tried.append(user_id)
+        return real(user_id, text, blocks)
+
+    monkeypatch.setattr(slack, "send_dm", counting)
+
+    with pytest.raises(PrivacyViolationError):
+        tasks.remind_due_items()
+    assert tasks.remind_due_items() == []
+
+    assert tried == [KIM], "the second run does not send it again"
+
+
+def test_a_refused_reminder_whose_claim_cannot_be_kept_is_still_raised(
+    session: Session, slack: FakeSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    item(session, "act_bad", description="010-1234-5678로 전화하기")
+
+    def broken(*_: object, **__: object) -> None:
+        raise RuntimeError("database gone")
+
+    monkeypatch.setattr(service, "settle_refused_due_reminder", broken)
+
+    with capture_logs() as logs, pytest.raises(PrivacyViolationError, match="act_bad"):
+        tasks.remind_due_items()
+
+    assert "extraction_due_reminder_refusal_not_kept" in [e["event"] for e in logs]
+    assert "database gone" not in repr(logs)
 
 
 def test_the_log_carries_ids_and_counts_never_the_text(session: Session, slack: FakeSlack) -> None:
@@ -602,4 +644,8 @@ def test_every_refused_reminder_is_named_not_only_the_last(
     assert "2 due reminder(s)" in message
     assert "act_a_bad" in message and "act_b_bad" in message
     assert [m.text.splitlines()[1] for m in slack.sent] == ["• 스펙 초안 공유"]
-    assert reminded(session) == [("act_c_fine", "due_soon", TOMORROW)]
+    assert reminded(session) == [
+        ("act_a_bad", "due_soon", TOMORROW),
+        ("act_b_bad", "due_soon", TOMORROW),
+        ("act_c_fine", "due_soon", TOMORROW),
+    ]

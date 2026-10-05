@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import reminders
+from . import reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -90,6 +90,8 @@ from .models import (
     ExtExternalRef,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtSyncFailure,
+    ExtWeeklyDigest,
 )
 from .noun_form import tidy
 from .pipeline.base import (
@@ -124,6 +126,7 @@ from .schemas import (
     ReviewDecision,
     SourceUtterance,
     SummaryDecision,
+    SyncFailureRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -864,6 +867,15 @@ def create_action_item(
     ``confidence`` is 1.0 and ``origin`` is ``user``: a person typing an item is
     the certainty, and the origin is what edit cost is measured against.
 
+    **A person's own item is confirmed as it is written** -- ``todo``, not
+    ``needs_confirmation``. Confirmation is a person checking what the model
+    drafted (ADR 0006, #246); a person who typed the item has done that
+    already, and asking them to confirm their own words kept a typed due date
+    off their calendar until a second click nobody expected (decided with the
+    user, 2026-10-04). ``router.create_action_item`` then queues the outside
+    copies as a confirmation does. An item the agent adds (``AGENT_ORIGINS``)
+    still waits for the board: the chat drafted it.
+
     Counted as an edit. An item the model missed costs the user more than one it
     got wrong -- they have to notice the absence, which is the failure recall
     makes likely and the one editing cannot fix by itself.
@@ -913,7 +925,9 @@ def create_action_item(
         assignee_id=payload.assignee_id,
         assignee_label=payload.assignee_label,
         due_date=payload.due_date,
-        status=ActionStatus.NEEDS_CONFIRMATION.value,
+        status=(
+            ActionStatus.TODO.value if origin == "user" else ActionStatus.NEEDS_CONFIRMATION.value
+        ),
         confidence=1.0,
         origin=origin,
     )
@@ -1051,6 +1065,7 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
 ) -> ActionItemRead:
@@ -1117,6 +1132,7 @@ def read_model(
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+        sync_failures=sync_failures or [],
     )
 
 
@@ -1159,14 +1175,26 @@ def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[
     return set(rows)
 
 
-def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
-    """``read_model`` for a single item a route just wrote, with its assignee
-    looked up. No summary or sync refs -- the routes that write never sent
-    them."""
+def read_one(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemRead:
+    """``read_model`` for a single item a route just wrote, read the way the list
+    reads it -- assignee, summary, copies outside and standing failures.
+
+    The board replaces its copy of the item with this answer. Without the
+    summary, the copies and the failures, an edit made the card's link and its
+    red "연동 실패" disappear until the next reload (review of #754).
+    ``reader_id`` is the caller, for the failure a calendar shows only to its
+    assignee (``sync_state.failures_for``)."""
     name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
     return read_model(
         item,
         assignee_name=name,
+        summary=action_item_summaries(session, [item]).get(item.id),
+        sync_refs=action_item_external_refs(session, [item.id]).get(item.id, []),
+        sync_failures=sync_state.failures_for(session, [item], reader_id=reader_id).get(
+            item.id, []
+        ),
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
     )
@@ -1378,6 +1406,9 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    # ``visible_to`` is the reader on the route; B's own callers pass none and
+    # so get no calendar failure, which is one person's to see.
+    failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
     return [
         read_model(
@@ -1385,6 +1416,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
         )
@@ -1556,8 +1588,13 @@ def related_utterances(session: Session, item_id: str) -> list[SourceUtterance]:
     return [SourceUtterance(id=uid, text=text) for uid, text in rows]
 
 
-def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
+def read_detail(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemDetail:
     """One item with the text of the utterances it was drawn from.
+
+    ``reader_id`` gets the reader their own confirmation DM about one of the
+    item's lines, when there is one (``confirmation_dm_url``).
 
     The only route in this module that returns the full *set* of sources
     verbatim. It is here and not on the list because the drawer is the one
@@ -1569,6 +1606,7 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    failures = sync_state.failures_for(session, [item], reader_id=reader_id).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
     hidden = originals_hidden(item)
     return ActionItemDetail(
@@ -1577,16 +1615,61 @@ def read_detail(session: Session, item: ExtActionItem) -> ActionItemDetail:
             assignee_name=name,
             summary=summary,
             sync_refs=refs,
+            sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
+        # Why there is no calendar event, where there is none (#680). What is
+        # missing from the item is said to any reader; anything about the
+        # assignee's calendar only to the assignee.
+        calendar=sync_state.calendar_state(session, item, reader_id=reader_id),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]
         if hidden
         else context_before(session, [s.utterance_id for s in item.sources if s.utterance_id]),
         related=[] if hidden else related_utterances(session, item.id),
         history=edit_history(session, item.id),
+        confirmation_dm_url=confirmation_dm_url(session, item, reader_id) if reader_id else None,
     )
+
+
+SLACK_OPEN = "https://slack.com/app_redirect?team={team}&channel={channel}"
+"""Slack's documented redirect: opens a conversation in the app or the browser."""
+
+
+def confirmation_dm_url(session: Session, item: ExtActionItem, reader_id: str) -> str | None:
+    """Where the reader's own confirmation DM about one of the item's lines is
+    (#680, the user, 2026-10-04) -- or ``None``.
+
+    **Only for the person the DM went to**: the speaker of the line, by its
+    participant. Slack opens a DM for its two members only, so a link shown to
+    anyone else would lead nowhere -- and would tell them a DM exists. The
+    place (``dm_channel``) is what #609 stores; the workspace is the team's
+    Slack connection's. A DM sent but not placed, or a team no longer on Slack,
+    is no link.
+    """
+    source_ids = [s.utterance_id for s in item.sources if s.utterance_id]
+    if not source_ids:
+        return None
+    channel = session.scalar(
+        select(ExtConfirmation.dm_channel)
+        .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
+        .join(Participant, Participant.id == Utterance.participant_id)
+        .where(
+            ExtConfirmation.utterance_id.in_(source_ids),
+            ExtConfirmation.dm_channel.is_not(None),
+            Participant.user_id == reader_id,
+        )
+        .limit(1)
+    )
+    if not channel:
+        return None
+    meeting = session.get(Meeting, item.meeting_id)
+    slack = load_integration(session, meeting.team_id, "slack") if meeting else None
+    team = slack.config.get("workspace_id") if slack is not None else None
+    if not team:
+        return None
+    return SLACK_OPEN.format(team=team, channel=channel)
 
 
 def action_item_external_refs(
@@ -3326,6 +3409,138 @@ def set_due_reminders(session: Session, user_id: str, *, on: bool, now: datetime
     return on
 
 
+def settle_refused_due_reminder(session: Session, reminder: DueReminder, *, now: datetime) -> None:
+    """Keep the claim of a reminder the outbound check refused, so the next run
+    does not try it again (review of #751).
+
+    The refused send rolled its own claim back with it. Left like that, the
+    same description was refused every ten minutes for as long as the
+    reminder stayed owed -- three days for an overdue one -- and each time
+    raised the same violation. The row now stands for "settled": sent, or
+    refused and reported once. A description corrected afterwards is not
+    reminded about that date; moving the date makes a new reminder."""
+    session.execute(
+        _insert_if_absent_into(session, ExtDueReminder)
+        .values(
+            action_item_id=reminder.action_item_id,
+            kind=reminder.kind,
+            due_date=reminder.due_date,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["action_item_id", "kind", "due_date"])
+    )
+
+
+@dataclass(frozen=True)
+class WeeklyDigest:
+    """One digest owed: whose, through which team's Slack, for which week. The
+    recipient is the person whose items they are -- there is no field a caller
+    could put another person in."""
+
+    user_id: str
+    team_id: str
+    week_start: date
+
+
+def _open_items_of(
+    session: Session, *, user_id: str | None, team_id: str | None, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]]:
+    """Open items with their team and meeting title, assigned to an account
+    that is on the meeting's team -- narrowed to one person and team when
+    given. A meeting past its retention window is left out."""
+    query = (
+        select(ExtActionItem, Meeting.team_id, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == ExtActionItem.assignee_id,
+            ),
+        )
+        .where(
+            ExtActionItem.status.in_([ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value]),
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.due_date, ExtActionItem.id)
+    )
+    if user_id is not None:
+        query = query.where(ExtActionItem.assignee_id == user_id)
+    if team_id is not None:
+        query = query.where(Meeting.team_id == team_id)
+    return [(item, team, title) for item, team, title in session.execute(query).tuples()]
+
+
+def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDigest]:
+    """The digests owed at ``now`` and not yet sent (the user, 2026-10-04):
+    one per person and team that has an open item assigned to that person on
+    that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
+    Who counts is who ``due_reminders_to_send`` would remind: an account on the
+    meeting's team -- a typed name has nobody to tell."""
+    week = reminders.digest_week(now)
+    if week is None:
+        return []
+    owners = {
+        (item.assignee_id, team)
+        for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
+        if item.assignee_id
+    }
+    sent = set(
+        session.execute(
+            select(ExtWeeklyDigest.user_id, ExtWeeklyDigest.team_id).where(
+                ExtWeeklyDigest.week_start == week
+            )
+        ).tuples()
+    )
+    return [
+        WeeklyDigest(user_id=user, team_id=team, week_start=week)
+        for user, team in sorted(owners)
+        if (user, team) not in sent
+    ]
+
+
+def send_weekly_digest(
+    session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
+) -> bool:
+    """Claim the week's digest and send it, in that order -- or send nothing.
+
+    The person's items are read again here, as they are now: one finished or
+    given away since the list was made is not in it, and a person with none
+    left is sent nothing and claims nothing. The claim is inserted only if
+    absent, in the caller's transaction with the send, so two runs cannot both
+    send and a failed send takes the claim back -- ``send_due_reminder``'s
+    shape. It goes to ``digest.user_id`` and nobody else.
+    """
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    if not rows:
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtWeeklyDigest)
+        .values(
+            user_id=digest.user_id,
+            team_id=digest.team_id,
+            week_start=digest.week_start,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "week_start"])
+        .returning(ExtWeeklyDigest.user_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        digest.user_id,
+        reminders.build_weekly_digest(
+            [
+                reminders.DigestLine(item.description, item.due_date, title)
+                for item, _, title in rows
+            ],
+            today=digest.week_start,
+            board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
+        ),
+    )
+    return True
+
+
 @dataclass(frozen=True)
 class PendingQuestion:
     """One ambiguous agreement ready to be asked about: ids only. The quoted
@@ -3824,6 +4039,9 @@ class NotionPages(Protocol):
     both fit."""
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
+    def find_pages(
+        self, database_id: str, *, title_property: str, title: str, created_after: datetime
+    ) -> list[str]: ...
     def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
     def trash_page(self, page_id: str) -> bool: ...
     def page_state(self, page_id: str) -> str: ...
@@ -4151,7 +4369,9 @@ def sync_action_item_to_notion(
 
     meeting = session.get(Meeting, item.meeting_id)
     properties = notion_properties(item, meeting.title if meeting else None, names)
-    page_id = notion.create_page(database_id, properties)
+    page_id = _page_a_lost_create_made(session, notion, item, database_id, names, properties)
+    if page_id is None:
+        page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtExternalRef, (item.id, NOTION))
     assert ref is not None
@@ -4159,6 +4379,69 @@ def sync_action_item_to_notion(
     ref.url = notion_url(page_id)
     log.info("extraction_notion_synced", action_item_id=item.id, meeting_id=item.meeting_id)
     return ref
+
+
+LOST_CREATE_WINDOW = timedelta(minutes=10)
+"""How long before a recorded "no answer" a create that may have arrived can
+have been made: the request's own timeout, with room for a clock apart."""
+
+
+def _page_a_lost_create_made(
+    session: Session,
+    notion: NotionPages,
+    item: ExtActionItem,
+    database_id: str,
+    names: Mapping[str, str],
+    properties: dict[str, Any],
+) -> str | None:
+    """The page an earlier create made though it timed out on our side, when
+    there is exactly one; it is updated and kept instead of making a second
+    (mkkim68 and lsh2217, reviews of #754).
+
+    Asked only when the item's last Notion copy failed as ``unreachable`` --
+    the one failure that may have arrived -- and only for pages with exactly
+    the item's title made from shortly before that failure on, leaving out
+    any page another item's ref already holds. None found:
+    the create did not arrive, make the page. More than one: nothing here can
+    tell which is this item's, so none is taken and a page is made, as before.
+    A team map with no title has nothing to look for."""
+    failure = session.get(ExtSyncFailure, (item.id, NOTION))
+    if failure is None or failure.kind != sync_state.UNREACHABLE or "title" not in names:
+        return None
+    # The very title the create sends, read back from the properties it is
+    # built from, so the two cannot drift apart (mkkim68, review of #777).
+    title = properties[names["title"]]["title"][0]["text"]["content"]
+    failed_at = failure.failed_at
+    if failed_at.tzinfo is None:
+        failed_at = failed_at.replace(tzinfo=UTC)
+    found = notion.find_pages(
+        database_id,
+        title_property=names["title"],
+        title=title,
+        created_after=failed_at - LOST_CREATE_WINDOW,
+    )
+    # Items share sentences ("회의록 공유"): a page another item already holds
+    # is that item's, never this one's lost create. Taken, the two would share
+    # one page and overwrite each other (mkkim68, review of #777).
+    if found:
+        held = set(
+            session.scalars(
+                select(ExtExternalRef.external_id).where(
+                    ExtExternalRef.system == NOTION,
+                    ExtExternalRef.external_id.in_(found),
+                    ExtExternalRef.action_item_id != item.id,
+                )
+            )
+        )
+        found = [page_id for page_id in found if page_id not in held]
+    if len(found) != 1:
+        log.info(
+            "extraction_notion_lost_create_not_found", action_item_id=item.id, found=len(found)
+        )
+        return None
+    notion.update_page(found[0], properties)
+    log.info("extraction_notion_lost_create_adopted", action_item_id=item.id)
+    return found[0]
 
 
 DECISION_NOTION_PROPERTIES: Mapping[str, str] = {

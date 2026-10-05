@@ -159,8 +159,12 @@ agreement, and sync the result to Notion and Jira.
    makes a new one; if someone archives it, it is left archived (#403). The
    board does not say so yet: later edits to that item stop reaching Notion
    and only the log records it. S18's integration row is where an "archived in
-   Notion" state belongs once it exists. A team without Notion connected is
-   skipped. Not
+   Notion" state belongs once it exists. A create that timed out on our side
+   may still have made the page: when the item's last Notion copy failed as
+   `unreachable`, the next create first asks the database for a live page
+   with exactly the item's title made since shortly before that failure, and
+   keeps it if there is exactly one (review of #754). A team without Notion
+   connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
@@ -269,9 +273,12 @@ confirmation DM's quotation is #586's second part.
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
 | `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
+| `ext_external_cleanup` | A deleted item's Notion page or Jira issue the deleting request could not trash or close: team, system, page id or issue key, and Jira's site. Ids only. Retried by `drain_external_cleanup` every ten minutes; a team not connected now is kept, a transient failure counted up to five, a refusal or another site's key dropped (#692). `team_id` cascades |
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
-| `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once". No text, no person; goes with the item |
+| `ext_sync_failures` | That an item's latest copy to Notion, Jira or a calendar failed: the system, one of four kinds (`privacy`, `reconnect`, `unreachable`, `rejected`) and the time (#680). Never the outside service's message, never what was being sent. Removed by the next copy that goes through; goes with the item |
+| `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
+| `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결). On unless a row says off; the person and when, nothing else. Goes with the account |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
@@ -621,6 +628,14 @@ versions.
   assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
+- A failed copy to an outside tool is remembered by its kind and its time
+  only (`ext_sync_failures`, #680): the service's own message may echo what
+  was sent and is not stored or logged. Notion and Jira are the team's
+  connections and their failures are shown to the team. A calendar is one
+  person's: what an item lacks (not confirmed, no date, no account for an
+  assignee) is said to anybody, and everything past that -- an event being
+  there, none being there, a failed calendar copy -- only to the assignee,
+  since each says whether that person connected a calendar.
 - Confirmation DMs go to the speaker, never to a channel.
 - Due-date reminders go to the item's assignee, never to a channel, a manager
   or the person who made the item, and nothing counts or ranks what a person
