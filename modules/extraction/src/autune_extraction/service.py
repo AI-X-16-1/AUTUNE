@@ -3380,6 +3380,28 @@ def send_due_reminder(
     return True
 
 
+def settle_refused_due_reminder(session: Session, reminder: DueReminder, *, now: datetime) -> None:
+    """Keep the claim of a reminder the outbound check refused, so the next run
+    does not try it again (review of #751).
+
+    The refused send rolled its own claim back with it. Left like that, the
+    same description was refused every ten minutes for as long as the
+    reminder stayed owed -- three days for an overdue one -- and each time
+    raised the same violation. The row now stands for "settled": sent, or
+    refused and reported once. A description corrected afterwards is not
+    reminded about that date; moving the date makes a new reminder."""
+    session.execute(
+        _insert_if_absent_into(session, ExtDueReminder)
+        .values(
+            action_item_id=reminder.action_item_id,
+            kind=reminder.kind,
+            due_date=reminder.due_date,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["action_item_id", "kind", "due_date"])
+    )
+
+
 @dataclass(frozen=True)
 class WeeklyDigest:
     """One digest owed: whose, through which team's Slack, for which week. The

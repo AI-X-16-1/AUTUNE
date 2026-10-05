@@ -406,7 +406,8 @@ the feature needs.
     utterance. A message already delivered stays in that person's Slack
     when the item or the meeting is deleted; Autune keeps only that a
     reminder of that kind went (`ext_due_reminders`), and that goes with
-    the item.
+    the item. A reminder the outbound check refuses is not sent, is
+    reported once, and keeps that same row so it is not tried again.
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes
