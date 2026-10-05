@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from celery import shared_task
 from sqlalchemy import select
@@ -62,11 +62,13 @@ from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import (
     calendar_sync,
+    days_off,
     jira_sync,
     notion_backfill,
     notion_setup,
     project_send,
     projects,
+    reminders,
     service,
     sync_state,
 )
@@ -188,7 +190,10 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, utterances, consented=consented)
-    classified = service.verify_utterances(get_nli(), classified)
+    nli = get_nli()
+    # Step 4 sends text out too, when it is the ``llm`` one.
+    give_roster(nli, roster)
+    classified = service.verify_utterances(nli, classified)
 
     resolver = get_resolver()
     # The resolver sends text out too, when it is the ``llm`` one (#411).
@@ -858,15 +863,34 @@ def send_weekly_digests() -> list[str]:
     sent: list[str] = []
     refused: list[str] = []
     not_linked = 0
+    away = 0
+    leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
+            continue
+        if leave and _out_of_office(digest.user_id, now):
+            # Held back, not claimed: asked again next run, and sent then if
+            # they are back inside the sending hours.
+            away += 1
             continue
         try:
             with session_scope() as session:
                 went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
         except PrivacyViolationError:
             refused.append(digest.user_id)
+            # Reported once: the week's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    service.settle_refused_weekly_digest(session, digest, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_weekly_digest_refusal_not_kept",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
             continue
         except SlackRecipientNotLinkedError:
             not_linked += 1
@@ -887,6 +911,7 @@ def send_weekly_digests() -> list[str]:
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
+            away=away,
         )
     if refused:
         raise PrivacyViolationError(
@@ -894,6 +919,163 @@ def send_weekly_digests() -> list[str]:
             f"{', '.join(refused)}"
         )
     return sent
+
+
+@shared_task(name="autune.extraction.periodic.send_daily_digests")
+@periodic(timedelta(minutes=10))
+def send_daily_digests() -> list[str]:
+    """The morning DM: to each person alone, what changed on their own items
+    since the last one and what is theirs to do today (the user, 2026-10-05;
+    ``service.daily_digests_to_send``). Returns the user ids one went to.
+
+    ``send_weekly_digests``' shape, for the same reasons: each DM claimed and
+    sent in its own transaction, a team without Slack or a person without a
+    linked account skipped and looked at again next run, an unexpected error
+    that one DM's, and a privacy refusal never swallowed -- raised after the
+    rest are sent. Every ten minutes; outside a Tuesday-to-Friday morning in
+    Korea it finds nothing owed. Nobody who turned their reminders off, and
+    nobody on a day they paused, is in the list.
+    """
+    if not get_settings().daily_digest:
+        return []
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = service.daily_digests_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({d.team_id for d in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent: list[str] = []
+    refused: list[str] = []
+    not_linked = 0
+    away = 0
+    leave = get_settings().leave_from_calendar
+    for digest in owed:
+        secret = secrets[digest.team_id]
+        if secret is None:
+            continue
+        if leave and _out_of_office(digest.user_id, now):
+            # Held back, not claimed: asked again next run, and sent then if
+            # they are back inside the sending hours.
+            away += 1
+            continue
+        try:
+            with session_scope() as session:
+                went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
+        except PrivacyViolationError:
+            refused.append(digest.user_id)
+            # Reported once: the day's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    service.settle_refused_daily_digest(session, digest, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_daily_digest_refusal_not_kept",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+            log.warning(
+                "extraction_daily_digest_failed",
+                user_id=digest.user_id,
+                team_id=digest.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent.append(digest.user_id)
+    if owed:
+        log.info(
+            "extraction_daily_digests_sent",
+            owed=len(owed),
+            sent=len(sent),
+            not_linked=not_linked,
+            away=away,
+        )
+    if refused:
+        raise PrivacyViolationError(
+            f"morning digest refused by the outbound check for {len(refused)} person(s): "
+            f"{', '.join(refused)}"
+        )
+    return sent
+
+
+def _out_of_office(user_id: str, now: datetime) -> bool:
+    """Whether this person's own connected calendar marks them out of office
+    right now (``days_off.away_now``) -- ``False`` for someone with no calendar
+    connected, and ``False`` when it cannot be read.
+
+    **Unknown is not away.** A digest is the person's own work sent to
+    themselves; a grant that lapsed or a Google outage must not silence it.
+    The failure is logged by type with the person's id, never with anything
+    Google said. A privacy refusal is not that kind of failure and is raised.
+    """
+    try:
+        with session_scope() as session, _calendars(session) as calendar_for:
+            connection = calendar_for(user_id)
+            if connection is None:
+                return False
+            calendar, calendar_id = connection
+            return days_off.away_now(cast("days_off.LeaveCalendar", calendar), calendar_id, now=now)
+    except PrivacyViolationError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- unknown is not away; logged by type, ids only
+        log.warning("extraction_leave_not_read", user_id=user_id, reason=type(exc).__name__)
+        return False
+
+
+@shared_task(name="autune.extraction.periodic.refresh_public_holidays")
+@periodic(timedelta(hours=12))
+def refresh_public_holidays() -> int:
+    """Read Korea's public holidays from Google's public holiday calendar and
+    keep them (``days_off``), so no digest goes on one. Returns how many days
+    were kept; 0 when nothing was read.
+
+    Only where a digest is switched on and ``public_holiday_calendar`` is not
+    off: a deployment that sends none makes no call. A read that fails leaves
+    the last good one in place -- and once that is older than
+    ``days_off.FRESH_FOR`` the table in code answers -- so the failure is
+    logged by type and not raised: there is nothing for a retry queue to do
+    that the next run does not.
+    """
+    settings = get_settings()
+    if not settings.public_holiday_calendar or not (
+        settings.daily_digest or settings.weekly_digest
+    ):
+        return 0
+    now = datetime.now(tz=UTC)
+    try:
+        days = days_off.fetch_public_holidays(today=reminders.korean_day(now))
+    except IntegrationError as exc:
+        log.warning("extraction_public_holidays_not_read", reason=type(exc).__name__)
+        return 0
+    with session_scope() as session:
+        kept = days_off.store_public_holidays(session, days, now=now)
+    log.info("extraction_public_holidays_read", days=kept)
+    return kept
+
+
+@shared_task(name="autune.extraction.periodic.forget_ended_notification_pauses")
+@periodic(timedelta(hours=1))
+def forget_ended_notification_pauses() -> int:
+    """Delete the pauses that have ended (``service.forget_ended_pauses``):
+    when a person was away is kept only while it stops a message. Its own
+    task, so it runs whether or not a deployment sends either digest. Returns
+    how many went; counts only in the log."""
+    with session_scope() as session:
+        gone = service.forget_ended_pauses(
+            session, today=reminders.korean_day(datetime.now(tz=UTC))
+        )
+    if gone:
+        log.info("extraction_notification_pauses_forgotten", count=gone)
+    return gone
 
 
 @shared_task(name="autune.extraction.periodic.remind_due_items")
@@ -1026,9 +1208,13 @@ def summarise_confirmed_draft(utterance_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
-def sync_action_item(action_item_id: str) -> None:
+def sync_action_item(action_item_id: str) -> str:
     """Step 7 for one item past confirmation: create its Notion page the
     first time, update the same page every edit after (#30, #342).
+
+    Returns what happened, for ``sync_after_confirmation`` to keep or clear
+    the board's failure: ``COPY_SENT``, ``COPY_GONE`` (no such item) or
+    ``COPY_NOT_CONNECTED``.
 
     Runs whenever the board changes an item that has already left
     ``needs_confirmation`` (``sync_after_confirmation``), never before: nothing
@@ -1055,7 +1241,7 @@ def sync_action_item(action_item_id: str) -> None:
         meeting = session.get(Meeting, item.meeting_id) if item is not None else None
         if item is None or meeting is None:
             log.info("extraction_notion_item_gone", action_item_id=action_item_id)
-            return
+            return COPY_GONE
         config = load_integration(session, meeting.team_id, "notion")
         database_id = notion_setup.database_id(session, meeting.team_id, config, "action_db_id")
         if config is None or not config.secret or not database_id:
@@ -1069,7 +1255,7 @@ def sync_action_item(action_item_id: str) -> None:
                 action_item_id=action_item_id,
                 team_id=meeting.team_id,
             )
-            return
+            return COPY_NOT_CONNECTED
         service.sync_action_item_to_notion(
             session,
             NotionClient(config.secret),
@@ -1077,6 +1263,19 @@ def sync_action_item(action_item_id: str) -> None:
             database_id=database_id,
             property_names=config.config.get("action_properties"),
         )
+    return COPY_SENT
+
+
+COPY_SENT, COPY_GONE, COPY_NOT_CONNECTED = "sent", "gone", "not_connected"
+COPY_NOT_NEEDED = "not_needed"
+"""What a sync of one item to a tool did. ``COPY_NOT_CONNECTED`` is a skip, and
+it is not "the copy went": a team that disconnected Notion or Jira may still
+have the item's page or issue there, and a person who disconnected their
+calendar still has the item's event on it, saying what it said -- nothing this
+run did changed that. So a failure standing for the copy is kept, not cleared
+(mkkim68, reviews of #774 and #823; the user's call, 2026-10-05).
+``COPY_NOT_NEEDED`` is the calendar's "this item gets no event": nothing is
+outside, and nothing stands to be kept."""
 
 
 def sync_after_confirmation(action_item_id: str) -> None:
@@ -1101,9 +1300,19 @@ def sync_after_confirmation(action_item_id: str) -> None:
     it would crash this background task instead of logging gracefully, the
     same silent failure an unhandled ``IntegrationError`` would be (review,
     #333).
+
+    **Each of the three is on its own, whatever it raises** (mkkim68, review of
+    #774). The named errors above are the ones a tool or the outbound check
+    gives; anything else -- a database error, a claim that lost a race --
+    used to leave this function at the first copy, so the two after it were
+    never tried and nothing was recorded for any of them. On the paths that
+    run this without a person watching (a corrected line, deleted speech)
+    that meant a deleted sentence could stay in Jira or on a calendar with no
+    mark on the card. Now the copy that broke is recorded as failed, by the
+    error's class only, and the next one runs.
     """
     try:
-        sync_action_item(action_item_id)
+        went = sync_action_item(action_item_id)
     except IntegrationError as exc:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
         _sync_failed(action_item_id, sync_state.NOTION, exc)
@@ -1112,12 +1321,15 @@ def sync_after_confirmation(action_item_id: str) -> None:
             "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
         _sync_failed(action_item_id, sync_state.NOTION, exc)
+    except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
+        _sync_broke(action_item_id, sync_state.NOTION, exc)
     else:
-        _sync_went(action_item_id, sync_state.NOTION)
+        if went != COPY_NOT_CONNECTED:
+            _sync_went(action_item_id, sync_state.NOTION)
     # Separately, so a Notion failure never costs the calendar its event and
     # the other way round.
     try:
-        sync_action_item_calendar(action_item_id)
+        on_calendar = sync_action_item_calendar(action_item_id)
     except IntegrationError as exc:
         log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
         _sync_failed(action_item_id, sync_state.CALENDAR, exc)
@@ -1126,8 +1338,11 @@ def sync_after_confirmation(action_item_id: str) -> None:
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
         _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
+        _sync_broke(action_item_id, sync_state.CALENDAR, exc)
     else:
-        _sync_went(action_item_id, sync_state.CALENDAR)
+        if on_calendar != COPY_NOT_CONNECTED:
+            _sync_went(action_item_id, sync_state.CALENDAR)
     # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
     # (``JiraReconnectRequiredError``) as well as integration errors.
     try:
@@ -1135,6 +1350,8 @@ def sync_after_confirmation(action_item_id: str) -> None:
     except AutuneError as exc:
         log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
         _sync_failed(action_item_id, sync_state.JIRA, exc)
+    except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
+        _sync_broke(action_item_id, sync_state.JIRA, exc)
     else:
         if outcome == JIRA_NEEDS_RECONNECT:
             # Skipped, but not because there was nothing to send: the grant was
@@ -1143,7 +1360,7 @@ def sync_after_confirmation(action_item_id: str) -> None:
             # take the red mark off an item Jira never got (PARKJAEKYUNG0525,
             # review of #754).
             _record_failure(action_item_id, sync_state.JIRA, sync_state.RECONNECT)
-        else:
+        elif outcome != COPY_NOT_CONNECTED:
             _sync_went(action_item_id, sync_state.JIRA)
     # The project minutes it is in, when they went out: put back, edited.
     _refresh_minutes_for(item_ids=[action_item_id])
@@ -1172,6 +1389,19 @@ def _sync_failed(action_item_id: str, system: str, exc: BaseException) -> None:
     hiccup here must not turn into a crashed background task; it is logged by
     type and the card simply goes on saying nothing."""
     _record_failure(action_item_id, system, sync_state.kind_of(exc))
+
+
+def _sync_broke(action_item_id: str, system: str, exc: BaseException) -> None:
+    """A copy ended in something no tool raises: said loudly, by the error's
+    class and never its message, and kept as a failure like any other so the
+    card shows it and "다시 시도" can run it again. Never raises."""
+    log.error(
+        "extraction_copy_sync_broke",
+        action_item_id=action_item_id,
+        system=system,
+        error=type(exc).__name__,
+    )
+    _sync_failed(action_item_id, system, exc)
 
 
 def _record_failure(action_item_id: str, system: str, kind: str) -> None:
@@ -1207,7 +1437,9 @@ def _sync_went(action_item_id: str, system: str) -> None:
 JIRA_SENT, JIRA_SKIPPED, JIRA_NEEDS_RECONNECT = "sent", "skipped", "needs_reconnect"
 """What ``sync_action_item_jira`` did, for ``sync_after_confirmation`` to keep
 or clear the board's failure: a skip because the team's grant needs a person to
-reconnect is not a skip because there was nothing to send (review of #754)."""
+reconnect is not a skip because there was nothing to send (review of #754).
+``JIRA_SKIPPED`` is the item being gone; a team with no Jira connection or no
+project chosen answers ``COPY_NOT_CONNECTED``, as the Notion sync does."""
 
 
 @shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)
@@ -1236,7 +1468,7 @@ def sync_action_item_jira(action_item_id: str) -> str:
                 log.info("extraction_jira_needs_reconnect", action_item_id=action_item_id)
                 return JIRA_NEEDS_RECONNECT
             log.info("extraction_jira_not_connected", action_item_id=action_item_id)
-            return JIRA_SKIPPED
+            return COPY_NOT_CONNECTED
         client = JiraClient.for_cloud(access.access_token, access.cloud_id)
         try:
             jira_sync.sync_action_item_to_jira(
@@ -1306,7 +1538,7 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
 
 
 @shared_task(name="autune.extraction.sync_action_item_calendar", acks_late=True)
-def sync_action_item_calendar(action_item_id: str) -> None:
+def sync_action_item_calendar(action_item_id: str) -> str:
     """Step 7's calendar half (#435): the item's due date on its assignee's own
     calendar -- ``calendar_sync.sync_due_date_to_calendar``.
 
@@ -1314,11 +1546,28 @@ def sync_action_item_calendar(action_item_id: str) -> None:
     for a deployment without Google client credentials (``_calendars``). Like
     the Notion sync it does not retry itself: a timed-out create may have made
     the event, and a retry would make a second.
+
+    Returns what happened, as the Notion and Jira syncs do (mkkim68, review of
+    #823): ``COPY_SENT`` when the event was written; ``COPY_NOT_NEEDED`` when
+    the item has no event and gets none -- no date, no assignee with an
+    account, not confirmed, or a calendar that was never connected;
+    ``COPY_NOT_CONNECTED`` when **an event of this item is still on its
+    assignee's calendar and could not be reached** -- they disconnected, or
+    the deployment lost its Google client. That last one is read off the row:
+    the sync deletes the row whenever the event's owner is no longer the
+    item's, so a row left after a sync that wrote nothing is an event on the
+    right person's calendar that still says what it said.
     """
     with session_scope() as session, _calendars(session) as calendar_for:
-        calendar_sync.sync_due_date_to_calendar(
+        written = calendar_sync.sync_due_date_to_calendar(
             session, calendar_for, action_item_id=action_item_id
         )
+        if written is not None:
+            return COPY_SENT
+        if session.get(ExtCalendarEvent, action_item_id) is not None:
+            log.info("extraction_calendar_event_unreachable", action_item_id=action_item_id)
+            return COPY_NOT_CONNECTED
+        return COPY_NOT_NEEDED
 
 
 CALENDAR_POLL_OVERLAP = timedelta(minutes=2)

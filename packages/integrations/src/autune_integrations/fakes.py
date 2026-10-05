@@ -246,6 +246,7 @@ class FakeCalendar:
     listed: list[CalendarEvent] = field(default_factory=list)
     changed: list[CalendarEvent] = field(default_factory=list)
     busy: dict[str, list[tuple[datetime, datetime]]] = field(default_factory=dict)
+    away: list[tuple[datetime | date, datetime | date]] = field(default_factory=list)
     deleted: list[str] = field(default_factory=list)
     created: int = 0
     """Events ever made, so an id is never reused -- not even after a test
@@ -271,6 +272,12 @@ class FakeCalendar:
         self, emails: list[str], time_min: datetime, time_max: datetime
     ) -> dict[str, list[tuple[datetime, datetime]] | None]:
         return {email: self.busy.get(email) for email in emails}
+
+    def out_of_office(
+        self, calendar_id: str, time_min: datetime, time_max: datetime
+    ) -> list[tuple[datetime | date, datetime | date]]:
+        """What a test put in ``away``: times only, as the real client returns."""
+        return list(self.away)
 
     def create_event(
         self, calendar_id: str, summary: str, start_iso: str, end_iso: str, attendees: list[str]

@@ -6,6 +6,7 @@ import { GapDistributionBars } from "./GapDistributionBars";
 import { MeetingReportsCard } from "./MeetingReportsCard";
 import { PredictionCard } from "./PredictionCard";
 import { QualityScoreCard } from "./QualityScoreCard";
+import { WeeklyReportScheduleCard } from "./WeeklyReportScheduleCard";
 import { useDashboard } from "../hooks/useDashboard";
 
 /**
@@ -60,6 +61,10 @@ export function Dashboard({ teamId }: { teamId: string }) {
 
       <div style={{ gridColumn: "1 / -1" }}>
         <MeetingReportsCard teamId={teamId} />
+      </div>
+
+      <div style={{ gridColumn: "1 / -1" }}>
+        <WeeklyReportScheduleCard teamId={teamId} />
       </div>
     </div>
   );

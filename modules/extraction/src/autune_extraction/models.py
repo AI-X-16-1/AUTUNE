@@ -826,6 +826,64 @@ class ExtWeeklyDigest(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtDailyDigest(Base):
+    """That a person was sent the morning DM for one day, through one team's
+    Slack (the user, 2026-10-05). The primary key is the "once", as
+    ``ext_weekly_digests``'s is, and ``sent_at`` of the latest row is where the
+    next one's "since the last one" starts. No text: the message is not kept.
+    Goes with the person and with the team."""
+
+    __tablename__ = "ext_daily_digests"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtNotificationPause(Base):
+    """The days a person asked not to get the morning DM or Monday's digest --
+    leave, as they set it themselves (the user, 2026-10-05).
+
+    One range a person, replaced when they set another and deleted when they
+    clear it. **It says when a person is away, so it is theirs alone**: only
+    they can read or write it (the routes name nobody), no screen shows it to
+    a teammate, and nothing derives anything else from it -- it only stops a
+    message. It is not kept past its last day: the morning run deletes a range
+    that has ended (``service.forget_ended_pauses``). The due-date reminders
+    do not read it; a deadline is not put off by leave. Goes with the account.
+    """
+
+    __tablename__ = "ext_notification_pauses"
+    __table_args__ = (
+        CheckConstraint("ends_on >= starts_on", name="ck_ext_notification_pauses_order"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtPublicHoliday(Base):
+    """A public holiday in Korea, as Google's public holiday calendar listed it
+    at the last read (``days_off.py``, the user 2026-10-05). No digest goes on
+    one. Dates of public record: nothing here is about a person, a team or a
+    meeting. Replaced whole on every read; ``read_at`` is that read's time,
+    and a table with none newer than ``days_off.FRESH_FOR`` is not used."""
+
+    __tablename__ = "ext_public_holidays"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtDueReminder(Base):
     """That an item's assignee was sent a due-date reminder of one kind for one
     due date (``reminders``). The primary key is the "once": a second run, a

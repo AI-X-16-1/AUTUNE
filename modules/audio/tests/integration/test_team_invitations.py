@@ -223,7 +223,7 @@ def test_the_owner_of_the_address_joins_and_the_invitation_is_used_up(
     response = accept(client_for, invitee, token)
 
     assert response.status_code == 200
-    assert response.json() == {"team_id": team, "name": "Test Team"}
+    assert response.json() == {"team_id": team, "name": "Test Team", "pinned": False}
     assert members(db_session, team) == {inviter.id, invitee.id}
     assert rows(db_session, team) == []
     assert client_for(invitee).get(f"/api/audio/teams/{team}/members").status_code == 200

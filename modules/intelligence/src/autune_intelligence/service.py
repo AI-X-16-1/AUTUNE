@@ -17,7 +17,7 @@ from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
-from typing import Final, Literal
+from typing import Any, Final, Literal, NamedTuple
 
 import sqlalchemy as sa
 from sqlalchemy import func, text
@@ -83,6 +83,7 @@ from .models import (
     IntelPrediction,
     IntelReport,
     IntelScore,
+    IntelTeamSettings,
 )
 from .pipeline import get_gap_classifier, get_misalignment_predictor
 from .pipeline.base import Classification
@@ -475,10 +476,17 @@ never an undercounted partial and a quiet team's bars never silently span more
 than eight weeks. Bucketing by week is still the frontend's job."""
 
 
-def get_score(session: Session, meeting_id: str) -> IntelScore:
-    """The meeting's quality score, or a 404 that names no meeting content."""
+def get_score(session: Session, meeting_id: str, *, user_id: str | None = None) -> IntelScore:
+    """The meeting's quality score, or a 404 that names no meeting content.
+
+    With ``user_id``, only for a member of the meeting's team: anyone else gets
+    the same 404, so whether the meeting exists does not leak. E's agent tools
+    call it without one; who may run them is the agent layer's to decide.
+    """
     row = session.get(IntelScore, meeting_id)
-    if row is None:
+    if row is None or (
+        user_id is not None and not _is_member(session, user_id=user_id, team_id=row.team_id)
+    ):
         raise NotFoundError("intelligence score", meeting_id)
     return row
 
@@ -723,10 +731,14 @@ def _report_body_markdown(
     average_value: float | None,
     grade_distribution: dict[str, int],
     gap_distribution: dict[str, int],
-    action_item_completion_rate: float | None,
     partial_meeting_count: int,
+    progress: ActionProgressTotals | None = None,
 ) -> str:
     """The report's Slack/markdown body — a template, not an LLM.
+
+    ``progress`` is B's action-item counts as the dashboard reads them (#605):
+    ``None`` leaves them out (a report for a week that ended before today), and
+    totals without ``as_of`` say the counts did not arrive.
 
     Every value here is already computed in intel_scores/intel_gap_patterns;
     this only arranges them into readable sentences. `../architecture/privacy.md`
@@ -739,7 +751,9 @@ def _report_body_markdown(
     """
     header = f"*{period_start.isoformat()} ~ {period_end.isoformat()} 주간 리포트*"
     if meeting_count == 0:
-        return f"{header}\n\n이번 주 분석된 회의가 없습니다."
+        return "\n".join(
+            [header, "", "이번 주 분석된 회의가 없습니다.", *_progress_lines(progress)]
+        )
 
     lines = [header, "", f"이번 주 분석된 회의 {meeting_count}건."]
     if partial_meeting_count:
@@ -752,9 +766,60 @@ def _report_body_markdown(
     if gap_distribution:
         top_type, top_count = max(gap_distribution.items(), key=lambda kv: kv[1])
         lines.append(f"가장 잦은 갭 유형: {top_type} ({top_count}건)")
-    if action_item_completion_rate is not None:
-        lines.append(f"액션 아이템 완료율: {action_item_completion_rate:.0%}")
+    lines.extend(_progress_lines(progress))
     return "\n".join(lines)
+
+
+def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
+    """Team totals only, as the dashboard shows them -- never one meeting's."""
+    if progress is None:
+        return []
+    if progress.as_of is None:
+        return ["액션 아이템 완료 현황을 받지 못했습니다."]
+    counted = progress.as_of.astimezone(_KST)
+    if progress.completion_rate is not None:
+        lines = [f"액션 아이템 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
+    elif 0 < (progress.completion_meetings or 0) < ACTION_PROGRESS_MIN_MEETINGS:
+        lines = ["확정 항목이 있는 최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
+    else:
+        lines = ["최근 4주 회의에서 확정된 액션 아이템이 없습니다."]
+    counts = []
+    if progress.overdue is not None:
+        counts.append(f"기한 지난 항목 {progress.overdue}건")
+    if progress.carried_over is not None:
+        counts.append(
+            f"이월된 항목 {progress.carried_over}건 (이번 주 전 회의에서 아직 끝나지 않은 것)"
+        )
+    if counts:
+        lines.append(" · ".join(counts))
+    lines.append(f"액션 아이템 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
+    return lines
+
+
+def _stated_progress(
+    session: Session, team_id: str, period_start: date
+) -> ActionProgressTotals | None:
+    """The action-item counts the week's stored report stated, or ``None`` when
+    it stated none (or there is no report yet)."""
+    row = session.get(IntelReport, (team_id, period_start))
+    metrics = row.metrics_json if row is not None else {}
+    if not metrics.get("action_progress_stated"):
+        return None
+    as_of = metrics.get("action_progress_as_of")
+    return ActionProgressTotals(
+        completion_rate=metrics.get("action_item_completion_rate"),
+        completion_meetings=metrics.get("action_completion_meeting_count"),
+        overdue=metrics.get("overdue_action_items"),
+        as_of=datetime.fromisoformat(as_of) if as_of else None,
+        carried_over=metrics.get("carried_over_action_items"),
+    )
+
+
+_PROGRESS_REPORTED_WITHIN: Final = timedelta(days=2)
+"""B's counts describe today. A report for a week that ended longer ago than
+this leaves them out rather than print today's numbers as that week's. Two
+days, not one: a 23:00 slot caught up the next evening is ~47 hours past its
+week's end (``WEEKLY_REPORT_CATCH_UP``, #821 review)."""
 
 
 def generate_weekly_report(
@@ -766,13 +831,26 @@ def generate_weekly_report(
     The period is anchored to when E scored a meeting (``IntelScore.created_at``)
     — the same recency signal the dashboard's recent-scores strip already uses.
     E does not track when a meeting itself happened, only when it was analyzed.
+    Its dates are Korean dates: a week runs from midnight KST, as the team reads
+    it and as B counts "today" (``ACTION_PROGRESS_TODAY_ZONE``).
+
+    Action items come from B's latest counts as the dashboard reads them --
+    completion over the last four weeks' meetings, overdue over every kept
+    meeting, and what kept meetings held before ``period_start`` left undone
+    -- each under the three-meeting floor -- for a week ending
+    within ``_PROGRESS_REPORTED_WITHIN`` of now only (#605); written again
+    later, a week keeps the counts it first stated. "Before ``period_start``"
+    goes by when a meeting was held, while the week's meetings are those
+    *scored* in it, so a meeting held on the eve and scored the next morning
+    is in both. The quality score's confirmation rate stays in
+    ``metrics_json`` and out of the body.
 
     Returns a transient ``IntelReport`` carrying the values just written — not
     the tracked row — so the caller (a Celery task, delivering the body to
     Slack) does not need a second query.
     """
-    start = datetime.combine(period_start, datetime.min.time(), tzinfo=UTC)
-    end = datetime.combine(period_end, datetime.min.time(), tzinfo=UTC)
+    start = datetime.combine(period_start, datetime.min.time(), tzinfo=_KST)
+    end = datetime.combine(period_end, datetime.min.time(), tzinfo=_KST)
 
     scores = list(
         session.execute(
@@ -803,7 +881,15 @@ def generate_weekly_report(
         gap_distribution = {pattern: int(total) for pattern, total in gap_rows}
 
     average_value = (sum(values) / len(values)) if values else None
-    action_item_completion_rate = (sum(rates) / len(rates)) if rates else None
+    now = datetime.now(UTC)
+    progress = (
+        _action_progress_totals(session, team_id, now, carried_before=start)
+        if now - end <= _PROGRESS_REPORTED_WITHIN
+        # B's counts no longer describe that week: keep what its report said
+        # when it was first written, rather than wipe it (#809 review).
+        else _stated_progress(session, team_id, period_start)
+    )
+    shown = progress or ActionProgressTotals()
 
     body_markdown = _report_body_markdown(
         period_start=period_start,
@@ -812,15 +898,21 @@ def generate_weekly_report(
         average_value=average_value,
         grade_distribution=grade_distribution,
         gap_distribution=gap_distribution,
-        action_item_completion_rate=action_item_completion_rate,
         partial_meeting_count=partial_meeting_count,
+        progress=progress,
     )
     metrics_json = {
         "meeting_count": len(scores),
         "average_score": average_value,
         "grade_distribution": grade_distribution,
         "gap_distribution": gap_distribution,
-        "action_item_completion_rate": action_item_completion_rate,
+        "action_progress_stated": progress is not None,
+        "action_item_completion_rate": shown.completion_rate,
+        "action_completion_meeting_count": shown.completion_meetings,
+        "overdue_action_items": shown.overdue,
+        "carried_over_action_items": shown.carried_over,
+        "action_progress_as_of": shown.as_of.isoformat() if shown.as_of else None,
+        "action_item_confirmation_rate": (sum(rates) / len(rates)) if rates else None,
         "partial_meeting_count": partial_meeting_count,
     }
 
@@ -854,6 +946,205 @@ def generate_weekly_report(
         metrics_json=metrics_json,
         source_meeting_ids=meeting_ids,
     )
+
+
+# --- When the weekly report goes out (#227) ---------------------------------------
+#
+# A team picks a weekday and an hour (Korean time); an hourly task writes each
+# team's report once that slot has passed and posts it once. Nothing in apps/:
+# the task declares its own period (``autune_core.periodic``, #374).
+
+WEEKLY_REPORT_DEFAULT_WEEKDAY: Final = 0
+"""Monday, as ``date.weekday`` counts."""
+WEEKLY_REPORT_DEFAULT_HOUR: Final = 9
+"""09:00 Korean time: ui-spec S27's "Mondays 09:00"."""
+WEEKLY_REPORT_CATCH_UP: Final = timedelta(days=1)
+"""A slot older than this is not caught up: a worker that was down for a day
+does not post last week's report a week late."""
+WEEKLY_REPORT_ACTIVE_WITHIN: Final = timedelta(days=91)
+"""A team with no meeting created this recently is sent nothing at all -- B's
+``ACTION_PROGRESS_WINDOW``, so a report still has counts to state."""
+
+
+@dataclass(frozen=True)
+class WeeklyReportSchedule:
+    weekday: int
+    hour: int
+    send_empty: bool
+    updated_by_name: str | None = None
+    updated_at: datetime | None = None
+
+
+def weekly_report_schedule(session: Session, team_id: str) -> WeeklyReportSchedule:
+    """The team's setting, or the defaults when it has never changed them."""
+    row = session.get(IntelTeamSettings, team_id)
+    if row is None:
+        return WeeklyReportSchedule(
+            weekday=WEEKLY_REPORT_DEFAULT_WEEKDAY,
+            hour=WEEKLY_REPORT_DEFAULT_HOUR,
+            send_empty=False,
+        )
+    by = session.get(User, row.updated_by) if row.updated_by else None
+    return WeeklyReportSchedule(
+        weekday=row.weekly_report_weekday,
+        hour=row.weekly_report_hour,
+        send_empty=row.weekly_report_send_empty,
+        updated_by_name=by.display_name if by is not None else None,
+        updated_at=row.updated_at,
+    )
+
+
+def set_weekly_report_schedule(
+    session: Session, team_id: str, *, weekday: int, hour: int, send_empty: bool, user_id: str
+) -> WeeklyReportSchedule:
+    """A member sets when the team's report goes out. Logged with who did it."""
+    require_team_member(session, user_id=user_id, team_id=team_id)
+    if not 0 <= weekday <= 6:
+        raise ValidationError("weekday must be 0 (Monday) to 6 (Sunday)")
+    if not 0 <= hour <= 23:
+        raise ValidationError("hour must be 0 to 23")
+    statement = pg_insert(IntelTeamSettings).values(
+        team_id=team_id,
+        weekly_report_weekday=weekday,
+        weekly_report_hour=hour,
+        weekly_report_send_empty=send_empty,
+        updated_by=user_id,
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[IntelTeamSettings.team_id],
+            set_={
+                "weekly_report_weekday": weekday,
+                "weekly_report_hour": hour,
+                "weekly_report_send_empty": send_empty,
+                "updated_by": user_id,
+                "updated_at": func.now(),
+            },
+        )
+    )
+    session.flush()
+    session.expire_all()
+    log.info(
+        "intelligence_weekly_report_schedule_set",
+        team_id=team_id,
+        by=user_id,
+        weekday=weekday,
+        hour=hour,
+        send_empty=send_empty,
+    )
+    return weekly_report_schedule(session, team_id)
+
+
+def latest_weekly_slot(*, weekday: int, hour: int, now: datetime) -> datetime:
+    """The last ``weekday`` at ``hour`` (Korean time) at or before ``now``."""
+    local = now.astimezone(_KST)
+    slot = local.replace(hour=hour, minute=0, second=0, microsecond=0) - timedelta(
+        days=(local.weekday() - weekday) % 7
+    )
+    return slot if slot <= local else slot - timedelta(days=7)
+
+
+def weekly_period(slot: datetime) -> tuple[date, date]:
+    """The seven Korean days before the slot's day: ``[start, end)``."""
+    end = slot.astimezone(_KST).date()
+    return end - timedelta(days=7), end
+
+
+class DueWeeklyReport(NamedTuple):
+    team_id: str
+    period_start: date
+    period_end: date
+
+
+def due_weekly_reports(session: Session, now: datetime) -> list[DueWeeklyReport]:
+    """Teams whose latest slot passed within ``WEEKLY_REPORT_CATCH_UP`` and whose
+    report for that week is not out yet: not written, or written and neither
+    posted nor set aside. Only teams with a meeting in
+    ``WEEKLY_REPORT_ACTIVE_WITHIN``.
+
+    A week starts no earlier than the last report out ended, so a team that
+    moves its day is not sent the same days twice: the next report is shorter,
+    and a slot inside the last week is skipped (#821 review)."""
+    active = session.scalars(
+        sa.select(Meeting.team_id)
+        .where(Meeting.created_at >= now - WEEKLY_REPORT_ACTIVE_WITHIN, _not_expired(now))
+        .distinct()
+    ).all()
+    due = []
+    for team_id in sorted(active):
+        schedule = weekly_report_schedule(session, team_id)
+        slot = latest_weekly_slot(weekday=schedule.weekday, hour=schedule.hour, now=now)
+        if now - slot > WEEKLY_REPORT_CATCH_UP:
+            continue
+        start, end = weekly_period(slot)
+        last_out = session.scalar(
+            sa.select(func.max(IntelReport.period_end)).where(
+                IntelReport.team_id == team_id,
+                sa.or_(IntelReport.posted_at.is_not(None), IntelReport.not_posted.is_not(None)),
+                IntelReport.period_start != start,
+            )
+        )
+        if last_out is not None:
+            start = max(start, last_out)
+        if start >= end:
+            continue
+        row = session.get(IntelReport, (team_id, start))
+        if row is None or (row.posted_at is None and row.not_posted is None):
+            due.append(DueWeeklyReport(team_id, start, end))
+    return due
+
+
+def weekly_report_is_empty(metrics: dict[str, Any]) -> bool:
+    """Nothing to say: no meeting analysed that week, and no item overdue or
+    carried over (or none known)."""
+    return (
+        not metrics.get("meeting_count")
+        and not metrics.get("overdue_action_items")
+        and not metrics.get("carried_over_action_items")
+    )
+
+
+def claim_weekly_report_post(
+    session: Session, team_id: str, period_start: date, *, now: datetime
+) -> IntelReport | None:
+    """The report to post, its post claimed; ``None`` when it is out already,
+    set aside, or missing. An empty week on a team that did not ask for those
+    is set aside (``not_posted="empty"``) and never claimed. The caller
+    commits before posting, and gives the claim back if posting fails."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is None or row.posted_at is not None or row.not_posted is not None:
+        return None
+    if (
+        weekly_report_is_empty(row.metrics_json)
+        and not weekly_report_schedule(session, team_id).send_empty
+    ):
+        row.not_posted = "empty"
+        session.flush()
+        log.info(
+            "intelligence_weekly_report_empty", team_id=team_id, period_start=str(period_start)
+        )
+        return None
+    row.posted_at = now
+    session.flush()
+    return row
+
+
+def refuse_weekly_report_post(session: Session, team_id: str, period_start: date) -> None:
+    """The outbound check refused the body: set the week aside for good
+    (``not_posted="refused"``). The same body would be refused again."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is not None:
+        row.posted_at = None
+        row.not_posted = "refused"
+        session.flush()
+
+
+def release_weekly_report_post(session: Session, team_id: str, period_start: date) -> None:
+    """A post that failed for another reason is tried again on the next tick."""
+    row = session.get(IntelReport, (team_id, period_start), with_for_update=True)
+    if row is not None:
+        row.posted_at = None
+        session.flush()
 
 
 # --- Meeting report (agent layer, #260/#261) --------------------------------
@@ -1442,45 +1733,57 @@ class ActionProgressTotals:
     past its due date matters however old its meeting is. Either is ``None``
     when drawn from fewer than ``ACTION_PROGRESS_MIN_MEETINGS`` meetings. With
     no meetings at all there is nothing to identify: no rate (no items is not
-    0% done) and 0 overdue.
+    0% done) and 0 overdue. ``carried_over``, asked for by the weekly report
+    only, is the confirmed items not done from kept meetings held before a
+    cutoff, under the same floor.
     """
 
     completion_rate: float | None = None
     completion_meetings: int | None = None
     overdue: int | None = None
     as_of: datetime | None = None
+    carried_over: int | None = None
 
 
 def _shown(meetings: int) -> bool:
     return meetings == 0 or meetings >= ACTION_PROGRESS_MIN_MEETINGS
 
 
-def _action_progress_totals(session: Session, team_id: str, now: datetime) -> ActionProgressTotals:
+def _action_progress_totals(
+    session: Session, team_id: str, now: datetime, *, carried_before: datetime | None = None
+) -> ActionProgressTotals:
     """Done over confirmed over the team's meetings held within
     ``ACTION_COMPLETION_WINDOW``, and the overdue count over all of its kept
     meetings -- team totals only, never one meeting's counts (the contract's
     usage rule). A meeting with no ``started_at`` is dated by its creation, as
-    A orders meetings."""
+    A orders meetings.
+
+    With ``carried_before``, also the confirmed items not done from kept
+    meetings held before it: what earlier meetings carry into the week."""
     as_of = session.scalar(
         sa.select(IntelActionProgress.as_of).where(IntelActionProgress.team_id == team_id)
     )
     if as_of is None or as_of < now - ACTION_PROGRESS_STALE_AFTER:
         return ActionProgressTotals()
-    recent = func.coalesce(Meeting.started_at, Meeting.created_at) >= (
-        now - ACTION_COMPLETION_WINDOW
-    )
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    recent = held >= now - ACTION_COMPLETION_WINDOW
+    earlier = held < (carried_before or now)
     row = IntelActionProgressMeeting
-    meetings, overdue, recent_meetings, confirmed, done = session.execute(
-        sa.select(
-            func.count(),
-            func.coalesce(func.sum(row.overdue), 0),
-            func.count().filter(recent),
-            func.coalesce(func.sum(row.confirmed).filter(recent), 0),
-            func.coalesce(func.sum(row.done).filter(recent), 0),
-        )
-        .join(Meeting, Meeting.id == row.meeting_id)
-        .where(row.team_id == team_id, _not_expired(now))
-    ).one()
+    meetings, overdue, recent_meetings, confirmed, done, earlier_meetings, carried = (
+        session.execute(
+            sa.select(
+                func.count(),
+                func.coalesce(func.sum(row.overdue), 0),
+                func.count().filter(recent),
+                func.coalesce(func.sum(row.confirmed).filter(recent), 0),
+                func.coalesce(func.sum(row.done).filter(recent), 0),
+                func.count().filter(earlier),
+                func.coalesce(func.sum(row.confirmed - row.done).filter(earlier), 0),
+            )
+            .join(Meeting, Meeting.id == row.meeting_id)
+            .where(row.team_id == team_id, _not_expired(now))
+        ).one()
+    )
     return ActionProgressTotals(
         completion_rate=(
             done / confirmed
@@ -1490,13 +1793,16 @@ def _action_progress_totals(session: Session, team_id: str, now: datetime) -> Ac
         completion_meetings=int(recent_meetings),
         overdue=int(overdue) if _shown(meetings) else None,
         as_of=as_of,
+        carried_over=(
+            int(carried) if carried_before is not None and _shown(earlier_meetings) else None
+        ),
     )
 
 
 # --- the dashboard's meeting-report card (10/2) --------------------------------------
 #
 # A report is meeting text, so these check that the person asking is on the team,
-# unlike the older aggregate routes (#156). Any member may edit a draft until it
+# as every route of this module now does (#814). Any member may edit a draft until it
 # is posted. An edit takes a new ``draft_id``, so an approval given for the
 # model's text can never post it. Nothing is posted from the card: the edit is
 # announced (``autune.intelligence.meeting_report_changed``) and the Report

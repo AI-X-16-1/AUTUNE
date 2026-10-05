@@ -425,6 +425,28 @@ class DueReminderSettingIn(BaseModel):
     on: bool
 
 
+class NotificationPause(BaseModel):
+    """The caller's own leave dates: no morning DM and no Monday digest from
+    ``starts_on`` to ``ends_on``, both days included (the user, 2026-10-05).
+    Both ``None`` is no pause. Sent to clear or replace it, and answered with
+    what stands. Their own only: nothing here names a person."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    starts_on: date | None = None
+    ends_on: date | None = None
+
+
+class NotificationPauseRead(NotificationPause):
+    """The caller's pause as it stands, and what else holds their digests back
+    here. ``calendar_leave`` says whether this deployment also reads
+    out-of-office time from a calendar the person connected
+    (``AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR``), so the screen can say so
+    where it is true and stay silent where it is not."""
+
+    calendar_leave: bool = False
+
+
 class MeetingNoteUpdate(BaseModel):
     """The memo, whole. Blank removes it."""
 

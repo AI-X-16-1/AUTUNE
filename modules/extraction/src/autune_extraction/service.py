@@ -57,7 +57,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import reminders, sync_state
+from . import days_off, reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -80,6 +80,7 @@ from .models import (
     ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
+    ExtDailyDigest,
     ExtDecision,
     ExtDecisionRef,
     ExtDecisionRelated,
@@ -93,6 +94,7 @@ from .models import (
     ExtForgottenUtterance,
     ExtMeetingNote,
     ExtMeetingSummary,
+    ExtNotificationPause,
     ExtProject,
     ExtSyncFailure,
     ExtWeeklyDigest,
@@ -3596,9 +3598,14 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
     for Autune's DMs about their items; off means this one too (follow-up to
     #771, the user's call 2026-10-05)."""
     week = reminders.digest_week(now)
-    if week is None:
+    # A Monday that is a public holiday has no digest: nobody is at work to
+    # read the week's list, and that week goes without one (``days_off``).
+    if week is None or days_off.is_public_holiday(session, week, now=now):
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id)))
+    # And anyone who asked for no digest on that day -- their own leave dates
+    # (``ExtNotificationPause``, the user 2026-10-05).
+    off |= _paused_users(session, week)
     owners = {
         (item.assignee_id, team)
         for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
@@ -3634,7 +3641,9 @@ def send_weekly_digest(
     their reminders off after the list was made is sent nothing and claims
     nothing, as ``send_due_reminder`` treats them.
     """
-    if not due_reminders_on(session, digest.user_id):
+    if not due_reminders_on(session, digest.user_id) or notifications_paused(
+        session, digest.user_id, digest.week_start
+    ):
         return False
     rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
     if not rows:
@@ -3664,6 +3673,336 @@ def send_weekly_digest(
         ),
     )
     return True
+
+
+def settle_refused_weekly_digest(session: Session, digest: WeeklyDigest, *, now: datetime) -> None:
+    """Keep the week's claim of a digest the outbound check refused, so it is
+    reported once and not tried again every ten minutes for the rest of that
+    Monday (``settle_refused_due_reminder``'s reason, review of #751). The
+    refused send rolled its own claim back with it; this writes it again, in a
+    transaction of its own. Only a refusal is settled: a send Slack did not
+    take, or a person with no linked account, stays owed."""
+    session.execute(
+        _insert_if_absent_into(session, ExtWeeklyDigest)
+        .values(
+            user_id=digest.user_id,
+            team_id=digest.team_id,
+            week_start=digest.week_start,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "week_start"])
+    )
+
+
+# --- a person's own leave dates (the user, 2026-10-05) ---------------------------
+
+MAX_PAUSE_DAYS = 92
+"""The longest range a person may pause for: a quarter. A typo in the year
+must not silence a person's digests until they notice."""
+
+MAX_PAUSE_AHEAD_DAYS = 366
+"""How far ahead a pause may start: a year. A range in 2099 is a typo too, and
+it would sit in the table -- a date somebody is away -- for as long (review of
+#833)."""
+
+
+def notification_pause(session: Session, user_id: str) -> ExtNotificationPause | None:
+    """The days this person asked for no morning DM and no Monday digest, if
+    they set any. Their own row only: the caller passes the signed-in person."""
+    return session.get(ExtNotificationPause, user_id)
+
+
+def notifications_paused(session: Session, user_id: str, day: date) -> bool:
+    """Whether ``day`` is inside this person's own pause."""
+    pause = notification_pause(session, user_id)
+    return pause is not None and pause.starts_on <= day <= pause.ends_on
+
+
+def _paused_users(session: Session, day: date) -> set[str]:
+    return set(
+        session.scalars(
+            select(ExtNotificationPause.user_id).where(
+                ExtNotificationPause.starts_on <= day, ExtNotificationPause.ends_on >= day
+            )
+        )
+    )
+
+
+def set_notification_pause(
+    session: Session,
+    user_id: str,
+    *,
+    starts_on: date | None,
+    ends_on: date | None,
+    now: datetime,
+) -> ExtNotificationPause | None:
+    """Replace this person's pause with ``starts_on``..``ends_on``, both days
+    included, or clear it when both are ``None``. One range a person: setting
+    another replaces the first, nothing is kept of it. Only the caller's own --
+    the route passes the signed-in person and there is no way to name another.
+    """
+    if (starts_on is None) != (ends_on is None):
+        raise ValidationError("a pause needs both its first and its last day, or neither")
+    session.execute(delete(ExtNotificationPause).where(ExtNotificationPause.user_id == user_id))
+    if starts_on is None or ends_on is None:
+        session.flush()
+        return None
+    if ends_on < starts_on:
+        raise ValidationError("a pause cannot end before it starts")
+    if (ends_on - starts_on).days >= MAX_PAUSE_DAYS:
+        raise ValidationError(f"a pause may be {MAX_PAUSE_DAYS} days at most")
+    today = reminders.korean_day(now)
+    if ends_on < today:
+        raise ValidationError("a pause that has already ended would change nothing")
+    if (starts_on - today).days > MAX_PAUSE_AHEAD_DAYS:
+        raise ValidationError(f"a pause may start {MAX_PAUSE_AHEAD_DAYS} days ahead at most")
+    pause = ExtNotificationPause(
+        user_id=user_id, starts_on=starts_on, ends_on=ends_on, created_at=now
+    )
+    session.add(pause)
+    session.flush()
+    return pause
+
+
+def forget_ended_pauses(session: Session, *, today: date) -> int:
+    """Delete every pause whose last day is before ``today``. When a person
+    was away is theirs, and it is kept only for as long as it stops a message.
+    Returns how many went."""
+    gone = session.execute(delete(ExtNotificationPause).where(ExtNotificationPause.ends_on < today))
+    return int(getattr(gone, "rowcount", 0) or 0)
+
+
+# --- the morning DM (the user, 2026-10-05) ---------------------------------------
+
+
+@dataclass(frozen=True)
+class DailyDigestOwed:
+    """One morning DM owed: whose, through which team's Slack, for which day.
+    As ``WeeklyDigest``: the recipient is the person whose items they are, and
+    there is no field a caller could put another person in."""
+
+    user_id: str
+    team_id: str
+    day: date
+
+
+def daily_digests_to_send(session: Session, *, now: datetime) -> list[DailyDigestOwed]:
+    """The morning DMs owed at ``now`` and not yet sent: one per person and
+    team that has an open item assigned to that person on that team, on a
+    Tuesday-to-Friday morning in Korea (``reminders.daily_day``).
+
+    Who counts is who the weekly digest counts, less the same people: anyone
+    who turned their reminders off, and anyone whose own pause covers today.
+    Monday has the weekly digest instead, and a weekend has nothing -- nor has
+    a public holiday (``days_off.is_public_holiday``)."""
+    day = reminders.daily_day(now)
+    if day is None or days_off.is_public_holiday(session, day, now=now):
+        return []
+    off = set(session.scalars(select(ExtDueReminderOptOut.user_id))) | _paused_users(session, day)
+    owners = {
+        (item.assignee_id, team)
+        for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
+        if item.assignee_id and item.assignee_id not in off
+    }
+    sent = set(
+        session.execute(
+            select(ExtDailyDigest.user_id, ExtDailyDigest.team_id).where(ExtDailyDigest.day == day)
+        ).tuples()
+    )
+    return [
+        DailyDigestOwed(user_id=user, team_id=team, day=day)
+        for user, team in sorted(owners)
+        if (user, team) not in sent
+    ]
+
+
+def _daily_since(session: Session, owed: DailyDigestOwed, *, now: datetime) -> datetime:
+    """Where "since the last one" starts for this DM: when this person's last
+    morning DM through this team went, else the start of the day before --
+    and never more than ``reminders.DAILY_LOOKBACK`` ago. In UTC, so that the
+    comparison reads the same on every database."""
+    last = session.scalar(
+        select(func.max(ExtDailyDigest.sent_at)).where(
+            ExtDailyDigest.user_id == owed.user_id,
+            ExtDailyDigest.team_id == owed.team_id,
+            ExtDailyDigest.day < owed.day,
+        )
+    )
+    if last is None:
+        last = reminders.previous_morning(owed.day)
+    elif last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return max(last.astimezone(UTC), (now - reminders.DAILY_LOOKBACK).astimezone(UTC))
+
+
+def daily_digest_content(
+    session: Session, owed: DailyDigestOwed, *, since: datetime, now: datetime
+) -> reminders.DailyDigest:
+    """What this person's morning DM says, read now.
+
+    **What changed** comes from ``ext_edit_events``, which keeps that an item
+    was edited, which fields, and when -- never a value and never who. So
+    "done" is an item of theirs that is done now and whose status was edited
+    since; "taken on" is an open item of theirs that was created since, whose
+    assignee was edited since, or that was **confirmed** since
+    (``_confirmed_since``) -- the usual way a person comes to hold an item: the
+    model drafts it in ``needs_confirmation`` with no ``created`` event, and a
+    person's confirmation is its first status edit (review of #833). Nothing
+    else is claimed: an item moved between 할 일 and 진행 중 is not called new,
+    and whoever made the edit is not known and not said. One thing leaves no
+    mark at all and is not seen: an already confirmed item given to a person
+    by ``fill_identified_assignees``.
+
+    **Today** is their open items: late ones, the ones due today, then the
+    ones in progress -- each item once, in the first that fits -- and the
+    rest only counted. Their own items on this team, as the weekly digest
+    reads them: a meeting past its retention window is left out."""
+    marks: dict[str, set[str]] = {}
+    for item_id, kind, fields in session.execute(
+        select(ExtEditEvent.action_item_id, ExtEditEvent.kind, ExtEditEvent.fields)
+        .join(Meeting, Meeting.id == ExtEditEvent.meeting_id)
+        .where(Meeting.team_id == owed.team_id, ExtEditEvent.created_at > since)
+    ).tuples():
+        if item_id is not None:
+            marks.setdefault(item_id, set()).update({kind, *(fields.split(",") if fields else ())})
+
+    # The marks are the team's: which of them are this person's is decided
+    # below, where a line is made -- by the assignee here, and by
+    # ``_open_items_of`` for the open ones.
+    finished = [item_id for item_id, seen in marks.items() if "status" in seen]
+    done = [
+        reminders.DigestLine(item.description, item.due_date, title)
+        for item, title in session.execute(
+            select(ExtActionItem, Meeting.title)
+            .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+            .where(
+                ExtActionItem.id.in_(finished),
+                ExtActionItem.assignee_id == owed.user_id,
+                ExtActionItem.status == ActionStatus.DONE.value,
+                or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+            )
+            .order_by(ExtActionItem.id)
+        ).tuples()
+    ]
+
+    taken_on: list[reminders.DigestLine] = []
+    late: list[reminders.DigestLine] = []
+    due_today: list[reminders.DigestLine] = []
+    in_progress: list[reminders.DigestLine] = []
+    others = 0
+    open_rows = _open_items_of(session, user_id=owed.user_id, team_id=owed.team_id, now=now)
+    confirmed = _confirmed_since(
+        session,
+        [
+            item.id
+            for item, _team, _title in open_rows
+            if item.origin != "user" and "status" in marks.get(item.id, set())
+        ],
+        since=since,
+    )
+    for item, _team, title in open_rows:
+        line = reminders.DigestLine(item.description, item.due_date, title)
+        if marks.get(item.id, set()) & {"created", "assignee_id"} or item.id in confirmed:
+            taken_on.append(line)
+        if item.due_date is not None and item.due_date < owed.day:
+            late.append(line)
+        elif item.due_date == owed.day:
+            due_today.append(line)
+        elif item.status == ActionStatus.IN_PROGRESS.value:
+            in_progress.append(line)
+        else:
+            others += 1
+    return reminders.DailyDigest(
+        done=done,
+        taken_on=taken_on,
+        late=late,
+        due_today=due_today,
+        in_progress=in_progress,
+        others=others,
+    )
+
+
+def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: datetime) -> set[str]:
+    """Which of these items -- not made by a person, and with a status edit
+    after ``since`` -- left ``needs_confirmation`` after ``since``.
+
+    Such an item is born in ``needs_confirmation`` and every way out of it is
+    ``update_action_item``, which records a status edit: so its **first**
+    status edit is its confirmation, and it was confirmed since exactly when
+    it has none from before. An edit from before edits named their fields
+    (#109) may have been one, and then the item is not called new.
+    """
+    if not item_ids:
+        return set()
+    earlier = set(
+        session.scalars(
+            select(ExtEditEvent.action_item_id).where(
+                ExtEditEvent.action_item_id.in_(item_ids),
+                ExtEditEvent.kind == "edited",
+                ExtEditEvent.created_at <= since,
+                or_(ExtEditEvent.fields.is_(None), ExtEditEvent.fields.like("%status%")),
+            )
+        )
+    )
+    return set(item_ids) - earlier
+
+
+def send_daily_digest(
+    session: Session, slack: SlackApi, owed: DailyDigestOwed, *, now: datetime
+) -> bool:
+    """Claim the day's morning DM and send it, in that order -- or send nothing.
+
+    ``send_weekly_digest``'s shape. The person's choice and their pause are
+    read again here, and so are their items: someone who turned the reminders
+    off or went on leave after the list was made is sent nothing and claims
+    nothing, and a person with nothing changed and nothing open has no
+    message. The claim is inserted only if absent, in the caller's transaction
+    with the send, so two runs cannot both send and a failed send takes the
+    claim back. It goes to ``owed.user_id`` and nobody else.
+    """
+    if not due_reminders_on(session, owed.user_id) or notifications_paused(
+        session, owed.user_id, owed.day
+    ):
+        return False
+    content = daily_digest_content(
+        session, owed, since=_daily_since(session, owed, now=now), now=now
+    )
+    if content.empty:
+        return False
+    claimed = session.execute(
+        _insert_if_absent_into(session, ExtDailyDigest)
+        .values(user_id=owed.user_id, team_id=owed.team_id, day=owed.day, sent_at=now)
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "day"])
+        .returning(ExtDailyDigest.user_id)
+    ).first()
+    if claimed is None:
+        return False
+    slack.send_dm(
+        owed.user_id,
+        reminders.build_daily_digest(
+            content, board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions"
+        ),
+    )
+    return True
+
+
+def settle_refused_daily_digest(session: Session, owed: DailyDigestOwed, *, now: datetime) -> None:
+    """Keep the day's claim of a morning DM the outbound check refused, so it
+    is reported once and not tried again every ten minutes until noon
+    (``settle_refused_due_reminder``'s reason, review of #751).
+
+    The refused send rolled its own claim back with it; this writes it again,
+    in a transaction of its own. The row then stands for "settled for that
+    day": sent, or refused and reported. Only a refusal is settled -- a send
+    Slack did not take, or a person with no linked account, stays owed.
+    Tomorrow's DM counts its changes from this row's time, so what the refused
+    one would have said changed is not said again; the open work is read
+    fresh, and is refused -- once -- again if it still cannot go out."""
+    session.execute(
+        _insert_if_absent_into(session, ExtDailyDigest)
+        .values(user_id=owed.user_id, team_id=owed.team_id, day=owed.day, sent_at=now)
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "day"])
+    )
 
 
 @dataclass(frozen=True)

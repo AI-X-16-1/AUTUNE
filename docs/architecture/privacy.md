@@ -378,10 +378,14 @@ the feature needs.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
 - A cloud model is never the default, and in module B it has to be switched on
-  twice (#392). B's classifier and resolver send text to a provider only when
-  their implementation is set to `llm` (or `llm_checked`), and B's settings
-  refuse to load that unless `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is
-  set as well. The flag checks nothing about the meeting or the key -- the code
+  twice (#392). B's classifier, resolver, meeting summary and step-4 NLI send
+  text to a provider only when their implementation is set to `llm` (or
+  `llm_checked`), and B's settings refuse to load that unless
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well. Each sends
+  masked text of consenting speakers only, with the team's names replaced:
+  the classifier every utterance in windows, the resolver a commitment and
+  the lines around it, the summary the meeting in sections, and NLI only the
+  utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
   it makes sending speech out something a deployment says deliberately. Until
   #392 is decided, only demo meetings go through a deployment that sets it.
@@ -436,6 +440,47 @@ the feature needs.
     (`ext_due_reminder_optouts`, which goes with the account); the same
     switch stops Monday's DM of that person's own open items (#792), which
     carries the same things about each item and goes to nobody else either.
+  - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
+    direct message to a person about their own items on one team: what
+    changed since the last one (items of theirs now done, items they newly
+    hold -- made, given to them, or confirmed since) and today's work (late, due today, in progress; the rest as a
+    count). It carries what a reminder carries about each item -- its
+    description, a late item's due date, the meeting's title -- and a link to
+    the board; no utterance, and nobody else's items. "What changed" is read
+    from `ext_edit_events`, which holds that an item was edited, which fields
+    and when: the message never says who made a change, and it counts
+    nothing about a person -- it is a list of that person's own work sent to
+    that person. Autune keeps only that the day's message went
+    (`ext_daily_digests`), not its text. The reminder switch above stops it.
+    A morning DM or a Monday DM the outbound check refuses is not sent, is
+    reported once, and keeps that day's (or week's) row so it is not tried
+    again every ten minutes.
+  - **A person's own leave dates:** a person may set one range of days on
+    which the morning DM and Monday's DM are not sent
+    (`ext_notification_pauses`). When someone is away is theirs alone: only
+    they can read or write it, no screen or route shows it to a teammate or
+    an admin, nothing is derived from it, and it is deleted once its last
+    day has passed. Due-date reminders do not read it.
+  - **Out-of-office time, from a person's own calendar:** where a deployment
+    turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
+    person who connected Google Calendar is not sent the morning DM or
+    Monday's DM while that calendar marks them out of office. This is the
+    one read of a person's calendar that is not of Autune's own events, and
+    it is narrowed at Google twice: out-of-office events only
+    (`eventTypes=outOfOffice`), and their start and end only -- no title, no
+    description, no attendee, no other event is requested or returned. It
+    asks about the minute the message would go, uses the answer to hold that
+    one message back, and **stores nothing**: no table, log line or metric
+    says a person was away. A calendar that cannot be read is treated as
+    not away. Turn it on only once what the deployment tells people about
+    the calendar connection says so; the settings screen says it where it is
+    on.
+  - **Public holidays:** no morning DM or Monday DM goes on one. The days
+    come from Google's public calendar of Korea's holidays, fetched at its
+    public address with no credentials -- nobody's Google grant is used and
+    the request carries nothing -- and kept in `ext_public_holidays`, dates
+    of public record. A table in code (the `holidays` package) answers when
+    the calendar has not been read for two weeks.
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes

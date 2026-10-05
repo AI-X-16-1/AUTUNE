@@ -8,6 +8,7 @@ import base64
 import hashlib
 import re
 import time
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -16,7 +17,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
@@ -740,6 +741,34 @@ def test_me_lists_the_teams_the_person_belongs_to(
     teams = client.get("/api/auth/me").json()["teams"]
 
     assert teams == [{"id": "team_b", "name": "B팀"}, {"id": "team_a", "name": "A팀"}]
+
+
+def test_me_lists_pinned_teams_first_in_the_order_they_were_pinned(
+    api: tuple[TestClient, dict[str, object]], db: Session
+) -> None:
+    """A pin (module A writes ``team_members.pinned_at``) puts a team before
+    the ones merely joined, whenever it was joined. The assistant and S28 take
+    ``teams[0]``, so this is how a person chooses their default."""
+    client, _ = api
+    user = upsert_user_from_google(db, _identity())
+    for team_id in ("team_1", "team_2", "team_3"):
+        db.add(Team(id=team_id, name=team_id))
+        db.flush()
+        db.add(TeamMember(team_id=team_id, user_id=user.id))
+        db.flush()
+    first = datetime(2026, 10, 2, tzinfo=UTC)
+    for team_id, when in (("team_3", first), ("team_2", first + timedelta(minutes=1))):
+        db.execute(
+            update(TeamMember)
+            .where(TeamMember.team_id == team_id, TeamMember.user_id == user.id)
+            .values(pinned_at=when)
+        )
+    db.commit()
+    client.cookies.set(SESSION_COOKIE, issue_token(user.id))
+
+    teams = client.get("/api/auth/me").json()["teams"]
+
+    assert [team["id"] for team in teams] == ["team_3", "team_2", "team_1"]
 
 
 def test_providers_reports_whether_google_is_configured(

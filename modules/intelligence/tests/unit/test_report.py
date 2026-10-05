@@ -9,7 +9,7 @@ transcript content; every value is a number already aggregated in intel_scores
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from autune_intelligence import service
 
@@ -22,7 +22,6 @@ def test_body_is_a_no_meetings_message_when_nothing_was_scored() -> None:
         average_value=None,
         grade_distribution={},
         gap_distribution={},
-        action_item_completion_rate=None,
         partial_meeting_count=0,
     )
 
@@ -39,7 +38,6 @@ def test_body_reports_meeting_count_and_average_grade() -> None:
         average_value=0.82,
         grade_distribution={"A": 2, "B": 2},
         gap_distribution={},
-        action_item_completion_rate=None,
         partial_meeting_count=0,
     )
 
@@ -55,7 +53,6 @@ def test_body_names_the_most_common_gap_type() -> None:
         average_value=0.7,
         grade_distribution={"B": 3},
         gap_distribution={"ownership": 5, "schedule": 2},
-        action_item_completion_rate=None,
         partial_meeting_count=0,
     )
 
@@ -71,14 +68,13 @@ def test_body_omits_the_gap_line_when_no_gaps_were_found() -> None:
         average_value=0.9,
         grade_distribution={"A": 2},
         gap_distribution={},
-        action_item_completion_rate=None,
         partial_meeting_count=0,
     )
 
     assert "갭" not in body
 
 
-def test_body_includes_action_item_completion_rate_when_measured() -> None:
+def test_body_includes_action_item_progress_when_given() -> None:
     body = service._report_body_markdown(
         period_start=date(2026, 9, 7),
         period_end=date(2026, 9, 14),
@@ -86,14 +82,45 @@ def test_body_includes_action_item_completion_rate_when_measured() -> None:
         average_value=0.9,
         grade_distribution={"A": 2},
         gap_distribution={},
-        action_item_completion_rate=0.5,
         partial_meeting_count=0,
+        progress=service.ActionProgressTotals(
+            completion_rate=0.5,
+            overdue=1,
+            as_of=datetime(2026, 9, 14, 0, 0, tzinfo=UTC),
+            carried_over=2,
+        ),
     )
 
-    assert "50%" in body
+    assert "액션 아이템 완료율 (최근 4주 회의): 50%" in body
+    assert "기한 지난 항목 1건 · 이월된 항목 2건" in body
+    assert "9/14 09:00 기준" in body  # Korean time
 
 
-def test_body_omits_the_completion_line_when_not_measured() -> None:
+def test_body_blames_the_floor_only_below_three_meetings() -> None:
+    """Three meetings or more without a rate means nothing was confirmed (#809 review)."""
+
+    def body(meetings: int) -> str:
+        return service._report_body_markdown(
+            period_start=date(2026, 9, 7),
+            period_end=date(2026, 9, 14),
+            meeting_count=2,
+            average_value=0.9,
+            grade_distribution={"A": 2},
+            gap_distribution={},
+            partial_meeting_count=0,
+            progress=service.ActionProgressTotals(
+                completion_meetings=meetings,
+                overdue=0,
+                as_of=datetime(2026, 9, 14, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+    assert "3건 미만" in body(2)
+    assert "3건 미만" not in body(4)
+    assert "확정된 액션 아이템이 없습니다" in body(4)
+
+
+def test_body_omits_the_completion_line_when_not_given() -> None:
     body = service._report_body_markdown(
         period_start=date(2026, 9, 7),
         period_end=date(2026, 9, 14),
@@ -101,7 +128,6 @@ def test_body_omits_the_completion_line_when_not_measured() -> None:
         average_value=0.9,
         grade_distribution={"A": 2},
         gap_distribution={},
-        action_item_completion_rate=None,
         partial_meeting_count=0,
     )
 
@@ -116,7 +142,6 @@ def test_body_includes_partial_analysis_count_when_some_meetings_were_partial() 
         average_value=0.8,
         grade_distribution={"A": 4},
         gap_distribution={},
-        action_item_completion_rate=None,
         partial_meeting_count=1,
     )
 
@@ -131,7 +156,6 @@ def test_body_omits_the_partial_analysis_line_when_none_were_partial() -> None:
         average_value=0.9,
         grade_distribution={"A": 2},
         gap_distribution={},
-        action_item_completion_rate=None,
         partial_meeting_count=0,
     )
 

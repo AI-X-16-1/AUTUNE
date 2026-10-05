@@ -122,7 +122,8 @@ One entry per speaker label in the meeting:
 ```json
 [{ "speaker_label": "화자 2",
    "user_id": null,
-   "candidate": { "user_id": "usr_…", "name": "김민경", "similarity": 0.87 } }]
+   "candidate": { "user_id": "usr_…", "name": "김민경", "similarity": 0.87 },
+   "display_name": null }]
 ```
 
 `candidate` is computed per request: the label's observation vector against the
@@ -155,7 +156,9 @@ Body `{"user_id": "usr_…"}`. Any member of the meeting's team may call it.
    setting was turned off;
 4. no observation row (setting off, no consent, too little speech, embedder
    unavailable) → step 1 still happens. Assigning a person is useful even when
-   no vector can be learned from it.
+   no vector can be learned from it;
+5. a name typed for that label (below) is deleted: a label is a member or a
+   typed name, never both.
 
 **The setting gates collection, not only the copy.** It read as a gate on step
 2 alone until review, and the code matched that reading: a consented meeting
@@ -169,6 +172,25 @@ reprocessed after it goes off gives its existing vectors back.
 With the setting off, step 1 is the only thing this endpoint does today: the
 person is assigned, no profile is written, and no candidate will ever be
 offered for them until the setting is turned on and they are confirmed again.
+
+### `PUT /meetings/{meeting_id}/speakers/{speaker_label}/name`
+
+Body `{"name": "외부 디자이너"}`, 1-50 characters after trimming. Any member of
+the meeting's team may call it. For a speaker the picker cannot offer because
+they have no account on the team — a guest, someone from another company.
+
+The name goes into `aud_speaker_names` for that (meeting, label) and nowhere
+else, and comes back as `display_name` on the list above:
+
+- `Participant.user_id` stays `NULL`, so `transcript_payload` carries no
+  `speaker_id` and B, C, D and E see an unidentified speaker;
+- no voice profile is written, whatever `voice_profiles_enabled` says — there
+  is nobody to file it under, and nobody who could later ask for it to be
+  deleted;
+- calling it again replaces the name; the row cascades with the meeting;
+- a label already assigned to a member is `409`. Undoing an assignment also
+  has to undo the profile it may have produced, which is the confirm
+  endpoint's job, not a side effect of typing a name.
 
 ### `DELETE /me/voice-profile`
 

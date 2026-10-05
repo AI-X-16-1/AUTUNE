@@ -190,3 +190,50 @@ def test_terms_drops_questions_when_they_alone_exceed_limit() -> None:
         f"Questions not a prefix of input: expected first {len(kept_markers)}, "
         f"got indices {kept_markers}"
     )
+
+
+def _written(answer: str) -> str:
+    return GeminiWriter(text=FakeText(answer)).write(  # type: ignore[arg-type]
+        meeting_title="주간", questions=["q"], matches=[]
+    )
+
+
+def test_an_echoed_section_instruction_is_dropped() -> None:
+    # The 2026-10-05 rehearsal: the model copied each heading's description,
+    # and one spilled onto the next line.
+    echoed = (
+        "## 제기된 질문 — the questions raised in this meeting, one line each.\n"
+        "- 결제 테스트는 언제 끝나요?\n\n"
+        "## 과거 회의에서 나온 것 — what the team's earlier meetings said about them, "
+        "citing the meeting title given with each quote.\n"
+        "If nothing was found, say so.\n(없음)\n\n"
+        "## 아직 모르는 것 — what remains unconfirmed.\n- 출시일"
+    )
+
+    assert _written(echoed) == (
+        "## 제기된 질문\n- 결제 테스트는 언제 끝나요?\n\n"
+        "## 과거 회의에서 나온 것\n(없음)\n\n"
+        "## 아직 모르는 것\n- 출시일"
+    )
+
+
+def test_content_written_on_a_heading_line_moves_below_it() -> None:
+    # The other rehearsal document put the questions after the heading's dash.
+    assert _written(
+        "## 제기된 질문 — 다음 회의는 언제죠? / 결제는요?\n## 아직 모르는 것\n- 없음"
+    ) == ("## 제기된 질문\n다음 회의는 언제죠? / 결제는요?\n## 아직 모르는 것\n- 없음")
+
+
+def test_a_well_formed_document_is_left_as_it_is() -> None:
+    body = (
+        "## 제기된 질문\n- a\n\n## 과거 회의에서 나온 것\n- [9/23 리뷰] b\n\n## 아직 모르는 것\n- c"
+    )
+
+    assert _written(body) == body
+
+
+def test_the_instructions_put_each_heading_alone_on_its_line() -> None:
+    lines = WRITE_INSTRUCTIONS.splitlines()
+
+    for heading in ("## 제기된 질문", "## 과거 회의에서 나온 것", "## 아직 모르는 것"):
+        assert heading in lines
