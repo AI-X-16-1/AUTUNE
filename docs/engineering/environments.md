@@ -281,13 +281,15 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL` | B | Answers a window when `LLM_MODEL` stays unavailable (429, 5xx, timeout after retries). Default `gemini-3.5-flash-lite`; blank disables it |
 | `AUTUNE_EXTRACTION_LLM_BASE_URL` | B | The provider's API root. Default Google's Generative Language API |
 | `AUTUNE_EXTRACTION_LLM_TIMEOUT_SEC` | B | Timeout per request (connect and read), seconds. Default `60` — a thinking model takes 12–20 s a window, past the shared client's 10 s. A window may retry and fall back, so it can take several of these |
-| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake`. Default `local`. Step 4 (#12). **No `external`**: it reads an utterance's own text — see below |
+| `AUTUNE_EXTRACTION_NLI_IMPL` | B | `local` · `hosted` · `fake` · `llm`. Default `local`. Step 4 (#12). `llm` is the Gemini API: opt-in, needs `LLM_API_KEY` and `LLM_ACKNOWLEDGED_392`, and sends the masked text of the meeting's ambiguous utterances — see below |
 | `AUTUNE_EXTRACTION_NLI_CHECKPOINT` | B | Recorded as the model version once NLI verifies a row. Never a floating tag. **Blank by default** — #172 settled on klue/roberta-base fine-tuned on KorNLI, but that checkpoint is not baked in as a silent default; `local` / `hosted` refuse to start without one |
 | `AUTUNE_EXTRACTION_NLI_ENDPOINT` | B | Our own inference server. Required when `NLI_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
+| `AUTUNE_EXTRACTION_NLI_MODEL` | B | The model `NLI_IMPL=llm` asks. Default `gemini-3.8-flash`. Its own setting, apart from `LLM_MODEL` (the classifier's): step 4 is a few utterances a meeting, usually one request |
+| `AUTUNE_EXTRACTION_NLI_FALLBACK_MODEL` | B | Asked when `NLI_MODEL` stays unavailable. **Blank by default**: no second model answers step 4 unless one is named |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `llm` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. `llm` is the Gemini API through the same `AUTUNE_EXTRACTION_LLM_*` settings as `CLASSIFIER_IMPL=llm`: opt-in, needs `LLM_API_KEY` and no checkpoint, sends the commitment and the lines around it with the team's names replaced, and a free-tier key is for dummy meetings only. **No `external`**, same reason as the classifier |
-| `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392` | B | `true` · `false`. Default `false`. Required, as `true`, for `CLASSIFIER_IMPL=llm` / `llm_checked` or `RESOLVER_IMPL=llm`: without it B's settings refuse to load (#392). Turns nothing on by itself — see below |
+| `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392` | B | `true` · `false`. Default `false`. Required, as `true`, for `CLASSIFIER_IMPL=llm` / `llm_checked`, `RESOLVER_IMPL=llm`, `SUMMARY_IMPL=llm` or `NLI_IMPL=llm`: without it B's settings refuse to load (#392). Turns nothing on by itself — see below |
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_MODEL` | B | The model `RESOLVER_IMPL=llm` asks first. Default `gemini-3.5-flash-lite`. Its own setting, apart from `LLM_MODEL` (the classifier's) |
@@ -390,7 +392,8 @@ the conversation is #392. Until #392 is settled:
 
 - `llm` is never the default, and nothing selects it for you.
 - **It has to be switched on twice.** With `AUTUNE_EXTRACTION_CLASSIFIER_IMPL`
-  set to `llm` or `llm_checked`, or `AUTUNE_EXTRACTION_RESOLVER_IMPL` set to
+  set to `llm` or `llm_checked`, or `AUTUNE_EXTRACTION_RESOLVER_IMPL`,
+  `AUTUNE_EXTRACTION_SUMMARY_IMPL` or `AUTUNE_EXTRACTION_NLI_IMPL` set to
   `llm`, module B's settings refuse to load unless
   `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — the worker and
   the API do not start (the API with every other module, since it imports each
@@ -451,12 +454,29 @@ touches it. Without the extra the classifier raises a `RuntimeError` naming this
 command — the default implementation failing with `No module named
 'transformers'` tells the reader nothing about the extra existing.
 
-### NLI (step 4) has no external option, and the same extra
+### NLI (step 4): the same opt-in as the classifier, and the same extra
 
-`AUTUNE_EXTRACTION_NLI_IMPL` accepts `local`, `hosted` and `fake` — not the
-classifier's `llm`. Step 4 (#12) reads a commitment or ambiguous utterance's
-own text, so an external implementation is the section 6 question #392 is
-settling for the classifier; the classifier's opt-in does not extend to NLI.
+`AUTUNE_EXTRACTION_NLI_IMPL` accepts `local`, `hosted`, `fake` and `llm`. Step 4
+(#12) reads an ambiguous utterance's own text, so an external implementation
+is the section 6 question #392 is settling for the classifier. Until
+2026-10-05 the classifier's opt-in did not extend to NLI; module B's owner
+then asked for step 4 on Gemini for the gate and the demo, and `llm` was added
+under the classifier's rules, not looser ones: never the default, refused at
+start-up without `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` and a key, and
+for dummy meetings only on a free-tier key.
+
+What `llm` sends is less than the classifier sends about the same meeting: the
+masked text of the utterances the classifier called `ambiguous` — a handful —
+numbered, with the team's names replaced by `[사람N]`, and one fixed
+hypothesis sentence. No speaker, no id, no meeting, no surrounding lines; a
+non-consenting speaker's line cannot be among them, because the classifier
+never saw it. A meeting's worth usually goes in one request under the
+4,000-character cap, to `AUTUNE_EXTRACTION_NLI_MODEL` (default
+`gemini-3.8-flash`, no fallback unless `NLI_FALLBACK_MODEL` names one). Its
+answer can only promote: `entailment` turns an `ambiguous` row into a
+`commitment`; anything else, an unreadable answer included, leaves it for the
+confirmation DM. The prompt is unmeasured.
+
 `local` needs the same `local-models` extra as the classifier
 (`transformers`/`torch` are shared); no separate `uv sync` is needed if you
 already installed it for the classifier.
@@ -540,11 +560,11 @@ nothing else. It classifies gaps across a team's whole meeting history —
 exactly the aggregation section 3 of `../architecture/privacy.md` asks module
 E to be careful with — so an external implementation is a design conversation,
 not a config value. That much is the same reasoning module C gives for its
-entity extractor (`AUTUNE_GAP_NER_IMPL`) and module B for its NLI
-(`AUTUNE_EXTRACTION_NLI_IMPL`). B's classifier is the exception: it has an
-opt-in external `llm` (`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` above), never the
-default and pending #392. None of this says anything about `hosted`, which B
-does have on both of its settings.
+entity extractor (`AUTUNE_GAP_NER_IMPL`). Module B is the exception: its
+classifier and, since 2026-10-05, its NLI each have an opt-in external `llm`
+(`AUTUNE_EXTRACTION_CLASSIFIER_IMPL` and `AUTUNE_EXTRACTION_NLI_IMPL` above),
+never the default and pending #392. None of this says anything about `hosted`,
+which B does have on both of those settings.
 
 E has no `hosted` for an unrelated reason: unlike B's classifier or C's NER
 model, there is no separate checkpoint to pin and no inference server to point

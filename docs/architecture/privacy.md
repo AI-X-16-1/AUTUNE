@@ -369,10 +369,14 @@ the feature needs.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
 - A cloud model is never the default, and in module B it has to be switched on
-  twice (#392). B's classifier and resolver send text to a provider only when
-  their implementation is set to `llm` (or `llm_checked`), and B's settings
-  refuse to load that unless `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is
-  set as well. The flag checks nothing about the meeting or the key -- the code
+  twice (#392). B's classifier, resolver, meeting summary and step-4 NLI send
+  text to a provider only when their implementation is set to `llm` (or
+  `llm_checked`), and B's settings refuse to load that unless
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well. Each sends
+  masked text of consenting speakers only, with the team's names replaced:
+  the classifier every utterance in windows, the resolver a commitment and
+  the lines around it, the summary the meeting in sections, and NLI only the
+  utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
   it makes sending speech out something a deployment says deliberately. Until
   #392 is decided, only demo meetings go through a deployment that sets it.
