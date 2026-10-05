@@ -26,11 +26,13 @@ const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as cons
  * themselves, then (on the 액션 tab) the lines each came from — and a memo the
  * team writes.
  *
- * Nothing here was written by a model: the statements and descriptions are the
- * ones the review already shows, and the counts are counts. A prose summary by
- * an LLM is v2 and waits on #392. Pending decisions carry the ochre dot, the
- * spec's mark for something still waiting on a person. A team that lists
- * projects also gets the decisions and items grouped by project
+ * Nothing below the first section was written by a model: the statements and
+ * descriptions are the ones the review already shows, and the counts are
+ * counts. The first section, v2, is a cloud model's summary of the whole
+ * meeting — only where the deployment turned it on (#392), and labelled as a
+ * model's so nobody reads it as the record. Pending decisions carry the ochre
+ * dot, the spec's mark for something still waiting on a person. A team that
+ * lists projects also gets the decisions and items grouped by project
  * (`ProjectGroups`, 2026-10-04) above the plain lists.
  */
 export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
@@ -73,6 +75,37 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
 
   return (
     <main className="flex max-w-[860px] flex-col gap-8" style={TAB_BODY}>
+      {summary.generated ? (
+        <section aria-label="AI 요약">
+          <Heading>AI 요약</Heading>
+          <p
+            className="text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-body)" }}
+          >
+            {summary.generated.overview}
+          </p>
+          {summary.generated.points.length > 0 ? (
+            <ul className="mt-2 list-disc pl-5">
+              {summary.generated.points.map((point, n) => (
+                <li
+                  key={n}
+                  className="text-[var(--color-ink-body)]"
+                  style={{ fontSize: "var(--text-body)" }}
+                >
+                  {point}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p className="mt-2">
+            <Meta>
+              모델이 회의 발화로 쓴 요약입니다. 아래 결정·액션과 다를 수
+              있습니다.
+            </Meta>
+          </p>
+        </section>
+      ) : null}
+
       <section aria-label="개요">
         <Heading>개요</Heading>
         <dl

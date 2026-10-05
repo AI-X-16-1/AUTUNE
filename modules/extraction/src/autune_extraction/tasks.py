@@ -85,7 +85,7 @@ from .models import (
     ExtProjectSendCleanup,
 )
 from .pipeline.base import give_roster
-from .pipeline.registry import get_classifier, get_nli, get_resolver
+from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
 
 log = get_logger(__name__)
 
@@ -238,6 +238,12 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         # Pages of decisions this run dropped: their refs are kept so the
         # pages can be retired, not left live in Notion (#669).
         orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
+        # A written summary of lines this run no longer reads -- corrected,
+        # re-masked, their speaker's consent withdrawn -- goes with the run
+        # that noticed, not when a new one happens to replace it. Here and not
+        # only in ``summarize_meeting``: that task is not queued at all with
+        # ``summary_impl=none``, and may fail (#782 review).
+        service.drop_stale_summary(session, meeting_id)
         # Which of the team's projects each row is about, by what was said.
         # Rows a person placed keep their project.
         projects.assign_meeting(session, meeting_id)
@@ -277,12 +283,89 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    # Its own task, so a provider that is down costs the 요약 tab its paragraph
+    # and never this run its rows (#421 v2). Only when a summarizer is on --
+    # asked of the setting, not by building the summarizer: one switched on
+    # without a key raises there, and this run's rows are already committed
+    # (#782 review). The task is where that is found and logged.
+    if get_settings().summary_impl != "none":
+        try:
+            summarize_meeting.delay(meeting_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
+            log.warning("extraction_summary_not_queued", error=type(exc).__name__)
     # The project minutes that already went out, brought in line with what
     # this run left confirmed: a corrected line, and also a confirmed decision
     # the rebuild no longer has, which no correction names (#787 review). A
     # meeting that sent nothing costs one query; a copy that already says the
     # minutes is not written to.
     refresh_project_minutes(meeting_id)
+
+
+@shared_task(name="autune.extraction.summarize_meeting", acks_late=True)
+def summarize_meeting(meeting_id: str) -> bool:
+    """The 요약 tab's written summary (#421 v2): the meeting's consented lines to
+    ``summary_impl``'s model, the answer stored with the digest of those lines.
+
+    Skipped when no summarizer is on, when the meeting has no lines, and when
+    the stored summary was written from exactly these lines -- a re-extraction
+    that changed no line does not ask again. Reads, then calls the model with no
+    session open, then writes: a transaction is never held across a call that
+    takes seconds. A failed or unusable answer leaves the tab as v1 built it and
+    is logged by meeting id; nothing about it fails the meeting.
+
+    A stored summary of other lines than the meeting has now is deleted before
+    the model is asked, so none of the ways this can end without a new summary
+    -- no lines left, no summarizer, a failed call, an unusable answer -- leaves
+    the old one in the table. And the answer is stored only if the lines are
+    still the ones it was written from (``service.store_meeting_summary``):
+    speech deleted while the model was answering is not written back.
+
+    Returns whether a summary was written.
+    """
+    try:
+        summarizer = get_summarizer()
+    except ValueError as exc:
+        # Switched on without what it needs (a key). Said here, by name of the
+        # error only; the stale summary below still goes.
+        log.error("extraction_summary_not_configured", error=type(exc).__name__)
+        summarizer = None
+    with session_scope() as session:
+        lines = service.summary_lines(session, meeting_id)
+        if service.summary_is_current(session, meeting_id, lines):
+            return False
+        service.drop_stale_summary(session, meeting_id, lines)
+        if summarizer is None or not lines:
+            return False
+        roster = service.team_roster(session, meeting_id)
+        board = service.summary_board(session, meeting_id)
+    give_roster(summarizer, roster)
+    try:
+        written = summarizer.summarize(lines, board=board)
+    except PrivacyViolationError:
+        log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
+        return False
+    except Exception as exc:  # noqa: BLE001 -- the tab keeps v1; logged by id, never the text
+        log.warning("extraction_summary_failed", meeting_id=meeting_id, error=type(exc).__name__)
+        return False
+    if written is None:
+        return False
+    with session_scope() as session:
+        # Written from the lines read above. If they changed while the model
+        # was answering -- a line corrected, or deleted by its speaker -- it is
+        # not stored; the run that follows the change asks again.
+        stored = service.store_meeting_summary(
+            session,
+            meeting_id,
+            overview=written.overview,
+            points=written.points,
+            model_version=written.model_version,
+            lines=lines,
+        )
+    if stored is None:
+        log.info("extraction_summary_discarded_lines_changed", meeting_id=meeting_id)
+        return False
+    log.info("extraction_summary_stored", meeting_id=meeting_id, points=len(written.points))
+    return True
 
 
 def _project_clients(
