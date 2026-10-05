@@ -31,15 +31,18 @@ export type MeetingsState =
  * fast navigation cannot set state on something that is no longer mounted.
  */
 export function useMeetings(teamId?: string): MeetingsState {
-  const [state, setState] = useState<MeetingsState>({ status: "loading" });
+  // What was answered, kept with the team it was answered FOR. A bare state
+  // would still hold the last team's list on the render that first sees the
+  // next team -- the effect that clears it has not run yet -- and that list
+  // would be drawn once under the new team's name (review of #839).
+  const [answer, setAnswer] = useState<Answer>({ teamId, state: LOADING });
 
   useEffect(() => {
     let current = true;
-    setState({ status: "loading" });
 
     listMeetings(teamId)
       .then((meetings) => {
-        if (current) setState({ status: "ready", meetings });
+        if (current) setAnswer({ teamId, state: { status: "ready", meetings } });
       })
       .catch((error: unknown) => {
         // The message, never the body: an API error can quote what it refused.
@@ -47,7 +50,7 @@ export function useMeetings(teamId?: string): MeetingsState {
           error instanceof Error
             ? error.message
             : "회의 목록을 불러오지 못했습니다";
-        if (current) setState({ status: "error", message });
+        if (current) setAnswer({ teamId, state: { status: "error", message } });
       });
 
     return () => {
@@ -57,5 +60,11 @@ export function useMeetings(teamId?: string): MeetingsState {
     // team just left is dropped by `current`.
   }, [teamId]);
 
-  return state;
+  // An answer for another team is not this team's: until this one's lands,
+  // the list is loading.
+  return answer.teamId === teamId ? answer.state : LOADING;
 }
+
+type Answer = { teamId: string | undefined; state: MeetingsState };
+
+const LOADING: MeetingsState = { status: "loading" };
