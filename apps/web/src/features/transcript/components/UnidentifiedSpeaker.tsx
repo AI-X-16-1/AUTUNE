@@ -7,9 +7,9 @@ import type { SpeakerCandidate, TeamMember } from "../types";
 /**
  * Putting a name to a voice the pipeline separated but could not identify.
  *
- * Two controls are live -- confirming a candidate, and picking from the
- * team -- and two are placeholders that explain, in their `title`, what is
- * missing before they can open. Neither live control guesses: a similarity
+ * Three controls are live -- confirming a candidate, picking from the team,
+ * and typing a name -- and one is a placeholder that explains, in its
+ * `title`, what is missing before it can open. Neither live control guesses: a similarity
  * score high enough to show is not high enough to write into the record,
  * because the cost of being wrong is a commitment filed under somebody who
  * never made it. A candidate is drawn next to the label with its similarity;
@@ -23,6 +23,14 @@ import type { SpeakerCandidate, TeamMember } from "../types";
  * and `ui-spec.md`'s one-primary-per-screen rule is still respected --
  * S13's primary is 녹음 종료 in the right rail, the action you cannot take back.
  *
+ * **직접 입력 is for a voice with no account on the team** -- a guest,
+ * someone from another company. The name is kept for this meeting only
+ * (`aud_speaker_names`): no person is attached, no voice is enrolled, and the
+ * published transcript still carries no `speaker_id`, so no other module
+ * learns it. The line says so, rather than letting a typed name pass for an
+ * identification. A named speaker stays in this list so that a typo can be
+ * fixed and a member can still be picked instead.
+ *
  * **No utterance count.** This line used to read `화자 2 · 발화 41건`, which is
  * a per-person speech volume wearing a number instead of a name. Everyone in
  * the room knows who 화자 2 is, so the anonymity is not real —
@@ -35,13 +43,17 @@ import type { SpeakerCandidate, TeamMember } from "../types";
 export function UnidentifiedSpeaker({
   speaker,
   candidate,
+  displayName,
   members,
   membersError,
   pending = false,
   onAssign,
+  onName,
 }: {
   speaker: string;
   candidate?: SpeakerCandidate | null;
+  /** A name already typed for this speaker, for this meeting only. */
+  displayName?: string | null;
   members?: TeamMember[];
   /** Set when `GET /teams/{id}/members` failed. An empty `members` with no
    * error reads as "nobody else on this team"; an empty `members` *with*
@@ -54,6 +66,8 @@ export function UnidentifiedSpeaker({
    * second click mid-request would otherwise open. */
   pending?: boolean;
   onAssign?: (userId: string) => void;
+  /** Called with the trimmed name when 저장 is clicked. */
+  onName?: (name: string) => void;
 }) {
   // What the select holds, which is a choice and not yet an assignment: the
   // "지정" button is what sends it. A success drops this whole entry from the
@@ -65,6 +79,13 @@ export function UnidentifiedSpeaker({
   useEffect(() => {
     if (!pending) setPicked("");
   }, [pending]);
+  // `null` while the text field is closed. Closed again once a save lands
+  // (`displayName` changes); a failure leaves it open with what was typed.
+  const [typed, setTyped] = useState<string | null>(null);
+  useEffect(() => {
+    setTyped(null);
+  }, [displayName]);
+  const trimmed = typed?.trim() ?? "";
 
   return (
     <div
@@ -75,7 +96,11 @@ export function UnidentifiedSpeaker({
         fontSize: "var(--text-status)",
       }}
     >
-      {candidate ? (
+      {displayName ? (
+        <span style={{ color: "var(--color-ink-muted)" }}>
+          {speaker} · {displayName} (이 회의에서만 표시)
+        </span>
+      ) : candidate ? (
         <span>
           {speaker} · 후보 {candidate.name} · 유사도 {candidate.similarity.toFixed(2)}
         </span>
@@ -132,14 +157,54 @@ export function UnidentifiedSpeaker({
       >
         지정
       </Button>
-      <Button
-        tone="quiet"
-        size="compact"
-        disabled
-        title="계정이 없는 참석자를 어떻게 기록할지 정해지면 열립니다"
-      >
-        직접 입력
-      </Button>
+      {typed === null ? (
+        <Button
+          tone="quiet"
+          size="compact"
+          disabled={pending}
+          title="팀에 계정이 없는 참석자의 이름을 이 회의에서만 표시합니다"
+          onClick={() => setTyped(displayName ?? "")}
+        >
+          {displayName ? "이름 고치기" : "직접 입력"}
+        </Button>
+      ) : (
+        <>
+          <input
+            aria-label={`${speaker} 이름 직접 입력`}
+            value={typed}
+            maxLength={50}
+            placeholder="이 회의에서만 표시할 이름"
+            disabled={pending}
+            autoFocus
+            onChange={(event) => setTyped(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && trimmed) onName?.(trimmed);
+              if (event.key === "Escape") setTyped(null);
+            }}
+            className="focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
+            style={{
+              height: "var(--control-h-compact)",
+              paddingInline: "var(--control-px-compact)",
+              fontSize: "var(--control-text-compact)",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--color-hairline)",
+              background: "var(--color-surface-sunken)",
+              color: "var(--color-ink-strong)",
+            }}
+          />
+          <Button
+            tone="text"
+            size="compact"
+            disabled={pending || !trimmed}
+            onClick={() => onName?.(trimmed)}
+          >
+            저장
+          </Button>
+          <Button tone="quiet" size="compact" disabled={pending} onClick={() => setTyped(null)}>
+            취소
+          </Button>
+        </>
+      )}
       <Button
         tone="quiet"
         size="compact"

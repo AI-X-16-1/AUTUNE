@@ -52,6 +52,7 @@ from .schemas import (
     PiiReported,
     SpeakerAssignment,
     SpeakerEntry,
+    SpeakerName,
     SpeechDeleted,
     TeamCreate,
     TeamMemberSummary,
@@ -430,6 +431,28 @@ def assign_speaker(
         speaker_label=speaker_label,
         user_id=body.user_id,
         confirmed_by=user,
+    )
+
+
+@router.put(
+    "/meetings/{meeting_id}/speakers/{speaker_label}/name",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def name_speaker(
+    meeting_id: str,
+    speaker_label: str,
+    body: SpeakerName,
+    user: CurrentUser,
+    session: SessionDep,
+) -> None:
+    """Name a speaker who has no account on the team, for this meeting only.
+    No person is attached and no voice is kept."""
+    service.name_speaker(
+        session,
+        meeting_id=meeting_id,
+        speaker_label=speaker_label,
+        name=body.name,
+        named_by=user,
     )
 
 

@@ -27,7 +27,7 @@ from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedErr
 from . import identification, storage
 from .config import AudioSettings, get_settings
 from .job_guard import JobStopped
-from .models import AudConsentAttestation, AudSpeakerEmbedding, TranscriptionJob
+from .models import AudConsentAttestation, AudSpeakerEmbedding, AudSpeakerName, TranscriptionJob
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
 from .speakers import UNIDENTIFIED
@@ -1083,6 +1083,12 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
     }
     profiles = _profiles_of_team(session, team_id=meeting.team_id)
     threshold = get_settings().identification_threshold
+    names = {
+        row.speaker_label: row.name
+        for row in session.scalars(
+            sa.select(AudSpeakerName).where(AudSpeakerName.meeting_id == meeting_id)
+        )
+    }
 
     entries = []
     for participant in participants:
@@ -1104,6 +1110,7 @@ def speakers_for(session: Session, *, meeting_id: str, reader: User) -> list[Spe
                 speaker_label=participant.speaker_label,
                 user_id=participant.user_id,
                 candidate=candidate,
+                display_name=names.get(participant.speaker_label),
             )
         )
     entries.sort(key=_speaker_order)
@@ -1230,6 +1237,14 @@ def assign_speaker(
     if participant is None:
         raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
     participant.user_id = user_id
+    # A label is a member or a typed name, never both: once it is a member,
+    # a name typed earlier must not resurface if the assignment is undone.
+    session.execute(
+        sa.delete(AudSpeakerName).where(
+            AudSpeakerName.meeting_id == meeting_id,
+            AudSpeakerName.speaker_label == speaker_label,
+        )
+    )
     session.flush()
 
     observation = session.scalar(
@@ -1301,6 +1316,55 @@ def assign_speaker(
     # a meeting with no observation; ``reason`` is what a debugging session
     # actually needs.
     log.info("speaker_assigned", meeting_id=meeting_id, learned=learned, reason=reason)
+
+
+def name_speaker(
+    session: Session,
+    *,
+    meeting_id: str,
+    speaker_label: str,
+    name: str,
+    named_by: User,
+) -> None:
+    """ "``화자 2`` is called this, in this meeting" -- for a voice with no
+    account on the team.
+
+    Writes the name and nothing else. The participant keeps ``user_id = NULL``,
+    so the published transcript carries no ``speaker_id`` and no other module
+    learns the name; no voice profile is written, whatever
+    ``voice_profiles_enabled`` says, because there is nobody to file it under
+    and nobody who could later ask for it to be deleted.
+
+    A speaker already assigned to a member is refused (409) rather than
+    quietly un-assigned: undoing an assignment also has to undo the voice
+    profile it may have produced, and that is ``assign_speaker``'s job, not a
+    side effect of typing a name.
+
+    The name is never logged: it is a third party's.
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=named_by.id, team_id=meeting.team_id)
+
+    participant = session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting_id,
+            Participant.speaker_label == speaker_label,
+        )
+    )
+    if participant is None:
+        raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
+    if participant.user_id is not None:
+        raise ConflictError("this speaker is already assigned to a team member")
+
+    row = session.get(AudSpeakerName, (meeting_id, speaker_label))
+    if row is None:
+        session.add(AudSpeakerName(meeting_id=meeting_id, speaker_label=speaker_label, name=name))
+    else:
+        row.name = name
+    session.flush()
+    log.info("speaker_named", meeting_id=meeting_id)
 
 
 def _delete_observations_owned_by(session: Session, *, user_id: str) -> int:

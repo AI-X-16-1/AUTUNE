@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 
-import { assignSpeaker, getSpeakers, listTeamMembers } from "../api";
+import { assignSpeaker, getSpeakers, listTeamMembers, nameSpeaker } from "../api";
 import type { SpeakerEntry, TeamMember } from "../types";
 
 /**
@@ -135,13 +135,15 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
     };
   }, [teamId]);
 
-  const assign = useCallback(
-    async (speakerLabel: string, userId: string) => {
+  // `assign` and `name` are the same write with a different request: one
+  // `pending`, one `assignError`, the same refetch-before-release.
+  const write = useCallback(
+    async (send: () => Promise<void>) => {
       const generation = generationRef.current;
       setPending(true);
       setAssignError(null);
       try {
-        await assignSpeaker(meetingId, speakerLabel, userId);
+        await send();
         // Awaited, not fired-and-forgotten: `pending` must stay true until
         // this refetch has actually landed, or the confirmed entry's
         // controls re-enable -- and its `<select>` resets to the
@@ -156,7 +158,20 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
         if (generationRef.current === generation) setPending(false);
       }
     },
-    [meetingId, load],
+    [load],
+  );
+
+  const assign = useCallback(
+    (speakerLabel: string, userId: string) =>
+      write(() => assignSpeaker(meetingId, speakerLabel, userId)),
+    [meetingId, write],
+  );
+
+  /** A name for a voice with no account on the team, for this meeting only. */
+  const name = useCallback(
+    (speakerLabel: string, typed: string) =>
+      write(() => nameSpeaker(meetingId, speakerLabel, typed)),
+    [meetingId, write],
   );
 
   return {
@@ -165,6 +180,7 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
     members,
     membersError,
     assign,
+    name,
     assignError,
     pending,
   };
@@ -186,6 +202,12 @@ function assignErrorMessage(caught: unknown): string {
     }
     if (caught.status === 404) {
       return "이 화자를 찾을 수 없습니다. 새로고침한 뒤 다시 시도해 주세요.";
+    }
+    if (caught.status === 409) {
+      return "이미 팀원으로 지정된 화자라서 이름을 직접 입력할 수 없습니다.";
+    }
+    if (caught.status === 422) {
+      return "이름은 1자 이상 50자 이하로 입력해 주세요.";
     }
   }
   return "화자를 지정하지 못했습니다. 잠시 후 다시 시도해 주세요.";

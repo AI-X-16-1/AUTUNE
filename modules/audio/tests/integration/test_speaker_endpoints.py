@@ -224,7 +224,7 @@ def test_the_response_carries_no_counts_or_durations(
 
     assert len(body) == 2
     for entry in body:
-        assert set(entry) == {"speaker_label", "user_id", "candidate"}
+        assert set(entry) == {"speaker_label", "user_id", "candidate", "display_name"}
     assert "count" not in response.text
     assert "seconds" not in response.text
 
@@ -743,6 +743,145 @@ def test_a_user_outside_the_team_cannot_be_assigned(
         )
     )
     assert profiles == []
+
+
+# --- PUT /meetings/{id}/speakers/{label}/name --------------------------------
+#
+# A name for a voice that has no account here -- a guest, someone from another
+# company. It belongs to this one meeting: no person, no profile, nothing that
+# would recognise the voice next time.
+
+
+def _name(client: TestClient, meeting: str, label: str, name: str) -> httpx.Response:
+    return client.put(
+        f"/api/audio/meetings/{meeting}/speakers/{quote(label)}/name", json={"name": name}
+    )
+
+
+def test_naming_a_speaker_shows_the_name_in_the_speaker_list(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    response = _name(client, meeting, "화자 1", "  외부 디자이너  ")
+
+    assert response.status_code == 204
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["display_name"] == "외부 디자이너"
+    assert entry["user_id"] is None
+
+
+def test_naming_writes_no_person_and_no_voice(
+    client: TestClient,
+    db_session: Session,
+    meeting: str,
+    voice_profiles_enabled: None,
+) -> None:
+    """Even with profiles on, a typed name enrols nothing: there is nobody to
+    enrol it under, and a voice kept for a name is a voice kept for nobody."""
+    participant = Participant(meeting_id=meeting, speaker_label="화자 1")
+    db_session.add(participant)
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.flush()
+    db_session.add(
+        Utterance(
+            meeting_id=meeting,
+            participant_id=participant.id,
+            speaker_label="화자 1",
+            start_sec=0.0,
+            end_sec=1.0,
+            text="안녕하세요",
+        )
+    )
+    db_session.flush()
+
+    assert _name(client, meeting, "화자 1", "외부 디자이너").status_code == 204
+
+    db_session.refresh(participant)
+    assert participant.user_id is None
+    profiles = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id.is_not(None))
+        )
+    )
+    assert profiles == []
+    [utterance] = transcript_payload(db_session, meeting_id=meeting).utterances
+    assert utterance.speaker_id is None
+
+
+def test_naming_again_replaces_the_name(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    _name(client, meeting, "화자 1", "외부 디자이너")
+    assert _name(client, meeting, "화자 1", "김 대표").status_code == 204
+
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["display_name"] == "김 대표"
+
+
+def test_confirming_a_member_drops_the_typed_name(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    """A label is a member or a name, never both: the member wins and the
+    typed name is not left behind to resurface."""
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+    _name(client, meeting, "화자 1", "외부 디자이너")
+
+    assert _confirm(client, meeting, "화자 1", candidate.id).status_code == 204
+
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["user_id"] == candidate.id
+    assert entry["display_name"] is None
+
+
+def test_naming_a_speaker_already_assigned_to_a_member_is_409(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1", user_id=candidate.id))
+    db_session.flush()
+
+    response = _name(client, meeting, "화자 1", "외부 디자이너")
+
+    assert response.status_code == 409
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["user_id"] == candidate.id
+    assert entry["display_name"] is None
+
+
+@pytest.mark.parametrize("name", ["", "   ", "가" * 51])
+def test_a_blank_or_overlong_name_is_refused(
+    client: TestClient, db_session: Session, meeting: str, name: str
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    response = _name(client, meeting, "화자 1", name)
+
+    assert response.status_code == 422
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["display_name"] is None
+
+
+def test_naming_an_unknown_label_is_404(client: TestClient, meeting: str) -> None:
+    assert _name(client, meeting, "화자 9", "외부 디자이너").status_code == 404
+
+
+def test_an_outsider_cannot_name_a_speaker(
+    app_for, client: TestClient, db_session: Session, meeting: str, outsider: User
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    response = _name(app_for(outsider), meeting, "화자 1", "외부 디자이너")
+
+    assert response.status_code == 403
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["display_name"] is None
 
 
 # --- DELETE /me/voice-profile ------------------------------------------------

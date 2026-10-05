@@ -131,6 +131,9 @@ export type SpeakerEntry = {
   speaker_label: string;
   user_id: string | null;
   candidate: SpeakerCandidate | null;
+  /** A name typed for this meeting only, for a voice with no account on the
+   * team. Never set together with `user_id`. */
+  display_name?: string | null;
 };
 
 export type TeamMember = { user_id: string; name: string };
