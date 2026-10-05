@@ -26,7 +26,7 @@ from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
 
 from autune_core import Base, Meeting, PrivacyViolationError, Team, TeamMember, User
-from autune_extraction import days_off, service, tasks
+from autune_extraction import days_off, reminders, service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
     ExtActionItem,
@@ -890,3 +890,127 @@ def test_no_shape_of_the_answer_fails_the_task(
     assert [e["reason"] for e in logs if e["event"] == "extraction_public_holidays_not_read"] == [
         "OverflowError"
     ]
+
+
+# --- a holiday Monday: the week's digest goes on the next working day ---------------------
+#     (the user, 2026-10-05: "공휴일이 아닌 업무일에 요약")
+
+HOLIDAY_MONDAY = date(2026, 10, 5)
+WEDNESDAY_10_KST = datetime(2026, 10, 7, 1, 0, tzinfo=UTC)
+
+
+def holidays(*days: date):  # type: ignore[no-untyped-def]
+    return lambda day: day in days
+
+
+def test_the_digest_day_is_the_weeks_first_working_day() -> None:
+    monday = HOLIDAY_MONDAY
+    assert reminders.digest_day(monday) == monday
+    assert reminders.digest_day(monday, holidays(monday)) == TUESDAY
+    assert reminders.digest_day(monday, holidays(monday, TUESDAY)) == date(2026, 10, 7)
+    whole_week = [monday + timedelta(days=n) for n in range(5)]
+    assert reminders.digest_day(monday, holidays(*whole_week)) is None, "never a weekend"
+
+
+def test_a_week_is_named_by_its_monday_whichever_day_its_digest_goes() -> None:
+    off = holidays(HOLIDAY_MONDAY)
+
+    assert reminders.digest_week(HOLIDAY_MONDAY_10_KST, off) is None, "not on the holiday"
+    assert reminders.digest_week(TUESDAY_10_KST, off) == HOLIDAY_MONDAY
+    assert reminders.digest_week(WEDNESDAY_10_KST, off) is None, "once, not every day after"
+    assert reminders.digest_week(datetime(2026, 10, 6, 12, 0, tzinfo=UTC), off) is None  # 21:00
+    # A week with no holiday is as it always was.
+    assert reminders.digest_week(PLAIN_MONDAY_10_KST, off) == date(2026, 10, 12)
+    assert reminders.digest_week(PLAIN_MONDAY_10_KST + timedelta(days=1), off) is None
+
+
+def test_after_a_holiday_monday_the_digest_is_owed_on_tuesday_once(session: Session) -> None:
+    assert service.weekly_digests_to_send(session, now=HOLIDAY_MONDAY_10_KST) == []
+
+    owed = service.weekly_digests_to_send(session, now=TUESDAY_10_KST)
+
+    assert [(d.user_id, d.week_start) for d in owed] == [
+        ("user_kim", HOLIDAY_MONDAY),
+        ("user_lee", HOLIDAY_MONDAY),
+    ]
+    slack = FakeSlack()
+    for digest in owed:
+        assert service.send_weekly_digest(session, slack, digest, now=TUESDAY_10_KST) is True
+    assert [m.channel for m in slack.sent] == ["user_kim", "user_lee"]
+    assert service.weekly_digests_to_send(session, now=TUESDAY_10_KST) == []
+    assert service.weekly_digests_to_send(session, now=WEDNESDAY_10_KST) == []
+    assert len(service.weekly_digests_to_send(session, now=PLAIN_MONDAY_10_KST)) == 2, (
+        "the next week is a new one"
+    )
+
+
+def test_the_day_the_weeks_digest_goes_has_no_morning_dm(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As a Monday has none: one message that morning, not two."""
+    monkeypatch.setattr(
+        service,
+        "get_settings",
+        lambda: ExtractionSettings(_env_file=None, weekly_digest=True),  # type: ignore[call-arg]
+    )
+
+    assert service.daily_digests_to_send(session, now=TUESDAY_10_KST) == []
+    assert len(service.daily_digests_to_send(session, now=WEDNESDAY_10_KST)) == 2
+
+
+def test_where_no_weekly_digest_is_sent_that_morning_keeps_its_dm(session: Session) -> None:
+    """A deployment with only the morning DM must not go silent on the day a
+    digest it does not send would have gone."""
+    assert ExtractionSettings(_env_file=None).weekly_digest is False  # type: ignore[call-arg]
+
+    assert len(service.daily_digests_to_send(session, now=TUESDAY_10_KST)) == 2
+
+
+def test_a_pause_is_about_the_day_the_digest_goes_not_the_weeks_monday(
+    session: Session,
+) -> None:
+    """Somebody who paused the holiday Monday only is back on Tuesday, and
+    somebody who paused Tuesday is not told on Tuesday."""
+    service.set_notification_pause(
+        session,
+        "user_kim",
+        starts_on=HOLIDAY_MONDAY,
+        ends_on=HOLIDAY_MONDAY,
+        now=HOLIDAY_MONDAY_10_KST,
+    )
+    service.set_notification_pause(
+        session, "user_lee", starts_on=TUESDAY, ends_on=TUESDAY, now=HOLIDAY_MONDAY_10_KST
+    )
+
+    owed = service.weekly_digests_to_send(session, now=TUESDAY_10_KST)
+
+    assert [d.user_id for d in owed] == ["user_kim"]
+    lee = service.WeeklyDigest(user_id="user_lee", team_id="team_1", week_start=HOLIDAY_MONDAY)
+    assert service.weekly_digest_would_go(session, lee, now=TUESDAY_10_KST) is False
+    assert service.weekly_digest_would_go(session, owed[0], now=TUESDAY_10_KST) is True
+
+
+def test_what_is_late_is_late_as_of_the_day_it_is_sent(session: Session) -> None:
+    """An item due on the holiday Monday is overdue in Tuesday's digest."""
+    item = session.get(ExtActionItem, "act_user_kim")
+    assert item is not None
+    item.due_date = HOLIDAY_MONDAY
+    session.flush()
+    (owed, _lee) = service.weekly_digests_to_send(session, now=TUESDAY_10_KST)
+    slack, on_monday = FakeSlack(), FakeSlack()
+
+    service.send_weekly_digest(session, slack, owed, now=TUESDAY_10_KST)
+    expected = reminders.build_weekly_digest(
+        [reminders.DigestLine(item.description, item.due_date, "주간 회의")],
+        today=TUESDAY,
+        board_url=slack.sent[0].text.splitlines()[-1],
+    )
+    as_of_monday = reminders.build_weekly_digest(
+        [reminders.DigestLine(item.description, item.due_date, "주간 회의")],
+        today=HOLIDAY_MONDAY,
+        board_url=slack.sent[0].text.splitlines()[-1],
+    )
+
+    assert slack.sent[0].text == expected
+    assert expected != as_of_monday, "the two days read differently, or this checks nothing"
+    assert on_monday.sent == []
