@@ -29,6 +29,7 @@ from autune_core import CurrentUser, User, get_session
 from . import service
 from .enqueue import enqueue_publish_report
 from .schemas import (
+    GapCarry,
     GapDismissal,
     GapExplanations,
     TeamGapRead,
@@ -150,6 +151,32 @@ def _dismiss(session: Session, gap_id: str, reader: User, *, dismissed: bool) ->
     result = service.set_dismissed(session, gap_id, reader, dismissed=dismissed)
     session.commit()
     enqueue_publish_report(result.meeting_id)
+    return result
+
+
+@router.post("/gaps/{gap_id}/carry", response_model=GapCarry)
+def carry_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapCarry:
+    """Send one gap on to the next meeting -- "다음 회의 어젠다로" on S20 (#824).
+
+    A mark on the gap and nothing else: no meeting is created or named, and
+    nobody is invited. The next meeting's picture reads the marks
+    (``tools.carried_gaps``). Named by the gap, so the membership check is the
+    service's, as for a dismissal.
+    """
+    return _carry(session, gap_id, reader, carried=True)
+
+
+@router.delete("/gaps/{gap_id}/carry", response_model=GapCarry)
+def undo_carry_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapCarry:
+    """Take it back, for the same reason a dismissal can be taken back."""
+    return _carry(session, gap_id, reader, carried=False)
+
+
+def _carry(session: Session, gap_id: str, reader: User, *, carried: bool) -> GapCarry:
+    """Set the mark and commit it. Nothing to republish: ``GapReport`` does not
+    carry it, so E's copy is unchanged."""
+    result = service.set_carried(session, gap_id, reader, carried=carried)
+    session.commit()
     return result
 
 

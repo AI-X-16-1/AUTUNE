@@ -928,6 +928,16 @@ threshold tuning has to read what was dismissed, and soft deletes are forbidden
 pressed the button is not something tuning needs, and storing it would be a
 per-person record of conduct that ADR 0003 refuses.
 
+`gap_gaps.carried_at` marks a gap somebody sent on to the next meeting
+("다음 회의 어젠다로" on S20, #824), with `dismissed_at`'s rules: no actor
+column, a second press keeps the first moment, and a re-run that updates the
+row in place keeps it. It names no meeting. A team's next meeting has no agenda
+to hold the gap yet (#756), so the mark is what the next meeting's picture reads
+— the agent tool `gap.carried_gaps`, which lists the team's carried,
+undismissed gaps, most recently sent first. Nothing is scheduled and nobody is
+invited; that is S25 (P2). A mark stays until somebody takes it back or
+dismisses the gap.
+
 ### A speaker confirmed after scoring — `gap_scorings`
 
 A gap's risk reads how much of the room was silent on a topic, and who is one
@@ -1016,6 +1026,8 @@ here, so the no-deletion-hook sentence above still holds.
 | GET | `/gaps?team_id=` | Every open gap across a team's meetings, newest meeting first (`severity` repeats, default `high`) |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
 | DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
+| POST | `/gaps/{id}/carry` | Mark a gap as sent on to the next meeting — "다음 회의 어젠다로" (#824) |
+| DELETE | `/gaps/{id}/carry` | Take that back |
 | GET | `/templates` | Available domain templates |
 | GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
@@ -1126,6 +1138,11 @@ reprocessed. It then queues `autune.gap.publish_report`, so E scores the
 meeting against the template in force rather than the one the pipeline first
 compared it to (#316). A key no template file defines is a 422, not a 404 — what
 is wrong is the value, not the address.
+
+`POST /gaps/{id}/carry` and its `DELETE` are the same shape for `carried_at`
+(`schemas.GapCarry`), and do not republish: `GapReport` carries no such mark,
+so E's copy has nothing to change. S20 reads the mark from `/explanations`
+(`carried`).
 
 `POST /gaps/{id}/dismiss` sets `dismissed_at` and nothing else; `DELETE` on the
 same path clears it, because a button pressed by mistake has to be undoable from

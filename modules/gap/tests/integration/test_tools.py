@@ -297,3 +297,89 @@ def test_gaps_by_id_with_nothing_still_open_is_not_a_failure(team_id: str) -> No
         result = call(tools.gaps_by_id, team_id, m, gap_ids=cited)
         assert result["ok"]
         assert result["items"] == []
+
+
+# --- carried_gaps (#824) -----------------------------------------------------
+
+
+def carry(meeting_id: str, key: str, at: datetime) -> str:
+    with session_scope() as s:
+        gap = s.scalar(
+            select(GapGap).where(GapGap.meeting_id == meeting_id, GapGap.template_item_key == key)
+        )
+        assert gap is not None
+        gap.carried_at = at
+        return gap.id
+
+
+def carried(team_id: str) -> dict:
+    with session_scope() as s:
+        result = tools.carried_gaps(s, team_id=team_id)
+    assert set(result) == KEYS
+    assert all(ID.fullmatch(e) for e in result["evidence"])
+    return result
+
+
+def test_carried_gaps_lists_what_was_sent_on_newest_first(team_id: str) -> None:
+    older = meeting(team_id, COVERS_TWO, started=T0)
+    newer = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=7))
+    first = carry(older, "risk", T0 + timedelta(days=1))
+    second = carry(newer, "dependency", T0 + timedelta(days=8))
+
+    result = carried(team_id)
+
+    assert result["ok"] is True
+    assert [item["id"] for item in result["items"]] == [second, first]
+    assert [item["meeting_id"] for item in result["items"]] == [newer, older]
+    assert result["evidence"] == [second, first]
+
+
+def test_carried_gaps_leaves_out_a_gap_dismissed_since(team_id: str) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    carry(m, "risk", T0)
+    carry(m, "dependency", T0)
+    dismiss(m, "risk")
+
+    assert keys_of(carried(team_id)) == {"dependency"}
+
+
+def test_carried_gaps_reads_only_the_runs_team(team_id: str, other_team: str) -> None:
+    carry(meeting(other_team, COVERS_TWO, started=T0), "risk", T0)
+
+    result = carried(team_id)
+
+    assert result["ok"] is True
+    assert result["items"] == []
+
+
+def test_carried_gaps_keeps_five_and_says_there_were_more(team_id: str) -> None:
+    m = meeting(team_id, COVERS_NOTHING, started=T0)
+    n = meeting(team_id, COVERS_TWO, started=T0 + timedelta(days=1))
+    for i, key in enumerate(["success_criteria", "ownership", "risk", "dependency", "next_step"]):
+        carry(m, key, T0 + timedelta(minutes=i))
+    carry(n, "risk", T0 + timedelta(hours=1))
+
+    result = carried(team_id)
+
+    assert len(result["items"]) == tools.MAX_ITEMS
+    assert result["truncated"] is True
+    assert "6건" in result["summary"]
+
+
+def test_carried_gaps_carries_no_person(team_id: str) -> None:
+    carry(meeting(team_id, COVERS_TWO, started=T0), "risk", T0)
+
+    text = str(carried(team_id)).lower()
+
+    assert not any(word in text for word in PERSONAL)
+
+
+def test_a_rerun_keeps_the_carried_mark(team_id: str) -> None:
+    """``_store_gaps`` updates a gap in place, as it keeps ``dismissed_at``."""
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    gap_id = carry(m, "risk", T0)
+
+    service.detect_gaps(m)
+
+    with session_scope() as s:
+        assert s.get(GapGap, gap_id).carried_at is not None

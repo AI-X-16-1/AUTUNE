@@ -251,6 +251,7 @@ export const DEMO_EXPLANATIONS: GapExplanations = {
   gaps: [
     {
       gap_id: "gap_demo_ownership",
+      carried: false,
       coverage: "missing",
       basis: "none",
       topic_label: null,
@@ -262,6 +263,7 @@ export const DEMO_EXPLANATIONS: GapExplanations = {
     },
     {
       gap_id: "gap_demo_risk",
+      carried: false,
       coverage: "partial",
       basis: "topic",
       topic_label: "예외 처리",
@@ -284,6 +286,7 @@ export const DEMO_EXPLANATIONS: GapExplanations = {
     },
     {
       gap_id: "gap_demo_dependency",
+      carried: false,
       coverage: "partial",
       basis: "topic",
       topic_label: "연동 일정",
@@ -305,6 +308,7 @@ export const DEMO_EXPLANATIONS: GapExplanations = {
     },
     {
       gap_id: "gap_demo_next_step",
+      carried: false,
       coverage: "partial",
       basis: "topic",
       topic_label: "후속 작업",

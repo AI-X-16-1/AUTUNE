@@ -131,7 +131,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, dismiss, undoDismiss, choose } = useGapActions(reloadAll);
+  const { pending, failure, dismiss, undoDismiss, carry, undoCarry, choose } =
+    useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
   const [coverageTab, setCoverageTab] = useState<Coverage>("missing");
@@ -257,6 +258,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           showLow={showLow}
                           onToggleLow={() => setShowLow((on) => !on)}
                           onDismiss={(gapId) => void dismiss(gapId)}
+                          onCarry={(gapId, carried) =>
+                            void (carried ? carry(gapId) : undoCarry(gapId))
+                          }
                           pendingGapId={pending}
                         />
                       );
@@ -282,6 +286,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     showLow={showLow}
                     onToggleLow={() => setShowLow((on) => !on)}
                     onDismiss={(gapId) => void dismiss(gapId)}
+                    onCarry={(gapId, carried) =>
+                      void (carried ? carry(gapId) : undoCarry(gapId))
+                    }
                     pendingGapId={pending}
                   />
                 )}

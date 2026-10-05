@@ -141,6 +141,17 @@ export interface GapDismissal {
 }
 
 /**
+ * Whether a gap was sent on to the next meeting — what `POST` and `DELETE
+ * /api/gap/gaps/{id}/carry` return (`GapCarry`, #824). The flag the server
+ * settled on, no timestamp and nobody's id, like `GapDismissal`.
+ */
+export interface GapCarry {
+  gap_id: string;
+  meeting_id: string;
+  carried: boolean;
+}
+
+/**
  * One utterance a verdict rests on — `EvidenceRead` in
  * `modules/gap/src/autune_gap/schemas.py`. Masked text, no speaker.
  */
@@ -187,6 +198,8 @@ export interface GapExplanation {
   matched_keywords: string[];
   evidence: GapEvidence[];
   breakdown: ScoreBreakdown | null;
+  /** Somebody sent this gap on to the next meeting — "다음 회의 어젠다로" (#824). */
+  carried: boolean;
 }
 
 /** `GET /api/gap/explanations/{meeting_id}` — `GapExplanations`. */

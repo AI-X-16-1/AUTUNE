@@ -2,11 +2,11 @@
 
 import { useCallback, useState } from "react";
 
-import { chooseTemplate, dismissGap, undoDismissGap } from "../api";
+import { carryGap, chooseTemplate, dismissGap, undoCarryGap, undoDismissGap } from "../api";
 
 /**
- * The writes S20 makes: dismissing a gap, taking a dismissal back, and holding
- * the meeting to another template.
+ * The writes S20 makes: dismissing a gap and sending one on to the next meeting
+ * (#824), taking either back, and holding the meeting to another template.
  *
  * **Every write is followed by a read, never by a local edit.** The server
  * decides what a dismissal does to the report and the rail — the gap leaves
@@ -58,6 +58,26 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
+  const carry = useCallback(
+    (gapId: string) =>
+      run(
+        gapId,
+        () => carryGap(gapId),
+        "갭을 다음 회의로 넘기지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      ),
+    [run],
+  );
+
+  const undoCarry = useCallback(
+    (gapId: string) =>
+      run(
+        gapId,
+        () => undoCarryGap(gapId),
+        "다음 회의로 넘긴 것을 되돌리지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      ),
+    [run],
+  );
+
   const choose = useCallback(
     (meetingId: string, templateKey: string) =>
       run(
@@ -68,5 +88,5 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
-  return { pending, failure, dismiss, undoDismiss, choose };
+  return { pending, failure, dismiss, undoDismiss, carry, undoCarry, choose };
 }

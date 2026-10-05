@@ -61,6 +61,19 @@ class GapDismissal(BaseModel):
     dismissed: bool
 
 
+class GapCarry(BaseModel):
+    """Whether somebody sent one gap on to the next meeting (#824).
+
+    What ``POST`` and ``DELETE /gaps/{gap_id}/carry`` both return, the same
+    shape as ``GapDismissal`` and for the same reasons: the flag the server
+    settled on, no timestamp and nobody's id.
+    """
+
+    gap_id: str
+    meeting_id: str
+    carried: bool
+
+
 class TemplateItemRead(BaseModel):
     """One checklist item beside what the meeting did with it.
 
@@ -220,6 +233,9 @@ class GapExplanationRead(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRead] = Field(default_factory=list)
     breakdown: ScoreBreakdownRead | None = None
+    carried: bool = False
+    """Whether somebody sent this gap on to the next meeting (#824). Here rather
+    than on ``GapReport``: the contract is E's business, and E has no use for it."""
 
 
 class GapExplanations(BaseModel):
