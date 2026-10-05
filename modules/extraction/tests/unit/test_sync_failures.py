@@ -273,6 +273,40 @@ def test_the_jira_sync_says_which_skip_it_was(
     assert SYNC_ACTION_ITEM_JIRA("act_1") == expected
 
 
+def test_a_corrected_line_or_deleted_speech_syncs_through_the_same_bookkeeping(
+    session: Session, sends: dict
+) -> None:
+    """PARKJAEKYUNG0525, review of #754: those paths used to queue the three
+    syncs directly, so their failures were neither kept nor cleared. They now
+    queue ``sync_item_copies``, which is the edit's path on the worker."""
+    item(session)
+    sends["notion"] = TransientIntegrationError("timed out")
+
+    tasks.sync_item_copies("act_1")
+
+    assert kept(session) == {"notion": "unreachable"}
+
+    sends["notion"] = None
+    tasks.sync_item_copies("act_1")
+
+    assert kept(session) == {}
+
+
+def test_two_first_failures_at_once_keep_the_latest_and_lose_nothing(session: Session) -> None:
+    """Review of #754: the second of two first failures used to hit the primary
+    key and be dropped. It is one upsert now."""
+    item(session)
+    first = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+    later = datetime(2026, 10, 2, 1, 5, tzinfo=UTC)
+
+    sync_state.record_failure(session, "act_1", "jira", "unreachable", now=first)
+    sync_state.record_failure(session, "act_1", "jira", "reconnect", now=later)
+
+    session.expire_all()
+    (row,) = session.scalars(select(ExtSyncFailure)).all()
+    assert (row.kind, row.failed_at.replace(tzinfo=UTC)) == ("reconnect", later)
+
+
 def test_a_team_without_jira_has_nothing_to_keep(session: Session, sends: dict) -> None:
     item(session)
     sends["jira"] = TransientIntegrationError("down")

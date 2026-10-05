@@ -26,6 +26,7 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
@@ -66,14 +67,20 @@ def record_failure(
     whatever was kept before. Nothing is written for an item that is gone."""
     if session.get(ExtActionItem, action_item_id) is None:
         return
-    row = session.get(ExtSyncFailure, (action_item_id, system))
     when = now or datetime.now(tz=UTC)
-    if row is None:
-        session.add(
-            ExtSyncFailure(action_item_id=action_item_id, system=system, kind=kind, failed_at=when)
+    # One upsert, not get-then-add: two syncs failing at once (an edit and a
+    # retry) used to both add, and the second hit the primary key and was
+    # lost (PARKJAEKYUNG0525, review of #754).
+    insert = postgresql.insert if session.get_bind().dialect.name == "postgresql" else sqlite.insert
+    statement = insert(ExtSyncFailure).values(
+        action_item_id=action_item_id, system=system, kind=kind, failed_at=when
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["action_item_id", "system"],
+            set_={"kind": statement.excluded.kind, "failed_at": statement.excluded.failed_at},
         )
-    else:
-        row.kind, row.failed_at = kind, when
+    )
     session.flush()
 
 
