@@ -64,7 +64,8 @@ TABLES = [
     ExtNotionTarget.__table__,
     # ``has_copy_outside`` counts a calendar event as a copy (#672).
     ExtCalendarEvent.__table__,
-    # A create that timed out is looked for before a second one (#754 review).
+    # An edit's answer carries the item's standing failures (review of #754),
+    # and a create that timed out is looked for before a second one.
     ExtSyncFailure.__table__,
 ]
 

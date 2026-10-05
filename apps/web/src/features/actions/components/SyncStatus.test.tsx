@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/shared/api/client";
+
 import { ActionCard } from "./ActionCard";
 import { SyncStatus, calendarLine } from "./SyncStatus";
 import type { ActionItemRead, CalendarState, SyncFailure } from "../types";
@@ -57,6 +59,19 @@ describe("SyncStatus", () => {
     expect(line.className).toContain("color-signal-critical");
   });
 
+  it.each([
+    ["notion", "Notion에서 먼저 확인"],
+    ["jira", "Jira에서 먼저 확인"],
+    ["calendar", "캘린더에서 먼저 확인"],
+  ] as const)("after no answer, asks to look in %s first: the copy may be there", (system, words) => {
+    // A create that timed out may have arrived; a retry would make a second
+    // (review of #754).
+    const failure: SyncFailure = { ...JIRA_DOWN, system, kind: "unreachable" };
+    render(<SyncStatus item={item([failure])} calendar={null} />);
+
+    expect(screen.getByText(/응답이 없었습니다/).textContent).toContain(words);
+  });
+
   it("queues the sync again and says only that it was sent", async () => {
     retry.mockResolvedValue({ queued: true });
     render(<SyncStatus item={item([JIRA_DOWN])} calendar={null} />);
@@ -67,6 +82,27 @@ describe("SyncStatus", () => {
     expect(retry).toHaveBeenCalledExactlyOnceWith("act_1");
     // The failure line stays: nothing here knows yet whether it went through.
     expect(screen.getByText(/Jira 연동 실패/)).toBeTruthy();
+  });
+
+  it("does not offer a second press after a send", async () => {
+    retry.mockResolvedValue({ queued: true });
+    render(<SyncStatus item={item([JIRA_DOWN])} calendar={null} />);
+
+    const button = screen.getByRole("button", { name: "다시 시도" }) as HTMLButtonElement;
+    fireEvent.click(button);
+    await screen.findByRole("status");
+
+    expect(button.disabled).toBe(true);
+  });
+
+  it("says when the server refuses a press inside its cooldown", async () => {
+    retry.mockRejectedValue(new ApiError(429, "retry_too_soon", "this item was sent again"));
+    render(<SyncStatus item={item([JIRA_DOWN])} calendar={null} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("30초 뒤");
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("does not claim a resend the server did not queue", async () => {

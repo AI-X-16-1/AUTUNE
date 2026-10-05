@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, Request
@@ -273,6 +273,40 @@ def test_the_jira_sync_says_which_skip_it_was(
     assert SYNC_ACTION_ITEM_JIRA("act_1") == expected
 
 
+def test_a_corrected_line_or_deleted_speech_syncs_through_the_same_bookkeeping(
+    session: Session, sends: dict
+) -> None:
+    """PARKJAEKYUNG0525, review of #754: those paths used to queue the three
+    syncs directly, so their failures were neither kept nor cleared. They now
+    queue ``sync_item_copies``, which is the edit's path on the worker."""
+    item(session)
+    sends["notion"] = TransientIntegrationError("timed out")
+
+    tasks.sync_item_copies("act_1")
+
+    assert kept(session) == {"notion": "unreachable"}
+
+    sends["notion"] = None
+    tasks.sync_item_copies("act_1")
+
+    assert kept(session) == {}
+
+
+def test_two_first_failures_at_once_keep_the_latest_and_lose_nothing(session: Session) -> None:
+    """Review of #754: the second of two first failures used to hit the primary
+    key and be dropped. It is one upsert now."""
+    item(session)
+    first = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+    later = datetime(2026, 10, 2, 1, 5, tzinfo=UTC)
+
+    sync_state.record_failure(session, "act_1", "jira", "unreachable", now=first)
+    sync_state.record_failure(session, "act_1", "jira", "reconnect", now=later)
+
+    session.expire_all()
+    (row,) = session.scalars(select(ExtSyncFailure)).all()
+    assert (row.kind, row.failed_at.replace(tzinfo=UTC)) == ("reconnect", later)
+
+
 def test_a_team_without_jira_has_nothing_to_keep(session: Session, sends: dict) -> None:
     item(session)
     sends["jira"] = TransientIntegrationError("down")
@@ -364,6 +398,45 @@ def test_the_list_and_the_detail_carry_the_failure(client: TestClient, session: 
         assert entry["failed_at"].startswith("2026-10-02T01:00:00")
 
 
+def test_an_edit_answers_with_the_failure_and_the_copy_still_there(
+    client: TestClient, session: Session
+) -> None:
+    """Review of #754: the board replaces its card with the edit's answer, so an
+    answer without them made the link and the red mark vanish until a reload."""
+    item(session)
+    session.add(
+        ExtExternalRef(
+            action_item_id="act_1",
+            system="notion",
+            meeting_id=MEETING,
+            external_id="page-1",
+            url="https://www.notion.so/page1",
+        )
+    )
+    session.commit()
+    failure(session)
+
+    edited = client.patch(
+        f"{PREFIX}/action-items/act_1", json={"description": "스펙 초안 공유하기"}
+    )
+
+    assert edited.status_code == 200
+    body = edited.json()
+    assert [(f["system"], f["kind"]) for f in body["sync_failures"]] == [("jira", "reconnect")]
+    assert [r["system"] for r in body["sync_refs"]] == ["notion"]
+
+
+def test_an_edit_shows_a_calendar_failure_to_its_assignee_only(
+    client: TestClient, session: Session
+) -> None:
+    item(session)  # assigned to KIM, not the reader
+    failure(session, system="calendar", kind="reconnect")
+
+    body = client.patch(f"{PREFIX}/action-items/act_1", json={"description": "고침"}).json()
+
+    assert body["sync_failures"] == []
+
+
 def test_a_draft_with_nothing_outside_shows_no_failure(
     client: TestClient, session: Session
 ) -> None:
@@ -421,6 +494,35 @@ def test_retry_queues_the_same_sync_an_edit_does(
     assert response.status_code == 202
     assert response.json() == {"queued": True}
     assert ran == ["act_1"]
+
+
+def test_a_second_press_within_the_cooldown_is_refused(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """lsh2217, review of #754: each press runs Notion, the calendar and Jira
+    once more, so a second one inside ``RETRY_COOLDOWN`` runs nothing."""
+    item(session)
+    ran: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", ran.append)
+
+    first = client.post(f"{PREFIX}/action-items/act_1/sync")
+    second = client.post(f"{PREFIX}/action-items/act_1/sync")
+
+    assert first.status_code == 202
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "retry_too_soon"
+    assert ran == ["act_1"]
+
+
+def test_a_press_after_the_cooldown_goes(session: Session) -> None:
+    item(session)
+    start = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+
+    assert sync_state.claim_retry(session, "act_1", now=start)
+    assert not sync_state.claim_retry(session, "act_1", now=start + timedelta(seconds=29))
+    assert sync_state.claim_retry(
+        session, "act_1", now=start + sync_state.RETRY_COOLDOWN + timedelta(seconds=1)
+    )
 
 
 def test_an_item_never_confirmed_has_nothing_to_retry(

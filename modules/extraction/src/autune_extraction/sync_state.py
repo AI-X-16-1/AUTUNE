@@ -23,22 +23,54 @@ calendar copy -- is said to the assignee and to nobody else.
 from __future__ import annotations
 
 from collections.abc import Collection
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, PrivacyViolationError, TeamMember, users_with_integration
+from autune_core.errors import AutuneError
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_integrations import ReconnectRequiredError, TransientIntegrationError
 
-from .models import ExtActionItem, ExtCalendarEvent, ExtExternalRef, ExtSyncFailure
+from .models import ExtActionItem, ExtCalendarEvent, ExtExternalRef, ExtSyncFailure, ExtSyncRetry
 from .schemas import CalendarState, SyncFailureRead
 
 NOTION, JIRA, CALENDAR = "notion", "jira", "calendar"
 
 PRIVACY, RECONNECT, UNREACHABLE, REJECTED = "privacy", "reconnect", "unreachable", "rejected"
+
+
+RETRY_COOLDOWN = timedelta(seconds=30)
+"""How long after one "다시 시도" for an item the next is refused (lsh2217,
+review of #754). Each press runs Notion, the calendar and Jira once more; the
+sync itself takes seconds, so a press sooner than this cannot know more."""
+
+
+class RetryTooSoonError(AutuneError):
+    code = "retry_too_soon"
+    status_code = 429
+
+
+def claim_retry(session: Session, action_item_id: str, *, now: datetime | None = None) -> bool:
+    """Whether a retry of this item may go now; records it when so.
+
+    One statement, so two presses at once cannot both pass: insert the time,
+    or replace the stored one only when it is older than ``RETRY_COOLDOWN``,
+    and see whether a row came back."""
+    when = now or datetime.now(tz=UTC)
+    insert = postgresql.insert if session.get_bind().dialect.name == "postgresql" else sqlite.insert
+    statement = insert(ExtSyncRetry).values(action_item_id=action_item_id, retried_at=when)
+    claimed = session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["action_item_id"],
+            set_={"retried_at": statement.excluded.retried_at},
+            where=ExtSyncRetry.retried_at <= when - RETRY_COOLDOWN,
+        ).returning(ExtSyncRetry.action_item_id)
+    ).first()
+    return claimed is not None
 
 
 def kind_of(exc: BaseException) -> str:
@@ -66,14 +98,20 @@ def record_failure(
     whatever was kept before. Nothing is written for an item that is gone."""
     if session.get(ExtActionItem, action_item_id) is None:
         return
-    row = session.get(ExtSyncFailure, (action_item_id, system))
     when = now or datetime.now(tz=UTC)
-    if row is None:
-        session.add(
-            ExtSyncFailure(action_item_id=action_item_id, system=system, kind=kind, failed_at=when)
+    # One upsert, not get-then-add: two syncs failing at once (an edit and a
+    # retry) used to both add, and the second hit the primary key and was
+    # lost (PARKJAEKYUNG0525, review of #754).
+    insert = postgresql.insert if session.get_bind().dialect.name == "postgresql" else sqlite.insert
+    statement = insert(ExtSyncFailure).values(
+        action_item_id=action_item_id, system=system, kind=kind, failed_at=when
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=["action_item_id", "system"],
+            set_={"kind": statement.excluded.kind, "failed_at": statement.excluded.failed_at},
         )
-    else:
-        row.kind, row.failed_at = kind, when
+    )
     session.flush()
 
 
