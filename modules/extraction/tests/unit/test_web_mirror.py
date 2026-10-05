@@ -45,6 +45,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
         "project_id",
         "is_candidate",
         "sync_refs",
+        "sync_failures",
         "summary",
         "assignee_name",
         "description_resolved",
@@ -60,7 +61,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
 def test_the_web_detail_mirror_is_current() -> None:
     added = set(ActionItemDetail.model_fields) - set(ActionItemRead.model_fields)
 
-    assert added == {"sources", "context", "related", "history", "confirmation_dm_url"}
+    assert added == {"sources", "context", "related", "history", "calendar", "confirmation_dm_url"}
     assert ts_fields("ActionItemDetail") == added, f"update {TYPES_TS}"
     assert ts_fields("SourceUtterance") == set(SourceUtterance.model_fields), f"update {TYPES_TS}"
     assert ts_fields("EditHistoryEntry") == set(EditHistoryEntry.model_fields), f"update {TYPES_TS}"

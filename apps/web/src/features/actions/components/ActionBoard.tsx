@@ -4,11 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
+import { BulkTriage } from "./BulkTriage";
 import { CandidateBand } from "./CandidateBand";
 import { CONFIRMED_NOTICE, canDrop, confirms, groupForBoard } from "../board";
 import { useCardContext } from "../hooks/useCardContext";
 import { COLUMNS, COLUMN_LABELS } from "../types";
-import type { ActionItemDraft } from "../api";
+import type { ActionItemDraft, BulkActionResult } from "../api";
 import type { Moves } from "../board";
 import type { ActionItemRead, ActionStatus } from "../types";
 
@@ -46,6 +47,10 @@ import type { ActionItemRead, ActionStatus } from "../types";
  * that a person who meant only to tidy the board learns that this move was
  * the one that sends the item on. It offers no undo -- whether one can be
  * honoured once a copy has left is not settled.
+ *
+ * **The card whose detail window is open (`selectedId`) cannot be dragged**
+ * (#712): its status select is right beside it, and a drop and a pick racing
+ * each other would end on whichever request landed last.
  */
 export function ActionBoard({
   items,
@@ -54,6 +59,7 @@ export function ActionBoard({
   add,
   showMeeting = false,
   onMove,
+  onBulk,
 }: {
   items: ActionItemRead[];
   selectedId?: string;
@@ -63,6 +69,11 @@ export function ActionBoard({
   showMeeting?: boolean;
   /** Set an item's status. Rejects when the server refused, leaving it where it was. */
   onMove?: (id: string, status: ActionStatus) => Promise<unknown>;
+  /**
+   * Confirm or delete several 확인 필요 items at once (2026-10-04). When set,
+   * that column's cards get a checkbox and the column a bar to act on them.
+   */
+  onBulk?: (ids: string[], action: "confirm" | "delete") => Promise<BulkActionResult>;
 }) {
   // Drawn in the column it was dropped on while the request is in flight, so
   // the card does not spring back and then jump; see `Moves`.
@@ -73,6 +84,9 @@ export function ActionBoard({
   // that only slid back would say nothing (review of #292).
   const [failure, setFailure] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // What is ticked in 확인 필요, for the bulk bar.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   // The board's own state changes a tick after `dragstart`, not inside it: a
   // re-render of the card while the browser is still starting the drag
   // cancels the drag in some versions of Chrome (review of #710).
@@ -103,6 +117,31 @@ export function ActionBoard({
       setMoves((current) =>
         Object.fromEntries(Object.entries(current).filter(([moving]) => moving !== id)),
       );
+    }
+  };
+
+  const drafts = byColumn.needs_confirmation;
+  const bulk = async (action: "confirm" | "delete") => {
+    if (onBulk === undefined) return;
+    const ids = drafts.filter((item) => picked.has(item.id)).map((item) => item.id);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    setFailure(null);
+    setNotice(null);
+    try {
+      const done = await onBulk(ids, action);
+      setPicked(new Set());
+      const count = action === "confirm" ? done.confirmed.length : done.deleted.length;
+      const skipped = done.skipped.length > 0 ? ` ${done.skipped.length}개는 이미 바뀌어 건너뛰었습니다.` : "";
+      setNotice(
+        (action === "confirm"
+          ? `${count}개를 확정했습니다. 팀이 연결한 도구가 있으면 그쪽에도 반영됩니다.`
+          : `${count}개를 삭제했습니다.`) + skipped,
+      );
+    } catch {
+      setFailure("한 번에 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setBulkBusy(false);
     }
   };
 
@@ -178,10 +217,23 @@ export function ActionBoard({
                   {byColumn[status].length}
                 </span>
               </header>
+              {onBulk !== undefined && status === "needs_confirmation" ? (
+                <BulkTriage
+                  total={drafts.length}
+                  picked={drafts.filter((item) => picked.has(item.id)).length}
+                  busy={bulkBusy}
+                  onPickAll={(all) =>
+                    setPicked(all ? new Set(drafts.map((item) => item.id)) : new Set())
+                  }
+                  onConfirm={() => void bulk("confirm")}
+                  onDelete={() => void bulk("delete")}
+                />
+              ) : null}
 
               {/* A floor, so an empty column is still somewhere to drop. */}
               <div className="mt-3 grid content-start gap-2" style={{ minHeight: "var(--space-48)" }}>
-                {byColumn[status].map((item) => (
+                {byColumn[status].map((item) => {
+                  const card = (
                   <ActionCard
                     key={item.id}
                     item={item}
@@ -190,7 +242,10 @@ export function ActionBoard({
                     showMeeting={showMeeting}
                     context={context[item.id]}
                     drag={
-                      onMove === undefined
+                      // Its detail window is open: its status is changed there.
+                      // Two ways at once would send two PATCHes and the last to
+                      // land would win (#712).
+                      onMove === undefined || item.id === selectedId
                         ? undefined
                         : {
                             moving: item.id in moves,
@@ -210,7 +265,28 @@ export function ActionBoard({
                           }
                     }
                   />
-                ))}
+                  );
+                  if (onBulk === undefined || status !== "needs_confirmation") return card;
+                  return (
+                    <div key={item.id} className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-3"
+                        aria-label={`${item.description} 선택`}
+                        checked={picked.has(item.id)}
+                        onChange={(event) =>
+                          setPicked((now) => {
+                            const next = new Set(now);
+                            if (event.target.checked) next.add(item.id);
+                            else next.delete(item.id);
+                            return next;
+                          })
+                        }
+                      />
+                      <div className="min-w-0 flex-1">{card}</div>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           );

@@ -162,6 +162,22 @@ browser cannot sign them in as whoever started it. Redis proves a state was
 issued; the cookie is what proves to whom.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
+**Google flows also carry PKCE** (#704). Sign-in and the personal connects
+send an S256 `code_challenge`; the verifier waits in the same Redis entry as
+the `state` and goes out only with the code exchange, so a code lifted off the
+redirect is worthless elsewhere, even with the client secret. Nothing to
+configure: Google accepts PKCE from a web client as it is. Atlassian, Notion
+and Slack are sent no challenge yet: whether each accepts one from a
+confidential client has to be checked against a real app per provider first,
+and until then `state` with the cookie above binds their callbacks.
+
+**A connect that stores a token checks the encryption key before it spends
+the code** (#593, #704). Calendar, Jira, Notion and Slack callbacks all fail
+on a missing or broken `AUTUNE_ENCRYPTION_KEY` before the provider is asked,
+so no grant is issued that nothing keeps; the screen shows the connect as
+failed. Their start endpoints check it too, so nobody is sent through a
+consent screen that cannot succeed.
+
 **Signing out ends the person's sessions on the server, on every device.**
 `POST /logout` writes the moment on the person's row
 (`users.sessions_valid_from`) and clears the cookie; from then on
@@ -243,6 +259,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting claim (`live/registry.py`) is per process: a second worker lets a second session onto the same meeting, and accepts an upload the other worker's open socket should have refused (409) |
 | `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
+| `AUTUNE_AUDIO_HEARTBEAT_INTERVAL_S` | A | How often a running transcription writes its heartbeat and checks whether it was cancelled. Default `30` |
+| `AUTUNE_AUDIO_STALL_AFTER_S` | A | A running transcription whose heartbeat is older than this has no worker and may be restarted. Default `120` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` | A | Exactly how many people spoke, when the room knows (#325). Unset by default: pyannote clusters freely, and a wrong number is worse than none. Deployment-wide for now; the per-meeting field comes with S10. Must be ≥ 1; the settings refuse to load otherwise |
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |

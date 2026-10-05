@@ -21,7 +21,16 @@ export interface DashboardRead {
   meeting_count: number;
   average_score: number | null;
   average_grade: Grade | null;
+  /**
+   * Done over confirmed across the team's meetings held in the last four
+   * weeks, from B's latest counts (#605). `null` with `action_progress_as_of` when those are missing or
+   * stale; `null` alone when nothing is confirmed.
+   */
   action_item_completion_rate: number | null;
+  overdue_action_items: number | null;
+  action_progress_as_of: string | null;
+  /** The quality score's share of items that got confirmed -- not completion. */
+  action_item_confirmation_rate: number | null;
   /** Scoped to the trailing eight weeks — not the N most recent meetings. */
   recent_scores: DashboardScoreEntry[];
   gap_distribution: Record<string, number>;
