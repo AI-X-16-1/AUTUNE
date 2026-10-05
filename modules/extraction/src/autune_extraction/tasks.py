@@ -1136,9 +1136,13 @@ def summarise_confirmed_draft(utterance_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.sync_action_item", acks_late=True)
-def sync_action_item(action_item_id: str) -> None:
+def sync_action_item(action_item_id: str) -> str:
     """Step 7 for one item past confirmation: create its Notion page the
     first time, update the same page every edit after (#30, #342).
+
+    Returns what happened, for ``sync_after_confirmation`` to keep or clear
+    the board's failure: ``COPY_SENT``, ``COPY_GONE`` (no such item) or
+    ``COPY_NOT_CONNECTED``.
 
     Runs whenever the board changes an item that has already left
     ``needs_confirmation`` (``sync_after_confirmation``), never before: nothing
@@ -1165,7 +1169,7 @@ def sync_action_item(action_item_id: str) -> None:
         meeting = session.get(Meeting, item.meeting_id) if item is not None else None
         if item is None or meeting is None:
             log.info("extraction_notion_item_gone", action_item_id=action_item_id)
-            return
+            return COPY_GONE
         config = load_integration(session, meeting.team_id, "notion")
         database_id = notion_setup.database_id(session, meeting.team_id, config, "action_db_id")
         if config is None or not config.secret or not database_id:
@@ -1179,7 +1183,7 @@ def sync_action_item(action_item_id: str) -> None:
                 action_item_id=action_item_id,
                 team_id=meeting.team_id,
             )
-            return
+            return COPY_NOT_CONNECTED
         service.sync_action_item_to_notion(
             session,
             NotionClient(config.secret),
@@ -1187,6 +1191,19 @@ def sync_action_item(action_item_id: str) -> None:
             database_id=database_id,
             property_names=config.config.get("action_properties"),
         )
+    return COPY_SENT
+
+
+COPY_SENT, COPY_GONE, COPY_NOT_CONNECTED = "sent", "gone", "not_connected"
+COPY_NOT_NEEDED = "not_needed"
+"""What a sync of one item to a tool did. ``COPY_NOT_CONNECTED`` is a skip, and
+it is not "the copy went": a team that disconnected Notion or Jira may still
+have the item's page or issue there, and a person who disconnected their
+calendar still has the item's event on it, saying what it said -- nothing this
+run did changed that. So a failure standing for the copy is kept, not cleared
+(mkkim68, reviews of #774 and #823; the user's call, 2026-10-05).
+``COPY_NOT_NEEDED`` is the calendar's "this item gets no event": nothing is
+outside, and nothing stands to be kept."""
 
 
 def sync_after_confirmation(action_item_id: str) -> None:
@@ -1211,9 +1228,19 @@ def sync_after_confirmation(action_item_id: str) -> None:
     it would crash this background task instead of logging gracefully, the
     same silent failure an unhandled ``IntegrationError`` would be (review,
     #333).
+
+    **Each of the three is on its own, whatever it raises** (mkkim68, review of
+    #774). The named errors above are the ones a tool or the outbound check
+    gives; anything else -- a database error, a claim that lost a race --
+    used to leave this function at the first copy, so the two after it were
+    never tried and nothing was recorded for any of them. On the paths that
+    run this without a person watching (a corrected line, deleted speech)
+    that meant a deleted sentence could stay in Jira or on a calendar with no
+    mark on the card. Now the copy that broke is recorded as failed, by the
+    error's class only, and the next one runs.
     """
     try:
-        sync_action_item(action_item_id)
+        went = sync_action_item(action_item_id)
     except IntegrationError as exc:
         log.warning("extraction_notion_sync_failed", action_item_id=action_item_id)
         _sync_failed(action_item_id, sync_state.NOTION, exc)
@@ -1222,12 +1249,15 @@ def sync_after_confirmation(action_item_id: str) -> None:
             "extraction_notion_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
         _sync_failed(action_item_id, sync_state.NOTION, exc)
+    except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
+        _sync_broke(action_item_id, sync_state.NOTION, exc)
     else:
-        _sync_went(action_item_id, sync_state.NOTION)
+        if went != COPY_NOT_CONNECTED:
+            _sync_went(action_item_id, sync_state.NOTION)
     # Separately, so a Notion failure never costs the calendar its event and
     # the other way round.
     try:
-        sync_action_item_calendar(action_item_id)
+        on_calendar = sync_action_item_calendar(action_item_id)
     except IntegrationError as exc:
         log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
         _sync_failed(action_item_id, sync_state.CALENDAR, exc)
@@ -1236,8 +1266,11 @@ def sync_after_confirmation(action_item_id: str) -> None:
             "extraction_calendar_sync_blocked_by_privacy_guard", action_item_id=action_item_id
         )
         _sync_failed(action_item_id, sync_state.CALENDAR, exc)
+    except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
+        _sync_broke(action_item_id, sync_state.CALENDAR, exc)
     else:
-        _sync_went(action_item_id, sync_state.CALENDAR)
+        if on_calendar != COPY_NOT_CONNECTED:
+            _sync_went(action_item_id, sync_state.CALENDAR)
     # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
     # (``JiraReconnectRequiredError``) as well as integration errors.
     try:
@@ -1245,6 +1278,8 @@ def sync_after_confirmation(action_item_id: str) -> None:
     except AutuneError as exc:
         log.warning("extraction_jira_sync_failed", action_item_id=action_item_id, error=exc.code)
         _sync_failed(action_item_id, sync_state.JIRA, exc)
+    except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
+        _sync_broke(action_item_id, sync_state.JIRA, exc)
     else:
         if outcome == JIRA_NEEDS_RECONNECT:
             # Skipped, but not because there was nothing to send: the grant was
@@ -1253,7 +1288,7 @@ def sync_after_confirmation(action_item_id: str) -> None:
             # take the red mark off an item Jira never got (PARKJAEKYUNG0525,
             # review of #754).
             _record_failure(action_item_id, sync_state.JIRA, sync_state.RECONNECT)
-        else:
+        elif outcome != COPY_NOT_CONNECTED:
             _sync_went(action_item_id, sync_state.JIRA)
     # The project minutes it is in, when they went out: put back, edited.
     _refresh_minutes_for(item_ids=[action_item_id])
@@ -1282,6 +1317,19 @@ def _sync_failed(action_item_id: str, system: str, exc: BaseException) -> None:
     hiccup here must not turn into a crashed background task; it is logged by
     type and the card simply goes on saying nothing."""
     _record_failure(action_item_id, system, sync_state.kind_of(exc))
+
+
+def _sync_broke(action_item_id: str, system: str, exc: BaseException) -> None:
+    """A copy ended in something no tool raises: said loudly, by the error's
+    class and never its message, and kept as a failure like any other so the
+    card shows it and "다시 시도" can run it again. Never raises."""
+    log.error(
+        "extraction_copy_sync_broke",
+        action_item_id=action_item_id,
+        system=system,
+        error=type(exc).__name__,
+    )
+    _sync_failed(action_item_id, system, exc)
 
 
 def _record_failure(action_item_id: str, system: str, kind: str) -> None:
@@ -1317,7 +1365,9 @@ def _sync_went(action_item_id: str, system: str) -> None:
 JIRA_SENT, JIRA_SKIPPED, JIRA_NEEDS_RECONNECT = "sent", "skipped", "needs_reconnect"
 """What ``sync_action_item_jira`` did, for ``sync_after_confirmation`` to keep
 or clear the board's failure: a skip because the team's grant needs a person to
-reconnect is not a skip because there was nothing to send (review of #754)."""
+reconnect is not a skip because there was nothing to send (review of #754).
+``JIRA_SKIPPED`` is the item being gone; a team with no Jira connection or no
+project chosen answers ``COPY_NOT_CONNECTED``, as the Notion sync does."""
 
 
 @shared_task(name="autune.extraction.sync_action_item_jira", acks_late=True)
@@ -1346,7 +1396,7 @@ def sync_action_item_jira(action_item_id: str) -> str:
                 log.info("extraction_jira_needs_reconnect", action_item_id=action_item_id)
                 return JIRA_NEEDS_RECONNECT
             log.info("extraction_jira_not_connected", action_item_id=action_item_id)
-            return JIRA_SKIPPED
+            return COPY_NOT_CONNECTED
         client = JiraClient.for_cloud(access.access_token, access.cloud_id)
         try:
             jira_sync.sync_action_item_to_jira(
@@ -1416,7 +1466,7 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
 
 
 @shared_task(name="autune.extraction.sync_action_item_calendar", acks_late=True)
-def sync_action_item_calendar(action_item_id: str) -> None:
+def sync_action_item_calendar(action_item_id: str) -> str:
     """Step 7's calendar half (#435): the item's due date on its assignee's own
     calendar -- ``calendar_sync.sync_due_date_to_calendar``.
 
@@ -1424,11 +1474,28 @@ def sync_action_item_calendar(action_item_id: str) -> None:
     for a deployment without Google client credentials (``_calendars``). Like
     the Notion sync it does not retry itself: a timed-out create may have made
     the event, and a retry would make a second.
+
+    Returns what happened, as the Notion and Jira syncs do (mkkim68, review of
+    #823): ``COPY_SENT`` when the event was written; ``COPY_NOT_NEEDED`` when
+    the item has no event and gets none -- no date, no assignee with an
+    account, not confirmed, or a calendar that was never connected;
+    ``COPY_NOT_CONNECTED`` when **an event of this item is still on its
+    assignee's calendar and could not be reached** -- they disconnected, or
+    the deployment lost its Google client. That last one is read off the row:
+    the sync deletes the row whenever the event's owner is no longer the
+    item's, so a row left after a sync that wrote nothing is an event on the
+    right person's calendar that still says what it said.
     """
     with session_scope() as session, _calendars(session) as calendar_for:
-        calendar_sync.sync_due_date_to_calendar(
+        written = calendar_sync.sync_due_date_to_calendar(
             session, calendar_for, action_item_id=action_item_id
         )
+        if written is not None:
+            return COPY_SENT
+        if session.get(ExtCalendarEvent, action_item_id) is not None:
+            log.info("extraction_calendar_event_unreachable", action_item_id=action_item_id)
+            return COPY_NOT_CONNECTED
+        return COPY_NOT_NEEDED
 
 
 CALENDAR_POLL_OVERLAP = timedelta(minutes=2)
