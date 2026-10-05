@@ -82,7 +82,7 @@ Web: `cd apps/web && pnpm install && pnpm test && pnpm run typecheck && pnpm run
 
 Create `modules/audio/tests/integration/test_cancel_restart.py`:
 
-```python
+```text
 """Cancelling and restarting a transcription (spec 2026-10-02).
 
 A worker that dies leaves its meeting ``analyzing`` with nobody coming; a wrong
@@ -139,7 +139,7 @@ Expected: FAIL — `TypeError: 'heartbeat_at' is an invalid keyword argument for
 
 `modules/audio/migrations/20261002_1200_aud_jobs_cancel_and_heartbeat.py`:
 
-```python
+```text
 """cancelled status and heartbeat_at on aud_jobs
 
 A worker that dies mid-job left its meeting analyzing forever, and a wrong
@@ -189,7 +189,7 @@ Before writing it, confirm the head: `grep -rln "d2e8b04f6a17" modules/audio/mig
 
 In `models.py`, `TranscriptionJob.__table_args__`, change the status constraint to:
 
-```python
+```text
         CheckConstraint(
             "status IN ('queued','running','done','failed','superseded','cancelled')",
             name="ck_aud_jobs_status",
@@ -198,7 +198,7 @@ In `models.py`, `TranscriptionJob.__table_args__`, change the status constraint 
 
 and add after `stage_progress`:
 
-```python
+```text
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     """Written by the worker's ``JobGuard`` when it claims the job and every
     ``heartbeat_interval_s`` after. A ``running`` job whose heartbeat is older
@@ -209,7 +209,7 @@ Also add `cancelled` to the class docstring's list of statuses that set `finishe
 
 In `config.py`, after `orphan_after_hours`:
 
-```python
+```text
     heartbeat_interval_s: float = 30.0
     """How often a running job's ``JobGuard`` writes ``aud_jobs.heartbeat_at``
     and reads back whether it has been cancelled or superseded. Also the
@@ -271,7 +271,7 @@ git commit -m "feat(audio): aud_jobs can be cancelled and carries a heartbeat"
 
 `modules/audio/tests/unit/test_job_guard.py`:
 
-```python
+```text
 """The worker's heartbeat, and how it hears a cancel.
 
 The beat is injected: these tests are about what the guard does with the
@@ -353,7 +353,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'autune_audio.job_guard
 
 - [ ] **Step 3: Write `job_guard.py`**
 
-```python
+```text
 """The worker's heartbeat, and the way a cancel reaches a running task.
 
 A thread writes ``aud_jobs.heartbeat_at`` every ``interval_s`` and reads the
@@ -491,7 +491,7 @@ git commit -m "feat(audio): a job guard writes the heartbeat and hears a cancel"
 
 - [ ] **Step 1: Write the failing tests** (append to `test_progress.py`)
 
-```python
+```text
 class Stop(Exception):
     pass
 
@@ -553,7 +553,7 @@ In `ProgressReporter.__init__`, add the keyword parameter `check: Callable[[], N
 
 Change `stage` and `update`:
 
-```python
+```text
     def stage(self, name: str) -> None:
         """Enter a step. Written immediately, at 0. Asks ``check`` first, so a
         cancelled job stops before it starts the next step."""
@@ -602,7 +602,7 @@ git commit -m "feat(audio): progress callbacks ask whether the job should stop"
 
 The task's own `session_scope` is replaced by the fixture, but the guard's default beat opens a real one, which would see no committed row and stop every job. In `test_tasks.py`, add `from autune_audio.job_guard import JobGuard, beat_with` to the imports, and inside the `pipeline` fixture, before `yield state`:
 
-```python
+```text
     guards: list[JobGuard] = []
 
     def guard_on_test_session(job_id: str, *, interval_s: float) -> JobGuard:
@@ -621,7 +621,7 @@ Expected: FAIL — `AttributeError: <module 'autune_audio.tasks'> has no attribu
 
 - [ ] **Step 2: Write the failing behaviour tests** (append to `test_tasks.py`)
 
-```python
+```text
 def _cancel_during(pipeline: dict, db_session: Session, job: str, status: str) -> None:
     """Make the fake recogniser flip the job, then hear it, mid-pass."""
     original = pipeline["transcription"]
@@ -738,7 +738,7 @@ Expected: FAIL (the `JobGuard` attribute error from Step 1).
 
 In `service.py`, import `from .job_guard import JobStopped` and add after `mark_complete`:
 
-```python
+```text
 def lock_running_job(session: Session, *, job_id: str) -> None:
     """The fence in front of the transcript write: this attempt is still the
     current one, and stays so until the transaction ends.
@@ -770,7 +770,7 @@ def lock_running_job(session: Session, *, job_id: str) -> None:
 
 In `tasks.py` add `from .job_guard import JobGuard, JobStopped`. Replace the block from `report = ProgressReporter(job_id)` through the end of the `except Exception` handler with:
 
-```python
+```text
     with JobGuard(job_id, interval_s=settings.heartbeat_interval_s) as guard:
         report = ProgressReporter(job_id, check=guard.check)
         try:
@@ -827,7 +827,7 @@ git commit -m "feat(audio): a cancelled or superseded run stops, and writes noth
 
 - [ ] **Step 1: Write the failing tests**
 
-```python
+```text
 def test_a_restarted_attempt_does_not_get_six_more_hours(
     pipeline: dict,
     db_session: Session,
@@ -875,7 +875,7 @@ Expected: `test_a_restarted_attempt_does_not_get_six_more_hours` FAILS (file sti
 
 In `sweep_orphans`, change:
 
-```python
+```text
         elif job.status in ("queued", "running"):
             if job.created_at >= cutoff:
                 continue
@@ -883,7 +883,7 @@ In `sweep_orphans`, change:
 
 to:
 
-```python
+```text
         elif job.status in ("queued", "running"):
             # The earlier of the job and the file: a restart makes a new job
             # for an old upload, and must not grant it another window
@@ -928,7 +928,7 @@ git commit -m "fix(audio): an upload's six hours run from the upload, not the la
 
 Add imports at the top of the file:
 
-```python
+```text
 from pathlib import Path
 
 import pytest
@@ -946,7 +946,7 @@ from autune_core.errors import PermissionDeniedError
 
 Fixtures and tests:
 
-```python
+```text
 @pytest.fixture
 def member(db_session: Session, team: str) -> User:
     user = User(email="member@example.com", display_name="팀원")
@@ -1108,7 +1108,7 @@ Expected: FAIL — `AttributeError: module 'autune_audio.service' has no attribu
 
 In `service.py` (after `mark_published`):
 
-```python
+```text
 # --------------------------------------------------------------------------- #
 # Cancel and restart (spec 2026-10-02)
 # --------------------------------------------------------------------------- #
@@ -1189,7 +1189,7 @@ def cancel_transcription(
 
 In `router.py`, after `upload_recording`:
 
-```python
+```text
 @router.post("/meetings/{meeting_id}/transcription/cancel", response_model=MeetingState)
 def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingState:
     """Stop the meeting's transcription (S12 "처리 취소"). The meeting is
@@ -1235,7 +1235,7 @@ git commit -m "feat(audio): a transcription in progress can be cancelled"
 
 Add `import os` to the imports, and the broker stand-in from `test_upload.py`:
 
-```python
+```text
 class Enqueued:
     def __init__(self) -> None:
         self.sent: list[tuple[str, list[object]]] = []
@@ -1398,7 +1398,7 @@ Expected: FAIL — `AttributeError: module 'autune_audio.service' has no attribu
 
 After `cancel_transcription`:
 
-```python
+```text
 class NotStalledError(ConflictError):
     code = "not_stalled"
 
@@ -1466,7 +1466,7 @@ def restart_transcription(
 
 In `router.py`, add `from . import storage` to the `from . import ...` line, and after the cancel route:
 
-```python
+```text
 @router.post(
     "/meetings/{meeting_id}/transcription/restart",
     response_model=MeetingState,
@@ -1528,7 +1528,7 @@ git commit -m "feat(audio): a stalled transcription restarts from the upload sti
 
 - [ ] **Step 1: Write the failing tests**
 
-```python
+```text
 # --- flags --------------------------------------------------------------------
 
 
@@ -1613,7 +1613,7 @@ Expected: FAIL — `KeyError: 'cancellable'`.
 
 `schemas.py`, in `MeetingDetail` after `stage_progress`:
 
-```python
+```text
     stalled: bool = False
     """The running attempt's worker stopped writing its heartbeat
     (``service.is_stalled``). The screen offers 다시 시작 or 취소."""
@@ -1627,7 +1627,7 @@ Expected: FAIL — `KeyError: 'cancellable'`.
 
 `service.py`, after `restart_transcription`:
 
-```python
+```text
 class TranscriptionControls(NamedTuple):
     stalled: bool
     restartable: bool
@@ -1656,7 +1656,7 @@ def transcription_controls(
 
 `router.py`, in `get_meeting`, after `stage, stage_progress = ...`:
 
-```python
+```text
     controls = service.transcription_controls(
         session, meeting=meeting, settings=get_audio_settings()
     )
