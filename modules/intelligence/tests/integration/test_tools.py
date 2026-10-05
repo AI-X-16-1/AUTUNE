@@ -149,6 +149,38 @@ def test_team_trend_keeps_the_five_newest_meetings_and_says_it_cut(
     assert "7" in result["summary"]
 
 
+def test_team_trend_names_both_rates_and_keeps_them_apart(db_session: Session, team: str) -> None:
+    """확정률 is the quality score's; 완료율 is B's latest counts (#605)."""
+    from autune_contracts import TeamActionProgress
+    from autune_intelligence import service
+
+    m = _new_meeting(db_session, team)
+    _score(db_session, m, team, action_item_completion_rate=0.9)
+    service.store_action_progress(
+        db_session,
+        TeamActionProgress(
+            team_id=team,
+            as_of=datetime.now(UTC),
+            meetings=[{"meeting_id": m, "confirmed": 4, "done": 1, "overdue": 2}],
+        ),
+    )
+
+    summary = tools.team_trend(db_session, team)["summary"]
+
+    assert "확정률 90%" in summary
+    assert "완료율 25%" in summary
+    assert "기한 지난 항목 2건" in summary
+
+
+def test_team_trend_says_nothing_of_completion_it_does_not_know(
+    db_session: Session, team: str
+) -> None:
+    m = _new_meeting(db_session, team)
+    _score(db_session, m, team, action_item_completion_rate=0.9)
+
+    assert "완료율" not in tools.team_trend(db_session, team)["summary"]
+
+
 # --- recurring_gaps -----------------------------------------------------------
 
 

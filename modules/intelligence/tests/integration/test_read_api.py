@@ -281,6 +281,9 @@ def test_dashboard_is_empty_for_a_team_with_no_scored_meetings(
         "average_score": None,
         "average_grade": None,
         "action_item_completion_rate": None,
+        "overdue_action_items": None,
+        "action_progress_as_of": None,
+        "action_item_confirmation_rate": None,
         "recent_scores": [],
         "gap_distribution": {},
     }
@@ -325,7 +328,8 @@ def test_dashboard_rolls_up_scores_and_gap_patterns_for_the_team(
     assert body["meeting_count"] == 2
     assert body["average_score"] == pytest.approx(0.75)
     assert body["average_grade"] == "C"
-    assert body["action_item_completion_rate"] == pytest.approx(0.4)
+    assert body["action_item_confirmation_rate"] == pytest.approx(0.4)
+    assert body["action_item_completion_rate"] is None  # no counts from B yet
     assert [s["grade"] for s in body["recent_scores"]] == ["A", "C"]
     assert body["gap_distribution"] == {"ownership": 3}
 

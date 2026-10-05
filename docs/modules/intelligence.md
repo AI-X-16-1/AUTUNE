@@ -59,7 +59,9 @@ See `../architecture/async-pipeline.md`.
 1. **Collect** — gather whatever of `ExtractionResult`, `GapReport`, and
    `ContextLinks` has arrived.
 2. **Quality score** — grade A–F from decision density, gap count, action-item
-   completion rate, and participation balance.
+   confirmation rate (the share of the meeting's items that got confirmed,
+   fixed when the meeting is scored; stored as `action_item_completion_rate`),
+   and participation balance.
 3. **Gap classification** — SetFit classifies each gap's `Gap.title` (not
    `Gap.category` — C's category is free text whose vocabulary is not stable
    across meetings, the reason this step exists at all, and mixing it into the
@@ -191,7 +193,7 @@ foreign keys to another module's tables.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/dashboard/{team_id}` | Dashboard data |
+| GET | `/dashboard/{team_id}` | Dashboard data; action-item completion from B's current counts (below) |
 | GET | `/scores/{meeting_id}` | One meeting's quality score |
 | GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out |
 | GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
@@ -201,6 +203,18 @@ foreign keys to another module's tables.
 | PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer says a person edited it (the name is added from `edited_by` when read or posted, never stored), and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. Committed, then announced on `autune.intelligence.meeting_report_changed`; the Report subagent proposes the edited draft's post for approval. Nothing is posted from the card. 409 once posted, 422 with categories for personal data or over 3,000 characters as Slack receives it, 404 for anyone outside the team |
 | POST | `/meeting-reports/{meeting_id}/corrections` | A member corrects a **posted** report whose post reached Slack (202). It waits for approval like an edit: committed, then announced, and the Report subagent proposes `publish_meeting_report_correction` with its `correction_id`; once approved it goes out as a reply under the post. A newer correction replaces one still waiting. 409 for a draft, for a report that never reached Slack, or while an approved correction is being posted (at most five minutes); 422 for an unchanged, empty, too long or personal-data correction |
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
+
+**Action-item completion on the dashboard (#605).** `action_item_completion_rate`
+is done over confirmed, summed over the team's meetings in B's latest
+`TeamActionProgress`; `overdue_action_items` is the overdue total from it, and
+`action_progress_as_of` when B counted. All three are `null` when no snapshot
+has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
+card says the counts did not arrive, never 0%. A fresh snapshot with nothing
+confirmed has no rate and 0 overdue. Team totals only, never one meeting's
+counts. A meeting past `expires_at` is neither stored nor counted.
+`action_item_confirmation_rate` is the quality score's rate averaged over
+scored meetings; the agent tool `team_trend` names both (확정률, 완료율). The
+weekly report still reads the confirmation rate; moving it is the next step.
 
 **Meeting reports on the dashboard (#642, #674).** Every post goes through
 approval (L2), a person's edit included: a report goes out under the bot's name
