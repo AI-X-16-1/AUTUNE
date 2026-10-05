@@ -155,7 +155,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         date={explanations?.meeting_date ?? null}
       >
         {/* The one primary on the screen, and it is not wired: the Slack
-            question card is a surface this module has not built (#36). A
+            question card is a surface this module has not built (#824). A
             disabled button alone does not say why, so the reason is written
             beside it rather than left to a tooltip nobody hovers. */}
         <span

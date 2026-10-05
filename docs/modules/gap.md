@@ -633,7 +633,7 @@ they all spoke on.
 **A re-run keeps the gaps it already raised.** They are recognised by
 `(meeting_id, template_key, template_item_key)` and updated in place, so a gap's
 id survives — a link somebody sent still opens it — and so does `dismissed_at`,
-which is a person's judgement and the input threshold tuning reads (ADR 0006). A
+which is a person's judgement and the input threshold tuning reads (see Storage). A
 row this run did not produce is deleted: the meeting covers that item now. Only
 template rows are touched, so a gap found from the graph alone would be left
 alone. `gap_related_topics` is rewritten every run, because `build_topic_graph`

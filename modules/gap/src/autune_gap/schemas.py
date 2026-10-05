@@ -81,7 +81,7 @@ class TemplateItemRead(BaseModel):
     gap_id: str | None = None
     dismissed: bool = False
     """Somebody called this gap a false positive. The item is still not covered
-    — the row stays and threshold tuning reads it (ADR 0006) — so the rail says
+    — the row stays and threshold tuning reads it (docs/modules/gap.md, Storage) — so the rail says
     both rather than quietly promoting the item to covered."""
 
 
