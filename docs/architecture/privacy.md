@@ -58,9 +58,11 @@ The uploaded recording exists only for the duration of transcription.
   recorded may save the file to their own device by pressing "파일로 저장"
   (`recordingFile.saveRecordingFile`); without the save, closing the tab loses
   the meeting. "Does not have" is checked, not assumed
-  (`recordingFile.serverHasRecording`): a 409 or a meeting already past
-  `recording` means the server took it, and the tab drops its copy as it does
-  after a success. Only when the tab cannot confirm that does it keep offering
+  (`recordingFile.serverHasRecording`): after a 409, a gateway error or no
+  answer, the tab reads the meeting, and only a meeting already past
+  `recording` means the server took it -- then the tab drops its copy as it
+  does after a success. A 409 alone does not: the API also answers 409 while
+  the live session still holds the meeting, having received nothing. Only when the tab cannot confirm that does it keep offering
   the save. Nothing saves on its own. Autune cannot delete a saved file, which
   holds the other attendees' voices too, so the screen asks the person to
   delete it once it is uploaded.
