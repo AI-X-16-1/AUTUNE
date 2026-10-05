@@ -1286,6 +1286,10 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
             raise ReconnectRequiredError(
                 "the calendar grant was issued to another Google client; connect again"
             )
+        if config.config.get("grant_revoked"):
+            # Ended with a revoke of the person's other Google grant (core's
+            # ``_mark_shared_grants``, #760): known gone without asking Google.
+            raise ReconnectRequiredError("the calendar grant was revoked; connect again")
         token = refresh_access_token(
             client_id=client_id, client_secret=client_secret, refresh_token=config.secret
         )

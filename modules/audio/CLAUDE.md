@@ -42,7 +42,8 @@ Contract: `/docs/architecture/contracts.md`.
 - `aud_team_invitations` — a pending invitation to a team (#552): an address,
   not a member. `invitations.accept` is the only place one becomes a
   `team_members` row. The address is a third party's; what removes it is
-  listed in `invitations.py`.
+  listed in `invitations.py`. The link may also be mailed from the inviter's
+  own Gmail (`invitation_mail.py`), inside the request that made it.
 
 ## AI stack
 

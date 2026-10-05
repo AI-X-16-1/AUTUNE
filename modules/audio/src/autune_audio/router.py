@@ -21,7 +21,15 @@ from autune_core.errors import AutuneError
 from autune_core.events import publish
 from autune_core.settings import get_settings as get_core_settings
 
-from . import account, invitations, masking_rules, pii_report, service, storage
+from . import (
+    account,
+    invitation_mail,
+    invitations,
+    masking_rules,
+    pii_report,
+    service,
+    storage,
+)
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
@@ -147,11 +155,26 @@ def invite_to_team(
 ) -> InvitationIssued:
     """Invite an address to a team the caller is on (#552). Answers with the
     link's token, once -- only its hash is kept -- and the same shape whatever
-    the address. See ``invitations``."""
+    the address. See ``invitations``.
+
+    With ``send_email`` the link is also mailed from the caller's own Gmail
+    (``invitation_mail``), after the invitation is committed: a link in
+    somebody's inbox has to work."""
     token, expires_at = invitations.invite(session, team_id=team_id, email=body.email, by=user)
+    emailed = False
+    if body.send_email:
+        session.commit()
+        emailed = invitation_mail.send(
+            session,
+            team_id=team_id,
+            email=body.email,
+            token=token,
+            expires_at=expires_at,
+            by=user,
+        )
     # The token is a credential and this is its only appearance.
     response.headers["Cache-Control"] = "no-store"
-    return InvitationIssued(token=token, expires_at=expires_at)
+    return InvitationIssued(token=token, expires_at=expires_at, emailed=emailed)
 
 
 @router.post("/invitations/accept", response_model=TeamSummary)
