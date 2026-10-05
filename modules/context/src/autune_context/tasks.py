@@ -21,6 +21,9 @@ about to start and ``send_brief`` posts each one's pre-meeting brief
 (``autune_context.briefs``). Its agenda comes from ``autune.extraction.agenda_changed``
 -- B's ``TeamAgenda``, kept by ``on_extraction_agenda_changed`` (#436).
 
+Also on a clock: ``periodic.refresh_absence`` corrects who a changed decision's
+meeting is recorded as missing once its speakers have been named (#360).
+
 See docs/architecture/async-pipeline.md.
 """
 
@@ -357,6 +360,25 @@ def send_due_briefs() -> None:
         send_brief.apply_async((meeting_id,), expires=starts_at)
     if due:
         log.info("context_briefs_due", count=len(due))
+
+
+@shared_task(name="autune.context.periodic.refresh_absence", acks_late=True)
+@periodic(timedelta(minutes=10))
+def refresh_absence() -> int:
+    """Recompute who was absent from a changed decision once its meeting's
+    speakers have been named (#360; ``service.refresh_absence``). Returns how
+    many versions changed.
+
+    Every ten minutes because naming a speaker is a person on a screen, and a
+    run that finds nothing to change reads a few rows. Sends nothing and
+    publishes nothing: see ``service.refresh_absence`` for why not a
+    ``republish``. Safe to overlap: two runs over the same rows write the same
+    list. The log carries the count only -- the ids are people.
+    """
+    with session_scope() as session:
+        changed = service.refresh_absence(session)
+    log.info("context_absence_refreshed", versions=changed)
+    return changed
 
 
 @shared_task(name="autune.context.send_brief", acks_late=True)
