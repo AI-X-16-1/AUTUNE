@@ -1503,7 +1503,7 @@ def _action_progress_totals(session: Session, team_id: str, now: datetime) -> Ac
 # --- the dashboard's meeting-report card (10/2) --------------------------------------
 #
 # A report is meeting text, so these check that the person asking is on the team,
-# unlike the older aggregate routes (#156). Any member may edit a draft until it
+# as every route of this module now does (#814). Any member may edit a draft until it
 # is posted. An edit takes a new ``draft_id``, so an approval given for the
 # model's text can never post it. Nothing is posted from the card: the edit is
 # announced (``autune.intelligence.meeting_report_changed``) and the Report
