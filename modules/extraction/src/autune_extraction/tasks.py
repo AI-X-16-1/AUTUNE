@@ -848,7 +848,8 @@ def send_weekly_digests() -> list[str]:
     transaction, a team without Slack or a person without a linked account
     skipped and looked at again next run, an unexpected error that one
     digest's, and a privacy refusal never swallowed -- raised after the rest
-    are sent. Every ten minutes; outside a Monday's sending hours in Korea it
+    are sent. Every ten minutes; outside the sending hours of the week's first
+    working day in Korea (Monday, or the next day when Monday is a holiday) it
     finds nothing owed.
     """
     if not get_settings().weekly_digest:
