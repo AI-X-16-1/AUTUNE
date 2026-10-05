@@ -15,6 +15,7 @@ INTEL_TABLES = {
     "intel_meeting_reports",
     "intel_action_progress",
     "intel_action_progress_meetings",
+    "intel_team_settings",
 }
 
 
@@ -22,7 +23,7 @@ def _table(name: str):
     return Base.metadata.tables[name]
 
 
-def test_module_owns_exactly_these_nine_tables() -> None:
+def test_module_owns_exactly_these_ten_tables() -> None:
     present = {n for n in Base.metadata.tables if n.startswith("intel_")}
     assert present == INTEL_TABLES
 
@@ -52,14 +53,16 @@ def test_primary_keys_are_the_spec_natural_keys() -> None:
         "intel_meeting_reports": ["meeting_id"],
         "intel_action_progress": ["team_id"],
         "intel_action_progress_meetings": ["team_id", "meeting_id"],
+        "intel_team_settings": ["team_id"],
     }
     for name, cols in expected.items():
         assert [c.name for c in _table(name).primary_key.columns] == cols
 
 
 def test_meeting_scoped_tables_cascade_on_meeting_delete() -> None:
-    # Team-scoped: a weekly report, and the header of B's latest counts snapshot.
-    for name in INTEL_TABLES - {"intel_reports", "intel_action_progress"}:
+    # Team-scoped: a weekly report, the header of B's latest counts snapshot, and
+    # the team's weekly-report setting.
+    for name in INTEL_TABLES - {"intel_reports", "intel_action_progress", "intel_team_settings"}:
         fk = next(iter(_table(name).c.meeting_id.foreign_keys))
         assert fk.column.table.name == "meetings"
         assert fk.ondelete == "CASCADE"
@@ -121,3 +124,11 @@ def test_the_payload_columns_are_jsonb() -> None:
 
     for name in ("extraction_payload", "gap_payload", "context_payload"):
         assert isinstance(_table("intel_completion").c[name].type, JSONB)
+
+
+def test_team_settings_go_with_the_team_and_outlive_who_changed_them() -> None:
+    table = _table("intel_team_settings")
+    team = next(iter(table.c.team_id.foreign_keys))
+    by = next(iter(table.c.updated_by.foreign_keys))
+    assert (team.column.table.name, team.ondelete) == ("teams", "CASCADE")
+    assert (by.column.table.name, by.ondelete) == ("users", "SET NULL")

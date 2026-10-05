@@ -37,6 +37,8 @@ from .schemas import (
     ReportRead,
     ScoreRead,
     SpeakingRatioRead,
+    WeeklyReportScheduleEdit,
+    WeeklyReportScheduleRead,
 )
 
 router = APIRouter()
@@ -94,6 +96,31 @@ def list_reports(team_id: str, user: CurrentUser, session: SessionDep) -> list[I
     """The team's generated weekly reports, newest period first. Members only."""
     service.require_team_member(session, user_id=user.id, team_id=team_id)
     return service.list_reports(session, team_id)
+
+
+@router.get("/weekly-report-schedule/{team_id}", response_model=WeeklyReportScheduleRead)
+def get_weekly_report_schedule(
+    team_id: str, user: CurrentUser, session: SessionDep
+) -> service.WeeklyReportSchedule:
+    """When the team's weekly report goes out. Members only."""
+    service.require_team_member(session, user_id=user.id, team_id=team_id)
+    return service.weekly_report_schedule(session, team_id)
+
+
+@router.put("/weekly-report-schedule/{team_id}", response_model=WeeklyReportScheduleRead)
+def set_weekly_report_schedule(
+    team_id: str, edit: WeeklyReportScheduleEdit, user: CurrentUser, session: SessionDep
+) -> service.WeeklyReportSchedule:
+    """A member sets the weekday, the hour (Korean time) and whether an empty
+    week is posted; the next slot follows it."""
+    return service.set_weekly_report_schedule(
+        session,
+        team_id,
+        weekday=edit.weekday,
+        hour=edit.hour,
+        send_empty=edit.send_empty,
+        user_id=user.id,
+    )
 
 
 @router.get("/meeting-reports/{team_id}", response_model=list[MeetingReportRead])

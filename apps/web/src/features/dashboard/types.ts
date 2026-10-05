@@ -64,6 +64,19 @@ export interface HeatmapCell {
  */
 export type GapTitlesByPattern = Record<string, string[]>;
 
+/**
+ * When the team's weekly report goes out (#227) — `WeeklyReportScheduleRead`.
+ * `weekday` 0 is Monday; `hour` is Korean time. `updated_by_name` is `null`
+ * until a member changes the defaults (Monday 09:00, empty weeks not posted).
+ */
+export interface WeeklyReportSchedule {
+  weekday: number;
+  hour: number;
+  send_empty: boolean;
+  updated_by_name: string | null;
+  updated_at: string | null;
+}
+
 /** One stored prediction — `PredictionRead` in the module's schemas.py. */
 export interface PredictionRead {
   meeting_id: string;

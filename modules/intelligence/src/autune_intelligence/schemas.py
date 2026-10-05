@@ -121,6 +121,28 @@ class MeetingReportEdit(BaseModel):
     """``updated_at`` as the editor saw it; a newer save makes this edit a 409."""
 
 
+class WeeklyReportScheduleRead(BaseModel):
+    """When the team's weekly report goes out (#227). ``weekday`` 0 is Monday;
+    ``hour`` is Korean time. ``updated_by_name`` is ``None`` until a member
+    changes the defaults (Monday 09:00, empty weeks not posted)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    weekday: int
+    hour: int
+    send_empty: bool
+    updated_by_name: str | None
+    updated_at: datetime | None
+
+
+class WeeklyReportScheduleEdit(BaseModel):
+    """A member's change to it; out-of-range values are a 422 from the service."""
+
+    weekday: int
+    hour: int
+    send_empty: bool
+
+
 class MeetingReportCorrection(BaseModel):
     """A correction to a posted report, written on the dashboard card."""
 
