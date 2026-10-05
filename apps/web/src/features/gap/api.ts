@@ -5,6 +5,8 @@ import type {
   GapDismissal,
   GapExplanations,
   GapReport,
+  GapSeverity,
+  TeamGap,
   TemplateComparison,
   TemplateOption,
   TemplateSelection,
@@ -84,3 +86,14 @@ export const dismissGap = (gapId: string) =>
 /** Take a dismissal back; the gap returns to the report as it was raised. */
 export const undoDismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });
+
+/**
+ * Every open gap across a team's meetings, newest meeting first — the sidebar's
+ * "갭 리포트" (#550). HIGH alone unless asked: the same precision rule S20
+ * keeps. An unknown team and another team's are the same 404.
+ */
+export const listTeamGaps = (teamId: string, severities: readonly GapSeverity[]) => {
+  const query = new URLSearchParams({ team_id: teamId });
+  for (const severity of severities) query.append("severity", severity);
+  return api.gap<TeamGap[]>(`/gaps?${query.toString()}`);
+};
