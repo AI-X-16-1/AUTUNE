@@ -96,14 +96,21 @@ class Notion:
     """Stands in for ``NotionClient``: trashes, or raises what it is told to."""
 
     trashed: list[str] = []
+    retitled: list[tuple[str, dict]] = []
+    calls: list[str] = []
     fail: Exception | None = None
 
     def __init__(self, token: str) -> None:
         pass
 
+    def update_page(self, page_id: str, properties: dict) -> None:
+        Notion.calls.append("retitle")
+        Notion.retitled.append((page_id, properties))
+
     def trash_page(self, page_id: str) -> bool:
         if Notion.fail is not None:
             raise Notion.fail
+        Notion.calls.append("trash")
         Notion.trashed.append(page_id)
         return True
 
@@ -131,7 +138,7 @@ class Jira:
 
 @pytest.fixture(autouse=True)
 def fakes(monkeypatch: pytest.MonkeyPatch) -> None:
-    Notion.trashed, Notion.fail = [], None
+    Notion.trashed, Notion.retitled, Notion.calls, Notion.fail = [], [], [], None
     Jira.closed, Jira.comments, Jira.fail = [], [], None
     monkeypatch.setattr(tasks, "NotionClient", Notion)
     monkeypatch.setattr(tasks.JiraClient, "for_cloud", staticmethod(lambda t, c: Jira()))
@@ -469,3 +476,106 @@ def test_giving_up_logs_the_id_a_person_would_clean_up_by_hand(
 
     (entry,) = [e for e in logs if e["event"] == "extraction_external_cleanup_refused"]
     assert entry["external_id"] == "page-1"
+
+
+# --- the page is retitled before it goes to the trash (#768) ---------------------------
+
+
+def _title(properties: dict) -> str:
+    ((_name, value),) = properties.items()
+    return value["title"][0]["text"]["content"]
+
+
+def test_a_deleted_items_page_is_retitled_before_the_trash(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trash keeps a page restorable for 30 days; with this title the item's
+    sentence is not what it keeps -- as for a decision (#669)."""
+    connected(monkeypatch)
+    item_id = item_with(session, "notion", "page-1")
+
+    tasks.trash_notion_page(item_id)
+
+    assert Notion.calls == ["retitle", "trash"]
+    ((page, properties),) = Notion.retitled
+    assert page == "page-1"
+    assert _title(properties) == tasks.service.ITEM_DELETED_TEXT
+    assert "릴리스 노트 정리" not in repr(properties)
+
+
+def test_the_retry_retitles_too(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    connected(monkeypatch)
+    owe(session, "notion", "page-1")
+
+    tasks.drain_external_cleanup()
+
+    assert Notion.calls == ["retitle", "trash"]
+
+
+def test_a_teams_own_title_property_is_the_one_retitled(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own = IntegrationConfig(
+        service="notion", team_id=TEAM, secret="t", config={"action_properties": {"title": "Name"}}
+    )
+    monkeypatch.setattr(tasks, "load_integration", lambda _s, _t, _n: own)
+    item_id = item_with(session, "notion", "page-1")
+
+    tasks.trash_notion_page(item_id)
+
+    ((_page, properties),) = Notion.retitled
+    assert list(properties) == ["Name"]
+
+
+def test_a_map_with_no_title_trashes_the_page_as_it_is_and_says_so(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    own = IntegrationConfig(
+        service="notion", team_id=TEAM, secret="t", config={"action_properties": {"due": "Due"}}
+    )
+    monkeypatch.setattr(tasks, "load_integration", lambda _s, _t, _n: own)
+    item_id = item_with(session, "notion", "page-1")
+
+    with capture_logs() as logs:
+        tasks.trash_notion_page(item_id)
+
+    assert Notion.calls == ["trash"]
+    assert "extraction_notion_item_trashed_without_retitle" in [e["event"] for e in logs]
+
+
+def test_a_page_notion_will_not_edit_is_still_trashed(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page a person already archived: Notion refuses the retitle, and the
+    trash call that follows treats it as done."""
+    connected(monkeypatch)
+
+    class Archived(Notion):
+        def update_page(self, page_id: str, properties: dict) -> None:
+            raise PermanentIntegrationError("archived", upstream_status=400)
+
+    monkeypatch.setattr(tasks, "NotionClient", Archived)
+    item_id = item_with(session, "notion", "page-1")
+
+    tasks.trash_notion_page(item_id)
+
+    assert Notion.trashed == ["page-1"]
+    assert owed(session) == []
+
+
+def test_a_retitle_that_times_out_is_owed_and_retried(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connected(monkeypatch)
+
+    class Slow(Notion):
+        def update_page(self, page_id: str, properties: dict) -> None:
+            raise TransientIntegrationError("timed out")
+
+    monkeypatch.setattr(tasks, "NotionClient", Slow)
+    item_id = item_with(session, "notion", "page-1")
+
+    tasks.trash_notion_page(item_id)
+
+    assert Notion.trashed == []
+    assert owed(session) == [(TEAM, "notion", "page-1", None)]

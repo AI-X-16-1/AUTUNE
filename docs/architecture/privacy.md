@@ -367,8 +367,9 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune moves its page to Notion's trash, where the
-    team can restore it for 30 days. Retention and meeting deletion do not
+    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    and then moves it to Notion's trash, where the team can restore it for
+    30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
     the page is retitled first and trashed second, so what the trash holds
     for those 30 days is not the statement (#669). One exception: when the
@@ -407,7 +408,9 @@ the feature needs.
     when the item or the meeting is deleted; Autune keeps only that a
     reminder of that kind went (`ext_due_reminders`), and that goes with
     the item. A reminder the outbound check refuses is not sent, is
-    reported once, and keeps that same row so it is not tried again.
+    reported once, and keeps that same row so it is not tried again. Each
+    person can turn their own reminders off, and only their own
+    (`ext_due_reminder_optouts`, which goes with the account).
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes

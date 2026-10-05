@@ -380,6 +380,24 @@ class ConfirmationAnswerIn(BaseModel):
     answer: ConfirmationAnswer
 
 
+class DueReminderSetting(BaseModel):
+    """The caller's own due-date reminders (review of #751).
+
+    ``on`` is their choice: on unless they turned it off. ``sent_here`` says
+    whether this deployment sends reminders at all
+    (``AUTUNE_EXTRACTION_DUE_REMINDERS``), so the screen can say so rather
+    than show a switch that does nothing."""
+
+    on: bool
+    sent_here: bool
+
+
+class DueReminderSettingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    on: bool
+
+
 class MeetingNoteUpdate(BaseModel):
     """The memo, whole. Blank removes it."""
 
