@@ -79,9 +79,21 @@ def run_meeting_hooks(meeting_id: str) -> None:
 
 
 def run_user_hooks(user_id: str) -> None:
+    """Every module's user hook, then the person's Google grants revoked at
+    Google (#763). Called by module A's account deletion right before the
+    ``users`` row goes.
+
+    The revoke is last on purpose: a module may still need the grant to clean
+    up what it put outside Autune -- B's due dates on that person's calendar --
+    and a hook that raises stops the run before it, leaving the account and
+    its grants as they were for the next attempt. The revoke itself never
+    raises (``user_integrations.revoke_google_grants``)."""
     for module, hook in _user_hooks.items():
         hook(user_id)
         log.info("deletion_hook_ran", scope="user", module=module, user_id=user_id)
+    from .user_integrations import revoke_google_grants
+
+    revoke_google_grants(user_id)
 
 
 def run_speech_hooks(user_id: str, utterance_ids: Sequence[str]) -> None:

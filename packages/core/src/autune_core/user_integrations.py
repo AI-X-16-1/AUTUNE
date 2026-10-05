@@ -22,11 +22,18 @@ from sqlalchemy.orm import Session
 from .crypto import decrypt, encrypt
 from .entities import UserIntegration
 from .errors import ValidationError
+from .logging import get_logger
+
+log = get_logger(__name__)
 
 USER_SERVICES: Final = ("calendar", "slack")
 """Kept in step with the check constraint on ``user_integrations.service``.
 ``slack`` is a person's own Slack identity for direct messages (#255); ``gmail``
 is added with #431's decision, not before it."""
+
+GOOGLE_SERVICES: Final = ("calendar",)
+"""The personal grants that are Google refresh tokens, revoked at Google when
+the account is deleted (``revoke_google_grants``)."""
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,87 @@ def disconnect_user_integration(session: Session, user_id: str, service: str) ->
     row = _row(session, user_id, service)
     if row is not None:
         session.delete(row)
+
+
+def revoke_google_grants(user_id: str) -> None:
+    """End this person's Google grants at Google, before their account and
+    its ``user_integrations`` rows go (#763).
+
+    The rows cascade with ``users``, which leaves no copy of the token here,
+    but the grant stays valid at Google -- and Autune stays listed under the
+    person's third-party access -- until they remove it there by hand. This
+    ends it from our side.
+
+    **After every module's user hook** (``deletion.run_user_hooks``): B
+    removes the due dates it put on that calendar with this same grant, and
+    a revoked grant could not.
+
+    **Once per Google account and client.** Revoking one refresh token ends
+    everything that account granted that client, so a second grant with the
+    same ``google_sub`` and ``client_id`` is already gone; revoking it again
+    would only log a refusal. A grant saved before either was recorded is
+    revoked on its own.
+
+    **Never raises, never waits on Google past its timeout.** An account
+    deletion does not stop because Google is unreachable or refuses (the
+    grant may already be revoked, or have expired); that is logged by
+    service and outcome, never with the token, and the deletion goes on, as
+    the calendar cleanup does (privacy.md section 4). Safe to run twice: a
+    second run finds the grant already revoked, logs it, and changes nothing.
+
+    **Before the account's own ``DELETE`` commits.** If that delete then
+    fails, the account stays with its grants revoked at Google; the person's
+    connections then ask to be connected again, and deleting again finishes
+    the job.
+    """
+    from .db import session_scope
+    from .oauth.google import revoke_token
+
+    grants: list[UserIntegrationConfig] = []
+    for service in GOOGLE_SERVICES:
+        # One try per service: a row that will not decrypt must not keep the
+        # others from being revoked (mkkim68, review of #766).
+        try:
+            with session_scope() as session:
+                grant = load_user_integration(session, user_id, service)
+        except Exception as exc:  # noqa: BLE001 -- see the docstring
+            log.warning(
+                "user_google_grant_unreadable",
+                user_id=user_id,
+                service=service,
+                error=type(exc).__name__,
+            )
+            continue
+        if grant is not None and grant.secret:
+            grants.append(grant)
+
+    done: set[tuple[str, str]] = set()
+    for grant in grants:
+        account, client = grant.config.get("google_sub"), grant.config.get("client_id")
+        key = (str(account), str(client)) if account and client else None
+        if key is not None and key in done:
+            log.info(
+                "user_google_grant_revoked", user_id=user_id, service=grant.service, shared=True
+            )
+            continue
+        assert grant.secret is not None
+        try:
+            revoked = revoke_token(grant.secret)
+        except Exception as exc:  # noqa: BLE001 -- the right to delete comes first
+            log.warning(
+                "user_google_grant_not_revoked",
+                user_id=user_id,
+                service=grant.service,
+                error=type(exc).__name__,
+            )
+            continue
+        if key is not None and revoked:
+            done.add(key)
+        log.info(
+            "user_google_grant_revoked" if revoked else "user_google_grant_not_revoked",
+            user_id=user_id,
+            service=grant.service,
+        )
 
 
 def users_with_integration(session: Session, service: str) -> list[str]:
