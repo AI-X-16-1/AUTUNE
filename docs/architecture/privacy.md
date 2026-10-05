@@ -52,6 +52,13 @@ The uploaded recording exists only for the duration of transcription.
   may point at a directory this process does not own (#351).
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
+- A live recording lives in the recording tab's memory until its upload
+  succeeds, then the tab drops it. **The one browser copy allowed:** when that
+  upload fails, the person who recorded may save the file to their own device
+  by pressing "파일로 저장" (`recordingFile.saveRecordingFile`). The server
+  never received that audio, and without the save closing the tab loses the
+  meeting. Nothing saves on its own, and nothing offers a copy once the server
+  has the recording.
 
 **Forbidden:**
 - Persisting the recording to object storage, a mounted volume, or a database

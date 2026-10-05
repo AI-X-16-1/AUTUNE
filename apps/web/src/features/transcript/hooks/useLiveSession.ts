@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Utterance } from "@autune/contracts";
 
 import { getToken, liveSocketUrl, uploadRecording } from "../api";
+import { saveRecordingFile } from "../recordingFile";
 import type { LiveRow } from "../types";
 
 export type LivePhase =
@@ -28,6 +29,8 @@ export type LiveSession = {
   resume: () => void;
   stop: () => Promise<void>;
   retryUpload: () => Promise<void>;
+  /** Saves the recording to this computer. Only does anything after a failed upload. */
+  saveRecording: () => void;
   /** Clears a refusal so the gate can try `start()` again. Only valid from `"error"`. */
   reset: () => void;
 };
@@ -161,6 +164,12 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       setError(caught instanceof Error ? caught.message : "업로드에 실패했습니다.");
       setPhase("upload_failed");
     }
+  }, [meetingId]);
+
+  /** Save the recording to this computer, only after an upload failed: the
+   * one moment the tab holds audio the server never received (`recordingFile`). */
+  const saveRecording = useCallback(() => {
+    if (blob.current) saveRecordingFile(blob.current, meetingId);
   }, [meetingId]);
 
   const start = useCallback(async () => {
@@ -436,5 +445,5 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     setElapsed(0);
   }, [phase]);
 
-  return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload, reset };
+  return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload, saveRecording, reset };
 }
