@@ -7,7 +7,7 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -863,20 +863,26 @@ def send_weekly_digests() -> list[str]:
 
     sent: list[str] = []
     refused: list[str] = []
+    unasked: list[str] = []
     not_linked = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        # Asked by the service, last of all: only for a message that would
-        # otherwise go (review of #838).
-        away = partial(_out_of_office, digest.user_id, now) if leave else None
+        if leave:
+            would_go = partial(service.weekly_digest_would_go, digest=digest, now=now)
+            try:
+                if _held_back(would_go, digest.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(digest.user_id)
+                continue
         try:
             with session_scope() as session:
-                went = service.send_weekly_digest(
-                    session, SlackClient(secret), digest, now=now, away=away
-                )
+                went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
         except PrivacyViolationError:
             refused.append(digest.user_id)
             # Reported once: the week's claim is kept, in its own transaction,
@@ -905,18 +911,15 @@ def send_weekly_digests() -> list[str]:
             continue
         if went:
             sent.append(digest.user_id)
-    if owed:
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_weekly_digests_sent",
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
         )
-    if refused:
-        raise PrivacyViolationError(
-            f"weekly digest refused by the outbound check for {len(refused)} person(s): "
-            f"{', '.join(refused)}"
-        )
+    _raise_refusals("weekly digest", refused, unasked)
     return sent
 
 
@@ -947,20 +950,26 @@ def send_daily_digests() -> list[str]:
 
     sent: list[str] = []
     refused: list[str] = []
+    unasked: list[str] = []
     not_linked = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        # Asked by the service, last of all: only for a message that would
-        # otherwise go (review of #838).
-        away = partial(_out_of_office, digest.user_id, now) if leave else None
+        if leave:
+            would_go = partial(service.daily_digest_would_go, owed=digest, now=now)
+            try:
+                if _held_back(would_go, digest.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(digest.user_id)
+                continue
         try:
             with session_scope() as session:
-                went = service.send_daily_digest(
-                    session, SlackClient(secret), digest, now=now, away=away
-                )
+                went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
         except PrivacyViolationError:
             refused.append(digest.user_id)
             # Reported once: the day's claim is kept, in its own transaction,
@@ -989,19 +998,59 @@ def send_daily_digests() -> list[str]:
             continue
         if went:
             sent.append(digest.user_id)
-    if owed:
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_daily_digests_sent",
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
         )
+    _raise_refusals("morning digest", refused, unasked)
+    return sent
+
+
+def _raise_refusals(what: str, refused: list[str], unasked: list[str]) -> None:
+    """Raise the privacy refusals a digest run collected, each as what it was:
+    a message the outbound check refused (its claim already settled), or a
+    question to a person's calendar it refused (nothing claimed -- no message
+    was refused, and the digest is tried again next run)."""
+    said = []
     if refused:
-        raise PrivacyViolationError(
-            f"morning digest refused by the outbound check for {len(refused)} person(s): "
+        said.append(
+            f"{what} refused by the outbound check for {len(refused)} person(s): "
             f"{', '.join(refused)}"
         )
-    return sent
+    if unasked:
+        said.append(
+            f"{what}: the read of a person's calendar was refused by the outbound check "
+            f"for {len(unasked)} person(s): {', '.join(unasked)}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+
+
+def _held_back(would_go: Callable[[Session], bool], user_id: str, now: datetime) -> bool:
+    """Whether this digest waits because its person is out of office right now.
+
+    **The calendar is asked last, and outside the send.** ``would_go`` -- every
+    reason not to send that Autune's own tables hold -- is asked first, in a
+    transaction that is closed before Google is called: a calendar is read
+    only for a message that would otherwise go, no transaction of the send's
+    stays open while Google answers, and a refusal of the question cannot be
+    mistaken for a refusal of the message (review of #838, review of #841).
+
+    **A run that holds somebody back looks like a run with nothing to send.**
+    That is why a deployment that reads calendars logs no summary of its
+    digests: ``owed=1 sent=0`` with no failure beside it is that one person's
+    absence, repeated every ten minutes until the run they came back. Nothing
+    is counted, nothing is claimed and nothing is written here; what a send
+    leaves -- its claim and its time -- is what any send leaves.
+    """
+    with session_scope() as session:
+        if not would_go(session):
+            return False
+    return _out_of_office(user_id, now)
 
 
 def _out_of_office(user_id: str, now: datetime) -> bool:
@@ -1014,8 +1063,6 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
     calendar says, so theirs is not asked about -- every ten minutes of a
     morning, it would be (mkkim68, review of #838).
 
-    **Nothing here says who was away.** No count of held-back digests is
-    logged: with one person owed, a count of one is that person's absence.
 
     **Unknown is not away.** A digest is the person's own work sent to
     themselves; a grant that lapsed or a Google outage must not silence it.

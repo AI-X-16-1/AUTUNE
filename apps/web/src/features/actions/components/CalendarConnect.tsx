@@ -131,10 +131,10 @@ export function CalendarConnect() {
           className="basis-full text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
-          연결하면 마감일을 넣는 것 외에, 내 캘린더의 &lsquo;부재중&rsquo; 일정이 언제부터
-          언제까지인지도 읽습니다. 그 시간에는 아침 요약과 월요일 요약을 보내지 않기
-          위해서입니다. 일정의 제목이나 다른 일정은 읽지 않으며, 읽은 시간은 저장하지
-          않습니다.
+          {connected ? "연결되어 있는 동안" : "연결하면"} 마감일을 넣는 것 외에, 내 캘린더의
+          &lsquo;부재중&rsquo; 일정이 언제부터 언제까지인지도 읽습니다. 그 시간에는 아침
+          요약과 월요일 요약을 보내지 않기 위해서입니다. 일정의 제목이나 다른 일정은 읽지
+          않으며, 읽은 시간은 저장하지 않습니다.
         </span>
       ) : null}
       {note ? (

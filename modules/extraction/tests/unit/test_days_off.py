@@ -396,6 +396,8 @@ class World:
     calendars: dict[str, object] = field(default_factory=dict)
     linked: set[str] = field(default_factory=lambda: {"user_kim", "user_lee"})
     """Who linked a Slack account for DMs."""
+    open_scopes: int = 0
+    """How many ``session_scope`` blocks the task has open right now."""
     settings: dict[str, bool] = field(
         default_factory=lambda: {
             "daily_digest": True,
@@ -411,12 +413,15 @@ def world(session: Session, monkeypatch: pytest.MonkeyPatch) -> World:
 
     @contextmanager
     def scope() -> Iterator[Session]:
+        made.open_scopes += 1
         try:
             yield session
             session.commit()
         except BaseException:
             session.rollback()
             raise
+        finally:
+            made.open_scopes -= 1
 
     @contextmanager
     def calendars(_: Session) -> Iterator[object]:
@@ -507,26 +512,25 @@ def test_a_calendar_that_cannot_be_read_is_not_a_person_who_is_away(
     assert "secret-abc" not in repr(logs)
 
 
-def test_a_privacy_refusal_while_asking_is_raised_not_read_as_unknown(
+def test_a_privacy_refusal_while_asking_is_raised_as_that_and_claims_nothing(
     session: Session, world: World
 ) -> None:
+    """Not read as "unknown, so send", and not taken for a refused MESSAGE
+    either: that would settle the day's claim for a DM nobody refused, and the
+    person would get none that day (review of #841)."""
     world.calendars["user_kim"] = PrivacyViolationError("refused")
 
-    with pytest.raises(PrivacyViolationError):
+    with pytest.raises(PrivacyViolationError, match="read of a person's calendar.*user_kim"):
         tasks.send_daily_digests()
 
+    assert [m.channel for m in world.slack.sent] == ["user_lee"], "the others still go"
+    assert [d.user_id for d in session.query(ExtDailyDigest)] == ["user_lee"]
 
-# --- asked last, about nobody it need not be, and nothing kept (review of #838) ------------
+    world.calendars["user_kim"] = FakeCalendar()
+    assert tasks.send_daily_digests() == ["user_kim"], "and theirs goes once it can be asked"
 
 
-class Spy:
-    def __init__(self, answer: bool) -> None:
-        self.answer = answer
-        self.calls = 0
-
-    def __call__(self) -> bool:
-        self.calls += 1
-        return self.answer
+# --- asked last, outside the send, and nothing kept (reviews of #838 and #841) -------------
 
 
 def owed_kim(session: Session) -> service.DailyDigestOwed:
@@ -538,70 +542,91 @@ def owed_kim(session: Session) -> service.DailyDigestOwed:
     return found
 
 
-def test_the_calendar_is_asked_only_about_a_message_that_would_otherwise_go(
-    session: Session,
-) -> None:
-    """Every cheaper reason not to send comes first: a person who turned the
-    reminders off, paused the day, or has nothing to be told does not have
-    their calendar read to learn what is already known."""
-    owed, slack = owed_kim(session), FakeSlack()
+def test_would_go_is_every_reason_not_to_send_that_autune_can_see(session: Session) -> None:
+    """What the task asks before it reads anybody's calendar: the reminder
+    switch, the person's own pause, and whether there is anything to say."""
+    owed = owed_kim(session)
+    assert service.daily_digest_would_go(session, owed, now=TUESDAY_10_KST) is True
 
-    off = Spy(True)
     service.set_due_reminders(session, "user_kim", on=False, now=TUESDAY_10_KST)
-    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=off) is False
+    assert service.daily_digest_would_go(session, owed, now=TUESDAY_10_KST) is False
     service.set_due_reminders(session, "user_kim", on=True, now=TUESDAY_10_KST)
 
-    paused = Spy(True)
     service.set_notification_pause(
         session, "user_kim", starts_on=TUESDAY, ends_on=TUESDAY, now=TUESDAY_10_KST
     )
-    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=paused) is False
+    assert service.daily_digest_would_go(session, owed, now=TUESDAY_10_KST) is False
     service.set_notification_pause(
         session, "user_kim", starts_on=None, ends_on=None, now=TUESDAY_10_KST
     )
 
-    nothing = Spy(True)
     session.query(ExtActionItem).filter_by(assignee_id="user_kim").delete()
     session.flush()
-    assert (
-        service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=nothing) is False
-    )
-
-    assert (off.calls, paused.calls, nothing.calls) == (0, 0, 0)
-    assert slack.sent == []
+    assert service.daily_digest_would_go(session, owed, now=TUESDAY_10_KST) is False
+    assert session.query(ExtDailyDigest).count() == 0, "asking claims nothing"
 
 
-def test_away_is_asked_once_before_anything_is_claimed(session: Session) -> None:
-    owed, slack = owed_kim(session), FakeSlack()
-
-    away = Spy(True)
-    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=away) is False
-    assert away.calls == 1
-    assert session.query(ExtDailyDigest).count() == 0 and slack.sent == []
-
-    back = Spy(False)
-    assert service.send_daily_digest(session, slack, owed, now=TUESDAY_10_KST, away=back) is True
-    assert back.calls == 1 and [m.channel for m in slack.sent] == ["user_kim"]
-
-
-def test_mondays_digest_asks_last_too(session: Session) -> None:
+def test_mondays_would_go_is_the_same_question(session: Session) -> None:
     (owed, _other) = service.weekly_digests_to_send(session, now=PLAIN_MONDAY_10_KST)
-    slack = FakeSlack()
+    assert service.weekly_digest_would_go(session, owed, now=PLAIN_MONDAY_10_KST) is True
 
-    off = Spy(True)
     service.set_due_reminders(session, owed.user_id, on=False, now=PLAIN_MONDAY_10_KST)
-    assert (
-        service.send_weekly_digest(session, slack, owed, now=PLAIN_MONDAY_10_KST, away=off) is False
-    )
+    assert service.weekly_digest_would_go(session, owed, now=PLAIN_MONDAY_10_KST) is False
     service.set_due_reminders(session, owed.user_id, on=True, now=PLAIN_MONDAY_10_KST)
-    away = Spy(True)
-    assert (
-        service.send_weekly_digest(session, slack, owed, now=PLAIN_MONDAY_10_KST, away=away)
-        is False
+
+    monday = date(2026, 10, 12)
+    service.set_notification_pause(
+        session, owed.user_id, starts_on=monday, ends_on=monday, now=PLAIN_MONDAY_10_KST
+    )
+    assert service.weekly_digest_would_go(session, owed, now=PLAIN_MONDAY_10_KST) is False
+    service.set_notification_pause(
+        session, owed.user_id, starts_on=None, ends_on=None, now=PLAIN_MONDAY_10_KST
     )
 
-    assert (off.calls, away.calls) == (0, 1)
-    assert session.query(ExtWeeklyDigest).count() == 0 and slack.sent == []
+    session.query(ExtActionItem).filter_by(assignee_id=owed.user_id).delete()
+    session.flush()
+    assert service.weekly_digest_would_go(session, owed, now=PLAIN_MONDAY_10_KST) is False
+    assert session.query(ExtWeeklyDigest).count() == 0
+
+
+@pytest.mark.parametrize("task", ["send_daily_digests", "send_weekly_digests"])
+def test_no_calendar_is_read_for_a_message_that_would_not_go(
+    session: Session, world: World, monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    """Every cheaper reason first: somebody whose digest would not go anyway
+    does not have their calendar read to learn what is already known."""
+    if task == "send_weekly_digests":
+        _Clock.moment = PLAIN_MONDAY_10_KST
+    asked = Asked(away=[(date(2026, 10, 1), date(2026, 10, 31))])
+    world.calendars["user_kim"] = asked
+    monkeypatch.setattr(service, "daily_digest_would_go", lambda *_, **__: False)
+    monkeypatch.setattr(service, "weekly_digest_would_go", lambda *_, **__: False)
+
+    getattr(tasks, task)()
+
+    assert asked.asked == []
+
+
+@pytest.mark.parametrize("task", ["send_daily_digests", "send_weekly_digests"])
+def test_the_calendar_is_asked_with_no_transaction_open(
+    session: Session, world: World, monkeypatch: pytest.MonkeyPatch, task: str
+) -> None:
+    """Google may take ten seconds to answer. The question is put after the
+    transaction that asked ``would_go`` has closed and before the send's
+    opens (review of #841)."""
+    if task == "send_weekly_digests":
+        _Clock.moment = PLAIN_MONDAY_10_KST
+    open_when_asked: list[int] = []
+
+    def out_of_office(user_id: str, now: datetime) -> bool:
+        open_when_asked.append(world.open_scopes)
+        return False
+
+    monkeypatch.setattr(tasks, "_out_of_office", out_of_office)
+
+    assert sorted(getattr(tasks, task)()) == ["user_kim", "user_lee"]
+
+    assert open_when_asked == [0, 0]
 
 
 def test_nobodys_calendar_is_read_for_a_dm_that_cannot_reach_them(
@@ -620,25 +645,90 @@ def test_nobodys_calendar_is_read_for_a_dm_that_cannot_reach_them(
     assert asked.asked == []
 
 
-def test_no_log_line_says_how_many_were_away(session: Session, world: World) -> None:
-    """With one person owed, a count of one is that person's absence
-    (mkkim68, review of #838). privacy.md says nothing is kept, so nothing is."""
-    world.calendars["user_kim"] = FakeCalendar(away=[(TUESDAY, date(2026, 10, 8))])
-    session.query(ExtActionItem).filter_by(assignee_id="user_lee").delete()
+def run_logged(task: str) -> tuple[list[str], list[dict[str, object]]]:
+    with capture_logs() as logs:
+        went = getattr(tasks, task)()
+    return went, logs
+
+
+def without_items_of(session: Session, user_id: str) -> None:
+    session.query(ExtActionItem).filter_by(assignee_id=user_id).delete()
     session.flush()
 
-    with capture_logs() as logs:
-        assert tasks.send_daily_digests() == []
 
-    (summary,) = [e for e in logs if e["event"] == "extraction_daily_digests_sent"]
-    assert summary == {
-        "event": "extraction_daily_digests_sent",
-        "log_level": "info",
-        "owed": 1,
-        "sent": 0,
-        "not_linked": 0,
-    }
-    assert "away" not in repr(logs)
+@pytest.mark.parametrize(
+    ("task", "moment", "away"),
+    [
+        pytest.param(
+            "send_daily_digests", TUESDAY_10_KST, (TUESDAY, date(2026, 10, 8)), id="morning"
+        ),
+        pytest.param(
+            "send_weekly_digests",
+            PLAIN_MONDAY_10_KST,
+            (date(2026, 10, 12), date(2026, 10, 13)),
+            id="monday",
+        ),
+    ],
+)
+def test_a_run_that_holds_somebody_back_is_a_run_with_nothing_to_send(
+    session: Session,
+    world: World,
+    task: str,
+    moment: datetime,
+    away: tuple[date, date],
+) -> None:
+    """Review of #841. ``owed=1 sent=0`` with no failure beside it was that
+    one person's absence, and the run it turned into ``sent=1`` was the time
+    they came back. Where calendars are read, a held-back run and a run with
+    nothing to send leave the same thing behind: the same return, the same
+    log lines, the same rows."""
+    _Clock.moment = moment
+    table = ExtDailyDigest if task == "send_daily_digests" else ExtWeeklyDigest
+    without_items_of(session, "user_lee")
+    world.calendars["user_kim"] = FakeCalendar(away=[away])
+
+    held_back = run_logged(task)
+    rows_held_back = session.query(table).count()
+
+    without_items_of(session, "user_kim")
+    nothing_to_send = run_logged(task)
+
+    assert held_back == nothing_to_send == ([], [])
+    assert rows_held_back == session.query(table).count() == 0
+
+
+def test_one_sent_and_one_held_back_is_one_sent(session: Session, world: World) -> None:
+    """The same, beside somebody whose DM does go: nothing says another
+    person was owed one."""
+    world.calendars["user_kim"] = FakeCalendar(away=[(TUESDAY, date(2026, 10, 8))])
+
+    beside_a_held_back = run_logged("send_daily_digests")
+
+    session.query(ExtDailyDigest).delete()
+    without_items_of(session, "user_kim")
+    world.slack.sent.clear()
+    alone = run_logged("send_daily_digests")
+
+    assert beside_a_held_back == alone
+    assert beside_a_held_back[0] == ["user_lee"]
+
+
+def test_where_no_calendar_is_read_the_summary_is_logged_as_before(
+    session: Session, world: World
+) -> None:
+    world.settings["leave_from_calendar"] = False
+
+    _went, logs = run_logged("send_daily_digests")
+
+    assert [e for e in logs if e["event"] == "extraction_daily_digests_sent"] == [
+        {
+            "event": "extraction_daily_digests_sent",
+            "log_level": "info",
+            "owed": 2,
+            "sent": 2,
+            "not_linked": 0,
+        }
+    ]
 
 
 # --- the holiday read --------------------------------------------------------------------

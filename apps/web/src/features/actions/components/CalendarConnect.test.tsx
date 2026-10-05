@@ -59,6 +59,7 @@ describe("CalendarConnect", () => {
 
     await connectButton();
     const notice = await screen.findByText(NOTICE);
+    expect(notice.textContent).toMatch(/^연결하면 /);
     expect(notice.textContent).toContain("제목이나 다른 일정은 읽지 않으며");
     expect(notice.textContent).toContain("저장하지");
   });
@@ -69,7 +70,8 @@ describe("CalendarConnect", () => {
     render(<CalendarConnect />);
 
     expect(await screen.findByText("내 Google 캘린더 연결됨")).toBeTruthy();
-    expect(await screen.findByText(NOTICE)).toBeTruthy();
+    // Already connected: it is being read now, not "if you connect".
+    expect((await screen.findByText(NOTICE)).textContent).toMatch(/^연결되어 있는 동안 /);
   });
 
   it("leaves the line off, and the button working, when it cannot ask", async () => {
