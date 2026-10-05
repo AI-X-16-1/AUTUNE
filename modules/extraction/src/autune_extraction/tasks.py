@@ -42,6 +42,8 @@ from autune_core import (
     users_with_integration,
 )
 from autune_core.deletion import on_meeting_deleted, on_speech_deleted, on_user_deleted
+from autune_core.jira_connection import JiraAccess
+from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     CalendarClient,
@@ -67,6 +69,7 @@ from .models import (
     ExtConfirmation,
     ExtDecision,
     ExtDecisionRef,
+    ExtExternalCleanup,
     ExtExternalRef,
 )
 from .pipeline.base import give_roster
@@ -1207,9 +1210,8 @@ def retire_decision_pages() -> int:
     Not covered, because nothing records them: a *changed* page whose update
     failed (retried at the row's next change or by the backfill), and the
     page or issue of an action item a person deleted when
-    ``trash_notion_page`` / ``close_jira_issue`` could not get through --
-    the item's row is gone by then. Both need a record of what is owed,
-    which is a table, not this task.
+    ``trash_notion_page`` / ``close_jira_issue`` could not get through,
+    which is ``drain_external_cleanup``'s (#692).
     """
     rows = notion_backfill._decision_pages_to_retire(None)
     if not rows:
@@ -1232,7 +1234,13 @@ def trash_notion_page(action_item_id: str) -> None:
     """Before the board deletes an item: its Notion page to the workspace's
     trash, restorable there for 30 days (decided with the user, #467). Runs in
     the deleting request, best effort -- an unreachable Notion never blocks a
-    deletion. Jira closes instead (``close_jira_issue``): Jira has no trash."""
+    deletion. Jira closes instead (``close_jira_issue``): Jira has no trash.
+
+    A page this cannot trash -- Notion did not answer, or the team's Notion is
+    not connected right now -- is owed to ``ext_external_cleanup`` before the
+    item's ref goes with it, and ``drain_external_cleanup`` tries again (#692).
+    """
+    owed: tuple[str, str] | None = None
     try:
         with session_scope() as session:
             ref = session.get(ExtExternalRef, (action_item_id, "notion"))
@@ -1240,12 +1248,15 @@ def trash_notion_page(action_item_id: str) -> None:
             meeting = session.get(Meeting, item.meeting_id) if item is not None else None
             if ref is None or not ref.external_id or meeting is None:
                 return
+            owed = (meeting.team_id, str(ref.external_id))
             config = load_integration(session, meeting.team_id, "notion")
             if config is None or not config.secret:
+                log.info("extraction_notion_trash_not_connected", action_item_id=action_item_id)
+                _owe_external_cleanup(meeting.team_id, "notion", owed[1], site=None)
                 return
             client = NotionClient(config.secret)
             try:
-                client.trash_page(str(ref.external_id))
+                client.trash_page(owed[1])
             finally:
                 client.close()
             log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
@@ -1255,20 +1266,38 @@ def trash_notion_page(action_item_id: str) -> None:
             action_item_id=action_item_id,
             error=type(exc).__name__,
         )
+        if owed is not None:
+            _owe_external_cleanup(owed[0], "notion", owed[1], site=None)
 
 
 def close_jira_issue(action_item_id: str) -> None:
     """Before the board deletes an item: its Jira issue closed with a note
     (``jira_sync.close_for_deleted_item``). Runs in the deleting request, best
-    effort -- an unreachable Jira never blocks a deletion."""
+    effort -- an unreachable Jira never blocks a deletion.
+
+    An issue this cannot close -- Jira did not answer, or the team's
+    connection is missing or needs a person to reconnect -- is owed to
+    ``ext_external_cleanup`` with the site its key is from, and
+    ``drain_external_cleanup`` tries again (#692)."""
+    owed: tuple[str, str, str | None] | None = None
     try:
         with session_scope() as session:
+            ref = session.get(ExtExternalRef, (action_item_id, jira_sync.JIRA))
             item = session.get(ExtActionItem, action_item_id)
             meeting = session.get(Meeting, item.meeting_id) if item is not None else None
-            if meeting is None:
+            if meeting is None or ref is None or not ref.external_id:
                 return
+            if not ref.site:
+                # A ref from before #458 names no site, and its key could be
+                # anyone's issue on the site connected now; ``close_for_deleted_item``
+                # leaves it alone, so there is nothing to owe (mkkim68, review of #764).
+                log.info("extraction_jira_close_no_site", action_item_id=action_item_id)
+                return
+            owed = (meeting.team_id, str(ref.external_id), ref.site)
             access = jira_access(meeting.team_id)
             if access is None:
+                log.info("extraction_jira_close_not_connected", action_item_id=action_item_id)
+                _owe_external_cleanup(meeting.team_id, jira_sync.JIRA, owed[1], site=owed[2])
                 return
             client = JiraClient.for_cloud(access.access_token, access.cloud_id)
             try:
@@ -1280,6 +1309,30 @@ def close_jira_issue(action_item_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 -- a deletion must not fail on Jira
         log.warning(
             "extraction_jira_close_failed", action_item_id=action_item_id, error=type(exc).__name__
+        )
+        if owed is not None:
+            _owe_external_cleanup(owed[0], jira_sync.JIRA, owed[1], site=owed[2])
+
+
+def _owe_external_cleanup(team_id: str, system: str, external_id: str, *, site: str | None) -> None:
+    """Record a page or issue the deleting request could not clean up, in its own
+    transaction -- the deletion's may still roll back, and the item's ref is about
+    to go either way. Ids only. Never raises: losing this record is what #692
+    was, and it must not also cost the person their deletion."""
+    try:
+        with session_scope() as session:
+            session.execute(
+                service._insert_if_absent_into(session, ExtExternalCleanup)
+                .values(team_id=team_id, system=system, external_id=external_id, site=site)
+                .on_conflict_do_nothing(index_elements=["team_id", "system", "external_id"])
+            )
+        log.info("extraction_external_cleanup_owed", team_id=team_id, system=system)
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        log.warning(
+            "extraction_external_cleanup_not_recorded",
+            team_id=team_id,
+            system=system,
+            error=type(exc).__name__,
         )
 
 
@@ -1472,6 +1525,156 @@ def drain_calendar_cleanup() -> int:
                     session.delete(row)
     log.info("extraction_calendar_cleanup_drained", taken=len(rows), removed=removed)
     return removed
+
+
+@shared_task(name="autune.extraction.periodic.drain_external_cleanup")
+@periodic(timedelta(minutes=10))
+def drain_external_cleanup() -> int:
+    """Trash the Notion pages and close the Jira issues of deleted items whose
+    cleanup the deleting request could not do (#692). Returns how many went.
+
+    The same as at deletion: a page to Notion's trash, an issue closed with
+    ``jira_sync.DELETED_NOTE``. Done, or already gone (Notion's 404, Jira's
+    404): the row goes. A team whose Notion or Jira is not connected now, or
+    whose Jira needs a person to reconnect, is skipped and kept, with no
+    attempt counted -- connecting again is what lets it through. A key from
+    another Jira site than the team's now -- or from none -- may name someone else's issue: dropped,
+    logged. A transient failure is counted, up to ``CLEANUP_MAX_ATTEMPTS``; a
+    refusal drops the row, logged, as ``drain_calendar_cleanup`` does.
+
+    At most ``CLEANUP_BATCH`` rows are tried per run; rows passed over for a
+    missing connection do not count toward it. A connection that cannot be
+    read this run (a refresh that failed for now, a secret that would not
+    decrypt) passes that team over the same way, so one team never rolls the
+    whole run back.
+    """
+    done = 0
+    tried = 0
+    jira_for: dict[str, JiraAccess | None] = {}
+    notion_for: dict[str, str | None] = {}
+    with session_scope() as session:
+        # A team whose connection cannot be read this run -- a token refresh
+        # that timed out or got a 5xx, a secret that would not decrypt -- is
+        # passed over like an unconnected one, its rows kept and no attempt
+        # counted. Raised here, it would end the run and roll back every row
+        # already cleaned: closed issues noted twice next run, counted
+        # attempts lost, every team behind it kept waiting (PARK, review of
+        # #764).
+        def notion_token(team_id: str) -> str | None:
+            if team_id not in notion_for:
+                try:
+                    config = load_integration(session, team_id, "notion")
+                except Exception as exc:  # noqa: BLE001 -- that team only, this run only
+                    _connection_unread(team_id, "notion", exc)
+                    config = None
+                notion_for[team_id] = config.secret if config is not None else None
+            return notion_for[team_id]
+
+        def jira(team_id: str) -> JiraAccess | None:
+            if team_id not in jira_for:
+                try:
+                    jira_for[team_id] = jira_access(team_id)
+                except JiraReconnectRequiredError:
+                    jira_for[team_id] = None
+                except Exception as exc:  # noqa: BLE001 -- that team only, this run only
+                    _connection_unread(team_id, "jira", exc)
+                    jira_for[team_id] = None
+            return jira_for[team_id]
+
+        # Rows of a team not connected now are passed over, not counted, so
+        # the batch walks past them by id: a hundred of them first in line
+        # must not keep every other team's cleanup waiting (mkkim68, review
+        # of #764). Locked rows are skipped, so two runs that overlap never
+        # trash or close the same thing twice.
+        after = 0
+        while tried < CLEANUP_BATCH:
+            rows = list(
+                session.scalars(
+                    select(ExtExternalCleanup)
+                    .where(ExtExternalCleanup.id > after)
+                    .order_by(ExtExternalCleanup.id)
+                    .limit(CLEANUP_BATCH)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+            if not rows:
+                break
+            after = rows[-1].id
+            for row in rows:
+                if tried >= CLEANUP_BATCH:
+                    break
+                token: str | None = None
+                access: JiraAccess | None = None
+                if row.system == "notion":
+                    token = notion_token(row.team_id)
+                    if not token:
+                        continue
+                else:
+                    access = jira(row.team_id)
+                    if access is None:
+                        continue
+                tried += 1
+                done += _clean_up_one(session, row, token, access)
+    log.info("extraction_external_cleanup_drained", tried=tried, done=done)
+    return done
+
+
+def _connection_unread(team_id: str, system: str, exc: Exception) -> None:
+    log.warning(
+        "extraction_external_cleanup_connection_unread",
+        team_id=team_id,
+        system=system,
+        error=type(exc).__name__,
+    )
+
+
+def _clean_up_one(
+    session: Session,
+    row: ExtExternalCleanup,
+    notion_token: str | None,
+    access: JiraAccess | None,
+) -> int:
+    """One owed page or issue, with the team's connection already in hand; 1
+    when it went. The rules are ``drain_external_cleanup``'s."""
+    ids = {"team_id": row.team_id, "system": row.system, "external_id": row.external_id}
+    try:
+        if row.system == "notion":
+            assert notion_token is not None
+            notion = NotionClient(notion_token)
+            try:
+                notion.trash_page(row.external_id)
+            finally:
+                notion.close()
+        else:
+            assert access is not None
+            # Equal or nothing: a key without a site could be anyone's issue
+            # on the site connected now (mkkim68, review of #764).
+            if row.site != access.cloud_id:
+                log.info("extraction_external_cleanup_other_site", **ids)
+                session.delete(row)
+                return 0
+            jira = JiraClient.for_cloud(access.access_token, access.cloud_id)
+            try:
+                jira_sync.close_issue(jira, row.external_id)
+            finally:
+                jira.close()
+        session.delete(row)
+        return 1
+    except TransientIntegrationError:
+        row.attempts += 1
+        if row.attempts >= CLEANUP_MAX_ATTEMPTS:
+            # The page id or issue key is logged, so a person can finish by hand.
+            log.warning("extraction_external_cleanup_gave_up", **ids)
+            session.delete(row)
+    except IntegrationError as exc:
+        log.warning("extraction_external_cleanup_refused", **ids, error=type(exc).__name__)
+        session.delete(row)
+    except Exception as exc:  # noqa: BLE001 -- one row must not block the queue
+        row.attempts += 1
+        log.warning("extraction_external_cleanup_failed", **ids, error=type(exc).__name__)
+        if row.attempts >= CLEANUP_MAX_ATTEMPTS:
+            session.delete(row)
+    return 0
 
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
