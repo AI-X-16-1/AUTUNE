@@ -448,6 +448,9 @@ the feature needs.
     nothing about a person -- it is a list of that person's own work sent to
     that person. Autune keeps only that the day's message went
     (`ext_daily_digests`), not its text. The reminder switch above stops it.
+    A morning DM or a Monday DM the outbound check refuses is not sent, is
+    reported once, and keeps that day's (or week's) row so it is not tried
+    again every ten minutes.
   - **A person's own leave dates:** a person may set one range of days on
     which the morning DM and Monday's DM are not sent
     (`ext_notification_pauses`). When someone is away is theirs alone: only

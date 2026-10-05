@@ -868,6 +868,18 @@ def send_weekly_digests() -> list[str]:
                 went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
         except PrivacyViolationError:
             refused.append(digest.user_id)
+            # Reported once: the week's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    service.settle_refused_weekly_digest(session, digest, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_weekly_digest_refusal_not_kept",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
             continue
         except SlackRecipientNotLinkedError:
             not_linked += 1
@@ -934,6 +946,18 @@ def send_daily_digests() -> list[str]:
                 went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
         except PrivacyViolationError:
             refused.append(digest.user_id)
+            # Reported once: the day's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    service.settle_refused_daily_digest(session, digest, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_daily_digest_refusal_not_kept",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
             continue
         except SlackRecipientNotLinkedError:
             not_linked += 1

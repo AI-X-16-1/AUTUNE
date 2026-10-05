@@ -3673,6 +3673,25 @@ def send_weekly_digest(
     return True
 
 
+def settle_refused_weekly_digest(session: Session, digest: WeeklyDigest, *, now: datetime) -> None:
+    """Keep the week's claim of a digest the outbound check refused, so it is
+    reported once and not tried again every ten minutes for the rest of that
+    Monday (``settle_refused_due_reminder``'s reason, review of #751). The
+    refused send rolled its own claim back with it; this writes it again, in a
+    transaction of its own. Only a refusal is settled: a send Slack did not
+    take, or a person with no linked account, stays owed."""
+    session.execute(
+        _insert_if_absent_into(session, ExtWeeklyDigest)
+        .values(
+            user_id=digest.user_id,
+            team_id=digest.team_id,
+            week_start=digest.week_start,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "week_start"])
+    )
+
+
 # --- a person's own leave dates (the user, 2026-10-05) ---------------------------
 
 MAX_PAUSE_DAYS = 92
@@ -3916,6 +3935,25 @@ def send_daily_digest(
         ),
     )
     return True
+
+
+def settle_refused_daily_digest(session: Session, owed: DailyDigestOwed, *, now: datetime) -> None:
+    """Keep the day's claim of a morning DM the outbound check refused, so it
+    is reported once and not tried again every ten minutes until noon
+    (``settle_refused_due_reminder``'s reason, review of #751).
+
+    The refused send rolled its own claim back with it; this writes it again,
+    in a transaction of its own. The row then stands for "settled for that
+    day": sent, or refused and reported. Only a refusal is settled -- a send
+    Slack did not take, or a person with no linked account, stays owed.
+    Tomorrow's DM counts its changes from this row's time, so what the refused
+    one would have said changed is not said again; the open work is read
+    fresh, and is refused -- once -- again if it still cannot go out."""
+    session.execute(
+        _insert_if_absent_into(session, ExtDailyDigest)
+        .values(user_id=owed.user_id, team_id=owed.team_id, day=owed.day, sent_at=now)
+        .on_conflict_do_nothing(index_elements=["user_id", "team_id", "day"])
+    )
 
 
 @dataclass(frozen=True)

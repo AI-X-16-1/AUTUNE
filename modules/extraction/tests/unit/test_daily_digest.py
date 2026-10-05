@@ -12,6 +12,8 @@ the person alone, and is not kept past its last day.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -22,8 +24,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
-from autune_core import Base, Meeting, Team, TeamMember, User, get_session
+from autune_core import (
+    Base,
+    Meeting,
+    PrivacyViolationError,
+    Team,
+    TeamMember,
+    User,
+    get_session,
+)
 from autune_core.errors import AutuneError, ValidationError
 from autune_extraction import reminders, service, tasks
 from autune_extraction.config import ExtractionSettings
@@ -36,6 +47,8 @@ from autune_extraction.models import (
 )
 from autune_extraction.reminders import DailyDigest, DigestLine, build_daily_digest, daily_day
 from autune_extraction.router import router
+from autune_integrations.errors import TransientIntegrationError
+from autune_integrations.fakes import FakeSlack as CheckedSlack
 
 from .conftest import READER, sign_in
 
@@ -430,6 +443,136 @@ def test_the_setting_is_off_by_default_and_the_task_then_sends_nothing(
     monkeypatch.setattr(tasks, "session_scope", None)  # would fail if it were opened
 
     assert tasks.send_daily_digests() == []
+
+
+@dataclass
+class _Config:
+    secret: str
+
+    def require_secret(self) -> str:
+        return self.secret
+
+
+class _Clock(datetime):
+    """``datetime.now`` as the tasks call it, held at a moment a test picks."""
+
+    moment = TUESDAY_10_KST
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[no-untyped-def, override]
+        return cls.moment
+
+
+@pytest.fixture
+def checked_slack(session: Session, monkeypatch: pytest.MonkeyPatch) -> CheckedSlack:
+    """Both digest tasks with this session, connected teams, both switches on,
+    Tuesday 10:00 in Korea, and the fake that runs the outbound check -- the
+    one that refuses a phone number, as the real client does."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        try:
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+
+    fake = CheckedSlack()
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    monkeypatch.setattr(tasks, "load_integration", lambda s, team, service: _Config("xoxb"))
+    monkeypatch.setattr(tasks, "SlackClient", lambda secret: fake)
+    monkeypatch.setattr(tasks, "datetime", _Clock)
+    monkeypatch.setattr(
+        tasks,
+        "get_settings",
+        lambda: ExtractionSettings(_env_file=None, daily_digest=True, weekly_digest=True),  # type: ignore[call-arg]
+    )
+    _Clock.moment = TUESDAY_10_KST
+    return fake
+
+
+def refusable(session: Session) -> None:
+    """One of user_kim's team_1 items now carries a phone number somebody typed."""
+    item = session.get(ExtActionItem, "act_today")
+    assert item is not None
+    item.description = "010-1234-5678로 전화하기"
+    session.flush()
+
+
+def test_a_refused_morning_dm_is_raised_after_the_others_go_and_not_tried_again(
+    session: Session, checked_slack: CheckedSlack
+) -> None:
+    """The outbound check refuses one person's DM. The others still get theirs,
+    the refusal is raised, not swallowed -- and the day's claim is kept, so the
+    next run, ten minutes later, does not refuse the same text again."""
+    refusable(session)
+
+    with pytest.raises(PrivacyViolationError, match="user_kim"):
+        tasks.send_daily_digests()
+
+    assert sorted(m.channel for m in checked_slack.sent) == ["user_kim", "user_lee"]
+    assert not any("010-1234-5678" in m.text for m in checked_slack.sent)
+    assert sorted((d.user_id, d.team_id) for d in session.query(ExtDailyDigest)) == [
+        ("user_kim", "team_1"),  # refused, settled for the day
+        ("user_kim", "team_2"),
+        ("user_lee", "team_1"),
+    ]
+
+    assert tasks.send_daily_digests() == [], "nothing owed, nothing refused, nothing raised"
+    assert len(checked_slack.sent) == 2
+
+
+def test_a_morning_dm_slack_did_not_take_stays_owed(
+    session: Session, checked_slack: CheckedSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a refusal is settled. A send that failed takes its claim back and
+    is tried again next run."""
+
+    def down(user_id: str, text: str, blocks=None) -> str:  # type: ignore[no-untyped-def]
+        raise TransientIntegrationError("slack timed out")
+
+    monkeypatch.setattr(checked_slack, "send_dm", down)
+
+    assert tasks.send_daily_digests() == []
+
+    assert session.query(ExtDailyDigest).count() == 0
+    assert len(service.daily_digests_to_send(session, now=TUESDAY_10_KST)) == 3
+
+
+def test_a_refused_morning_dm_whose_claim_cannot_be_kept_is_still_raised(
+    session: Session, checked_slack: CheckedSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refusable(session)
+
+    def broken(*_: object, **__: object) -> None:
+        raise RuntimeError("database gone")
+
+    monkeypatch.setattr(service, "settle_refused_daily_digest", broken)
+
+    with capture_logs() as logs, pytest.raises(PrivacyViolationError, match="user_kim"):
+        tasks.send_daily_digests()
+
+    assert "extraction_daily_digest_refusal_not_kept" in [e["event"] for e in logs]
+    assert "database gone" not in repr(logs) and "010-1234-5678" not in repr(logs)
+
+
+def test_a_refused_monday_digest_is_raised_once_and_not_tried_again(
+    session: Session, checked_slack: CheckedSlack
+) -> None:
+    """The same hole in the weekly digest (#792): its refused claim rolled back,
+    so the same text was refused every ten minutes until eight that night."""
+    refusable(session)
+    _Clock.moment = MONDAY_10_KST
+
+    with pytest.raises(PrivacyViolationError, match="user_kim"):
+        tasks.send_weekly_digests()
+
+    assert sorted(m.channel for m in checked_slack.sent) == ["user_kim", "user_lee"]
+    assert session.query(ExtWeeklyDigest).count() == 3
+
+    assert tasks.send_weekly_digests() == []
+    assert len(checked_slack.sent) == 2
 
 
 @pytest.fixture
