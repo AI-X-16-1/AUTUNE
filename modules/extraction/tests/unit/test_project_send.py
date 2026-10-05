@@ -708,8 +708,31 @@ def test_an_owner_not_reachable_keeps_the_event_for_later(session: Session) -> N
 
     refreshed = project_send.refresh(session, MEETING, project_send.Clients(), lambda _: None)
 
-    assert {s.outcome for s in refreshed} == {"not_connected"}
+    # Autune's event already says its minutes: nothing to reach its owner for.
+    assert {(s.project_id, s.outcome) for s in refreshed} == {
+        ("prj_a", "unchanged"),
+        ("prj_b", "not_connected"),
+    }
+    assert project_send.in_line(refreshed) is False, "App's event is still owed"
     assert session.query(ExtMinutesEvent).count() == 2
+
+
+def test_an_event_that_already_says_the_minutes_asks_for_no_grant(session: Session) -> None:
+    """A refresh after every change must not refresh a person's Google token,
+    or write to their calendar, for minutes that did not change (#787 review)."""
+    calendar = FakeCalendar()
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+    asked: list[str] = []
+
+    def calendar_for(user_id: str) -> tuple[Any, str] | None:
+        asked.append(user_id)
+        return calendar, "primary"
+
+    refreshed = project_send.refresh(session, MEETING, project_send.Clients(), calendar_for)
+
+    assert {s.outcome for s in refreshed} == {"unchanged"} and len(refreshed) == 2
+    assert asked == []
+    assert len(calendar.created) == 2 and calendar.updated == [] and calendar.deleted == []
 
 
 # --- a refresh can be repeated, and is until it has worked (#787 review) -----------
@@ -1059,3 +1082,65 @@ def test_moving_an_item_back_to_needs_confirmation_refreshes_the_minutes(
 
     assert answer.status_code == 200
     assert refreshed == [MEETING]
+
+
+# --- the same for the events on people's own calendars (#788 review) ----------------
+
+
+def test_an_event_whose_owner_cannot_be_reached_is_owed_and_retried(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nobody else can touch a person's calendar: an event left behind there
+    has the retry and nothing else."""
+    calendar = FakeCalendar()
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(calendar))
+    _withdraw(session, "dec_ok")
+    reachable: list[bool] = []
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield session
+
+    @contextmanager
+    def calendars(_session: Session) -> Iterator[Any]:
+        yield lambda _user_id: (calendar, "primary") if reachable else None
+
+    monkeypatch.setattr(tasks, "session_scope", same_session)
+    monkeypatch.setattr(tasks, "_project_clients", lambda *_: project_send.Clients())
+    monkeypatch.setattr(tasks, "_calendars", calendars)
+
+    assert tasks.refresh_project_minutes(MEETING) is False
+    assert _owed(session) is not None
+    assert calendar.updated == []
+
+    reachable.append(True)
+    assert tasks.retry_project_minutes_refresh() == 1
+    assert _owed(session) is None
+    assert calendar.updated == ["evt_1"], "Autune's event rewritten; App's was unchanged"
+
+
+def test_deleted_speech_owes_a_meeting_that_went_to_calendars_only(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_send.send(session, MEETING, ["calendar"], calendar_clients(FakeCalendar()))
+    queued: list[str] = []
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield session
+
+    monkeypatch.setattr(tasks, "session_scope", same_session)
+    monkeypatch.setattr(
+        tasks.service,
+        "forget_speech",
+        lambda _session, _ids: service.SpeechForgotten(changed_decisions=("dec_ok",)),
+    )
+    monkeypatch.setattr(
+        tasks, "refresh_project_minutes_queued", SimpleNamespace(delay=queued.append)
+    )
+    monkeypatch.setattr(tasks, "sync_decision", SimpleNamespace(delay=lambda _id: None))
+
+    tasks.forget_deleted_speech("user_1", ["utt_1"])
+
+    assert queued == [MEETING]
+    assert _owed(session) is not None

@@ -173,6 +173,10 @@ class ExtMinutesEvent(Base):
         String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
     )
     event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    """As ``ExtProjectSend.content_digest``: a hash of the minutes the event
+    last received, so a refresh leaves an event alone that already says them
+    and asks for its owner's grant only when there is something to write."""
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

@@ -491,6 +491,7 @@ def _to_calendar(session: Session, meeting_id: str, m: Minutes, clients: Clients
         ).scalar_one()
         old = row.event_id
         row.event_id = _write_event(calendar, calendar_id, m, old)
+        row.content_digest = _digest(m)
         session.flush()
     return "updated" if old else "created"
 
@@ -833,9 +834,10 @@ def refresh(
     so this is the only way an event there loses a deleted sentence.
 
     A copy that already says the minutes as they are now is left alone and
-    reported ``unchanged`` (``ExtProjectSend.content_digest``): nothing is
-    asked of its tool. So this can run after every change, and again after a
-    failure, without a new Notion page each time."""
+    reported ``unchanged`` (``content_digest`` on its row, an event's too):
+    nothing is asked of its tool, and no grant is asked for. So this can run
+    after every change, and again after a failure, without a new Notion page
+    each time."""
     existing = list(
         session.scalars(select(ExtProjectSend).where(ExtProjectSend.meeting_id == meeting_id))
     )
@@ -895,6 +897,13 @@ def _refresh_event(
     m: Minutes | None,
     calendar_for: CalendarFor | None,
 ) -> str:
+    if (
+        m is not None
+        and m.day is not None
+        and event.event_id
+        and event.content_digest == _digest(m)
+    ):
+        return "unchanged"
     mine = calendar_for(event.user_id) if calendar_for is not None else None
     if mine is None:
         return "not_connected"
