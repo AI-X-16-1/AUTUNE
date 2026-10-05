@@ -231,8 +231,8 @@ class ExtractionSettings(BaseSettings):
     code cannot check: nothing marks a meeting as a dummy, and nothing says
     which tier a key is. What the code can do is make sending speech to a
     provider something a deployment says twice. With ``classifier_impl`` set
-    to ``llm`` or ``llm_checked``, or ``resolver_impl`` set to ``llm``, and
-    this not true, these settings refuse to load.
+    to ``llm`` or ``llm_checked``, or ``resolver_impl`` or ``summary_impl``
+    set to ``llm``, and this not true, these settings refuse to load.
 
     **It turns nothing on.** Set alone, it changes nothing.
 
@@ -279,6 +279,20 @@ class ExtractionSettings(BaseSettings):
     resolver_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``resolver_impl=local``. Mirrors
     ``classifier_device``."""
+
+    summary_impl: str = "none"
+    """``none`` or ``llm``: whether a meeting gets a summary written by a cloud
+    model on the 요약 tab (#421 v2). ``llm`` sends the meeting's consented,
+    masked lines out, the team's names replaced, so it is opt-in and needs
+    ``llm_acknowledged_392`` like every other cloud setting. ``none`` leaves
+    the tab as v1 built it, from B's own rows."""
+
+    summary_model: str = "gemini-3.5-flash-lite"
+    """The model ``summary_impl=llm`` asks. The cheap one: a meeting takes a
+    call per section and one to combine them."""
+
+    summary_fallback_model: str = "gemini-3.8-flash"
+    """Asked instead when ``summary_model`` stays unavailable. Blank disables it."""
 
     embedder_impl: str = "fake"
     """Which embedder backs the resolver's similarity check: ``local``,
@@ -357,6 +371,7 @@ class ExtractionSettings(BaseSettings):
         for name, value in (
             ("CLASSIFIER_IMPL", self.classifier_impl),
             ("RESOLVER_IMPL", self.resolver_impl),
+            ("SUMMARY_IMPL", self.summary_impl),
         ):
             if value in CLOUD_IMPLS:
                 raise ValueError(
