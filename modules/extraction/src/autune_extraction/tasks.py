@@ -1050,11 +1050,15 @@ def sync_action_item(action_item_id: str) -> str:
 
 
 COPY_SENT, COPY_GONE, COPY_NOT_CONNECTED = "sent", "gone", "not_connected"
-"""What a sync of one item to a team's tool did. ``COPY_NOT_CONNECTED`` is a
-skip, and it is not "the copy went": a team that disconnected Notion or Jira
-may still have the item's page or issue there, saying what it said, and nothing
-this run did changed that. So a failure standing for the copy is kept, not
-cleared (mkkim68, review of #774; the user's call, 2026-10-05)."""
+COPY_NOT_NEEDED = "not_needed"
+"""What a sync of one item to a tool did. ``COPY_NOT_CONNECTED`` is a skip, and
+it is not "the copy went": a team that disconnected Notion or Jira may still
+have the item's page or issue there, and a person who disconnected their
+calendar still has the item's event on it, saying what it said -- nothing this
+run did changed that. So a failure standing for the copy is kept, not cleared
+(mkkim68, reviews of #774 and #823; the user's call, 2026-10-05).
+``COPY_NOT_NEEDED`` is the calendar's "this item gets no event": nothing is
+outside, and nothing stands to be kept."""
 
 
 def sync_after_confirmation(action_item_id: str) -> None:
@@ -1108,7 +1112,7 @@ def sync_after_confirmation(action_item_id: str) -> None:
     # Separately, so a Notion failure never costs the calendar its event and
     # the other way round.
     try:
-        sync_action_item_calendar(action_item_id)
+        on_calendar = sync_action_item_calendar(action_item_id)
     except IntegrationError as exc:
         log.warning("extraction_calendar_sync_failed", action_item_id=action_item_id)
         _sync_failed(action_item_id, sync_state.CALENDAR, exc)
@@ -1120,7 +1124,8 @@ def sync_after_confirmation(action_item_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 -- one copy never costs the others theirs
         _sync_broke(action_item_id, sync_state.CALENDAR, exc)
     else:
-        _sync_went(action_item_id, sync_state.CALENDAR)
+        if on_calendar != COPY_NOT_CONNECTED:
+            _sync_went(action_item_id, sync_state.CALENDAR)
     # And Jira on its own too. ``AutuneError`` covers a refused Jira grant
     # (``JiraReconnectRequiredError``) as well as integration errors.
     try:
@@ -1312,7 +1317,7 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
 
 
 @shared_task(name="autune.extraction.sync_action_item_calendar", acks_late=True)
-def sync_action_item_calendar(action_item_id: str) -> None:
+def sync_action_item_calendar(action_item_id: str) -> str:
     """Step 7's calendar half (#435): the item's due date on its assignee's own
     calendar -- ``calendar_sync.sync_due_date_to_calendar``.
 
@@ -1320,11 +1325,28 @@ def sync_action_item_calendar(action_item_id: str) -> None:
     for a deployment without Google client credentials (``_calendars``). Like
     the Notion sync it does not retry itself: a timed-out create may have made
     the event, and a retry would make a second.
+
+    Returns what happened, as the Notion and Jira syncs do (mkkim68, review of
+    #823): ``COPY_SENT`` when the event was written; ``COPY_NOT_NEEDED`` when
+    the item has no event and gets none -- no date, no assignee with an
+    account, not confirmed, or a calendar that was never connected;
+    ``COPY_NOT_CONNECTED`` when **an event of this item is still on its
+    assignee's calendar and could not be reached** -- they disconnected, or
+    the deployment lost its Google client. That last one is read off the row:
+    the sync deletes the row whenever the event's owner is no longer the
+    item's, so a row left after a sync that wrote nothing is an event on the
+    right person's calendar that still says what it said.
     """
     with session_scope() as session, _calendars(session) as calendar_for:
-        calendar_sync.sync_due_date_to_calendar(
+        written = calendar_sync.sync_due_date_to_calendar(
             session, calendar_for, action_item_id=action_item_id
         )
+        if written is not None:
+            return COPY_SENT
+        if session.get(ExtCalendarEvent, action_item_id) is not None:
+            log.info("extraction_calendar_event_unreachable", action_item_id=action_item_id)
+            return COPY_NOT_CONNECTED
+        return COPY_NOT_NEEDED
 
 
 CALENDAR_POLL_OVERLAP = timedelta(minutes=2)

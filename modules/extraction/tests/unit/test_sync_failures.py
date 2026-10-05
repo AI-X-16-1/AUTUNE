@@ -52,6 +52,7 @@ from autune_integrations import (
 from .conftest import (
     READER,
     RECORD_FAILURE,
+    SYNC_ACTION_ITEM_CALENDAR,
     SYNC_ACTION_ITEM_JIRA,
     SYNC_FAILED,
     SYNC_WENT,
@@ -307,14 +308,15 @@ def test_two_first_failures_at_once_keep_the_latest_and_lose_nothing(session: Se
     assert (row.kind, row.failed_at.replace(tzinfo=UTC)) == ("reconnect", later)
 
 
-@pytest.mark.parametrize("system", ["notion", "jira"])
+@pytest.mark.parametrize("system", ["notion", "calendar", "jira"])
 def test_a_copy_skipped_because_the_team_is_not_connected_keeps_its_failure(
     session: Session, sends: dict, system: str
 ) -> None:
     """mkkim68, review of #774: a skip is not "the copy went". A team that
     disconnected the tool may still have the item's page or issue there, saying
     what it said -- after deleted speech, the deleted sentence -- and the red
-    mark used to come off the card all the same."""
+    mark used to come off the card all the same. The calendar too (her review
+    of #823): a person who disconnected still has the event."""
     item(session)
     sends[system] = TransientIntegrationError("down")
     tasks.sync_after_confirmation("act_1")
@@ -365,6 +367,84 @@ def test_the_notion_sync_says_when_the_team_is_not_connected(
 
     assert tasks.sync_action_item("act_1") == tasks.COPY_NOT_CONNECTED
     assert tasks.sync_action_item("act_never_was") == tasks.COPY_GONE
+
+
+# --- the calendar says which skip it was, too (#823 review) ---------------------------
+
+
+def _nobody_has_a_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``_calendars`` as it answers for someone who disconnected, or on a
+    deployment with no Google client: nobody's calendar can be reached."""
+
+    @contextmanager
+    def calendars(_session: Session) -> Iterator[Callable[[str], None]]:
+        yield lambda _user_id: None
+
+    monkeypatch.setattr(tasks, "_calendars", calendars)
+
+
+@pytest.fixture
+def real_calendar_sync(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real ``sync_action_item_calendar`` on this session, nobody connected."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+
+    monkeypatch.setattr(tasks, "session_scope", scope)
+    _nobody_has_a_calendar(monkeypatch)
+
+
+def test_the_calendar_sync_says_when_an_event_is_out_of_reach(
+    session: Session, real_calendar_sync: None
+) -> None:
+    """The event is on its assignee's calendar and the assignee is still the
+    item's; only the way to it is gone. The row is what says so, and it stays."""
+    item(session)
+    event(session)
+
+    assert SYNC_ACTION_ITEM_CALENDAR("act_1") == tasks.COPY_NOT_CONNECTED
+    assert session.get(ExtCalendarEvent, "act_1") is not None
+
+
+def test_an_item_with_no_event_on_a_calendar_never_connected_needs_none(
+    session: Session, real_calendar_sync: None
+) -> None:
+    item(session)
+
+    assert SYNC_ACTION_ITEM_CALENDAR("act_1") == tasks.COPY_NOT_NEEDED
+
+
+def test_an_item_that_no_longer_gets_an_event_is_not_called_out_of_reach(
+    session: Session, real_calendar_sync: None
+) -> None:
+    """Undated since: the sync drops the row, so nothing says an event is
+    still to be reached, and no mark is kept for it."""
+    item(session, due_date=None)
+    event(session)
+
+    assert SYNC_ACTION_ITEM_CALENDAR("act_1") == tasks.COPY_NOT_NEEDED
+    assert session.get(ExtCalendarEvent, "act_1") is None
+
+
+def test_a_disconnected_calendar_keeps_its_mark_through_deleted_speech(
+    session: Session, sends: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68's case on #823, end to end: the event exists and its last
+    update failed; the assignee disconnects; speech is deleted and
+    ``sync_item_copies`` runs. The calendar step can reach nothing -- the
+    event still says the deleted sentence -- and the mark must stay."""
+    item(session)
+    event(session)
+    sends["calendar"] = TransientIntegrationError("calendar timed out")
+    tasks.sync_after_confirmation("act_1")
+    assert kept(session) == {"calendar": "unreachable"}
+
+    monkeypatch.setattr(tasks, "sync_action_item_calendar", SYNC_ACTION_ITEM_CALENDAR)
+    _nobody_has_a_calendar(monkeypatch)
+    tasks.sync_item_copies("act_1")
+
+    assert kept(session) == {"calendar": "unreachable"}
 
 
 # --- each copy on its own, whatever it raises (#774 review) ---------------------------
