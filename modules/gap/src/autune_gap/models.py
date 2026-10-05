@@ -221,7 +221,7 @@ class GapGap(Base, TimestampMixin):
 
     ``dismissed_at`` records that somebody called this a false positive. It is
     a real timestamp rather than a soft-delete flag — the row is not hidden,
-    it is marked, and ADR 0006's threshold tuning reads the mark. Nobody's id
+    it is marked, and threshold tuning reads the mark (docs/modules/gap.md, Storage). Nobody's id
     is stored with it: which member of a team pressed dismiss is not something
     the feature needs, and storing it would be a per-person record of conduct
     that ADR 0003 refuses.

@@ -138,6 +138,50 @@ class ExtProjectSend(Base):
     )
 
 
+class ExtMinutesEvent(Base):
+    """A project's minutes as an all-day event on the meeting's day, in the
+    calendar of the person who sent them (2026-10-04).
+
+    Their own calendar, by their own click: team work is not copied into
+    anybody else's (``calendar_sync``). Kept so sending again updates the same
+    event, and so the event goes when the meeting expires or the person's
+    account is deleted (``tasks.queue_meeting_calendar_events``,
+    ``tasks.forget_user_calendar_events``) -- and when the project is deleted
+    (``projects.delete_project``) -- and the event follows what changes after
+    it was sent (``project_send.refresh``). The event id only, no text.
+
+    ``event_id`` is empty only inside the transaction that claimed the row to
+    make the event, so a double click makes one event.
+
+    **A calendar disconnected before the event goes cannot be reached.** The
+    grant is the only way into a person's calendar, so their minutes events
+    stay there -- in their own calendar, put there by their own click, where
+    they can delete them -- and the cleanup row is dropped with a log line
+    after its tries (``tasks.drain_calendar_cleanup``). Removing them at
+    disconnect needs a hook core does not have yet.
+    """
+
+    __tablename__ = "ext_minutes_events"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    """As ``ExtProjectSend.content_digest``: a hash of the minutes the event
+    last received, so a refresh leaves an event alone that already says them
+    and asks for its owner's grant only when there is something to write."""
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtProjectRefreshOwed(Base):
     """A meeting whose project minutes outside still have to be brought in line
     with what is confirmed now (#787 review).
@@ -458,7 +502,8 @@ class ExtExternalRef(Base):
 
 
 class ExtDecisionRef(Base):
-    """The page a confirmed decision became in an outside tool, once.
+    """The page -- or Jira issue -- a confirmed decision became in an outside
+    tool, once.
 
     The same rule as ``ExtExternalRef`` for action items: keyed by the decision and
     the system, claimed before the call, filled in after it. A separate table
@@ -485,6 +530,9 @@ class ExtDecisionRef(Base):
     )
     external_id: Mapped[str | None] = mapped_column(String(64))
     url: Mapped[str | None] = mapped_column(Text)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """For a Jira issue, the cloud id of the site it is on: a key is unique only
+    within a site, as for ``ExtExternalRef.site``. ``None`` for a Notion page."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -778,6 +826,64 @@ class ExtWeeklyDigest(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtDailyDigest(Base):
+    """That a person was sent the morning DM for one day, through one team's
+    Slack (the user, 2026-10-05). The primary key is the "once", as
+    ``ext_weekly_digests``'s is, and ``sent_at`` of the latest row is where the
+    next one's "since the last one" starts. No text: the message is not kept.
+    Goes with the person and with the team."""
+
+    __tablename__ = "ext_daily_digests"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtNotificationPause(Base):
+    """The days a person asked not to get the morning DM or Monday's digest --
+    leave, as they set it themselves (the user, 2026-10-05).
+
+    One range a person, replaced when they set another and deleted when they
+    clear it. **It says when a person is away, so it is theirs alone**: only
+    they can read or write it (the routes name nobody), no screen shows it to
+    a teammate, and nothing derives anything else from it -- it only stops a
+    message. It is not kept past its last day: the morning run deletes a range
+    that has ended (``service.forget_ended_pauses``). The due-date reminders
+    do not read it; a deadline is not put off by leave. Goes with the account.
+    """
+
+    __tablename__ = "ext_notification_pauses"
+    __table_args__ = (
+        CheckConstraint("ends_on >= starts_on", name="ck_ext_notification_pauses_order"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    starts_on: Mapped[date] = mapped_column(Date, nullable=False)
+    ends_on: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtPublicHoliday(Base):
+    """A public holiday in Korea, as Google's public holiday calendar listed it
+    at the last read (``days_off.py``, the user 2026-10-05). No digest goes on
+    one. Dates of public record: nothing here is about a person, a team or a
+    meeting. Replaced whole on every read; ``read_at`` is that read's time,
+    and a table with none newer than ``days_off.FRESH_FOR`` is not used."""
+
+    __tablename__ = "ext_public_holidays"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtDueReminder(Base):
     """That an item's assignee was sent a due-date reminder of one kind for one
     due date (``reminders``). The primary key is the "once": a second run, a
@@ -1057,9 +1163,10 @@ class ExtCalendarCleanup(Base):
 
 class ExtDueReminderOptOut(Base):
     """A person who turned the due-date reminders off for themselves (review
-    of #751). On unless they did: a row means off, and turning them back on
-    deletes it. Only the person, never which items or teams; goes with the
-    account."""
+    of #751) -- and with them Monday's digest of their own open items (#792):
+    one switch for Autune's DMs about a person's items. On unless they did:
+    a row means off, and turning them back on deletes it. Only the person,
+    never which items or teams; goes with the account."""
 
     __tablename__ = "ext_due_reminder_optouts"
 

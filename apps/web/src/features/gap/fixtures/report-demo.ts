@@ -329,4 +329,14 @@ export const DEMO_EXPLANATIONS: GapExplanations = {
       },
     },
   ],
+  covered: [
+    {
+      item_key: "success_criteria",
+      topic_label: "성능 목표",
+      topic_centrality: 0.78,
+      evidence: [
+        { utterance_id: "utt_demo_0", start_sec: 512, text: "성능 목표는 p95 300ms로 잡겠습니다." },
+      ],
+    },
+  ],
 };

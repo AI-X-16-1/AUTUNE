@@ -221,6 +221,32 @@ class AudSpeakerEmbedding(Base, TimestampMixin):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AudSpeakerName(Base):
+    """A name typed for a voice with no account here: ``aud_speaker_names``.
+
+    A guest, someone from another company -- somebody the team-member picker
+    cannot offer. The name belongs to one (meeting, label) and goes nowhere
+    else: the participant keeps ``user_id = NULL``, so the transcript publishes
+    no ``speaker_id`` and other modules see an unidentified speaker; no voice
+    profile is written, so nothing recognises this voice in the next meeting.
+
+    Cascades with the meeting, which is its only path to deletion and the only
+    one it needs: it names nobody with an account, so no user deletion can
+    reach it, and it outlives no meeting.
+    """
+
+    __tablename__ = "aud_speaker_names"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    speaker_label: Mapped[str] = mapped_column(String(100), primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class AudTeamInvitation(Base):
     """A pending invitation to a team: an address, not a member (#552).
 

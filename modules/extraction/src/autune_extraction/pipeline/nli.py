@@ -3,12 +3,15 @@
 - ``local``  -- default: in-process transformers (extra: ``local-models``).
 - ``hosted`` -- our own inference server.
 - ``fake``   -- deterministic, for tests.
+- ``llm``    -- a cloud LLM, in ``nli_llm.py``; opt-in, behind #392's
+  acknowledgement like ``classifier_impl=llm``.
 
 klue/roberta fine-tuned on KorNLI by default (#172: server-only deployment,
 weights never distributed, dev acc 0.8185 / held-out XNLI test acc 0.8273).
-No ``external`` option, for the same reason ``classifier.py`` has none --
-sending an utterance to somebody else's NLI endpoint is a privacy decision,
-not a config string (privacy.md section 6, ``base.py``).
+The three here stay inside our infrastructure. Sending an utterance to
+somebody else's endpoint is a privacy decision, not a config string
+(privacy.md section 6, ``base.py``), which is why ``llm`` is a module of its
+own, off by default, and refused at start-up until it is acknowledged.
 
 ``torch`` and ``transformers`` are imported inside the class that needs
 them -- see ``classifier.py``'s own note on why.

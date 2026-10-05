@@ -33,14 +33,25 @@ def test_a_narrow_win_still_picks_a_label() -> None:
 # --- what has deliberately no implementation ---------------------------------
 
 
-def test_there_is_no_external_nli() -> None:
+def test_the_one_external_nli_is_the_opt_in_llm() -> None:
     """Same reasoning as the classifier: privacy.md section 6 makes an
     external NLI endpoint a design conversation, not a config string.
 
     Asserted as the whole key set so adding one fails here, where the reason
     is written down, rather than passing as an ordinary feature.
+
+    This test read ``{"local", "hosted", "fake"}`` and was named "there is no
+    external NLI" until 2026-10-05. The conversation it asked for happened:
+    module B's owner asked for step 4 on Gemini for the gate and the demo,
+    and ``llm`` was added under the classifier's own conditions -- never the
+    default, refused without #392's acknowledgement (the two assertions
+    below), and for review by all four owners because privacy.md changed with
+    it. Another name still fails here.
     """
-    assert set(_NLI) == {"local", "hosted", "fake"}
+    assert set(_NLI) == {"local", "hosted", "fake", "llm"}
+    assert ExtractionSettings(_env_file=None).nli_impl == "local"  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="LLM_ACKNOWLEDGED_392"):
+        ExtractionSettings(_env_file=None, nli_impl="llm")  # type: ignore[call-arg]
 
 
 # --- the fake, which verify_utterances is built on ---------------------------

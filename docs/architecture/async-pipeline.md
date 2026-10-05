@@ -100,6 +100,7 @@ agrees on.
 | `autune.intelligence.on_extraction_action_progress` | task | E |
 | `autune.intelligence.announce_meeting_report_changed` | task | E (queued by the report card's route; publishes the event below from the worker, #170) |
 | `autune.intelligence.periodic.announce_report_changes` | task | E (every 5 minutes, a change whose announcement was lost, #698) |
+| `autune.intelligence.periodic.weekly_reports` | task | E (hourly; each team's weekly report once its chosen weekday and hour pass, #227) |
 | `autune.intelligence.meeting_report_changed` | event | E (from the report card, #674) |
 
 Register tasks in your module's `tasks.py`. `apps/worker` discovers them by

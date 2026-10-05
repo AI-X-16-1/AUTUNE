@@ -229,6 +229,9 @@ class InvitationCreate(BaseModel):
     checked: whether anybody holds an account under it is never looked up."""
 
     email: str = Field(min_length=3, max_length=320)
+    send_email: bool = False
+    """Also mail the link from the inviter's own Gmail (``invitation_mail``).
+    Off by default: the link is handed over by the inviter unless they ask."""
 
     @field_validator("email", mode="before")
     @classmethod
@@ -247,11 +250,14 @@ class InvitationCreate(BaseModel):
 class InvitationIssued(BaseModel):
     """The token for the invitation's link, this once, and when it lapses.
 
-    The same two fields whatever the address was. Nothing here says whether
-    it has an account, a name, or a place on the team already."""
+    The same fields whatever the address was. Nothing here says whether it
+    has an account, a name, or a place on the team already."""
 
     token: str
     expires_at: datetime
+    emailed: bool = False
+    """Whether Gmail took the mail ``send_email`` asked for. It turns on the
+    inviter's own grant and on Gmail, never on the address (``invitation_mail``)."""
 
 
 class InvitationAccept(BaseModel):
@@ -268,6 +274,9 @@ class TeamSummary(BaseModel):
 
     team_id: str
     name: str
+    pinned: bool = False
+    """Whether the caller pinned this team to the top of their own list. Theirs
+    alone: no other member's answer carries it."""
 
 
 class SpeakerCandidate(BaseModel):
@@ -290,12 +299,29 @@ class SpeakerEntry(BaseModel):
     speaker_label: str
     user_id: str | None
     candidate: SpeakerCandidate | None
+    display_name: str | None = None
+    """A name typed for this meeting only, for a voice with no account here
+    (``PUT /meetings/{id}/speakers/{label}/name``). Never set together with
+    ``user_id``."""
 
 
 class SpeakerAssignment(BaseModel):
     """ "``화자 2`` is this person." The body of the confirmation."""
 
     user_id: str
+
+
+class SpeakerName(BaseModel):
+    """ "``화자 2`` is called this, in this meeting." For someone the picker
+    cannot offer because they have no account on the team."""
+
+    name: str = Field(min_length=1, max_length=50)
+    """1-50 characters after trimming."""
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _trim_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class TeamMemberSummary(BaseModel):

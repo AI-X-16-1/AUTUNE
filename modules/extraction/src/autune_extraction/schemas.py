@@ -323,6 +323,15 @@ class ProjectRead(BaseModel):
     jira_project_key: str | None = None
 
 
+class NameSuggestion(BaseModel):
+    """A word that came up in several of the team's meetings that no project
+    has yet."""
+
+    word: str
+    count: int
+    """In how many of the latest meetings it came up -- meetings, not mentions."""
+
+
 class ProjectWrite(BaseModel):
     """A project as a member types it."""
 
@@ -346,14 +355,14 @@ class ProjectSendRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    targets: list[Literal["notion", "slack", "jira"]] = Field(min_length=1)
+    targets: list[Literal["notion", "slack", "jira", "calendar"]] = Field(min_length=1)
 
 
 class ProjectSendResult(BaseModel):
     project_id: str
     project_name: str
-    target: Literal["notion", "slack", "jira"]
-    outcome: Literal["created", "updated", "retracted", "not_connected", "failed"]
+    target: Literal["notion", "slack", "jira", "calendar"]
+    outcome: Literal["created", "updated", "retracted", "not_connected", "no_date", "failed"]
 
 
 class ProjectSendReport(BaseModel):
@@ -414,6 +423,28 @@ class DueReminderSettingIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     on: bool
+
+
+class NotificationPause(BaseModel):
+    """The caller's own leave dates: no morning DM and no Monday digest from
+    ``starts_on`` to ``ends_on``, both days included (the user, 2026-10-05).
+    Both ``None`` is no pause. Sent to clear or replace it, and answered with
+    what stands. Their own only: nothing here names a person."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    starts_on: date | None = None
+    ends_on: date | None = None
+
+
+class NotificationPauseRead(NotificationPause):
+    """The caller's pause as it stands, and what else holds their digests back
+    here. ``calendar_leave`` says whether this deployment also reads
+    out-of-office time from a calendar the person connected
+    (``AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR``), so the screen can say so
+    where it is true and stay silent where it is not."""
+
+    calendar_leave: bool = False
 
 
 class MeetingNoteUpdate(BaseModel):

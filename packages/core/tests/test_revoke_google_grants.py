@@ -59,6 +59,19 @@ def test_a_calendar_grant_is_revoked(world: dict[str, Any]) -> None:
     assert world["revoked"] == ["1//refresh"]
 
 
+def test_a_gmail_grant_is_revoked_with_the_account(world: dict[str, Any]) -> None:
+    """A grant to send mail as the person must not outlive their account at
+    Google (#760 review): with the real ``GOOGLE_SERVICES``, not a stand-in."""
+    world["grants"]["gmail_send"] = UserIntegrationConfig(
+        "gmail_send", USER, "1//mail", {"google_sub": "sub-2", "client_id": "cid"}
+    )
+    world["grants"]["calendar"] = calendar(google_sub="sub-1", client_id="cid")
+
+    ui.revoke_google_grants(USER)
+
+    assert world["revoked"] == ["1//refresh", "1//mail"]
+
+
 def test_nothing_connected_asks_google_nothing(world: dict[str, Any]) -> None:
     ui.revoke_google_grants(USER)
     assert world["revoked"] == []
@@ -143,7 +156,10 @@ def test_an_unreadable_grant_is_logged_and_does_not_raise(
     with capture_logs() as logs:
         ui.revoke_google_grants(USER)
 
-    assert [e["event"] for e in logs] == ["user_google_grant_unreadable"]
+    # Once per service -- the calendar's row and the Gmail one (#760).
+    assert [(e["event"], e["service"]) for e in logs] == [
+        ("user_google_grant_unreadable", service) for service in ui.GOOGLE_SERVICES
+    ]
     assert world["revoked"] == []
 
 

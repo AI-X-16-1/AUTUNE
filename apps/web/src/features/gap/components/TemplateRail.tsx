@@ -205,7 +205,7 @@ function tally(items: readonly TemplateChecklistItem[]): string {
  * A dismissed gap keeps its verdict and says so.
  *
  * Somebody pressing "해당 없음" is a judgement about the gap, not evidence that
- * the meeting covered the item — the row stays for threshold tuning (ADR 0006)
+ * the meeting covered the item — the row stays for threshold tuning (docs/modules/gap.md, Storage)
  * and promoting the item to 충족 here would hide the input that tuning reads.
  */
 function verdict(item: TemplateChecklistItem): string {

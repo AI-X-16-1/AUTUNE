@@ -317,7 +317,16 @@ retention sweep, and the next invitation made for that team), when a new
 invitation to the same address replaces it, when the team or the inviter's
 account is deleted, and when the invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
-ids, never the address. Until it is accepted an invitation changes nothing
+ids, never the address.
+
+The inviter may have the link **mailed from their own Gmail** (#552), when
+they ask and only through their own `gmail.send` grant -- Autune runs no mail
+server and holds no shared sender. That hands the address and the link to
+Google, as the inviter pasting it into their own mail would. The message names
+the inviter and the team, never the invited address; it is built and sent
+inside the request that made the invitation, so the token never enters a Celery
+payload; and the answer says only whether Gmail took it, which does not depend
+on whether the address has an account here. Until it is accepted an invitation changes nothing
 about what the invited person, or the team, can read.
 
 **Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
@@ -369,10 +378,14 @@ the feature needs.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
 - A cloud model is never the default, and in module B it has to be switched on
-  twice (#392). B's classifier and resolver send text to a provider only when
-  their implementation is set to `llm` (or `llm_checked`), and B's settings
-  refuse to load that unless `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is
-  set as well. The flag checks nothing about the meeting or the key -- the code
+  twice (#392). B's classifier, resolver, meeting summary and step-4 NLI send
+  text to a provider only when their implementation is set to `llm` (or
+  `llm_checked`), and B's settings refuse to load that unless
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well. Each sends
+  masked text of consenting speakers only, with the team's names replaced:
+  the classifier every utterance in windows, the resolver a commitment and
+  the lines around it, the summary the meeting in sections, and NLI only the
+  utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
   it makes sending speech out something a deployment says deliberately. Until
   #392 is decided, only demo meetings go through a deployment that sets it.
@@ -424,7 +437,58 @@ the feature needs.
     the item. A reminder the outbound check refuses is not sent, is
     reported once, and keeps that same row so it is not tried again. Each
     person can turn their own reminders off, and only their own
-    (`ext_due_reminder_optouts`, which goes with the account).
+    (`ext_due_reminder_optouts`, which goes with the account); the same
+    switch stops Monday's DM of that person's own open items (#792), which
+    carries the same things about each item and goes to nobody else either.
+  - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
+    direct message to a person about their own items on one team: what
+    changed since the last one (items of theirs now done, items they newly
+    hold -- made, given to them, or confirmed since) and today's work (late, due today, in progress; the rest as a
+    count). It carries what a reminder carries about each item -- its
+    description, a late item's due date, the meeting's title -- and a link to
+    the board; no utterance, and nobody else's items. "What changed" is read
+    from `ext_edit_events`, which holds that an item was edited, which fields
+    and when: the message never says who made a change, and it counts
+    nothing about a person -- it is a list of that person's own work sent to
+    that person. Autune keeps only that the day's message went
+    (`ext_daily_digests`), not its text. The reminder switch above stops it.
+    A morning DM or a Monday DM the outbound check refuses is not sent, is
+    reported once, and keeps that day's (or week's) row so it is not tried
+    again every ten minutes.
+  - **A person's own leave dates:** a person may set one range of days on
+    which the morning DM and Monday's DM are not sent
+    (`ext_notification_pauses`). When someone is away is theirs alone: only
+    they can read or write it, no screen or route shows it to a teammate or
+    an admin, nothing is derived from it, and it is deleted once its last
+    day has passed. Due-date reminders do not read it.
+  - **Out-of-office time, from a person's own calendar:** where a deployment
+    turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
+    person who connected Google Calendar is not sent the morning DM or
+    Monday's DM while that calendar marks them out of office. This is the
+    one read of a person's calendar that is not of Autune's own events, and
+    it is narrowed at Google twice: out-of-office events only
+    (`eventTypes=outOfOffice`), and their start and end only -- no title, no
+    description, no attendee, no other event is requested or returned. It
+    asks about the minute the message would go, uses the answer to hold that
+    one message back, and **stores nothing**: no table, log line or metric
+    says a person was away. What is kept is what any digest that goes
+    leaves -- that it went and when (`sent_at` on `ext_daily_digests` and
+    `ext_weekly_digests`, and the sending task's result, which names who it
+    went to). A digest that went later than usual went late for one of
+    several reasons -- a worker that was down, a Slack account linked that
+    morning, an item assigned at eleven, a send that failed and was tried
+    again, or the person being back -- so a late time leaves room to guess
+    at the reason; the reason itself is recorded nowhere (mkkim68, review of
+    #841). A calendar that cannot be read is treated as
+    not away. Turn it on only once what the deployment tells people about
+    the calendar connection says so; the settings screen says it where it is
+    on.
+  - **Public holidays:** no morning DM or Monday DM goes on one. The days
+    come from Google's public calendar of Korea's holidays, fetched at its
+    public address with no credentials -- nobody's Google grant is used and
+    the request carries nothing -- and kept in `ext_public_holidays`, dates
+    of public record. A table in code (the `holidays` package) answers when
+    the calendar has not been read for two weeks.
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes
@@ -441,6 +505,24 @@ the feature needs.
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
+  - **A person's Google grants themselves (#760 review):** a deleted
+    account's refresh tokens are revoked at Google before its rows go, the
+    calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
+    `revoke_google_grants`, #763) -- best effort, as above: when Google does
+    not answer, Autune still holds no copy afterwards, so nothing can use the
+    token, and the person sees Autune under their Google account's
+    third-party access until they remove it there. Disconnecting in Autune
+    revokes too, and a
+    revoke can end the person's other grant from the same Google account,
+    which is then shown as needing a reconnect. Each grant asks for its own
+    scope only, and a token that comes back carrying another grant's scope
+    is refused -- refused, not revoked: it is never stored, and it stays valid
+    at Google until the person connects again or removes Autune's access
+    there. A calendar connected before #760 may carry sign-in's scopes
+    (`openid email profile`) through `include_granted_scopes`; nothing
+    before #760 asked for `gmail.send`, so no stored grant carries both
+    personal scopes. Reconnecting the calendar gives it a token with its own
+    scope only.
 
 ## 7. Review checklist
 

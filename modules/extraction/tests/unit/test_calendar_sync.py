@@ -512,6 +512,29 @@ def test_a_grant_issued_to_another_client_is_not_sent_to_google(
     assert asked == []
 
 
+def test_a_grant_that_went_with_a_revoke_of_another_is_not_sent_to_google(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Core marks a calendar grant ``grant_revoked`` when the person's Gmail
+    grant from the same account was revoked (#760): known gone, not asked."""
+    asked: list[str] = []
+
+    def load(_s: Session, user_id: str, service: str) -> UserIntegrationConfig | None:
+        config = {"calendar_id": "primary", "client_id": "current-client", "grant_revoked": True}
+        return UserIntegrationConfig(service, user_id, "refresh-me", config)
+
+    monkeypatch.setattr(tasks, "load_user_integration", load)
+    monkeypatch.setattr(tasks, "refresh_access_token", lambda **kw: asked.append(kw) or "x")
+    monkeypatch.setattr(
+        tasks, "get_core_settings", lambda: core_settings(sign_in=("current-client", "s"))
+    )
+
+    with pytest.raises(ReconnectRequiredError), tasks._calendars(session) as calendar_for:
+        calendar_for(ME)
+
+    assert asked == []
+
+
 @pytest.mark.parametrize("issued_to", ["current-client", None])
 def test_a_grant_issued_to_this_client_or_to_nobody_on_record_is_refreshed(
     session: Session, monkeypatch: pytest.MonkeyPatch, issued_to: str | None

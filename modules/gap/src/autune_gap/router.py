@@ -116,7 +116,7 @@ def dismiss_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapDis
     """Mark one gap a false positive — "해당 없음" on S20.
 
     The gap leaves the report and stays in the table, marked; threshold tuning
-    reads the mark (ADR 0006). The rail keeps the item and says it was
+    reads the mark (docs/modules/gap.md, Storage). The rail keeps the item and says it was
     dismissed, because a false positive is a judgement about the gap and not
     evidence the meeting covered the item.
 

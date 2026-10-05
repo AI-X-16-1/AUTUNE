@@ -3,7 +3,7 @@ import Link from "next/link";
 import { StatusDot, type StatusVariant } from "@/shared/ui/StatusDot";
 
 import type { MeetingDetail, ProcessingStage } from "../types";
-import { TranscriptionControls } from "./TranscriptionControls";
+import { CancelTranscription, RestartNotice } from "./TranscriptionControls";
 
 type StageState = "done" | "running" | "queued" | "failed";
 
@@ -47,9 +47,17 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
 
   return (
     <section aria-label="처리 단계">
-      {overall !== null && (
-        <Overall value={overall} waiting={meeting.stage === null} />
-      )}
+      {/* 처리 중단 top right, beside the overall figure: where someone who
+          wants to stop a run looks first. */}
+      <header className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          {overall !== null && (
+            <Overall value={overall} waiting={meeting.stage === null} />
+          )}
+        </div>
+        <CancelTranscription meeting={meeting} />
+      </header>
+      <RestartNotice meeting={meeting} />
       <ol className="border-t border-[var(--color-hairline)]">
         {stages.map((stage) => (
           <li
@@ -115,8 +123,6 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
         ))}
       </ol>
 
-      <TranscriptionControls meeting={meeting} />
-
       {meeting.status === "failed" ? (
         <p
           role={meeting.cancelled ? "status" : "alert"}
@@ -129,7 +135,7 @@ export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
             }}
           >
             {meeting.cancelled
-              ? "처리를 중단했습니다. 원본 녹음은 삭제되었습니다."
+              ? "처리를 중단했습니다. 원본 녹음은 곧 삭제됩니다."
               : "처리에 실패했습니다. 원본 녹음은 삭제되었습니다."}
           </span>{" "}
           <Link

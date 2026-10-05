@@ -111,10 +111,10 @@ See `../architecture/async-pipeline.md`.
    only once the team has four weeks of history and three scored meetings
    (#27). Prophet trend forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
-   `intel_gap_patterns` for a team over `[period_start, period_end)` into one
-   `intel_reports` row (upserted by `(team_id, period_start)`), and
-   `tasks.generate_weekly_report` posts it to the team's Slack channel.
-   `period_end` defaults to today, `period_start` is 7 days before it. The
+   `intel_gap_patterns` for a team over `[period_start, period_end)`, plus B's
+   current action-item counts (below), into one
+   `intel_reports` row (upserted by `(team_id, period_start)`). Its dates are
+   Korean dates: a week runs from midnight KST. The
    body is **not** LLM-generated yet — `_report_body_markdown` is a
    deterministic template over the same numbers, with LLM prose deferred: no
    shared LLM client exists in `autune_integrations`, and a module-local one
@@ -122,10 +122,33 @@ See `../architecture/async-pipeline.md`.
    `check_outbound`. The report row is written whether or not Slack is
    connected, so `GET /reports/{team_id}` has something to serve either way;
    only the channel post is skipped without a connected Slack or a `channel`
-   key in its `config`. **Nothing calls this task on a schedule yet** — there
-   is no Celery Beat wiring in `apps/worker`, and none of the other four
-   modules have one either. Scheduling is a separate, cross-cutting decision,
-   not made here.
+   key in its `config`.
+
+   **When it goes out (#227).** A team picks a weekday and an hour (Korean
+   time) on the dashboard's 주간 리포트 card, and whether a week with nothing
+   to say is posted. Until a member changes them: Monday 09:00, and an empty
+   week is not posted. Any member may change them, as any member may change
+   the retention window, and the card names who did (`intel_team_settings`).
+   The hourly `autune.intelligence.periodic.weekly_reports` finds each team
+   whose latest slot passed within the last day. It writes that week's report
+   (the seven Korean days before the slot's day) if it is not written, and
+   posts it once. A team with no meeting in 91 days is sent nothing.
+   - **Once only:** the post is claimed (`posted_at`) and committed before it
+     is sent; a failed send gives the claim back for the next tick. A body the
+     outbound check refuses is set aside (`not_posted = "refused"`) and the
+     task fails once the other teams are done, as B's and C's sweeps do.
+   - **Moving the day:** a week starts no earlier than the last report out
+     ended, so the next report after a change is shorter rather than repeating
+     days, and a slot inside the last week is skipped.
+   - **Empty weeks:** "nothing to say" means no meeting analysed, and nothing
+     overdue or carried over. On a team that did not ask for those, the row is
+     kept and marked `not_posted = "empty"`. A week set aside stays so: written
+     again by hand with something to say, it is still not posted.
+   - **By hand:** `tasks.generate_weekly_report(team_id, period_end)` writes a
+     week by hand and posts it under the same rule. `period_end` defaults to
+     today in Korean time.
+   - **Timing:** a slot more than a day old is not caught up. Because the task
+     runs hourly, a report goes out within the hour after its time.
 7. **Personal feedback** — compute each participant's speaking ratio and DM it
    to that person. Do not store it. The ratio is a share of *measured* speech:
    the denominator is speech attributed to participants who consented to
@@ -183,6 +206,7 @@ See `../architecture/async-pipeline.md`.
 | `intel_meeting_reports` | One summary report per meeting, composed by the agent layer's Report subagent; posted once, deleted with its meeting |
 | `intel_action_progress` | The latest `TeamActionProgress` per team: its `as_of`, kept even when it listed no meeting so "none confirmed" stays apart from "unknown" |
 | `intel_action_progress_meetings` | That snapshot's counts per meeting (confirmed, done, overdue); deleted with its meeting; shown only as team totals |
+| `intel_team_settings` | When the team's weekly report goes out (weekday, hour in KST) and whether an empty week is posted; who changed it last. Deleted with its team |
 
 There is no speaking-ratio table, and there will not be one.
 
@@ -194,11 +218,12 @@ foreign keys to another module's tables.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/dashboard/{team_id}` | Dashboard data; action-item completion from B's current counts (below). **Team members only** |
-| GET | `/scores/{meeting_id}` | One meeting's quality score |
-| GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out |
-| GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
-| GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
+| GET | `/scores/{meeting_id}` | One meeting's quality score. **Its team only**; anyone else gets the same 404 as a meeting with no score |
+| GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out. **Team members only** |
+| GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears. **Team members only** |
+| GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count. **Team members only** |
 | GET | `/reports/{team_id}` | Weekly reports. **Team members only** |
+| GET, PUT | `/weekly-report-schedule/{team_id}` | When the weekly report goes out, and whether an empty week does; a PUT names who changed it. **Team members only** |
 | GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
 | PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer says a person edited it (the name is added from `edited_by` when read or posted, never stored), and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. Committed, then announced on `autune.intelligence.meeting_report_changed`; the Report subagent proposes the edited draft's post for approval. Nothing is posted from the card. 409 once posted, 422 with categories for personal data or over 3,000 characters as Slack receives it, 404 for anyone outside the team |
 | POST | `/meeting-reports/{meeting_id}/corrections` | A member corrects a **posted** report whose post reached Slack (202). It waits for approval like an edit: committed, then announced, and the Report subagent proposes `publish_meeting_report_correction` with its `correction_id`; once approved it goes out as a reply under the post. A newer correction replaces one still waiting. 409 for a draft, for a report that never reached Slack, or while an approved correction is being posted (at most five minutes); 422 for an unchanged, empty, too long or personal-data correction |
@@ -212,18 +237,37 @@ reads as "now"; the card says "최근 4주 회의". `overdue_action_items` is th
 overdue total over **every** meeting the snapshot listed that has not expired:
 an item past its due date matters however old its meeting is (#800 review).
 `action_completion_meeting_count` is the number of meetings in the four-week
-window, and `action_progress_as_of` when B counted. **A total from fewer than
+window that have a confirmed item (B lists no other), and `action_progress_as_of` when B counted. **A total from fewer than
 three meetings is not shown** (`ACTION_PROGRESS_MIN_MEETINGS`): with one or
 two, the team total is those meetings' counts, and when every item is one
 person's it is that person's record -- the heatmap's floor, for the same
-reason. The card then says the window holds fewer than three meetings. All three are `null` when no snapshot
+reason. The card then says the window holds fewer than three meetings with a
+confirmed item. All four are `null` when no snapshot
 has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
 card says the counts did not arrive, never 0%. A fresh snapshot with nothing
 confirmed has no rate and 0 overdue. Team totals only, never one meeting's
 counts. A meeting past `expires_at` is neither stored nor counted.
 `action_item_confirmation_rate` is the quality score's rate averaged over
-scored meetings; the agent tool `team_trend` names both (확정률, 완료율). The
-weekly report still reads the confirmation rate; moving it is the next step.
+scored meetings; the agent tool `team_trend` names both (확정률, 완료율).
+
+**Action items in the weekly report (#605).** The report states the same
+completion rate and overdue count, plus **carried over**: confirmed items not
+done from every kept meeting held before `period_start`. Each follows the
+three-meeting floor, so a line built from one or two meetings is left out. It
+also says when B counted ("… 기준"). These are B's counts as of generation, so a report for a
+week that ended more than two days before it is generated
+(`_PROGRESS_REPORTED_WITHIN`: a 23:00 slot caught up the next evening is ~47
+hours late) does not read them
+again: written again later, it keeps the counts it first stated, and a week
+never stated stays without them, rather than print today's numbers as that
+week's. Weeks run from midnight KST. "Before `period_start`" goes by when a
+meeting was held, while the week's meetings are those *scored* in it, so a
+meeting held on the eve and scored the next morning counts in both. Missing or stale counts read
+"액션 아이템 완료 현황을 받지 못했습니다". A week with no scored meeting still
+reports what earlier meetings carry. They are team totals in the team's
+channel -- never a direct message, never one meeting's counts (the contract's
+usage rule). `metrics_json` keeps the quality score's confirmation rate as
+`action_item_confirmation_rate`; the body does not show it.
 
 **Meeting reports on the dashboard (#642, #674).** Every post goes through
 approval (L2), a person's edit included: a report goes out under the bot's name
@@ -295,7 +339,8 @@ admin override and no team-level variant of this endpoint.
 | `autune.intelligence.aggregate` | B, C, D completion or timeout | `cpu_heavy` |
 | `autune.intelligence.on_extraction_action_progress` | B's `TeamActionProgress`, every ten minutes | `default` |
 | `autune.intelligence.send_personal_feedback` | After aggregation | `default` |
-| `autune.intelligence.weekly_report` | Weekly schedule | `cpu_heavy` |
+| `autune.intelligence.generate_weekly_report` | By hand: one team's week, written and posted once | `default` |
+| `autune.intelligence.periodic.weekly_reports` | Hourly: each team whose weekly slot has passed (#227) | `default` |
 | `autune.intelligence.deliver_meeting_report` | An approved post (`publish_meeting_report`, L2) | `default` |
 | `autune.intelligence.announce_meeting_report_changed` | A person's edit or correction on the dashboard card, after it commits (#674) | `default` |
 | `autune.intelligence.periodic.announce_report_changes` | Every five minutes: changes no announcement covered (#698) | `default` |

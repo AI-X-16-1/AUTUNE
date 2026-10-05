@@ -19,6 +19,7 @@ INTEL_TABLES = {
     "intel_meeting_reports",
     "intel_action_progress",
     "intel_action_progress_meetings",
+    "intel_team_settings",
 }
 
 

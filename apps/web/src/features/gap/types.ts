@@ -212,6 +212,20 @@ export interface GapExplanations {
   high_threshold: number;
   medium_threshold: number;
   gaps: GapExplanation[];
+  /** One per item the rail reads as covered, in template order. */
+  covered: CoveredExplanation[];
+}
+
+/**
+ * Why one checklist item was read as covered — `CoveredExplanationRead`. The
+ * topic is found again with the pipeline's rule; null when today's template or
+ * threshold no longer reaches it, and the screen then says it cannot show why.
+ */
+export interface CoveredExplanation {
+  item_key: string;
+  topic_label: string | null;
+  topic_centrality: number | null;
+  evidence: GapEvidence[];
 }
 
 /** How far the meeting got with one checklist item. */
