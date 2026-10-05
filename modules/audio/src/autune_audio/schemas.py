@@ -164,6 +164,15 @@ class MeetingDetail(MeetingState):
     Null otherwise, and before the worker has picked the job up."""
     stage_progress: float | None = None
     """How far through ``stage``, 0..1."""
+    stalled: bool = False
+    """The running attempt's worker stopped writing its heartbeat
+    (``service.is_stalled``). The screen offers 다시 시작 or 취소."""
+    restartable: bool = False
+    """``stalled`` and its upload is still on the server, inside six hours."""
+    cancellable: bool = False
+    """``analyzing`` with an attempt ``queued`` or ``running``."""
+    cancelled: bool = False
+    """``failed`` because a person cancelled, not because something broke."""
 
 
 class MeetingSummary(BaseModel):

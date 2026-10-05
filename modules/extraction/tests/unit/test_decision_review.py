@@ -29,6 +29,7 @@ from autune_extraction.decisions import ClassifiedUtterance
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
+    ExtCalendarEvent,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
@@ -39,6 +40,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtSyncFailure,
 )
 from autune_extraction.router import router
 from autune_extraction.schemas import DecisionReviewUpdate
@@ -67,6 +69,9 @@ TABLES = [
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    # Every read of an item looks these up (#680): its failed copies, its event.
+    ExtCalendarEvent.__table__,
+    ExtSyncFailure.__table__,
     ExtNotionTarget.__table__,
 ]
 

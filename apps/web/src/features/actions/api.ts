@@ -125,6 +125,25 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
 export const deleteActionItem = (id: string) =>
   withoutBody(`/action-items/${encodeURIComponent(id)}`);
 
+/** What a bulk confirm or delete did, id by id. */
+export interface BulkActionResult {
+  confirmed: string[];
+  deleted: string[];
+  /** Unknown, another team's, or no longer in 확인 필요. */
+  skipped: string[];
+}
+
+/**
+ * Confirm or delete several 확인 필요 items at once (the user, 2026-10-04).
+ * Each goes the way a single one does: a confirmation is recorded and sends
+ * the item's copies; a deletion closes them first.
+ */
+export const bulkActionItems = (ids: string[], action: "confirm" | "delete") =>
+  api.extraction<BulkActionResult>("/action-items/bulk", {
+    method: "POST",
+    body: JSON.stringify({ ids, action }),
+  });
+
 /** A request answered 204 (a `DELETE` unless told otherwise): an empty
  * success is not a parse failure. */
 async function withoutBody(
@@ -248,6 +267,16 @@ export const createDecision = (meetingId: string, statement: string) =>
  * next run cannot propose it again — the server decides which.
  */
 export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeURIComponent(id)}`);
+
+/**
+ * Send one item to the team's connected tools again -- "다시 시도" beside a
+ * failed copy (#680). Answers before the sync runs: `queued` is false for an
+ * item that was never confirmed, which has nothing outside to retry.
+ */
+export const retrySync = (id: string) =>
+  api.extraction<{ queued: boolean }>(`/action-items/${encodeURIComponent(id)}/sync`, {
+    method: "POST",
+  });
 
 /** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>
