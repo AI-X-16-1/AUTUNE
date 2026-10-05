@@ -38,7 +38,7 @@ describe("ActionCompletionRate", () => {
     render(<ActionCompletionRate rate={null} meetings={2} overdue={null} asOf={AS_OF} />);
 
     expect(
-      screen.getByText("최근 4주 회의가 3건 미만이라 완료율을 표시하지 않습니다."),
+      screen.getByText("확정 항목이 있는 최근 4주 회의가 3건 미만이라 완료율을 표시하지 않습니다."),
     ).toBeTruthy();
     expect(screen.queryByText(/기한 지난 항목/)).toBeNull();
   });

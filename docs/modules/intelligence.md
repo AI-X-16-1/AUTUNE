@@ -213,11 +213,12 @@ reads as "now"; the card says "최근 4주 회의". `overdue_action_items` is th
 overdue total over **every** meeting the snapshot listed that has not expired:
 an item past its due date matters however old its meeting is (#800 review).
 `action_completion_meeting_count` is the number of meetings in the four-week
-window, and `action_progress_as_of` when B counted. **A total from fewer than
+window that have a confirmed item (B lists no other), and `action_progress_as_of` when B counted. **A total from fewer than
 three meetings is not shown** (`ACTION_PROGRESS_MIN_MEETINGS`): with one or
 two, the team total is those meetings' counts, and when every item is one
 person's it is that person's record -- the heatmap's floor, for the same
-reason. The card then says the window holds fewer than three meetings. All three are `null` when no snapshot
+reason. The card then says the window holds fewer than three meetings with a
+confirmed item. All four are `null` when no snapshot
 has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
 card says the counts did not arrive, never 0%. A fresh snapshot with nothing
 confirmed has no rate and 0 overdue. Team totals only, never one meeting's
@@ -230,8 +231,12 @@ completion rate and overdue count, plus **carried over**: confirmed items not
 done from every kept meeting held before `period_start`. Each follows the
 three-meeting floor, so a line built from one or two meetings is left out. It
 also says when B counted ("… 기준"). These are B's counts as of generation, so a report for a
-week that ended more than a day before it is generated leaves them out rather
-than print today's numbers as that week's. Missing or stale counts read
+week that ended more than a day before it is generated does not read them
+again: written again later, it keeps the counts it first stated, and a week
+never stated stays without them, rather than print today's numbers as that
+week's. Weeks run from midnight KST. "Before `period_start`" goes by when a
+meeting was held, while the week's meetings are those *scored* in it, so a
+meeting held on the eve and scored the next morning counts in both. Missing or stale counts read
 "액션 아이템 완료 현황을 받지 못했습니다". A week with no scored meeting still
 reports what earlier meetings carry. They are team totals in the team's
 channel -- never a direct message, never one meeting's counts (the contract's

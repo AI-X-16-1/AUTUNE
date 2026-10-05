@@ -299,3 +299,33 @@ def test_misalignment_risk_returns_the_latest_prediction_once_the_gate_clears(
     assert result["ok"] is True
     assert result["items"][0]["score"] == pytest.approx(0.62)
     assert "62%" in result["summary"]
+
+
+def test_team_trend_states_overdue_on_its_own_span_and_floor(
+    db_session: Session, team: str
+) -> None:
+    """Overdue counts every kept meeting, so it is stated even when the last four
+    weeks hold too few meetings for a rate (#812 review)."""
+    from autune_contracts import TeamActionProgress
+    from autune_intelligence import service
+
+    recent = _new_meeting(db_session, team)
+    old = [
+        _new_meeting(db_session, team, started_at=datetime.now(UTC) - timedelta(days=40))
+        for _ in range(2)
+    ]
+    service.store_action_progress(
+        db_session,
+        TeamActionProgress(
+            team_id=team,
+            as_of=datetime.now(UTC),
+            meetings=[
+                {"meeting_id": m, "confirmed": 2, "done": 0, "overdue": 1} for m in (recent, *old)
+            ],
+        ),
+    )
+
+    summary = tools.team_trend(db_session, team)["summary"]
+
+    assert "완료율" not in summary
+    assert "기한 지난 항목 3건(보관 중인 회의 전체)" in summary

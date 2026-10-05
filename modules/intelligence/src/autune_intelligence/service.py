@@ -772,7 +772,7 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
     if progress.completion_rate is not None:
         lines = [f"액션 아이템 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
     elif 0 < (progress.completion_meetings or 0) < ACTION_PROGRESS_MIN_MEETINGS:
-        lines = ["최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
+        lines = ["확정 항목이 있는 최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
     else:
         lines = ["최근 4주 회의에서 확정된 액션 아이템이 없습니다."]
     counts = []
@@ -786,6 +786,25 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
         lines.append(" · ".join(counts))
     lines.append(f"액션 아이템 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
     return lines
+
+
+def _stated_progress(
+    session: Session, team_id: str, period_start: date
+) -> ActionProgressTotals | None:
+    """The action-item counts the week's stored report stated, or ``None`` when
+    it stated none (or there is no report yet)."""
+    row = session.get(IntelReport, (team_id, period_start))
+    metrics = row.metrics_json if row is not None else {}
+    if not metrics.get("action_progress_stated"):
+        return None
+    as_of = metrics.get("action_progress_as_of")
+    return ActionProgressTotals(
+        completion_rate=metrics.get("action_item_completion_rate"),
+        completion_meetings=metrics.get("action_completion_meeting_count"),
+        overdue=metrics.get("overdue_action_items"),
+        as_of=datetime.fromisoformat(as_of) if as_of else None,
+        carried_over=metrics.get("carried_over_action_items"),
+    )
 
 
 _PROGRESS_REPORTED_WITHIN: Final = timedelta(days=1)
@@ -802,19 +821,25 @@ def generate_weekly_report(
     The period is anchored to when E scored a meeting (``IntelScore.created_at``)
     — the same recency signal the dashboard's recent-scores strip already uses.
     E does not track when a meeting itself happened, only when it was analyzed.
+    Its dates are Korean dates: a week runs from midnight KST, as the team reads
+    it and as B counts "today" (``ACTION_PROGRESS_TODAY_ZONE``).
 
     Action items come from B's latest counts as the dashboard reads them --
     completion and overdue over the last four weeks' meetings, and what
     meetings held before ``period_start`` left undone -- for a week ending
-    within ``_PROGRESS_REPORTED_WITHIN`` of now only (#605). The quality
-    score's confirmation rate stays in ``metrics_json`` and out of the body.
+    within ``_PROGRESS_REPORTED_WITHIN`` of now only (#605); written again
+    later, a week keeps the counts it first stated. "Before ``period_start``"
+    goes by when a meeting was held, while the week's meetings are those
+    *scored* in it, so a meeting held on the eve and scored the next morning
+    is in both. The quality score's confirmation rate stays in
+    ``metrics_json`` and out of the body.
 
     Returns a transient ``IntelReport`` carrying the values just written — not
     the tracked row — so the caller (a Celery task, delivering the body to
     Slack) does not need a second query.
     """
-    start = datetime.combine(period_start, datetime.min.time(), tzinfo=UTC)
-    end = datetime.combine(period_end, datetime.min.time(), tzinfo=UTC)
+    start = datetime.combine(period_start, datetime.min.time(), tzinfo=_KST)
+    end = datetime.combine(period_end, datetime.min.time(), tzinfo=_KST)
 
     scores = list(
         session.execute(
@@ -849,7 +874,9 @@ def generate_weekly_report(
     progress = (
         _action_progress_totals(session, team_id, now, carried_before=start)
         if now - end <= _PROGRESS_REPORTED_WITHIN
-        else None
+        # B's counts no longer describe that week: keep what its report said
+        # when it was first written, rather than wipe it (#809 review).
+        else _stated_progress(session, team_id, period_start)
     )
     shown = progress or ActionProgressTotals()
 
@@ -868,7 +895,9 @@ def generate_weekly_report(
         "average_score": average_value,
         "grade_distribution": grade_distribution,
         "gap_distribution": gap_distribution,
+        "action_progress_stated": progress is not None,
         "action_item_completion_rate": shown.completion_rate,
+        "action_completion_meeting_count": shown.completion_meetings,
         "overdue_action_items": shown.overdue,
         "carried_over_action_items": shown.carried_over,
         "action_progress_as_of": shown.as_of.isoformat() if shown.as_of else None,

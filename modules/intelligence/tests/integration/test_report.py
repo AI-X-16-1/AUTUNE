@@ -79,8 +79,10 @@ def test_excludes_scores_outside_the_period(db_session: Session, team: str) -> N
     before = _meeting(db_session, team)
     after = _meeting(db_session, team)
     _score(db_session, inside, team, created_at=datetime(2026, 9, 10, tzinfo=UTC))
-    _score(db_session, before, team, created_at=datetime(2026, 9, 6, 23, 59, tzinfo=UTC))
-    _score(db_session, after, team, created_at=datetime(2026, 9, 14, 0, 0, tzinfo=UTC))
+    # The week runs from midnight Korean time (#809 review): 9/6 23:59 KST is
+    # before it, 9/14 00:00 KST after it.
+    _score(db_session, before, team, created_at=datetime(2026, 9, 6, 14, 59, tzinfo=UTC))
+    _score(db_session, after, team, created_at=datetime(2026, 9, 13, 15, 0, tzinfo=UTC))
     db_session.flush()
 
     report = service.generate_weekly_report(db_session, team, PERIOD_START, PERIOD_END)
@@ -158,9 +160,10 @@ def _progress(
 
 
 def _this_week() -> tuple[date, date]:
+    """The seven Korean days up to today, as a report's week runs."""
     from datetime import timedelta
 
-    end = datetime.now(UTC).date()
+    end = datetime.now(service._KST).date()
     return end - timedelta(days=7), end
 
 
@@ -276,3 +279,75 @@ def test_a_past_weeks_report_leaves_todays_counts_out(db_session: Session, team:
     assert report.metrics_json["action_item_completion_rate"] is None
     assert "완료" not in report.body_markdown
     assert "이월" not in report.body_markdown
+
+
+def test_writing_a_past_week_again_keeps_the_counts_it_first_stated(
+    db_session: Session, team: str
+) -> None:
+    """A redelivery or a run by hand a few days on would otherwise find the
+    counts too old to state, and wipe what the report said (#809 review)."""
+    from datetime import timedelta
+    from unittest.mock import patch
+
+    start, end = _this_week()
+    meetings = [_held(db_session, team, days) for days in (2, 10, 12, 14)]
+    _progress(
+        db_session,
+        team,
+        [{"meeting_id": m, "confirmed": 2, "done": 1, "overdue": 1} for m in meetings],
+    )
+    first = service.generate_weekly_report(db_session, team, start, end)
+
+    later = datetime.now(UTC) + timedelta(days=3)
+
+    class _Later(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[no-untyped-def, override]
+            return later if tz is None else later.astimezone(tz)
+
+    with patch.object(service, "datetime", _Later):
+        again = service.generate_weekly_report(db_session, team, start, end)
+
+    keys = (
+        "action_item_completion_rate",
+        "action_completion_meeting_count",
+        "overdue_action_items",
+        "carried_over_action_items",
+        "action_progress_as_of",
+    )
+    assert {k: again.metrics_json[k] for k in keys} == {k: first.metrics_json[k] for k in keys}
+    assert first.metrics_json["overdue_action_items"] == 4
+    assert "기한 지난 항목 4건" in again.body_markdown
+
+
+def test_a_meeting_on_the_weeks_first_morning_is_not_carried_into_it(
+    db_session: Session, team: str
+) -> None:
+    """Carried over is what meetings before the week left undone, and the week
+    starts at midnight Korean time, not UTC (#809 review)."""
+    from datetime import timedelta
+
+    from autune_core import Meeting
+
+    start, end = _this_week()
+    early = Meeting(
+        team_id=team,
+        title="m",
+        started_at=datetime.combine(start, datetime.min.time(), tzinfo=service._KST)
+        + timedelta(minutes=30),
+    )
+    db_session.add(early)
+    db_session.flush()
+    earlier = [_held(db_session, team, days) for days in (10, 11, 12)]
+    _progress(
+        db_session,
+        team,
+        [
+            {"meeting_id": early.id, "confirmed": 5, "done": 0, "overdue": 0},
+            *({"meeting_id": m, "confirmed": 1, "done": 0, "overdue": 0} for m in earlier),
+        ],
+    )
+
+    report = service.generate_weekly_report(db_session, team, start, end)
+
+    assert report.metrics_json["carried_over_action_items"] == 3
