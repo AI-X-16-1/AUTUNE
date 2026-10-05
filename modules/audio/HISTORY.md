@@ -808,8 +808,9 @@ a GC pause and two is a busy host; four is two minutes of silence. The heartbeat
 thread and does not depend on progress callbacks; the real risk to it is a stage
 that holds the GIL for minutes, which none measured so far does.
 They are not tuned against a deploy window or a real stall rate. A restart is
-not offered in the last 10 minutes of the upload's six hours, so the sweep cannot
-take the file from under the restarted job.
+offered only with at least three of the upload's six hours left (see the
+follow-ups below), so the sweep cannot take the file from under the restarted
+job.
 
 **Measured on a real local stack** (own API port, own Redis db, throwaway
 database, fake B/C/D, Whisper `small` on CPU, one Mac, one solo-pool worker).
@@ -859,6 +860,34 @@ short UPDATE per interval.
 - During the restart run B's real consumer raised on a missing NLI checkpoint
   (`AUTUNE_EXTRACTION_NLI_IMPL`), a local-environment setting unrelated to this
   work.
+
+**Follow-ups from the #757 review (2026-10-05).** Each is a number or a rule
+chosen without a measurement behind it; revisit when real stalls are seen.
+
+- **Restart needs three hours left** (`RESTART_NEEDS`), not ten minutes. The
+  longest meeting the pipeline is sized for is two hours at about 1.27x real
+  time, so about 2.5 h of processing; a restart with less left would be swept
+  mid-run. The six-hour window is unchanged.
+- **A job queued for 15 minutes counts as stalled** (`QUEUE_STALL`), so a
+  message the broker lost can be restarted rather than only cancelled. A job
+  that was merely waiting behind other meetings loses its place and nothing
+  else: its late message is declined by `claim_job` as `superseded`.
+- **One clock per timestamp.** `heartbeat_at` and `created_at` are stamped by
+  the database and now measured against its clock (`db_now`); a file's mtime
+  is stamped by the host and measured against the host's. Before, an API host
+  whose clock ran ahead of the database's could call a live worker stalled.
+- **A stalled job's upload is deleted after the cancel commits**, by the route,
+  so a failed commit leaves the job and its file together.
+- **Two workers can overlap, briefly.** A stage that holds the GIL for longer
+  than `stall_after_s` would starve the heartbeat thread and make a live worker
+  read as stalled; a restart then runs the same meeting on a second worker until
+  the first one's guard hears `superseded`. The fence (`lock_running_job`)
+  keeps the first from writing anything. No stage measured so far holds the GIL
+  that long.
+- **S12:** 처리 중단 moved to the top right of the screen, beside the overall
+  progress. Retrying a single stage (re-running only diarization after it
+  failed) was considered and set aside: the transcription would have to be kept
+  between attempts, and before masking it may not be stored anywhere.
 
 ---
 
