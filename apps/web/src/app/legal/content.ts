@@ -66,6 +66,11 @@
  *   That is a collection from Google, not a provision to it, so it is in
  *   제2조 and 제3조 and in the Slack row's account of when a digest does not go
  *   -- not in the Google Calendar row of 제5조, which lists what is SENT.
+ *   "Not stored" holds on main since #841: no log line counts who was held
+ *   back either.
+ * - that a reminder or a digest went, and when, IS kept (#846 says so in
+ *   privacy.md): a reminder's mark goes with its item, a digest's with the
+ *   account or the team, and no code deletes them sooner (제2조, 제3조).
  *   Public holidays come from a public calendar with no credentials and are
  *   nobody's personal data; the Slack row says only that no digest goes then.
  * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
@@ -252,6 +257,11 @@ const PRIVACY: LegalDocument = {
             "이용자의 입력",
           ],
           [
+            "알림 발송 기록",
+            "본인에게 마감 알림, 월요일 요약 및 아침 요약을 보냈다는 사실과 그 일시. 메시지의 내용은 보관하지 않습니다",
+            "서비스 이용 과정에서 생성",
+          ],
+          [
             "부재중 일정의 시각",
             "이용자가 연결한 Google Calendar의 부재중 일정의 시작 및 종료 시각(회사가 해당 기능을 활성화한 경우에 한함). 일정의 제목, 내용, 참석자 및 그 밖의 일정은 조회하지 않습니다",
             "이용자가 연결한 Google Calendar로부터 조회",
@@ -311,6 +321,10 @@ const PRIVACY: LegalDocument = {
           [
             "본인이 정한 알림 중지 기간",
             "정한 종료일이 지날 때까지. 종료일이 지나면 파기하며, 이용자가 해제하거나 탈퇴하는 때에도 파기합니다.",
+          ],
+          [
+            "알림 발송 기록",
+            "마감 알림의 발송 기록은 해당 액션 아이템이 삭제될 때까지(회의의 보유 기간이 만료되어 삭제되는 경우를 포함합니다). 월요일 요약 및 아침 요약의 발송 기록은 회원 탈퇴 또는 팀의 삭제 시까지. 발송 일시가 남으므로 평소보다 늦게 발송된 날은 그 사유를 짐작할 여지가 있으나, 사유는 기록하지 않습니다.",
           ],
           [
             "부재중 일정의 시각",
