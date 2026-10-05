@@ -278,7 +278,7 @@ export interface Project {
   jira_project_key: string | null;
 }
 
-export type SendTarget = "notion" | "slack" | "jira";
+export type SendTarget = "notion" | "slack" | "jira" | "calendar";
 
 /** What happened to each project's minutes in each tool. */
 export interface ProjectSendReport {
@@ -286,7 +286,13 @@ export interface ProjectSendReport {
     project_id: string;
     project_name: string;
     target: SendTarget;
-    outcome: "created" | "updated" | "retracted" | "not_connected" | "failed";
+    outcome:
+      | "created"
+      | "updated"
+      | "retracted"
+      | "not_connected"
+      | "no_date"
+      | "failed";
   }[];
   /** Confirmed rows with no project, left out. */
   unsorted: number;

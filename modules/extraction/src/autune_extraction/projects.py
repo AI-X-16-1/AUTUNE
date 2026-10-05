@@ -264,7 +264,8 @@ def delete_project(session: Session, team_id: str, project_id: str) -> None:
     row = session.get(ExtProject, project_id)
     if row is None or row.team_id != team_id:
         raise NotFoundError("project", project_id)
-    # Its minutes' copies go with it: queued before the rows cascade away.
+    # Its minutes' copies go with it -- the team's tools and people's own
+    # calendars -- queued before the rows cascade away.
     project_send.queue_project(session, project_id)
     for item in session.scalars(
         select(ExtActionItem).where(ExtActionItem.project_id == project_id)

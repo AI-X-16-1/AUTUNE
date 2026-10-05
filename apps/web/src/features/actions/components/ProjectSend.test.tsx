@@ -60,3 +60,35 @@ describe("ProjectSend", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe("ProjectSend calendar", () => {
+  it("adds the sender's own calendar when checked", async () => {
+    send.mockResolvedValue({
+      results: [
+        {
+          project_id: "prj_a",
+          project_name: "Autune",
+          target: "calendar",
+          outcome: "no_date",
+        },
+      ],
+      unsorted: 0,
+    });
+    render(<ProjectSend meetingId="mtg_1" />);
+
+    fireEvent.click(screen.getByLabelText("내 Google 캘린더"));
+    fireEvent.click(
+      screen.getByRole("button", { name: "프로젝트별로 보내기" }),
+    );
+
+    expect(
+      await screen.findByText(/Autune · 내 Google 캘린더 회의 날짜 없음/),
+    ).toBeTruthy();
+    expect(send).toHaveBeenCalledWith("mtg_1", [
+      "notion",
+      "slack",
+      "jira",
+      "calendar",
+    ]);
+  });
+});
