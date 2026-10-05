@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { ApiError } from "@/shared/api/client";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { retrySync } from "../api";
@@ -83,9 +84,9 @@ export function SyncStatus({
   calendar: CalendarState | null;
 }) {
   const failures = item.sync_failures ?? [];
-  const [retry, setRetry] = useState<"idle" | "sending" | "sent" | "nothing" | "failed">(
-    "idle",
-  );
+  const [retry, setRetry] = useState<
+    "idle" | "sending" | "sent" | "nothing" | "too_soon" | "failed"
+  >("idle");
 
   if (failures.length === 0 && calendar === null) return null;
 
@@ -96,8 +97,9 @@ export function SyncStatus({
       // nothing outside to follow it (review of #754).
       const { queued } = await retrySync(item.id);
       setRetry(queued ? "sent" : "nothing");
-    } catch {
-      setRetry("failed");
+    } catch (error) {
+      // The server refuses a second press within its cooldown (review of #754).
+      setRetry(error instanceof ApiError && error.status === 429 ? "too_soon" : "failed");
     }
   };
 
@@ -131,7 +133,9 @@ export function SyncStatus({
             size="compact"
             onClick={() => void again()}
             loading={retry === "sending"}
-            disabled={retry === "sending"}
+            // After a send, until the list is opened again: the sync takes
+            // seconds and another press would only run it once more.
+            disabled={retry === "sending" || retry === "sent" || retry === "too_soon"}
           >
             다시 시도
           </Button>
@@ -143,6 +147,11 @@ export function SyncStatus({
           {retry === "nothing" ? (
             <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
               보낼 것이 없습니다. 항목을 확정하면 다시 보냅니다.
+            </span>
+          ) : null}
+          {retry === "too_soon" ? (
+            <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
+              방금 다시 보냈습니다. 30초 뒤에 다시 시도할 수 있습니다.
             </span>
           ) : null}
           {retry === "failed" ? (
