@@ -354,6 +354,16 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
+- A cloud model is never the default, and in module B it has to be switched on
+  twice (#392). B's classifier and resolver send text to a provider only when
+  their implementation is set to `llm` (or `llm_checked`), and B's settings
+  refuse to load that unless `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is
+  set as well. The flag checks nothing about the meeting or the key -- the code
+  cannot tell a real meeting from a dummy one, or a paid key from a free one --
+  it makes sending speech out something a deployment says deliberately. Until
+  #392 is decided, only demo meetings go through a deployment that sets it.
+  This is module B's alone: the agent's, C's and D's cloud switches are their
+  owners' and have no second switch today.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
@@ -376,6 +386,32 @@ the feature needs.
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
     description, due date and assignee's Jira account only.
+    One read brings content back the other way: a team's screen can list
+    the open issues of the project it connected (key, title, status,
+    assignee's display name, due date), read from Jira when a member asks
+    and passed through. None of it is stored or logged, so there is nothing
+    of the team's Jira for Autune to retain or delete. It is read with the
+    team's connection -- the grant of the person who connected it -- so
+    every member of the Autune team sees those titles, whether or not they
+    have an account on the Jira site (decided with the user, 2026-10-02).
+    An issue with a Jira security level is left out of that list: the level
+    restricts it to some people on the site, and the grant it is read with
+    would otherwise pass its title to everyone on the team.
+  - **Slack, a due-date reminder:** a direct message to an action item's
+    assignee -- their own linked account, through the bot of the team that
+    held the meeting -- the day before its due date and once after it
+    passes. To that person and nobody else: no channel, no manager, no count
+    of what anybody has missed. It carries the item's description, its due
+    date, the meeting's title and a link to the meeting's board; no
+    utterance. A message already delivered stays in that person's Slack
+    when the item or the meeting is deleted; Autune keeps only that a
+    reminder of that kind went (`ext_due_reminders`), and that goes with
+    the item.
+  - **A copy that failed (#680):** Autune keeps, per item and system, only
+    the kind of the latest failure and its time (`ext_sync_failures`) --
+    never the outside service's message or what was being sent. It goes
+    when the next copy goes through, and with the item. A failed copy to a
+    person's own calendar is shown only to that person.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not

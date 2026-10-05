@@ -169,6 +169,22 @@ class ExtractionSettings(BaseSettings):
     """``cpu`` or ``cuda``, for ``nli_impl=local``. Mirrors
     ``classifier_device``."""
 
+    due_reminders: bool = False
+    """``AUTUNE_EXTRACTION_DUE_REMINDERS``: whether an item's assignee is sent a
+    Slack DM the day before its due date and after it passes (``reminders``).
+    **Off by default** -- a DM to a person is something a deployment turns on,
+    not something it has to remember to stop. ``true`` turns it on, and even
+    then it sends only where a team connected Slack and the assignee linked
+    their account."""
+
+    weekly_digest: bool = False
+    """``AUTUNE_EXTRACTION_WEEKLY_DIGEST``: whether each person is sent, on
+    Monday in Korea, a Slack DM listing their own open action items
+    (``reminders.build_weekly_digest``, the user, 2026-10-04). Off by default
+    for the reason ``due_reminders`` is; sends only where a team connected
+    Slack and the person linked their account.
+    """
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 

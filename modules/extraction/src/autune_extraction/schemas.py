@@ -87,6 +87,43 @@ class ExternalRefRead(BaseModel):
     external_id: str | None
 
 
+class SyncFailureRead(BaseModel):
+    """The last attempt to copy the item to ``system`` failed (#680).
+
+    ``kind`` is all that is known and all that is kept: ``privacy`` -- the
+    outbound check refused the text; ``reconnect`` -- the connection's grant
+    was refused and a person has to connect again; ``unreachable`` -- the
+    service timed out or answered with a server error; ``rejected`` -- it
+    said no. No message from the service, and nothing of what was sent.
+    """
+
+    system: Literal["notion", "jira", "calendar"]
+    kind: Literal["privacy", "reconnect", "unreachable", "rejected"]
+    failed_at: datetime
+
+
+class CalendarState(BaseModel):
+    """Whether the item is on its assignee's calendar, and if not, why not.
+
+    An item with no event is usually not a failure: it is not something a
+    calendar event is made for. The board could not say which, and somebody
+    who had added an item by hand was left asking why nothing appeared
+    (2026-10-02). ``reason`` names the first thing missing.
+
+    ``not_confirmed``, ``no_due_date``, ``no_account`` (the assignee is a
+    typed name or nobody) and ``not_on_team`` are about the item and are sent
+    to any reader. ``sent``, ``none`` with no reason, and ``not_connected``
+    are about the assignee's own calendar -- each says whether that person
+    has connected one -- and are sent **only when the reader is the
+    assignee**. For anybody else the detail carries no ``calendar`` at all
+    once the item itself lacks nothing."""
+
+    state: Literal["sent", "none"]
+    reason: (
+        Literal["not_confirmed", "no_due_date", "no_account", "not_on_team", "not_connected"] | None
+    ) = None
+
+
 class ActionItemRead(BaseModel):
     """One item as this module's own screens read it.
 
@@ -201,6 +238,12 @@ class ActionItemRead(BaseModel):
     after the one where it was already confirmed (#295).
     """
 
+    sync_failures: list[SyncFailureRead] = Field(default_factory=list)
+    """Systems whose last copy of this item failed (#680). A kind and a time;
+    on the list for the reason ``sync_refs`` is -- it is not meeting content.
+    Notion and Jira are the team's connections and their failures go to any
+    reader; a ``calendar`` failure is one person's and is sent only to the
+    item's assignee. Empty for an item nothing has failed for."""
     sync_refs: list[ExternalRefRead]
     """One entry per system this item has been claimed for -- today, at most
     ``notion`` (#30). ``jira`` was designed (ui-spec S18, S28) but dropped
@@ -332,6 +375,11 @@ class ActionItemDetail(ActionItemRead):
     order comes with it at no extra cost.
     """
 
+    calendar: CalendarState | None = None
+    """What this reader may be told about the item and its assignee's
+    calendar (``CalendarState``). ``None`` when the item lacks nothing and the
+    reader is not the assignee -- the rest is the assignee's to know."""
+
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence
     with nothing to point at ("다음 주까지 볼게요") can be read with the thing it
@@ -348,6 +396,9 @@ class ActionItemDetail(ActionItemRead):
     if it says more than they show. Same consent filter as ``context``."""
 
     history: list[EditHistoryEntry] = Field(default_factory=list)
+    confirmation_dm_url: str | None = None
+    """The reader's own Slack confirmation DM about one of this item's lines --
+    only for the person it went to, since nobody else can open it (#680)."""
     """What people did to the item, oldest first (S18, #109). Empty for an item
     the model extracted and nobody has touched since."""
 
@@ -364,6 +415,39 @@ class Assignable(BaseModel):
 
     user_id: str
     name: str
+
+
+class JiraIssueRead(BaseModel):
+    """One open issue of the team's Jira project, as the list shows it.
+
+    Passed through from Jira and stored nowhere (``jira_issues``).
+    ``from_autune`` marks an issue Autune made from an action item, so the
+    list does not read as a second copy of the board above it."""
+
+    key: str
+    summary: str
+    status: str | None
+    status_category: str | None
+    assignee: str | None
+    due_date: date | None
+    url: str | None
+    from_autune: bool
+
+
+class JiraProjectIssues(BaseModel):
+    """One team's Jira project and its open issues.
+
+    ``state`` says why a list is empty when it is not simply empty: the
+    team chose no project, its connection needs a person to reconnect, or
+    Jira did not answer. ``more`` is true when Jira has more open issues
+    than were read."""
+
+    team_id: str
+    team_name: str
+    project_key: str | None
+    state: Literal["ok", "no_project", "needs_reconnect", "unavailable"]
+    issues: list[JiraIssueRead] = Field(default_factory=list)
+    more: bool = False
 
 
 class CarriedOverItem(ActionItemRead):
