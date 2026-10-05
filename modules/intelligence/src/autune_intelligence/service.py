@@ -835,8 +835,9 @@ def generate_weekly_report(
     it and as B counts "today" (``ACTION_PROGRESS_TODAY_ZONE``).
 
     Action items come from B's latest counts as the dashboard reads them --
-    completion and overdue over the last four weeks' meetings, and what
-    meetings held before ``period_start`` left undone -- for a week ending
+    completion over the last four weeks' meetings, overdue over every kept
+    meeting, and what kept meetings held before ``period_start`` left undone
+    -- each under the three-meeting floor -- for a week ending
     within ``_PROGRESS_REPORTED_WITHIN`` of now only (#605); written again
     later, a week keeps the counts it first stated. "Before ``period_start``"
     goes by when a meeting was held, while the week's meetings are those

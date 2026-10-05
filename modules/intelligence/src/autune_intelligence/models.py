@@ -204,7 +204,8 @@ class IntelReport(Base, TimestampMixin):
     ``posted_at`` is set when the post to the team's channel is claimed, before
     it is sent, and cleared if sending fails, so a report goes out once
     (#227). ``not_posted`` says why one never will: ``"empty"`` for a week
-    with nothing to say on a team that did not ask for those.
+    with nothing to say on a team that did not ask for those, ``"refused"``
+    for a body the outbound check refused (#821 review).
     """
 
     __tablename__ = "intel_reports"
