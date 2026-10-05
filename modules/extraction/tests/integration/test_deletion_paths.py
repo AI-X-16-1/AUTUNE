@@ -10,7 +10,7 @@ ORM, whose cascade would pass the test on its own.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 import sqlalchemy as sa
@@ -27,9 +27,12 @@ from autune_extraction.models import (
     ExtDecisionRelated,
     ExtDecisionReview,
     ExtDecisionSource,
+    ExtDueReminder,
     ExtEditEvent,
     ExtExtractionRun,
     ExtMeetingNote,
+    ExtSyncFailure,
+    ExtSyncRetry,
 )
 
 B_TABLES = (
@@ -45,6 +48,9 @@ B_TABLES = (
     "ext_classifications",
     "ext_extraction_runs",
     "ext_meeting_notes",
+    "ext_due_reminders",
+    "ext_sync_failures",
+    "ext_sync_retries",
 )
 
 
@@ -109,6 +115,25 @@ def meeting(db_session: Session) -> dict[str, str]:
     db_session.add(ExtExtractionRun(meeting_id=meeting.id, consent_key="0" * 64))
     db_session.add(ExtMeetingNote(meeting_id=meeting.id, body="팀 메모"))
     db_session.add(
+        ExtSyncFailure(
+            action_item_id=item.id,
+            system="jira",
+            kind="unreachable",
+            failed_at=datetime(2026, 9, 11, tzinfo=UTC),
+        )
+    )
+    db_session.add(
+        ExtSyncRetry(action_item_id=item.id, retried_at=datetime(2026, 9, 11, tzinfo=UTC))
+    )
+    db_session.add(
+        ExtDueReminder(
+            action_item_id=item.id,
+            kind="due_soon",
+            due_date=date(2026, 9, 12),
+            sent_at=datetime(2026, 9, 11, tzinfo=UTC),
+        )
+    )
+    db_session.add(
         ExtDecisionReview(
             decision_id=decision.id, meeting_id=meeting.id, status="confirmed", statement="확정"
         )
@@ -172,3 +197,7 @@ def test_a_deleted_item_keeps_its_edit_event_and_loses_the_link(
 
     events = db_session.execute(sa.text("SELECT action_item_id FROM ext_edit_events")).all()
     assert [row[0] for row in events] == [None]
+    # What it was reminded about goes with it: a reminder is nothing without its item.
+    assert count(db_session, "ext_due_reminders") == 0
+    assert count(db_session, "ext_sync_failures") == 0
+    assert count(db_session, "ext_sync_retries") == 0

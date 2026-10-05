@@ -43,6 +43,17 @@ person moved in Jira moves its item on the board, unless the board moved since
 Autune last touched the issue -- then the board keeps its status, and its own
 edit's outgoing sync is what brings Jira along. Only the status; summary, due
 date and assignee stay Autune's.
+
+**A confirmed decision is an issue too** (``sync_decision_to_jira``, the user,
+2026-10-04), beside its Notion page: summary "[결정] " and the statement in the
+wording that stands, filed straight into a ``done`` status -- a decision is
+settled, not work to pick up. Rewording it rewrites the issue. Taking the
+confirmation back, deleting the decision or a rerun dropping it retires the
+issue the way a decision's Notion page is retired (#669): retitled to
+``DECISION_PUT_BACK_TEXT``, its description cleared, a note added, closed --
+never deleted, since the team may have commented on it. Nothing goes before a
+person confirms (#246), and nothing but the statement: no meeting title, no
+source utterances, no names.
 """
 
 from __future__ import annotations
@@ -58,7 +69,7 @@ from autune_core import Meeting, TeamMember, User, get_logger
 from autune_integrations import IntegrationError, PermanentIntegrationError
 
 from . import service
-from .models import ExtActionItem, ExtExternalRef
+from .models import ExtActionItem, ExtDecision, ExtDecisionRef, ExtDecisionReview, ExtExternalRef
 from .schemas import ActionItemUpdate
 from .service import _insert_if_absent_into
 
@@ -388,18 +399,188 @@ def close_for_deleted_item(
     if ref.site != site:
         log.info("extraction_jira_other_site", action_item_id=action_item_id)
         return False
-    key = str(ref.external_id)
-    try:
-        if not jira.move_to_category(key, "done"):
-            log.info(
-                "extraction_jira_no_transition", action_item_id=action_item_id, category="done"
-            )
-        jira.add_comment(key, DELETED_NOTE)
-    except PermanentIntegrationError as exc:
-        # Already gone -- deleted in Jira, or with its project. Nothing to close.
-        if exc.details.get("upstream_status") != 404:
-            raise
+    if not close_issue(jira, str(ref.external_id)):
         log.info("extraction_jira_already_gone", action_item_id=action_item_id)
         return False
     log.info("extraction_jira_closed_with_item", action_item_id=action_item_id)
     return True
+
+
+def close_issue(jira: JiraIssues, key: str) -> bool:
+    """Move an issue to done and leave ``DELETED_NOTE`` on it. ``False`` when it
+    is already gone -- deleted in Jira, or with its project. Shared by the
+    deletion itself and ``tasks.drain_external_cleanup``'s retry (#692)."""
+    try:
+        if not jira.move_to_category(key, "done"):
+            log.info("extraction_jira_no_transition", category="done")
+        jira.add_comment(key, DELETED_NOTE)
+    except PermanentIntegrationError as exc:
+        if exc.details.get("upstream_status") != 404:
+            raise
+        return False
+    return True
+
+
+# --- decisions (2026-10-04) ------------------------------------------------------
+
+DECISION_PREFIX = "[결정] "
+"""What marks a decision's issue among the team's tasks."""
+
+DECISION_RETIRED_NOTE = "Autune에서 확정이 취소된 결정입니다. 이슈 기록은 남기고 닫았습니다."
+
+
+def _confirmed(
+    decision: ExtDecision | None, review: ExtDecisionReview | None
+) -> tuple[ExtDecision, ExtDecisionReview] | None:
+    if decision is None or review is None or review.status != "confirmed":
+        return None
+    return decision, review
+
+
+def sync_decision_to_jira(
+    session: Session,
+    jira: JiraIssues,
+    *,
+    decision_id: str,
+    project_key: str,
+    site: str,
+    site_url: str | None = None,
+) -> ExtDecisionRef | None:
+    """A confirmed decision as one issue: made the first time, rewritten after,
+    filed into a ``done`` status. A decision no longer confirmed -- put back,
+    deleted, dropped by a rerun -- has its issue retired. ``None`` when there
+    is nothing to send.
+
+    The claim, the lock-then-reread order and the site rule are
+    ``sync_action_item_to_jira``'s: a confirmation delivered twice makes one
+    issue, of two rewordings in flight the one that read last sends last, and
+    a key from another site is never written to.
+    """
+    ref = session.get(ExtDecisionRef, (decision_id, JIRA), with_for_update=True)
+    decision = session.get(ExtDecision, decision_id, populate_existing=True)
+    review = session.get(ExtDecisionReview, decision_id, populate_existing=True)
+    settled = _confirmed(decision, review)
+    if settled is None:
+        if ref is not None and ref.external_id:
+            _retire_decision_issue(jira, ref, site)
+        return ref
+    decision, review = settled
+
+    if ref is None:
+        claimed = session.scalars(
+            _insert_if_absent_into(session, ExtDecisionRef)
+            .values(decision_id=decision.id, system=JIRA, meeting_id=decision.meeting_id)
+            .on_conflict_do_nothing(index_elements=["decision_id", "system"])
+            .returning(ExtDecisionRef.decision_id)
+        ).one_or_none()
+        ref = session.get(
+            ExtDecisionRef,
+            (decision.id, JIRA),
+            with_for_update=claimed is None,
+            populate_existing=True,
+        )
+        assert ref is not None
+        if claimed is None:
+            # Another sync made the row first; read the verdict again under
+            # its lock, as the action item's claim race does.
+            settled = _confirmed(
+                session.get(ExtDecision, decision_id, populate_existing=True),
+                session.get(ExtDecisionReview, decision_id, populate_existing=True),
+            )
+            if settled is None:
+                if ref.external_id:
+                    _retire_decision_issue(jira, ref, site)
+                return ref
+            decision, review = settled
+
+    statement = service._confirmed_statement(decision, review)
+    summary = _summary(DECISION_PREFIX + statement)
+    # The whole statement when the summary could not hold it, else nothing --
+    # on an update too, so a reworded or deleted line does not stay behind.
+    description = statement if summary != DECISION_PREFIX + " ".join(statement.split()) else ""
+    if ref.external_id and ref.site != site:
+        log.info("extraction_jira_decision_other_site", decision_id=decision.id)
+    ours = bool(ref.external_id) and ref.site == site
+    updated = ours and jira.update_task(
+        str(ref.external_id),
+        summary,
+        due_date=None,
+        assignee_account_id=None,
+        keep_assignee=True,
+        description=description,
+    )
+    if not updated:
+        ref.external_id = jira.create_task(project_key, summary, description=description)
+        ref.site = site
+        ref.url = f"{site_url.rstrip('/')}/browse/{ref.external_id}" if site_url else None
+        log.info("extraction_jira_decision_created", decision_id=decision.id)
+    else:
+        log.info("extraction_jira_decision_updated", decision_id=decision.id)
+    try:
+        if not jira.move_to_category(str(ref.external_id), "done"):
+            log.info("extraction_jira_no_transition", decision_id=decision.id, category="done")
+    except IntegrationError as exc:
+        # The issue exists and its key is kept; the status waits for the next
+        # sync rather than a second issue being made.
+        log.warning(
+            "extraction_jira_move_failed", decision_id=decision.id, error=type(exc).__name__
+        )
+    return ref
+
+
+def _retire_decision_issue(jira: JiraIssues, ref: ExtDecisionRef, site: str) -> None:
+    """Take a decision's issue out of what reads as settled: retitled to
+    ``DECISION_PUT_BACK_TEXT`` with its description cleared, so the statement
+    is not what the issue keeps, then a note and a ``done`` status. The row
+    forgets the issue: confirming again makes a new one. An issue on another
+    site, or deleted in Jira, cannot be reached and is only forgotten."""
+    key = str(ref.external_id)
+    if ref.site == site:
+        try:
+            if jira.update_task(
+                key,
+                service.DECISION_PUT_BACK_TEXT,
+                due_date=None,
+                assignee_account_id=None,
+                keep_assignee=True,
+                description="",
+            ):
+                jira.add_comment(key, DECISION_RETIRED_NOTE)
+                if not jira.move_to_category(key, "done"):
+                    log.info(
+                        "extraction_jira_no_transition",
+                        decision_id=ref.decision_id,
+                        category="done",
+                    )
+        except PermanentIntegrationError as exc:
+            if exc.details.get("upstream_status") != 404:
+                raise
+    else:
+        log.info("extraction_jira_decision_other_site", decision_id=ref.decision_id)
+    ref.external_id = None
+    ref.url = None
+    log.info("extraction_jira_decision_retired", decision_id=ref.decision_id)
+
+
+def decision_issues_to_retire(session: Session) -> list[tuple[str, str]]:
+    """(decision id, meeting id) of every decision issue whose decision is gone
+    or no longer confirmed -- for the sweep that retires what a failed call
+    left behind (``tasks.retire_decision_issues``). Ids only."""
+    confirmed = (
+        select(ExtDecisionReview.decision_id)
+        .where(
+            ExtDecisionReview.decision_id == ExtDecisionRef.decision_id,
+            ExtDecisionReview.status == "confirmed",
+        )
+        .exists()
+    )
+    return [
+        (decision_id, meeting_id)
+        for decision_id, meeting_id in session.execute(
+            select(ExtDecisionRef.decision_id, ExtDecisionRef.meeting_id).where(
+                ExtDecisionRef.system == JIRA,
+                ExtDecisionRef.external_id.is_not(None),
+                ~confirmed,
+            )
+        ).tuples()
+    ]

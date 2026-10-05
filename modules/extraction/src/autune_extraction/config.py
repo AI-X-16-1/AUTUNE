@@ -11,12 +11,21 @@ from functools import lru_cache
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+CLOUD_IMPLS = frozenset({"llm", "llm_checked"})
+"""The implementation names that send utterance text to a cloud provider."""
+
 
 class ExtractionSettings(BaseSettings):
     # env_file mirrors autune_core.Settings: without it a module reads only
     # real environment variables and silently ignores .env.
+    # hide_input_in_errors: a validator below can refuse the whole object, and
+    # pydantic's message would otherwise print the input it refused -- the
+    # raw environment, the provider key in it.
     model_config = SettingsConfigDict(
-        env_prefix="AUTUNE_EXTRACTION_", env_file=".env", extra="ignore"
+        env_prefix="AUTUNE_EXTRACTION_",
+        env_file=".env",
+        extra="ignore",
+        hide_input_in_errors=True,
     )
 
     classifier_impl: str = "local"
@@ -160,6 +169,22 @@ class ExtractionSettings(BaseSettings):
     """``cpu`` or ``cuda``, for ``nli_impl=local``. Mirrors
     ``classifier_device``."""
 
+    due_reminders: bool = False
+    """``AUTUNE_EXTRACTION_DUE_REMINDERS``: whether an item's assignee is sent a
+    Slack DM the day before its due date and after it passes (``reminders``).
+    **Off by default** -- a DM to a person is something a deployment turns on,
+    not something it has to remember to stop. ``true`` turns it on, and even
+    then it sends only where a team connected Slack and the assignee linked
+    their account."""
+
+    weekly_digest: bool = False
+    """``AUTUNE_EXTRACTION_WEEKLY_DIGEST``: whether each person is sent, on
+    Monday in Korea, a Slack DM listing their own open action items
+    (``reminders.build_weekly_digest``, the user, 2026-10-04). Off by default
+    for the reason ``due_reminders`` is; sends only where a team connected
+    Slack and the person linked their account.
+    """
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 
@@ -198,6 +223,27 @@ class ExtractionSettings(BaseSettings):
             return None
         return value
 
+    llm_acknowledged_392: bool = False
+    """``AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392``: the second switch a cloud
+    implementation needs (#392, proposed by module A's owner in review of #405).
+
+    "Demo meetings only" and "a paid key for real ones" are both rules the
+    code cannot check: nothing marks a meeting as a dummy, and nothing says
+    which tier a key is. What the code can do is make sending speech to a
+    provider something a deployment says twice. With ``classifier_impl`` set
+    to ``llm`` or ``llm_checked``, or ``resolver_impl`` or ``summary_impl``
+    set to ``llm``, and this not true, these settings refuse to load.
+
+    **It turns nothing on.** Set alone, it changes nothing.
+
+    **Not keyed on ``AUTUNE_ENV``.** ``.env.example`` ships
+    ``AUTUNE_ENV=local``, so a deployment made from that file would be the
+    one let through. (The variable's own default has been ``production``
+    since #446; an earlier version of this text said ``local``.)
+
+    **Deleting this flag is the migration** once #392 is decided: every place
+    that set it is a ``grep`` away."""
+
     resolver_impl: str = "fake"
     """Which reference resolver to run: ``local``, ``hosted``, ``llm`` or ``fake``
     (#175). ``llm`` is a cloud model, opt-in the way ``classifier_impl=llm`` is,
@@ -233,6 +279,20 @@ class ExtractionSettings(BaseSettings):
     resolver_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``resolver_impl=local``. Mirrors
     ``classifier_device``."""
+
+    summary_impl: str = "none"
+    """``none`` or ``llm``: whether a meeting gets a summary written by a cloud
+    model on the 요약 tab (#421 v2). ``llm`` sends the meeting's consented,
+    masked lines out, the team's names replaced, so it is opt-in and needs
+    ``llm_acknowledged_392`` like every other cloud setting. ``none`` leaves
+    the tab as v1 built it, from B's own rows."""
+
+    summary_model: str = "gemini-3.5-flash-lite"
+    """The model ``summary_impl=llm`` asks. The cheap one: a meeting takes a
+    call per section and one to combine them."""
+
+    summary_fallback_model: str = "gemini-3.8-flash"
+    """Asked instead when ``summary_model`` stays unavailable. Blank disables it."""
 
     embedder_impl: str = "fake"
     """Which embedder backs the resolver's similarity check: ``local``,
@@ -294,6 +354,34 @@ class ExtractionSettings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _a_cloud_model_is_switched_on_twice(self) -> ExtractionSettings:
+        """Refuse a cloud implementation nobody acknowledged (#392).
+
+        Here and not in the registry, so the refusal is the settings object
+        itself: nothing in module B runs on a configuration that would send
+        speech out unacknowledged -- not the worker's first meeting, and not
+        a route that only wanted a threshold. It names the variable to set and
+        nothing else; the message carries no value from the environment.
+
+        Settings load lazily, so by itself this refuses at B's first use.
+        ``require_loadable`` is what makes it a refusal to start.
+        """
+        if self.llm_acknowledged_392:
+            return self
+        for name, value in (
+            ("CLASSIFIER_IMPL", self.classifier_impl),
+            ("RESOLVER_IMPL", self.resolver_impl),
+            ("SUMMARY_IMPL", self.summary_impl),
+        ):
+            if value in CLOUD_IMPLS:
+                raise ValueError(
+                    f"AUTUNE_EXTRACTION_{name}={value} sends meeting text to a cloud "
+                    "model. Set AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true to confirm "
+                    "this deployment may: demo meetings only until #392 is decided."
+                )
+        return self
+
+    @model_validator(mode="after")
     def _device_is_known(self) -> ExtractionSettings:
         """A typo should not surface as a CUDA error in the middle of a meeting."""
         for name, value in (
@@ -310,3 +398,21 @@ class ExtractionSettings(BaseSettings):
 @lru_cache
 def get_settings() -> ExtractionSettings:
     return ExtractionSettings()
+
+
+def require_loadable() -> None:
+    """Raise now if module B's settings would refuse to load.
+
+    Called when ``tasks`` is imported -- by the worker directly, by the API
+    through ``router``, which imports ``tasks`` -- so a worker or an API
+    given a configuration B refuses does not start, rather than starting and
+    failing on the first meeting or the first request (review of #744). The
+    API imports every module's router, so **a bad module B configuration
+    stops the whole API**, the other modules with it -- intended: a process
+    that would send speech out unacknowledged should not be half up.
+
+    Builds the settings and throws them away. ``get_settings`` is cached,
+    and priming that cache at import would pin whatever the environment held
+    at that moment for every later caller.
+    """
+    ExtractionSettings()

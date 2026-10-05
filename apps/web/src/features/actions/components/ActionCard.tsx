@@ -1,8 +1,10 @@
-import { StatusDot } from "@/shared/ui";
+import { MaskedText, StatusDot } from "@/shared/ui";
 
+import { SYSTEM_LABEL } from "./SyncStatus";
 import { isOverdue } from "../dates";
+import { staleLabel } from "../stale";
 import { isCandidate } from "../types";
-import type { ActionItemRead } from "../types";
+import type { ActionItemRead, SourceUtterance } from "../types";
 
 /**
  * What a dragged card carries: the item's id under Autune's own type, and no
@@ -38,6 +40,7 @@ export function ActionCard({
   onSelect,
   showMeeting = false,
   drag,
+  context,
 }: {
   item: ActionItemRead;
   selected?: boolean;
@@ -45,6 +48,12 @@ export function ActionCard({
   showMeeting?: boolean;
   /** Present on a board that moves cards; `moving` while its change is in flight. */
   drag?: { moving: boolean; onStart: () => void; onEnd: () => void };
+  /**
+   * The lines said just before this card's sentence, for a sentence that
+   * says nothing by itself (`pointsAtNothing`). Shown under the title, muted,
+   * and named as what they are so nobody reads a neighbouring line as the item.
+   */
+  context?: SourceUtterance[];
 }) {
   const overdue = isOverdue(item);
   const draggable = drag !== undefined && !drag.moving;
@@ -105,6 +114,22 @@ export function ActionCard({
         ) : null}
       </div>
 
+      {context !== undefined && context.length > 0 ? (
+        <div
+          role="group"
+          aria-label="앞선 발화"
+          className="mt-1 border-l border-[var(--color-hairline)] pl-2 text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          <span>앞선 발화</span>
+          {context.map((line) => (
+            <p key={line.id}>
+              <MaskedText>{line.text}</MaskedText>
+            </p>
+          ))}
+        </div>
+      ) : null}
+
       <div
         className="mt-1 text-[var(--color-ink-muted)]"
         style={{ fontSize: "var(--text-metaSmall)" }}
@@ -113,6 +138,16 @@ export function ActionCard({
       </div>
 
       <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
+        {staleLabel(item) ? (
+          // Carried through meeting after meeting unfinished (2026-10-04): the
+          // ochre of something waiting on a person, as text.
+          <span
+            className="text-[var(--color-signal-attention)]"
+            style={{ fontWeight: "var(--text-status-weight)" }}
+          >
+            {staleLabel(item)}
+          </span>
+        ) : null}
         {item.needs_reassignment ? (
           // Text, not a fill: red belongs to elapsing time and failure
           // (ui-spec section 0), and this is neither -- it is work nobody holds.
@@ -138,6 +173,16 @@ export function ActionCard({
           </span>
         ) : null}
       </div>
+
+      {item.sync_failures?.length ? (
+        // Red text, never a red fill (ui-spec section 0): a copy that failed.
+        <div
+          className="mt-2 text-[var(--color-signal-critical)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          연동 실패 · {item.sync_failures.map((f) => SYSTEM_LABEL[f.system]).join(", ")}
+        </div>
+      ) : null}
 
       {item.sync_refs?.length ? (
         <div

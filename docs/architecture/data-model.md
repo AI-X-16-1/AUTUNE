@@ -28,7 +28,8 @@ absence of a prefix is what marks a table as shared.
 | `teams` | An organization or squad |
 | `team_members` | User ↔ team membership and role |
 | `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
-| `user_integrations` | One person's own connection to their Google Calendar |
+| `user_integrations` | One person's own Google grants: their calendar, and sending mail as them (`gmail_send`, #552) |
+| `user_consents` | One person's agreement to one version of the terms or the privacy policy |
 | `meetings` | One analysis unit |
 | `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
 | `utterances` | One continuous stretch of speech, PII-masked |
@@ -57,8 +58,22 @@ if config is None:
 client = NotionClient(config.require_secret())
 ```
 
+`user_consents` records that a person agreed to the terms and to the privacy
+policy: which of the two, which version, when. Only those two — a check
+constraint says so. It can only record "agreed", so a consent that has to be
+refusable and withdrawable (voice feature data, transfer abroad) is not kept
+here, and no row permits any processing; see `privacy.md` section 5. Written by `packages/core`
+(`autune_core.consents`, behind `GET` and `POST /api/auth/consents`), read
+only for the person it is about, deleted with their account
+(`ON DELETE CASCADE`). The server stores the names and versions the page
+sends and does not know which version is current — the documents live with
+the screen that shows them (the web app's legal pages, not on main until
+#689), and a changed document is a new version nobody has agreed to yet. It records and does not gate: no API call
+is refused for a missing row.
+
 `user_integrations` is the per-person counterpart (#59, #435): a person's own
-calendar, which only they can grant and which is deleted with their
+calendar, or their grant to send mail as them (`gmail_send`, #552 -- `gmail.send`
+only, nothing in the mailbox is read; reading one is #431's), which only they can grant and which is deleted with their
 account (`ON DELETE CASCADE`). The same rule applies — written by `packages/core`,
 read by modules through `load_user_integration`, and only ever read by code
 acting for that person. A module's own sync state for it goes in its own
@@ -147,7 +162,7 @@ Every table a module owns is named `<prefix>_<name>`.
 
 | Module | Prefix | Examples |
 | --- | --- | --- |
-| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_consent_attestations` |
+| A. audio | `aud_` | `aud_jobs`, `aud_speaker_embeddings`, `aud_masking_events`, `aud_consent_attestations`, `aud_team_invitations` |
 | B. extraction | `ext_` | `ext_classifications`, `ext_action_items`, `ext_external_refs` |
 | C. gap | `gap_` | `gap_topics`, `gap_gaps`, `gap_participation` |
 | D. context | `ctx_` | `ctx_materials`, `ctx_topic_links`, `ctx_decisions`, `ctx_decision_versions` |

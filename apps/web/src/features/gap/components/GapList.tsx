@@ -352,9 +352,13 @@ function Reason({
           "의미 비교는 발화를 저장하지 않아 인용할 수 없습니다."
         );
       default:
+        // Missing means no topic matched and no keyword was said (and, with the
+        // embedder on, no utterance was near the item's examples). Name the two
+        // checks every run makes; whether the embedder ran is not sent.
         return (
-          `이 항목을 가리키는 표현(${quoted(explanation.keywords.slice(0, 5))} 등)이 회의에서 ` +
-          `한 번도 나오지 않아 누락으로 판정했습니다.`
+          `이 항목에 해당하는 토픽이 없었고, 이 항목을 가리키는 표현(` +
+          `${quoted(explanation.keywords.slice(0, 5))} 등)도 회의에서 한 번도 나오지 않아 ` +
+          `누락으로 판정했습니다.`
         );
     }
   })();
@@ -468,8 +472,7 @@ function Arithmetic({ breakdown, coverage }: { breakdown: ScoreBreakdown; covera
     <>
       {coverage === "missing" ? (
         <p>
-          누락 항목은 회의에 대응하는 토픽이 없어 잴 신호가 없습니다. 그래서 템플릿이 정한 항목
-          중요도가 그대로 점수가 됩니다.
+          회의에서 관련 내용이 확인되지 않아, 해당 항목의 중요도를 기준으로 점수를 계산합니다.
         </p>
       ) : (
         <p>측정된 값의 가중 평균{breakdown.damping !== null ? "에 미흡 감쇠를 곱한 값" : ""}입니다.</p>

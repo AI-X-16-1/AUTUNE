@@ -21,7 +21,15 @@ from autune_core.errors import AutuneError
 from autune_core.events import publish
 from autune_core.settings import get_settings as get_core_settings
 
-from . import account, masking_rules, pii_report, service
+from . import (
+    account,
+    invitation_mail,
+    invitations,
+    masking_rules,
+    pii_report,
+    service,
+    storage,
+)
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
 from .enqueue import enqueue_process_recording
@@ -31,6 +39,9 @@ from .schemas import (
     AccountDeleted,
     ConsentAttestation,
     ConsentState,
+    InvitationAccept,
+    InvitationCreate,
+    InvitationIssued,
     MaskingRule,
     MeetingCreate,
     MeetingDetail,
@@ -130,6 +141,52 @@ def create_team(body: TeamCreate, user: CurrentUser, session: SessionDep) -> Tea
     return TeamSummary(team_id=team.id, name=team.name)
 
 
+@router.post(
+    "/teams/{team_id}/invitations",
+    response_model=InvitationIssued,
+    status_code=status.HTTP_201_CREATED,
+)
+def invite_to_team(
+    team_id: str,
+    body: InvitationCreate,
+    user: CurrentUser,
+    session: SessionDep,
+    response: Response,
+) -> InvitationIssued:
+    """Invite an address to a team the caller is on (#552). Answers with the
+    link's token, once -- only its hash is kept -- and the same shape whatever
+    the address. See ``invitations``.
+
+    With ``send_email`` the link is also mailed from the caller's own Gmail
+    (``invitation_mail``), after the invitation is committed: a link in
+    somebody's inbox has to work."""
+    token, expires_at = invitations.invite(session, team_id=team_id, email=body.email, by=user)
+    emailed = False
+    if body.send_email:
+        session.commit()
+        emailed = invitation_mail.send(
+            session,
+            team_id=team_id,
+            email=body.email,
+            token=token,
+            expires_at=expires_at,
+            by=user,
+        )
+    # The token is a credential and this is its only appearance.
+    response.headers["Cache-Control"] = "no-store"
+    return InvitationIssued(token=token, expires_at=expires_at, emailed=emailed)
+
+
+@router.post("/invitations/accept", response_model=TeamSummary)
+def accept_invitation(
+    body: InvitationAccept, user: CurrentUser, session: SessionDep
+) -> TeamSummary:
+    """Join the team an invitation link names, as the signed-in owner of the
+    invited address. Every refusal is the same 404 (``InvitationUnusableError``)."""
+    team = invitations.accept(session, token=body.token, user=user)
+    return TeamSummary(team_id=team.id, name=team.name)
+
+
 @router.get("/meetings", response_model=list[MeetingSummary])
 def list_meetings(user: CurrentUser, session: SessionDep) -> list[MeetingSummary]:
     """The meetings of the teams this person belongs to, newest first. S05's list.
@@ -167,6 +224,9 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
     (``progress.ProgressReporter``)."""
     meeting = service.meeting_for(session, meeting_id=meeting_id, reader=user)
     stage, stage_progress = service.running_stage(session, meeting_id=meeting.id)
+    controls = service.transcription_controls(
+        session, meeting=meeting, settings=get_audio_settings()
+    )
     return MeetingDetail(
         meeting_id=meeting.id,
         title=meeting.title,
@@ -176,6 +236,7 @@ def get_meeting(meeting_id: str, user: CurrentUser, session: SessionDep) -> Meet
         team_id=meeting.team_id,
         stage=stage,
         stage_progress=stage_progress,
+        **controls._asdict(),
     )
 
 
@@ -264,6 +325,46 @@ def upload_recording(
             session.commit()
             raise EnqueueFailedError() from error
 
+    return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)
+
+
+@router.post("/meetings/{meeting_id}/transcription/cancel", response_model=MeetingState)
+def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingState:
+    """Stop the meeting's transcription (S12 "처리 중단"). The meeting is
+    ``failed`` on return and accepts a new upload; the worker stops within one
+    heartbeat. 409 ``nothing_to_cancel`` when nothing is running."""
+    meeting = service.cancel_transcription(
+        session, meeting_id=meeting_id, user=user, settings=get_audio_settings()
+    )
+    session.commit()
+    return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.post(
+    "/meetings/{meeting_id}/transcription/restart",
+    response_model=MeetingState,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def restart_transcription(meeting_id: str, user: CurrentUser, session: SessionDep) -> MeetingState:
+    """Run a stalled meeting again from its upload (S12 "다시 시작").
+
+    409 ``not_stalled`` while the worker is alive, ``recording_gone`` when the
+    upload is no longer on the server. Commit before the enqueue and fail the
+    meeting if the broker refuses, exactly as ``upload_recording`` does; here
+    there is no ``handover`` block to delete the file, so this does."""
+    settings = get_audio_settings()
+    job = service.restart_transcription(
+        session, meeting_id=meeting_id, user=user, settings=settings
+    )
+    session.commit()
+    try:
+        enqueue_process_recording(job.id)
+    except Exception as error:
+        log.warning("audio_enqueue_failed", job_id=job.id, error=type(error).__name__)
+        service.mark_failed(session, job_id=job.id)
+        session.commit()
+        storage.delete_orphan(storage.upload_path(job.id, settings))
+        raise EnqueueFailedError() from error
     return MeetingState(meeting_id=job.meeting_id, status=job.meeting.status)
 
 

@@ -75,7 +75,7 @@ def run_and_record(
     # Collected here rather than inside the graph, so the queue below reads the
     # same declarations the run was routed among (chat passes none).
     subagents = collect_subagents() if subagents is None else subagents
-    scope = RunScope(team_id=team_id, meeting_id=meeting_id)
+    scope = RunScope(team_id=team_id, meeting_id=meeting_id, user_id=requested_by)
     started = time.monotonic()
     state: MainState = {"request": request}
     # One mapping for both halves: execute_l1 keeps an L2-declared action for

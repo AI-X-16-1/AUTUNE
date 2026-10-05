@@ -52,6 +52,32 @@ export interface ExternalRefRead {
 }
 
 /**
+ * The last attempt to copy the item to `system` failed (#680). A kind and a
+ * time are all the server keeps: no message from the outside service.
+ */
+export interface SyncFailure {
+  system: "notion" | "jira" | "calendar";
+  kind: "privacy" | "reconnect" | "unreachable" | "rejected";
+  failed_at: string;
+}
+
+/**
+ * What this reader may be told about the item and its assignee's calendar.
+ * The four reasons about the item go to any reader; `sent`, a bare `none` and
+ * `not_connected` are about one person's calendar and go only to the assignee.
+ */
+export interface CalendarState {
+  state: "sent" | "none";
+  reason:
+    | "not_confirmed"
+    | "no_due_date"
+    | "no_account"
+    | "not_on_team"
+    | "not_connected"
+    | null;
+}
+
+/**
  * One item as `/api/extraction` returns it — `ActionItemRead` in
  * `modules/extraction/src/autune_extraction/schemas.py`.
  *
@@ -73,6 +99,13 @@ export interface ActionItemRead extends ActionItem {
    * item drafted from an utterance in the chat.
    */
   origin: "model" | "user" | "followup" | "chat";
+  /** The team's project this item is about, or null for none (미분류). */
+  project_id?: string | null;
+  /**
+   * For an open item: how many of its team's meetings were held since it was
+   * made. `STALE_AFTER` (3) or more reads as stuck.
+   */
+  carried_meetings?: number;
   /**
    * A line it was drawn from was corrected after it was made (#586) and the
    * text may still need a person's eye. Cleared by their next edit.
@@ -92,6 +125,11 @@ export interface ActionItemRead extends ActionItem {
    * this stricter one.
    */
   sync_refs: ExternalRefRead[];
+  /**
+   * Systems whose last copy of this item failed (#680). A `calendar` failure
+   * is sent only to the item's assignee. Empty when none did.
+   */
+  sync_failures?: SyncFailure[];
   /**
    * A one-line preview of the item's sources beyond `description` itself.
    * Rule-based, not a model: the longest source utterance, truncated, and only
@@ -179,6 +217,13 @@ export interface ActionItemDetail extends ActionItemRead {
   related?: SourceUtterance[];
   /** Oldest first. Empty for an item the model extracted and nobody touched. */
   history?: EditHistoryEntry[];
+  /** Where the item stands on its assignee's calendar, and why it has no event. */
+  calendar?: CalendarState | null;
+  /**
+   * The reader's own Slack confirmation DM about one of this item's lines —
+   * only for the person it went to, since nobody else can open it (#680).
+   */
+  confirmation_dm_url?: string | null;
 }
 
 /** `CarriedOverItem`: an open item from an earlier meeting of the same team. */
@@ -194,6 +239,8 @@ export interface CarriedOverItem extends ActionItemRead {
 export interface CarriedOver {
   open: number;
   overdue: number;
+  /** Open items carried through three or more meetings. */
+  stale?: number;
   items: CarriedOverItem[];
 }
 
@@ -214,12 +261,66 @@ export interface SummaryDecision {
   id: string;
   statement: string;
   status: "pending" | "confirmed";
+  /** The team's project it is about, or null for none (미분류). */
+  project_id?: string | null;
+}
+
+/**
+ * One of a team's projects (`ext_projects`, 2026-10-04). A meeting's decisions
+ * and items point at one, by what was said or by a person, so a meeting that
+ * covers several projects reads — and later goes out — project by project.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  /** Other names people say for it, matched in what was said. */
+  aliases: string[];
+  jira_project_key: string | null;
+}
+
+export type SendTarget = "notion" | "slack" | "jira" | "calendar";
+
+/** What happened to each project's minutes in each tool. */
+export interface ProjectSendReport {
+  results: {
+    project_id: string;
+    project_name: string;
+    target: SendTarget;
+    outcome:
+      | "created"
+      | "updated"
+      | "retracted"
+      | "not_connected"
+      | "no_date"
+      | "failed";
+  }[];
+  /** Confirmed rows with no project, left out. */
+  unsorted: number;
+}
+
+/** A project as a member types it. */
+export interface ProjectDraft {
+  name: string;
+  aliases: string[];
+  jira_project_key?: string | null;
 }
 
 /**
  * `MeetingSummary` (`GET /summary/{meeting_id}`, #421): S15's 요약 tab, v1 —
  * B's rows in three levels and the team's memo. No model wrote any of it.
  */
+/**
+ * A summary of the whole meeting written by a cloud model (#421 v2). Only
+ * when the deployment turned it on, and only while the lines it was written
+ * from are unchanged.
+ */
+export interface GeneratedSummary {
+  overview: string;
+  points: string[];
+  model_version: string;
+  created_at: string;
+}
+
 export interface MeetingSummary {
   meeting_id: string;
   /** Confirmed first, then pending; a rejected decision is not listed. */
@@ -230,6 +331,10 @@ export interface MeetingSummary {
   ambiguous_waiting: number;
   note: string | null;
   note_updated_at: string | null;
+  /** v2: absent or null when no current summary is written. */
+  generated?: GeneratedSummary | null;
+  /** The team's projects, to group the decisions and items by. */
+  projects?: Project[];
 }
 
 /** The memo's limit, the server's `MAX_NOTE_CHARS`. */

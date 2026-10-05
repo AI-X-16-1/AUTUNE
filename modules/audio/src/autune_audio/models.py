@@ -67,8 +67,9 @@ class TranscriptionJob(Base):
 
     Lifecycle: ``queued`` at the claim; ``running`` when the worker picks it
     up; ``done`` or ``failed`` when it stops; ``superseded`` when a later
-    attempt for the same meeting was accepted first. ``finished_at`` is set on
-    the last three, and the orphan sweep reads it (``service.sweep_orphans``).
+    attempt for the same meeting was accepted first; ``cancelled`` when a person
+    cancels the upload. ``finished_at`` is set on the last four, and the orphan
+    sweep reads it (``service.sweep_orphans``).
 
     Cascades from ``meetings`` -- the deletion path privacy.md section 4
     requires. Nothing here is meeting content: ids, statuses, timestamps.
@@ -77,7 +78,7 @@ class TranscriptionJob(Base):
     __tablename__ = "aud_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued','running','done','failed','superseded')",
+            "status IN ('queued','running','done','failed','superseded','cancelled')",
             name="ck_aud_jobs_status",
         ),
         CheckConstraint(
@@ -104,6 +105,10 @@ class TranscriptionJob(Base):
     ``progress.STAGES``. Null before the worker starts it."""
     stage_progress: Mapped[float | None] = mapped_column(Float)
     """How far through ``stage``, 0..1. Null when the step cannot tell."""
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Written by the worker's ``JobGuard`` when it claims the job and every
+    ``heartbeat_interval_s`` after. A ``running`` job whose heartbeat is older
+    than ``stall_after_s`` has no worker (``service.is_stalled``)."""
 
     meeting: Mapped[Meeting] = relationship()
 
@@ -214,6 +219,41 @@ class AudSpeakerEmbedding(Base, TimestampMixin):
         String(64), ForeignKey("users.id", ondelete="SET NULL")
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AudTeamInvitation(Base):
+    """A pending invitation to a team: an address, not a member (#552).
+
+    Nothing reads this as a membership; ``invitations.accept`` is the one
+    place a row here becomes a ``team_members`` row, and the row goes when it
+    does. ``token_hash`` is the SHA-256 of the link's token -- the token is
+    shown once and never stored. ``email`` is lower-cased, and is a third
+    party's address held before they agreed to anything: it goes with the
+    team, with the inviter's account, when it lapses, and when the invited
+    person deletes their own account (``invitations``).
+    """
+
+    __tablename__ = "aud_team_invitations"
+    __table_args__ = (
+        UniqueConstraint("team_id", "email", name="uq_aud_team_invitations_team_email"),
+        UniqueConstraint("token_hash", name="uq_aud_team_invitations_token_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    invited_by: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class AudMaskingRule(Base):

@@ -141,7 +141,11 @@ def test_a_version_that_overruns_the_column_is_a_stable_digest() -> None:
 
 
 def settings(**overrides: str) -> ExtractionSettings:
-    return ExtractionSettings(_env_file=None, **overrides)  # type: ignore[call-arg]
+    # These tests are about what an LLM implementation does once it is on;
+    # that it must be acknowledged first has its own file
+    # (test_llm_acknowledged_392.py).
+    given = {"llm_acknowledged_392": True} | overrides
+    return ExtractionSettings(_env_file=None, **given)  # type: ignore[call-arg, arg-type]
 
 
 @pytest.fixture

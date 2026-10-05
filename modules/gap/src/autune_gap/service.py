@@ -60,6 +60,7 @@ from autune_gap.schemas import (
     GapExplanations,
     ScoreBreakdownRead,
     ScorePartRead,
+    TeamGapRead,
     TemplateComparison,
     TemplateItemRead,
     TemplateRead,
@@ -140,6 +141,64 @@ def _is_team_member(session: Session, *, user_id: str, team_id: str) -> bool:
         )
         is not None
     )
+
+
+def require_readable_team(session: Session, team_id: str, reader: User) -> None:
+    """Raise unless ``reader`` belongs to ``team_id`` -- the team-wide gap list's
+    check, as ``require_readable_meeting`` is a meeting's.
+
+    An unknown team and somebody else's get the same ``NotFoundError``, for the
+    reason given there. Module D's ``require_readable_team`` draws the same line.
+    """
+    if not _is_team_member(session, user_id=reader.id, team_id=team_id):
+        log.info("gap_read_refused", team_id=team_id, reader_id=reader.id, reason="not_a_member")
+        raise NotFoundError("team", team_id)
+
+
+TEAM_GAPS_LIMIT = 200
+"""Rows the team-wide list returns at most. A team reads its recent meetings'
+gaps there; a backlog older than that is read one meeting at a time."""
+
+
+def team_gaps(
+    session: Session, team_id: str, *, severities: Sequence[GapSeverity]
+) -> list[TeamGapRead]:
+    """The team's open gaps, newest meeting first and, within one meeting, the
+    order S20 lists them in (#550).
+
+    Open means not dismissed, as ``build_report`` reads it: a gap the team
+    called wrong leaves this list as it leaves the meeting's report.
+
+    ``severities`` is the caller's: the screen asks for ``high`` alone by
+    default, the precision rule S20 keeps, and for the rest behind a toggle.
+    """
+    when = func.coalesce(Meeting.started_at, Meeting.created_at)
+    rows = session.execute(
+        select(GapGap, Meeting.title, when)
+        .join(Meeting, Meeting.id == GapGap.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            GapGap.dismissed_at.is_(None),
+            GapGap.severity.in_([severity.value for severity in severities]),
+        )
+        .order_by(when.desc(), Meeting.id, GapGap.risk_score.desc(), GapGap.id)
+        .limit(TEAM_GAPS_LIMIT)
+    ).all()
+    return [
+        TeamGapRead(
+            gap_id=gap.id,
+            meeting_id=gap.meeting_id,
+            meeting_title=title,
+            meeting_date=date,
+            category=gap.category,
+            title=gap.title,
+            severity=gap.severity,
+            risk_score=gap.risk_score,
+            template_item=gap.template_item,
+            suggested_question=gap.suggested_question,
+        )
+        for gap, title, date in rows
+    ]
 
 
 def build_topic_graph(transcript: TranscriptReady) -> int:

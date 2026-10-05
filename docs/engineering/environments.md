@@ -114,15 +114,16 @@ prefix `AUTUNE_<MODULE>_`.
 | `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
 
 Google *sign-in* is identity only (`openid email profile`). A person's calendar
-is a separate consent, given after signing in and described next. Nothing reads
+and sending mail as them are separate consents, given after signing in and
+described next. Nothing reads
 `AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which this page used to name here.
 
 ### A person's own Google grant
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar today (#435), mail when it exists. Optional: blank, the sign-in client does both |
-| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar (#435) and sending an invitation from their own Gmail (#552). Optional: blank, the sign-in client does both |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup. With the pair set, `AUTUNE_GOOGLE_REDIRECT_URI` is required too, and its absence is refused at startup |
 
 Sign-in keeps `AUTUNE_GOOGLE_CLIENT_ID`. The two are separate so that an
 identity-only client and one that asks for somebody's calendar can be reviewed
@@ -134,11 +135,35 @@ it, so a grant is always refreshed with the client that issued it.
 - **No second redirect URI.** One callback (`/api/auth/google/callback`)
   finishes sign-in and the calendar connect, so `AUTUNE_GOOGLE_REDIRECT_URI`
   must be registered on the integration client as well as on the sign-in one.
+  The integration pair without that variable is refused at startup: the
+  connect would start and then have no callback to finish on.
 - **Setting these on a running deployment strands its connected calendars.**
   Google binds a refresh token to the client that issued it. A grant issued
   to the sign-in client is refused at its next refresh once the integration
   client is in use, and the person is asked to connect again. Nothing migrates
   a grant from one client to the other.
+- **A grant records the client that issued it.** A connect stores the
+  issuing `client_id` beside the grant (public by nature, not a credential).
+  When it differs from the client the deployment refreshes with now,
+  `GET /api/auth/google/calendar` reports `needs_reconnect: true`, the
+  calendar card says the connection is broken, and module B skips the
+  refresh instead of sending one Google would refuse. A grant from before
+  the client was recorded says nothing either way and is tried as before —
+  which includes every calendar connected before #711, so the first switch
+  to an integration client is still found out by a refused refresh. With no
+  Google client configured at all, nothing is reported as needing a
+  reconnect: there is nothing to reconnect to.
+
+**The scopes a person's grant asks for** are `calendar.events` (the calendar
+card) and `gmail.send` (an invitation mailed from the inviter's own address,
+#552), each its own consent and its own grant. Both are *sensitive* scopes: the
+OAuth consent screen of the client that asks for them -- the integration client
+when it is set, the sign-in client otherwise -- must list them, and until the
+app is verified by Google only the consent screen's test users can grant them.
+A person who is not a test user gets Google's refusal and the screen says the
+connection failed; the invitation link can still be copied. `gmail.send` reads
+nothing; reading a mailbox (`gmail.readonly`, a *restricted* scope) is #431's
+question and is not asked for.
 
 **Two cookies, two jobs.** `autune_session` is the signed session (7 days,
 `HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
@@ -149,12 +174,39 @@ browser cannot sign them in as whoever started it. Redis proves a state was
 issued; the cookie is what proves to whom.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
-**A signed-out session is signed out in the browser only.** `POST /logout`
-clears the cookie; the JWT it held stays valid until it expires. A token that
-leaked cannot be revoked, which is acceptable for a first version and is not
-acceptable for long — it needs a token version on `User`, or a server-side
-session, before this carries real meetings. Until then the only way to end
-every session at once is rotating `AUTUNE_SECRET_KEY`, which signs everyone out.
+**Google flows also carry PKCE** (#704). Sign-in and the personal connects
+send an S256 `code_challenge`; the verifier waits in the same Redis entry as
+the `state` and goes out only with the code exchange, so a code lifted off the
+redirect is worthless elsewhere, even with the client secret. Nothing to
+configure: Google accepts PKCE from a web client as it is. Atlassian, Notion
+and Slack are sent no challenge yet: whether each accepts one from a
+confidential client has to be checked against a real app per provider first,
+and until then `state` with the cookie above binds their callbacks.
+
+**A connect that stores a token checks the encryption key before it spends
+the code** (#593, #704). Calendar, Jira, Notion and Slack callbacks all fail
+on a missing or broken `AUTUNE_ENCRYPTION_KEY` before the provider is asked,
+so no grant is issued that nothing keeps; the screen shows the connect as
+failed. Their start endpoints check it too, so nobody is sent through a
+consent screen that cannot succeed.
+
+**Signing out ends the person's sessions on the server, on every device.**
+`POST /logout` writes the moment on the person's row
+(`users.sessions_valid_from`) and clears the cookie; from then on
+`current_user` refuses every token of theirs issued up to it — the browser
+that signed out, another browser, a developer token, a copy that leaked. The
+next sign-in issues a token after that moment, which is good. It is one value
+per person, not a session per device: signing out in one place signs out
+everywhere, and there is no list of sessions to look at. Deploying this signed
+nobody out — a person who has never signed out has no moment to compare
+with. To end **everybody's** sessions at once, rotate `AUTUNE_SECRET_KEY`.
+
+Every door that takes a session token asks the same function
+(`autune_core.auth.user_for_token`): the HTTP routes through `current_user`,
+and module A's live WebSocket directly, because its handler cannot use a
+dependency. The check is made when a request or a connection arrives — **a
+live socket opened before the sign-out stays open until it closes**; it is
+not cut off mid-recording.
 
 ### Web (`apps/web`)
 
@@ -219,6 +271,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting claim (`live/registry.py`) is per process: a second worker lets a second session onto the same meeting, and accepts an upload the other worker's open socket should have refused (409) |
 | `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
+| `AUTUNE_AUDIO_HEARTBEAT_INTERVAL_S` | A | How often a running transcription writes its heartbeat and checks whether it was cancelled. Default `30` |
+| `AUTUNE_AUDIO_STALL_AFTER_S` | A | A running transcription whose heartbeat is older than this has no worker and may be restarted. Default `120` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` | A | Exactly how many people spoke, when the room knows (#325). Unset by default: pyannote clusters freely, and a wrong number is worse than none. Deployment-wide for now; the per-meeting field comes with S10. Must be ≥ 1; the settings refuse to load otherwise |
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
@@ -245,6 +299,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_NLI_DEVICE` | B | `cpu` · `cuda`. Default `cpu`. Mirrors `AUTUNE_EXTRACTION_CLASSIFIER_DEVICE` |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `llm` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. `llm` is the Gemini API through the same `AUTUNE_EXTRACTION_LLM_*` settings as `CLASSIFIER_IMPL=llm`: opt-in, needs `LLM_API_KEY` and no checkpoint, sends the commitment and the lines around it with the team's names replaced, and a free-tier key is for dummy meetings only. **No `external`**, same reason as the classifier |
+| `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392` | B | `true` · `false`. Default `false`. Required, as `true`, for `CLASSIFIER_IMPL=llm` / `llm_checked` or `RESOLVER_IMPL=llm`: without it B's settings refuse to load (#392). Turns nothing on by itself — see below |
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_MODEL` | B | The model `RESOLVER_IMPL=llm` asks first. Default `gemini-3.5-flash-lite`. Its own setting, apart from `LLM_MODEL` (the classifier's) |
@@ -346,6 +401,18 @@ can set. Module B added `llm` as an opt-in after the 2026-09-23 mentoring, and
 the conversation is #392. Until #392 is settled:
 
 - `llm` is never the default, and nothing selects it for you.
+- **It has to be switched on twice.** With `AUTUNE_EXTRACTION_CLASSIFIER_IMPL`
+  set to `llm` or `llm_checked`, or `AUTUNE_EXTRACTION_RESOLVER_IMPL` set to
+  `llm`, module B's settings refuse to load unless
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — the worker and
+  the API do not start (the API with every other module, since it imports each
+  router), and the error names the variable.
+  "Dummy meetings only" and "a paid key" are rules the code cannot check; the
+  flag makes sending speech to a provider something a deployment says twice.
+  It turns nothing on by itself, and deleting it is the migration once #392 is
+  decided. It is not keyed on `AUTUNE_ENV`: `.env.example` ships
+  `AUTUNE_ENV=local`, so a deployment made from that file would be the one let
+  through.
 - Use it on dummy meetings only. A free-tier key may let the provider keep what
   it is sent; a real meeting needs a paid key and #392's answer.
 
@@ -732,7 +799,7 @@ Configuration lives in the repository, not on the host:
 | `DEV_BASIC_AUTH_PASSWORD` | secret | yes; the password for `/api/*/dev/` |
 | `AUTUNE_AUDIO_HF_TOKEN` | secret | yes; pyannote is gated, so every upload fails after transcription without it ("Pyannote and its three gated repositories" above) |
 | `AUTUNE_AGENT_LLM_API_KEY` | secret | no; without it the agent chat refuses |
-| `AUTUNE_LLM_API_KEY` | secret | yes; the provider key under its shared name. Module B reads it when `AUTUNE_EXTRACTION_LLM_API_KEY` is blank (#701). The compose file sets `AUTUNE_EXTRACTION_RESOLVER_IMPL=llm` with `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true`, so **B's resolver sends text to the provider from this server**: for each commitment and decision, that utterance and its neighbours as module A masked them, consenting speakers only, the team roster's names replaced (#530). B's classifier stays `fake`. **Upload demo meetings only to this site until #392 is decided** — the code cannot tell a real meeting from a dummy one, or a paid key from a free one. Without the key the deploy stops at "Check configuration". The agent, C and D do not read this name |
+| `AUTUNE_LLM_API_KEY` | secret | yes; the provider key under its shared name. Module B reads it when `AUTUNE_EXTRACTION_LLM_API_KEY` is blank (#701). The compose file sets `AUTUNE_EXTRACTION_CLASSIFIER_IMPL=llm` with `AUTUNE_EXTRACTION_LLM_MODEL=gemini-3.5-flash-lite`, a blank `AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL` and `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` (the user's decision of 2026-10-05, #392), so **with this key every consenting speaker's masked utterance of a meeting on this server goes to the provider.** It also sets `AUTUNE_EXTRACTION_RESOLVER_IMPL=llm` (the user's decision of 2026-10-02): for each commitment and decision, that utterance and its neighbours go a second time, to the resolver's own models (`resolver_model`, and `resolver_second_model` when the first answer fails a check), the team roster's names replaced (#530). A real meeting needs a paid key; nothing in the code can tell which tier a key is. "Check configuration" refuses a deploy without it. Both NLI implementations call no provider here. The agent, C and D do not read this name |
 | `AUTUNE_GOOGLE_CLIENT_ID`, `AUTUNE_GOOGLE_CLIENT_SECRET` | secret | no; without them Google sign-in answers "not configured" and the dev token still works. The OAuth client must list `https://autune.shelldocs.cloud/api/auth/google/callback` as an authorised redirect URI. Sign-in creates a user for any verified Google account, so nginx asks for the dev password before `/api/auth/google/start`, and the OAuth consent screen should stay in Testing with only the team as test users |
 | `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID`, `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | secret | no; a second Google client for what a person connects (their calendar), apart from sign-in. Without them the sign-in client does both. Both or neither — the deploy stops on half. It uses the same callback, so `https://autune.shelldocs.cloud/api/auth/google/callback` must be an authorised redirect URI on this client too; if it lives in another Google Cloud project, that project's consent screen needs the same Testing state and test users |
 | `AUTUNE_SLACK_CLIENT_ID`, `AUTUNE_SLACK_CLIENT_SECRET` | secret | no; without them "Add to Slack" answers "not configured". Redirect URL to register in the Slack app: `https://autune.shelldocs.cloud/api/auth/slack/callback` |

@@ -21,6 +21,9 @@ Flow:
                                          finishes it (purpose ``calendar``)
 - ``GET /google/calendar``             -> whether *this* person connected one
 - ``POST /google/calendar/disconnect`` -> revoke at Google, then forget
+- ``GET /google/gmail/start``, ``GET /google/gmail``,
+  ``POST /google/gmail/disconnect``    -> the same three for sending mail as
+                                         the person (``gmail.send``, #552)
 """
 
 from __future__ import annotations
@@ -29,12 +32,14 @@ import hashlib
 import hmac
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Cookie, Depends, Query, Request
+from fastapi import APIRouter, Cookie, Depends, Header, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -45,14 +50,23 @@ from .auth import (
     _session_token,
     clear_session_cookie,
     current_user,
+    end_sessions,
     issue_token,
     set_session_cookie,
+    signed_in_user_or_none,
 )
 from .auth_service import upsert_user_from_google
+from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
 from .db import get_session
-from .entities import Meeting, Team, TeamMember
-from .errors import AutuneError, NotFoundError, PermissionDeniedError, ValidationError
+from .entities import Meeting, Team, TeamMember, User
+from .errors import (
+    AutuneError,
+    ConfigurationError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from .integrations_config import (
     IntegrationConfig,
     disconnect_integration,
@@ -65,9 +79,11 @@ from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import (
     CALENDAR_SCOPE,
+    GMAIL_SEND_SCOPE,
     GoogleOAuthClient,
     get_google_client,
     get_google_integration_client,
+    pkce_pair,
 )
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
 from .oauth.slack import (
@@ -78,6 +94,7 @@ from .oauth.slack import (
     SlackOAuthClient,
     SlackTeamNotConnectedError,
     SlackWrongWorkspaceError,
+    channel_name_for,
     get_slack_oauth_client,
 )
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
@@ -170,8 +187,17 @@ def google_start(
 ) -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
-    store.put(state, OAuthTransaction(nonce=nonce, redirect_to=_safe_redirect_target(redirect_to)))
-    response = RedirectResponse(google.authorization_url(state=state, nonce=nonce), status_code=307)
+    verifier, challenge = pkce_pair()
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce, redirect_to=_safe_redirect_target(redirect_to), code_verifier=verifier
+        ),
+    )
+    response = RedirectResponse(
+        google.authorization_url(state=state, nonce=nonce, code_challenge=challenge),
+        status_code=307,
+    )
     response.set_cookie(
         STATE_COOKIE,
         state,
@@ -241,9 +267,9 @@ def _complete_sign_in(
     if transaction is None:
         raise PermissionDeniedError("sign-in state is unknown or has expired")
 
-    if transaction.purpose == "calendar":
+    if transaction.purpose in _PERSONAL:
         # Finished by the client that started it (``integration_google``).
-        return _finish_calendar_connect(
+        return _finish_personal_connect(
             transaction, integration or google, session, code=code, error=error
         )
     if transaction.purpose != "sign_in":
@@ -254,7 +280,10 @@ def _complete_sign_in(
     if error or not code:
         raise PermissionDeniedError("Google sign-in did not complete")
 
-    identity = google.verify(google.exchange_code(code), nonce=transaction.nonce)
+    identity = google.verify(
+        google.exchange_code(code, code_verifier=transaction.code_verifier),
+        nonce=transaction.nonce,
+    )
     if not identity.email_verified:
         raise PermissionDeniedError("this Google account's email is not verified")
 
@@ -272,7 +301,25 @@ def providers() -> dict[str, bool]:
 
 
 @router.post("/logout", status_code=204)
-def logout() -> Response:
+def logout(
+    session: Annotated[Session, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+    autune_session: Annotated[str | None, Cookie()] = None,
+) -> Response:
+    """Sign out: end every session this person has, then clear the cookie.
+
+    Until now this only cleared the cookie, and the token it held stayed
+    valid for the rest of its seven days. ``end_sessions`` makes the server
+    refuse it, and every other token the person holds -- another browser, a
+    developer token, a copy that leaked.
+
+    204 whoever asks. A request with no session, an expired one or one
+    already signed out has nothing to end and still gets its cookie cleared:
+    signing out must not be something that can fail."""
+    user = signed_in_user_or_none(session, authorization, autune_session)
+    if user is not None:
+        end_sessions(user)
+        log.info("auth_signed_out", user_id=user.id)
     response = Response(status_code=204)
     clear_session_cookie(response)
     return response
@@ -281,12 +328,20 @@ def logout() -> Response:
 @router.get("/me")
 def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> dict[str, object]:
     """Who is signed in, and the teams they belong to -- what S28 settings
-    (#496) chooses a team's integrations from, with no meeting to name it."""
+    (#496) chooses a team's integrations from, with no meeting to name it.
+
+    **In the order the person joined them** (#742). Two screens take the
+    first as the default: the assistant (S34) asks about ``teams[0]``, and
+    S28 opens on it. By name, accepting an invitation (#552) to a team whose
+    name sorts earlier silently made the inviting team that default -- the
+    change of default nobody asked for that the review of #539 was about.
+    Module A's ``teams_for`` answers in the same order for the same reason,
+    so the two lists a browser holds agree on which team is first."""
     teams = session.execute(
         select(Team.id, Team.name)
         .join(TeamMember, TeamMember.team_id == Team.id)
         .where(TeamMember.user_id == user.id)
-        .order_by(Team.name, Team.id)
+        .order_by(TeamMember.id)
     ).all()
     return {
         "id": user.id,
@@ -297,39 +352,157 @@ def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> 
 
 
 # --------------------------------------------------------------------------- #
-# A person's own Google Calendar (#435): one click, their own grant
+# What a person agreed to: recorded here, asked for by the consent page
 # --------------------------------------------------------------------------- #
 
 
-@router.get("/google/calendar/start")
-def google_calendar_start(
-    request: Request,
-    user: CurrentUser,
-    store: Annotated[StateStore, Depends(get_state_store)],
-    google: IntegrationGoogle,
-    redirect_to: Annotated[str, Query()] = "/",
-) -> RedirectResponse:
-    """Send a signed-in person to Google to let Autune put their own tasks'
-    due dates on their own calendar.
+class _ConsentIn(BaseModel):
+    document: str
+    version: str
 
-    The same flow and callback as sign-in -- the same ``state`` cookie binding,
-    so a callback from another browser is refused -- with the person's id kept
-    in the transaction from *this* request's session. The callback therefore
-    stores the grant for whoever started, never for whoever finishes.
+
+class _ConsentsIn(BaseModel):
+    consents: list[_ConsentIn]
+
+
+def _consents_answer(consents: list[Consent]) -> dict[str, object]:
+    return {
+        "consents": [
+            {
+                "document": c.document,
+                "version": c.version,
+                "agreed_at": c.agreed_at.isoformat() if c.agreed_at else None,
+            }
+            for c in consents
+        ]
+    }
+
+
+@router.get("/consents")
+def my_consents(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, object]:
+    """The documents and versions the signed-in person agreed to -- theirs
+    only. The consent page compares this with what it requires; the server
+    does not know which version is current (``autune_core.consents``)."""
+    return _consents_answer(consents_of(session, user.id))
+
+
+@router.post("/consents")
+def agree(
+    body: _ConsentsIn,
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+) -> dict[str, object]:
+    """Record that the signed-in person agreed to each document and version
+    named. Agreeing again changes nothing: the first time is the one kept.
+    Nobody can agree for anyone else -- the person is the session's."""
+    recorded = record_consents(
+        session, user.id, [(item.document, item.version) for item in body.consents]
+    )
+    log.info("auth_consents_recorded", user_id=user.id, documents=len(body.consents))
+    return _consents_answer(recorded)
+
+
+# --------------------------------------------------------------------------- #
+# A person's own Google grants: their calendar (#435), sending mail as them
+# (#552). One click each, their own grant, the sign-in flow's callback.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _PersonalGoogle:
+    """One thing a signed-in person can let Autune do with their own Google
+    account. Each is its own consent, its own refresh token carrying only its
+    own scope (no ``include_granted_scopes``), and its own ``user_integrations``
+    row, so connecting one never widens what another can do.
+
+    **Revoking is not that separate.** Google's revoke can end everything one
+    account gave this OAuth client, so revoking one kind's token may end the
+    other's too. When that happens the other row is marked ``grant_revoked``
+    (``_mark_shared_grants``) and reported as needing a reconnect, rather than
+    left looking connected while nothing works (lsh2217, review of #760)."""
+
+    service: str
+    """The ``user_integrations`` service, and the transaction's ``purpose``."""
+    scope: str
+    label: str
+    """How refusals name it: "calendar", "Gmail"."""
+    query: str
+    """The key the screen reads on return: ``?<query>=connected|failed``."""
+    config: tuple[tuple[str, str], ...] = ()
+    """Settings stored beside the grant, besides the account and client."""
+
+
+CALENDAR = _PersonalGoogle(
+    "calendar", CALENDAR_SCOPE, "calendar", "calendar", (("calendar_id", "primary"),)
+)
+GMAIL_SEND = _PersonalGoogle("gmail_send", GMAIL_SEND_SCOPE, "Gmail", "gmail")
+_PERSONAL = {kind.service: kind for kind in (CALENDAR, GMAIL_SEND)}
+
+
+def _mark_shared_grants(
+    session: Session, user_id: str, *, revoked: _PersonalGoogle, account: object, client: str
+) -> None:
+    """After a revoke of ``revoked``'s token for Google account ``account`` at
+    ``client``: mark the person's other grants from the same account and client
+    as gone with it (class docstring). A grant recorded without its account or
+    client is left as it is -- nothing says it shared anything."""
+    for kind in _PERSONAL.values():
+        if kind is revoked:
+            continue
+        other = load_user_integration(session, user_id, kind.service)
+        if (
+            other is None
+            or not other.secret
+            or other.config.get("google_sub") != account
+            or other.config.get("client_id") != client
+        ):
+            continue
+        save_user_integration(
+            session,
+            user_id,
+            kind.service,
+            secret=other.secret,
+            config={**other.config, "grant_revoked": True},
+        )
+        log.info(f"auth_google_{kind.service}_revoked_with_another", user_id=user_id)
+
+
+def _start_personal_connect(
+    kind: _PersonalGoogle,
+    request: Request,
+    user: User,
+    store: StateStore,
+    google: GoogleOAuthClient,
+    redirect_to: str,
+) -> RedirectResponse:
+    """The same flow and callback as sign-in -- the same ``state`` cookie
+    binding, so a callback from another browser is refused -- with the person's
+    id kept in the transaction from *this* request's session. The callback
+    therefore stores the grant for whoever started, never for whoever finishes.
     """
+    if (refused := _cannot_store(redirect_to, f"{kind.query}=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
+    verifier, challenge = pkce_pair()
     store.put(
         state,
         OAuthTransaction(
             nonce=nonce,
             redirect_to=_safe_redirect_target(redirect_to),
-            purpose="calendar",
+            purpose=kind.service,
             user_id=user.id,
+            code_verifier=verifier,
         ),
     )
     url = google.authorization_url(
-        state=state, nonce=nonce, scope=f"openid {CALENDAR_SCOPE}", offline=True
+        state=state,
+        nonce=nonce,
+        scope=f"openid {kind.scope}",
+        offline=True,
+        code_challenge=challenge,
     )
     response = RedirectResponse(url, status_code=307)
     response.set_cookie(
@@ -344,7 +517,34 @@ def google_calendar_start(
     return response
 
 
-def _finish_calendar_connect(
+@router.get("/google/calendar/start")
+def google_calendar_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    google: IntegrationGoogle,
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a signed-in person to Google to let Autune put their own tasks'
+    due dates on their own calendar."""
+    return _start_personal_connect(CALENDAR, request, user, store, google, redirect_to)
+
+
+@router.get("/google/gmail/start")
+def google_gmail_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    google: IntegrationGoogle,
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a signed-in person to Google to let Autune send mail as them --
+    a team invitation from their own address (#552). ``gmail.send`` only:
+    nothing in their mailbox can be read with it."""
+    return _start_personal_connect(GMAIL_SEND, request, user, store, google, redirect_to)
+
+
+def _finish_personal_connect(
     transaction: OAuthTransaction,
     google: GoogleOAuthClient,
     session: Session,
@@ -352,26 +552,46 @@ def _finish_calendar_connect(
     code: str | None,
     error: str | None,
 ) -> RedirectResponse:
-    """A calendar connect that fails goes back to the screen it started from
-    with ``?calendar=failed``, not to a JSON error: the person pressed a button
-    on that screen and is still signed in there. Declining on Google's screen,
-    unticking the calendar box, or Google withholding a refresh token all land
-    here. Sign-in's own failures are unchanged."""
+    """A connect that fails goes back to the screen it started from with
+    ``?<query>=failed``, not to a JSON error: the person pressed a button on
+    that screen and is still signed in there. Declining on Google's screen,
+    unticking the permission's box, or Google withholding a refresh token all
+    land here. Sign-in's own failures are unchanged."""
+    kind = _PERSONAL[transaction.purpose]
     try:
         if error or not code:
-            raise PermissionDeniedError("Google calendar access was not granted")
-        return _complete_calendar_connect(transaction, google, session, code=code)
+            raise PermissionDeniedError(f"Google {kind.label} access was not granted")
+        return _complete_personal_connect(kind, transaction, google, session, code=code)
     except AutuneError as exc:
         log.info(
-            "auth_google_calendar_connect_failed", user_id=transaction.user_id, reason=exc.code
+            f"auth_google_{kind.service}_connect_failed",
+            user_id=transaction.user_id,
+            reason=exc.code,
         )
         return RedirectResponse(
-            _web_url(_with_query(transaction.redirect_to, "calendar=failed")), status_code=303
+            _web_url(_with_query(transaction.redirect_to, f"{kind.query}=failed")),
+            status_code=303,
         )
 
 
 def _with_query(path: str, pair: str) -> str:
     return path + ("&" if "?" in path else "?") + pair
+
+
+def _cannot_store(redirect_to: str, pair: str) -> RedirectResponse | None:
+    """Back to the screen with ``pair`` when this deploy could not store the
+    token a connect would bring back, else ``None`` -- checked at start, so
+    nobody goes through a consent screen that cannot succeed (mkkim68, review
+    of #765). The callback checks again before it spends the code: the key
+    can go between the two."""
+    try:
+        ensure_configured()
+    except ConfigurationError as exc:
+        log.info("auth_connect_not_started", reason=exc.code)
+        return RedirectResponse(
+            _web_url(_with_query(_safe_redirect_target(redirect_to), pair)), status_code=303
+        )
+    return None
 
 
 def _https_link(stored: object) -> str | None:
@@ -397,7 +617,8 @@ def _slack_channel_link(config: dict) -> str | None:
     return f"https://app.slack.com/client/{workspace}/{channel}"
 
 
-def _complete_calendar_connect(
+def _complete_personal_connect(
+    kind: _PersonalGoogle,
     transaction: OAuthTransaction,
     google: GoogleOAuthClient,
     session: Session,
@@ -405,37 +626,56 @@ def _complete_calendar_connect(
     code: str,
 ) -> RedirectResponse:
     if not transaction.user_id:
-        raise PermissionDeniedError("calendar connect was not started by a signed-in person")
-    grant = google.exchange_grant(code)
+        raise PermissionDeniedError(f"{kind.label} connect was not started by a signed-in person")
+    # Before the code is spent: a deploy that cannot store the refresh token
+    # fails here, not after Google has issued a grant nothing keeps (#704).
+    # The same for every personal grant -- a Gmail one too (#760 review).
+    ensure_configured()
+    grant = google.exchange_grant(code, code_verifier=transaction.code_verifier)
     # The ID token proves this code answered *our* request (nonce), not which
     # Google account it was: someone may keep their calendar on another account,
     # and the consent asks for no ``email``, so none is required (#452 review).
     claims = google.verify_request(grant.id_token, nonce=transaction.nonce)
     account = str(claims["sub"])
-    if CALENDAR_SCOPE not in grant.scopes:
-        raise PermissionDeniedError("calendar access was not granted")
+    if kind.scope not in grant.scopes:
+        raise PermissionDeniedError(f"{kind.label} access was not granted")
+    # A token carrying another personal grant's scope is a merged one --
+    # ``include_granted_scopes`` is no longer asked for, but a consent screen
+    # can still hand one back -- and storing it under this kind would let it
+    # do the other's job (mkkim68, review of #760). Refused; connecting again
+    # is the fix.
+    if any(other.scope in grant.scopes for other in _PERSONAL.values() if other is not kind):
+        log.warning(f"auth_google_{kind.service}_merged_grant_refused")
+        raise PermissionDeniedError(f"{kind.label} access came with another grant's scope")
     if not grant.refresh_token:
         raise PermissionDeniedError("Google granted no offline access; connect again")
-    previous = load_user_integration(session, transaction.user_id, "calendar")
+    previous = load_user_integration(session, transaction.user_id, kind.service)
     previous_account = previous.config.get("google_sub") if previous is not None else None
+    # Moved to another Google account: end the grant it replaces rather than
+    # leave it valid and unknown to us. Never for the same account -- Google's
+    # revoke ends everything that account granted Autune, the refresh token
+    # just received included, and ``prompt=consent`` hands out a new token on
+    # every connect, so comparing tokens cannot tell the two apart (#452
+    # review). A grant saved before the account was recorded is left alone for
+    # the same reason.
     if (
         previous is not None
         and previous.secret
         and previous_account is not None
         and previous_account != account
+        and google.revoke(previous.secret)
     ):
-        # A calendar moved to another Google account: end the grant it replaces
-        # rather than leave it valid and unknown to us. Never for the same
-        # account -- Google's revoke ends everything that account granted
-        # Autune, the refresh token just received included, and ``prompt=
-        # consent`` hands out a new token on every connect, so comparing tokens
-        # cannot tell the two apart (#452 review). A grant saved before the
-        # account was recorded is left alone for the same reason.
-        google.revoke(previous.secret)
+        _mark_shared_grants(
+            session,
+            transaction.user_id,
+            revoked=kind,
+            account=previous_account,
+            client=str(previous.config.get("client_id") or ""),
+        )
     save_user_integration(
         session,
         transaction.user_id,
-        "calendar",
+        kind.service,
         secret=grant.refresh_token,
         # ``sub`` is Google's stable account id, not a credential; it is kept
         # only so the next connect can tell a new account from the same one.
@@ -445,33 +685,82 @@ def _complete_calendar_connect(
         # deployment's integration client changes, this is how the grant is
         # known to need connecting again without a refused call to Google
         # (mkkim68, review of #700).
-        config={"calendar_id": "primary", "google_sub": account, "client_id": google.client_id},
+        config={**dict(kind.config), "google_sub": account, "client_id": google.client_id},
     )
-    log.info("auth_google_calendar_connected", user_id=transaction.user_id)
+    log.info(f"auth_google_{kind.service}_connected", user_id=transaction.user_id)
     return RedirectResponse(
-        _web_url(_with_query(transaction.redirect_to, "calendar=connected")), status_code=303
+        _web_url(_with_query(transaction.redirect_to, f"{kind.query}=connected")),
+        status_code=303,
     )
+
+
+def _personal_status(kind: _PersonalGoogle, session: Session, user: User) -> dict[str, bool]:
+    """Whether the signed-in person has connected this grant -- theirs only;
+    there is no way to ask about anyone else.
+
+    ``needs_reconnect`` is true for a grant recorded as issued to another
+    Google client than the one this deployment refreshes with now: its
+    refresh token cannot work. A grant from before the client was recorded
+    says nothing either way, and is reported as it always was. It is also
+    true for a grant that went with a revoke of the person's other one
+    (``grant_revoked``, ``_mark_shared_grants``).
+
+    With no Google client configured at all there is nothing to compare
+    with: nobody's grant can be refreshed in that state and the modules say
+    nothing (``autune_extraction.tasks._calendars``), and the card must not say
+    more than they do -- connecting again would not help. So that is not
+    ``needs_reconnect`` (mminjae97, review of #711)."""
+    grant = load_user_integration(session, user.id, kind.service)
+    connected = grant is not None and bool(grant.secret)
+    issued_to = grant.config.get("client_id") if grant is not None else None
+    # "Configured" as module B reads it (``tasks._google_client_configured``):
+    # an id and a secret. Half a client refreshes nothing, so it is not a
+    # client to reconnect to either (review of #718).
+    current, secret = get_settings().google_integration_credentials
+    configured = bool(current and secret)
+    revoked = grant is not None and bool(grant.config.get("grant_revoked"))
+    return {
+        "connected": connected,
+        "needs_reconnect": connected
+        and (revoked or (configured and bool(issued_to) and issued_to != current)),
+    }
+
+
+def _personal_disconnect(
+    kind: _PersonalGoogle, session: Session, user: User, google: GoogleOAuthClient
+) -> dict[str, bool]:
+    """Revoke the grant at Google, then forget it here (#444 review). Our copy
+    goes even when Google cannot be reached; ``revoked`` says whether Google
+    confirmed, so a person knows to check their Google account otherwise.
+
+    Google's revoke can end everything that account gave this OAuth client:
+    the person's other personal grant through it, and sign-in's consent where
+    it is the **sign-in client** (a deployment with no integration client) --
+    the next sign-in then shows Google's consent screen again. A confirmed
+    revoke therefore marks the other grant from the same account and client as
+    needing a reconnect (``_mark_shared_grants``), so its card says so instead
+    of looking connected while nothing works (lsh2217, review of #760)."""
+    grant = load_user_integration(session, user.id, kind.service)
+    revoked = bool(grant and grant.secret and google.revoke(grant.secret))
+    if revoked and grant is not None:
+        _mark_shared_grants(
+            session,
+            user.id,
+            revoked=kind,
+            account=grant.config.get("google_sub"),
+            client=str(grant.config.get("client_id") or ""),
+        )
+    disconnect_user_integration(session, user.id, kind.service)
+    log.info(f"auth_google_{kind.service}_disconnected", user_id=user.id, revoked=revoked)
+    return {"connected": False, "revoked": revoked}
 
 
 @router.get("/google/calendar")
 def google_calendar_status(
     user: CurrentUser, session: Annotated[Session, Depends(get_session)]
 ) -> dict[str, bool]:
-    """Whether the signed-in person has connected their own calendar -- theirs
-    only; there is no way to ask about anyone else.
-
-    ``needs_reconnect`` is true for a grant recorded as issued to another
-    Google client than the one this deployment refreshes with now: its
-    refresh token cannot work. A grant from before the client was recorded
-    says nothing either way, and is reported as it always was."""
-    grant = load_user_integration(session, user.id, "calendar")
-    connected = grant is not None and bool(grant.secret)
-    issued_to = grant.config.get("client_id") if grant is not None else None
-    current = get_settings().google_integration_credentials[0]
-    return {
-        "connected": connected,
-        "needs_reconnect": connected and bool(issued_to) and issued_to != current,
-    }
+    """Whether the signed-in person has connected their own calendar."""
+    return _personal_status(CALENDAR, session, user)
 
 
 @router.post("/google/calendar/disconnect")
@@ -480,22 +769,26 @@ def google_calendar_disconnect(
     session: Annotated[Session, Depends(get_session)],
     google: IntegrationGoogle,
 ) -> dict[str, bool]:
-    """Revoke the grant at Google, then forget it here (#444 review). Our copy
-    goes even when Google cannot be reached; ``revoked`` says whether Google
-    confirmed, so a person knows to check their Google account otherwise.
+    """Revoke the calendar grant at Google, then forget it here."""
+    return _personal_disconnect(CALENDAR, session, user, google)
 
-    The consent used ``include_granted_scopes``, so where the calendar was
-    connected through the **sign-in client** -- a deployment with no
-    integration client -- revoking this token can end the whole grant that
-    Google account gave Autune, sign-in scopes included. The next sign-in
-    with that account then shows Google's consent screen again; nothing else
-    changes. With an integration client the grant is that client's own, and
-    sign-in is not touched (mkkim68, review of #700)."""
-    grant = load_user_integration(session, user.id, "calendar")
-    revoked = bool(grant and grant.secret and google.revoke(grant.secret))
-    disconnect_user_integration(session, user.id, "calendar")
-    log.info("auth_google_calendar_disconnected", user_id=user.id, revoked=revoked)
-    return {"connected": False, "revoked": revoked}
+
+@router.get("/google/gmail")
+def google_gmail_status(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Whether the signed-in person has let Autune send mail as them."""
+    return _personal_status(GMAIL_SEND, session, user)
+
+
+@router.post("/google/gmail/disconnect")
+def google_gmail_disconnect(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    google: IntegrationGoogle,
+) -> dict[str, bool]:
+    """Revoke the Gmail send grant at Google, then forget it here."""
+    return _personal_disconnect(GMAIL_SEND, session, user, google)
 
 
 # --------------------------------------------------------------------------- #
@@ -562,6 +855,8 @@ def jira_start(
     the connection says who made it (``connected_by``). Same browser-bound
     ``state`` as Google sign-in, cookie scoped to the Jira callback."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (refused := _cannot_store(redirect_to, "jira=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -636,6 +931,8 @@ def _finish_jira_connect(
     try:
         if error or not code:
             raise PermissionDeniedError("Jira access was not granted")
+        # Before the code is spent, as for Slack (#593, #704).
+        ensure_configured()
         tokens = atlassian.exchange_code(code)
         if not tokens.refresh_token:
             raise PermissionDeniedError("Atlassian granted no offline access")
@@ -771,6 +1068,8 @@ def notion_start(
     screen they also pick the pages Autune may see -- one of those becomes the
     parent of Autune's databases (module B)."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (refused := _cannot_store(redirect_to, "notion=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -847,6 +1146,8 @@ def _finish_notion_connect(
     try:
         if error or not code:
             raise PermissionDeniedError("Notion access was not granted")
+        # Before the code is spent, as for Slack (#593, #704).
+        ensure_configured()
         grant = notion.exchange_code(code)
         save_integration(
             session,
@@ -927,6 +1228,10 @@ def slack_start(
     """Send a team member to Slack to install Autune's bot in the team's
     workspace. Same browser-bound ``state`` as the other connects."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (
+        refused := _cannot_store(redirect_to, "slack=failed&reason=configuration_error")
+    ) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -1030,7 +1335,8 @@ def _finish_slack_connect(
         # Decided before anything else can fail, so a failure path never has
         # to ask a session that may be broken.
         shared = _workspace_used_elsewhere(session, install.workspace_id, team_id)
-        channel = _alert_channel(slack, install, previous)
+        team = session.get(Team, team_id)
+        channel = _alert_channel(slack, install, previous, team.name if team else "")
         if previous is None or channel.id != previous.config.get("channel"):
             made = channel
         save_integration(
@@ -1083,16 +1389,25 @@ def _finish_slack_connect(
 
 
 def _alert_channel(
-    slack: SlackOAuthClient, install: SlackInstall, previous: IntegrationConfig | None
+    slack: SlackOAuthClient,
+    install: SlackInstall,
+    previous: IntegrationConfig | None,
+    team_name: str,
 ) -> SlackChannel:
     """The team's channel: kept on a re-install into the same workspace while it
-    can still take posts, made new (private, installer invited) otherwise."""
+    can still take posts, made new (private, installer invited) otherwise --
+    named after the team, ``slack_channel_name`` when the team's name will not
+    do (``channel_name_for``)."""
     if previous is not None and previous.config.get("workspace_id") == install.workspace_id:
         kept = previous.config.get("channel")
         if kept and slack.channel_usable(install.access_token, str(kept)):
             return SlackChannel(str(kept), str(previous.config.get("channel_name") or ""))
+    fallback = get_settings().slack_channel_name
     return slack.create_alert_channel(
-        install.access_token, get_settings().slack_channel_name, invite=install.installer_id
+        install.access_token,
+        channel_name_for(team_name, fallback),
+        invite=install.installer_id,
+        fallback=fallback,
     )
 
 

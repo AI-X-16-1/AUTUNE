@@ -4,9 +4,13 @@ import { useEffect, useState } from "react";
 
 import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 
+import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { SyncStatus } from "./SyncStatus";
+import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
+import { CONFIRMED_NOTICE, confirms } from "../board";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -22,16 +26,29 @@ import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
  * A small window over the board, not a column beside it (decided with the
  * user, 2026-10-01): opening it no longer reflows the board, and a click
  * outside it -- or Esc -- closes it and leaves the board exactly where it was.
+ *
+ * The two things a person does about the window itself sit together at the
+ * top right, 삭제 then 닫기 (the user, 2026-10-02): they were at opposite ends,
+ * the delete under everything a long item scrolls through. Side by side they
+ * are told apart by colour -- red text for the one that destroys, as
+ * everywhere -- and 삭제 still only opens the confirmation, so a slip costs a
+ * second click, not the item.
  */
 export function ActionDetailDrawer({
   item,
   onClose,
   onStatusChange,
+  onAssigneeChange,
   onDelete,
 }: {
   item: ActionItemRead;
   onClose: () => void;
   onStatusChange?: (status: ActionStatus) => void | Promise<void>;
+  /** Set the assignee: a member's account or a typed name, never both. */
+  onAssigneeChange?: (change: {
+    assignee_id: string | null;
+    assignee_label: string | null;
+  }) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -42,10 +59,39 @@ export function ActionDetailDrawer({
   // reason, and a failed delete otherwise closes the dialog and leaves the
   // drawer open saying nothing. Raised in review of #292.
   const [failure, setFailure] = useState<string | null>(null);
+  // A status change out of "확인 필요" confirms the item, which copies it to
+  // the tools the team connected. A drop on the board says so afterwards
+  // (#712); the same change made here said nothing (review of #717).
+  const [notice, setNotice] = useState<string | null>(null);
   // The select is controlled by `item.status`, so while a PATCH is in flight it
   // still shows the old value. Left enabled, a second pick sends a second PATCH
   // and the board ends on whichever response lands last. Raised in review of #292.
   const [changing, setChanging] = useState(false);
+  // The assignee as it stands on the item, and what the person is typing
+  // when they chose "직접 입력". A member or "미지정" is saved the moment it is
+  // picked, like the status; a typed name is saved with its own button, since
+  // saving on every keystroke would write half a name.
+  const members = useAssignable(item.meeting_id);
+  const stored: AssigneeValue = item.assignee_id
+    ? { kind: "member", userId: item.assignee_id }
+    : item.assignee_label
+      ? { kind: "typed", label: item.assignee_label }
+      : { kind: "none" };
+  const [typed, setTyped] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
+
+  const saveAssignee = async (value: AssigneeValue) => {
+    setFailure(null);
+    setAssigning(true);
+    try {
+      await onAssigneeChange?.(assigneeFields(value));
+      setTyped(null);
+    } catch {
+      setFailure("담당자를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setAssigning(false);
+    }
+  };
   // The quotation is fetched when the drawer opens (GET /action-items/{id});
   // the list the board holds carries utterance ids, never their words.
   // History follows an edit made here or on the board: the item's editable
@@ -140,9 +186,23 @@ export function ActionDetailDrawer({
               ) : null}
             </div>
           </div>
-          <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">
-            닫기
-          </Button>
+          <div className="flex shrink-0 items-center gap-3">
+            {/* Destructive actions are red text, then a modal. Red never fills
+                a button, and there is no undo afterwards — the row is gone. */}
+            {/* Named for what it deletes: beside 닫기, a bare "삭제" read aloud
+                does not say of what (review of #722). */}
+            <Button
+              tone="destructiveText"
+              size="compact"
+              aria-label="항목 삭제"
+              onClick={() => setConfirming(true)}
+            >
+              삭제
+            </Button>
+            <Button tone="quiet" size="compact" onClick={onClose} aria-label="닫기">
+              닫기
+            </Button>
+          </div>
         </header>
 
         <div
@@ -150,9 +210,51 @@ export function ActionDetailDrawer({
           style={{ padding: "var(--space-card)" }}
         >
           <Field label="담당">
-            {item.needs_reassignment
-              ? "재배정 필요 · 담당자가 이 팀에 없습니다"
-              : (item.assignee_name ?? item.assignee_label ?? "미지정")}
+            {onAssigneeChange === undefined ? (
+              item.needs_reassignment ? (
+                "재배정 필요 · 담당자가 이 팀에 없습니다"
+              ) : (
+                (item.assignee_name ?? item.assignee_label ?? "미지정")
+              )
+            ) : (
+              <div className="grid gap-2">
+                {item.needs_reassignment ? (
+                  <span>재배정 필요 · 담당자가 이 팀에 없습니다</span>
+                ) : null}
+                <AssigneeInput
+                  id={`assignee-${item.id}`}
+                  label="담당"
+                  memberName={item.assignee_name}
+                  members={members}
+                  value={typed !== null ? { kind: "typed", label: typed } : stored}
+                  disabled={assigning}
+                  onChange={(value) => {
+                    if (value.kind === "typed") setTyped(value.label);
+                    else void saveAssignee(value);
+                  }}
+                  controlClassName="w-full border bg-transparent"
+                  controlStyle={{
+                    height: "var(--control-h-default)",
+                    paddingInline: "var(--control-px-text)",
+                    borderRadius: "var(--radius)",
+                    border: "1px solid var(--color-hairline)",
+                    fontSize: "var(--text-body)",
+                  }}
+                />
+                {typed !== null && typed.trim() !== (item.assignee_label ?? "") ? (
+                  <div>
+                    <Button
+                      tone="secondary"
+                      size="compact"
+                      loading={assigning}
+                      onClick={() => void saveAssignee({ kind: "typed", label: typed })}
+                    >
+                      이름 저장
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </Field>
           <Field label="기한" mono>
             {item.due_date ?? "없음"}
@@ -169,10 +271,14 @@ export function ActionDetailDrawer({
               disabled={changing}
               aria-busy={changing || undefined}
               onChange={async (event) => {
+                const next = event.target.value as ActionStatus;
+                const confirmed = confirms(item, next);
                 setFailure(null);
+                setNotice(null);
                 setChanging(true);
                 try {
-                  await onStatusChange?.(event.target.value as ActionStatus);
+                  await onStatusChange?.(next);
+                  if (confirmed) setNotice(CONFIRMED_NOTICE);
                 } catch {
                   setFailure(
                     "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
@@ -198,6 +304,15 @@ export function ActionDetailDrawer({
               ))}
             </select>
           </Field>
+          {notice !== null ? (
+            <p
+              role="status"
+              className="mt-2 text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {notice}
+            </p>
+          ) : null}
 
           <section className="mt-6">
             <SectionTitle>근거 발화</SectionTitle>
@@ -233,11 +348,35 @@ export function ActionDetailDrawer({
             )}
           </section>
 
-          {item.sync_refs?.length ? (
+          {item.sync_refs?.length || quotation.dmUrl ? (
             <section className="mt-6">
               <SectionTitle>연동</SectionTitle>
               <div className="mt-2 grid gap-2">
-                {item.sync_refs.map((ref) => (
+                {quotation.dmUrl ? (
+                  // The reader's own confirmation DM: the server sends this to
+                  // the person it went to and nobody else (#680).
+                  <div
+                    className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    <StatusDot variant="confirmed" />
+                    <span className="text-[var(--color-ink-body)]">
+                      Slack 확인 DM
+                    </span>
+                    <span className="text-[var(--color-ink-muted)]">
+                      나에게 온 DM
+                    </span>
+                    <a
+                      href={quotation.dmUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="ml-auto text-[var(--color-accent-text)]"
+                    >
+                      열기
+                    </a>
+                  </div>
+                ) : null}
+                {(item.sync_refs ?? []).map((ref) => (
                   <div
                     key={ref.system}
                     className="flex items-center gap-2 border-b border-[var(--color-hairline)] pb-2"
@@ -272,6 +411,13 @@ export function ActionDetailDrawer({
                   </div>
                 ))}
               </div>
+            </section>
+          ) : null}
+
+          {(item.sync_failures?.length ?? 0) > 0 || quotation.calendar ? (
+            <section className="mt-6">
+              <SectionTitle>연동 상태</SectionTitle>
+              <SyncStatus item={item} calendar={quotation.calendar ?? null} />
             </section>
           ) : null}
 
@@ -314,7 +460,8 @@ export function ActionDetailDrawer({
             role="alert"
             className="text-[var(--color-signal-critical)]"
             style={{
-              paddingInline: "var(--space-card)",
+              // The window ends here now that the footer is gone.
+              padding: "0 var(--space-card) var(--space-card)",
               fontSize: "var(--text-rowBody)",
               lineHeight: "var(--text-rowBody-leading)",
             }}
@@ -322,17 +469,6 @@ export function ActionDetailDrawer({
             {failure}
           </p>
         )}
-
-        <footer
-          className="flex justify-end border-t border-[var(--color-hairline)]"
-          style={{ padding: "var(--space-card)" }}
-        >
-          {/* Destructive actions are red text, then a modal. Red never fills a
-              button, and there is no undo afterwards — the row is gone. */}
-          <Button tone="destructiveText" onClick={() => setConfirming(true)}>
-            삭제
-          </Button>
-        </footer>
 
         {confirming ? (
           <ConfirmDelete
@@ -398,6 +534,7 @@ const FIELD_LABELS: Record<string, string> = {
   assignee_label: "담당자",
   due_date: "기한",
   status: "상태",
+  project_id: "프로젝트",
 };
 
 function historyText(entry: EditHistoryEntry): string {

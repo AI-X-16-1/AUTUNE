@@ -28,6 +28,7 @@ from autune_agent.results import SubagentResult
 from autune_core import get_logger
 from autune_core.errors import PrivacyViolationError
 from autune_integrations.base import HttpClient
+from autune_integrations.errors import IntegrationError
 
 from .toolcall import Declaration, FunctionCall, Step, tools_body
 
@@ -66,12 +67,38 @@ def _require_scalar(value: Any) -> None:
             _require_scalar(inner)
 
 
+_EXEMPT_AT = {
+    "role": ("contents", "*", "role"),
+    "thoughtSignature": ("contents", "*", "parts", "*", "thoughtSignature"),
+    "responseMimeType": ("generationConfig", "responseMimeType"),
+}
+"""Where each ``ADDRESSING`` key may sit. Anywhere else the guard would skip text
+it should read -- a model-written ``functionCall.args`` echoed back could carry
+a key of the same name -- so the request is refused instead."""
+
+
+assert set(_EXEMPT_AT) == ADDRESSING, "every exempt key needs its slot"
+
+
+def _require_placement(value: Any, path: tuple[str, ...] = ()) -> None:
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            here = (*path, key)
+            if key in _EXEMPT_AT and here != _EXEMPT_AT[key]:
+                raise PrivacyViolationError(f"{key!r} is exempt from the check only in its slot")
+            _require_placement(inner, here)
+    elif isinstance(value, (list, tuple)):
+        for inner in value:
+            _require_placement(inner, (*path, "*"))
+
+
 class _GeminiClient(HttpClient):
     service = "agent-router"
     addressing = ADDRESSING
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         _require_scalar(kwargs.get("json"))
+        _require_placement(kwargs.get("json"))
         return super().request(method, path, **kwargs)
 
 
@@ -187,6 +214,25 @@ def gemini_tools_from_settings() -> GeminiTools | None:
     )
 
 
+COMPOSE_BUDGET = 3800
+"""Instructions plus text, under check_outbound's 4000 with room to spare."""
+
+
+def _fit(request: str, findings: list[str]) -> str:
+    """The compose text, dropping findings from the end -- the summary first in
+    the list goes last -- and cutting what is left, until it fits."""
+    kept = list(findings)
+    room = COMPOSE_BUDGET - len(COMPOSE_INSTRUCTIONS)
+
+    def build() -> str:
+        return f"Request:\n{request}\n\nFindings:\n" + "\n".join(kept)
+
+    while len(kept) > 1 and len(build()) > room:
+        kept.pop()
+    text = build()
+    return text if len(text) <= room else text[:room]
+
+
 class GeminiRouter:
     def __init__(
         self,
@@ -231,9 +277,14 @@ class GeminiRouter:
         ]
         if result.truncated:
             findings.append("(더 있음 — 상위 다섯 건만 표시)")
-        answer = self._text.generate(
-            COMPOSE_INSTRUCTIONS,
-            f"Request:\n{request}\n\nFindings:\n" + "\n".join(findings),
-            json_answer=False,
-        )
+        text = _fit(request, findings)
+        try:
+            answer = self._text.generate(COMPOSE_INSTRUCTIONS, text, json_answer=False)
+        except PrivacyViolationError:
+            raise
+        except IntegrationError as exc:
+            # Out of quota or the model is down: the tools already answered, so
+            # their summary is the answer rather than a 500 (demo-day #419).
+            log.warning("compose_fell_back", error=type(exc).__name__)
+            return result.summary
         return answer or result.summary

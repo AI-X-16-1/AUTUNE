@@ -38,6 +38,17 @@ from autune_core.user_integrations import UserIntegrationConfig
 ME = "user_me"
 
 
+def s256(verifier: str | None) -> str:
+    """RFC 7636's S256, written out here rather than imported, so the test
+    checks the client's arithmetic instead of repeating it."""
+    import base64
+    import hashlib
+
+    assert verifier
+    digest = hashlib.sha256(verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
 class FakeGoogle:
     def __init__(self, client_id: str = "sign-in-client") -> None:
         self.client_id = client_id
@@ -49,12 +60,17 @@ class FakeGoogle:
         self.revoked: list[str] = []
         self.revoke_answer = True
         self.asked: dict[str, Any] = {}
+        self.exchanged: list[str | None] = []
 
     def authorization_url(self, *, state: str, nonce: str, **kw: Any) -> str:
+        # The challenge is fresh on every request; kept apart so ``asked``
+        # still compares to a fixed answer.
+        self.challenge = kw.pop("code_challenge", None)
         self.asked = kw
         return f"https://accounts.google.com/o/oauth2/v2/auth?state={state}&nonce={nonce}"
 
-    def exchange_grant(self, code: str) -> GoogleGrant:
+    def exchange_grant(self, code: str, *, code_verifier: str | None = None) -> GoogleGrant:
+        self.exchanged.append(code_verifier)
         return self.grant
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
@@ -101,6 +117,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(
         auth_router_module, "disconnect_user_integration", lambda _s, uid, _svc: grants.pop(uid)
     )
+    # This test stores no encrypted secret; the check is its own test.
+    monkeypatch.setattr(auth_router_module, "ensure_configured", lambda: None)
 
     store = InMemoryStateStore()
     google = FakeGoogle()
@@ -169,6 +187,58 @@ def test_start_asks_google_for_the_calendar_offline_and_remembers_who_asked(
     assert world["google"].asked == {"scope": f"openid {CALENDAR_SCOPE}", "offline": True}
     ((_expiry, txn),) = world["store"]._entries.values()
     assert (txn.purpose, txn.user_id) == ("calendar", ME)
+    assert world["google"].challenge == s256(txn.code_verifier)
+
+
+def test_the_code_is_exchanged_with_the_verifier_its_challenge_came_from(
+    world: dict[str, Any],
+) -> None:
+    """#704: PKCE binds the code to the request that asked for it."""
+    client = signed_in(world)
+    state = start(client)
+    ((_expiry, txn),) = world["store"]._entries.values()
+
+    callback(client, state)
+
+    assert world["google"].exchanged == [txn.code_verifier]
+
+
+def test_a_deploy_that_cannot_store_the_grant_fails_before_the_code_is_spent(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#704: an empty AUTUNE_ENCRYPTION_KEY used to fail at the save, after
+    Google had issued a grant nothing kept."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    client = signed_in(world)
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = callback(client, state)
+
+    assert _failed_back_to_the_screen(response)
+    assert world["google"].exchanged == [], "Google was not asked"
+    assert world["grants"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_grant_sends_nobody_to_google(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #765: no consent screen that cannot succeed."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = signed_in(world).get(
+        "/api/auth/google/calendar/start?redirect_to=/meetings/m1/actions"
+    )
+
+    assert _failed_back_to_the_screen(response)
+    assert world["store"]._entries == {}
 
 
 # --- the callback ---------------------------------------------------------------------
@@ -250,8 +320,14 @@ def test_status_is_the_persons_own(world: dict[str, Any]) -> None:
 
 
 def _status_with_current_client(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, current: str
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    current: str,
+    secret: str | None = None,
 ) -> dict[str, bool]:
+    """The status as a server whose Google client is ``current`` gives it. A
+    client has a secret exactly when it has an id, unless a test says
+    otherwise: a blank id with a secret is a configuration nobody has."""
     monkeypatch.setattr(
         auth_router_module,
         "get_settings",
@@ -259,7 +335,7 @@ def _status_with_current_client(
             _env_file=None,
             env="local",
             google_client_id=current,
-            google_client_secret="s",
+            google_client_secret=("s" if current else "") if secret is None else secret,
             google_integration_client_id="",
             google_integration_client_secret="",
         ),
@@ -281,6 +357,37 @@ def test_a_grant_issued_to_another_client_says_it_needs_reconnecting(
         "needs_reconnect": True,
     }
     assert _status_with_current_client(world, monkeypatch, "the-old-client") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
+def test_with_no_google_client_configured_a_grant_is_not_called_broken(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mminjae97, review of #711: `"x" != ""` said "reconnect" on a server
+    that cannot connect anything, while module B skipped the person without
+    a word. The card and B say the same thing: nothing."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, "") == {
+        "connected": True,
+        "needs_reconnect": False,
+    }
+
+
+@pytest.mark.parametrize(("client_id", "secret"), [("the-new-client", ""), ("", "s")])
+def test_half_a_google_client_is_not_one_to_reconnect_to(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, client_id: str, secret: str
+) -> None:
+    """Review of #718: the status looked at the id alone while module B needs
+    the id and the secret, so with a secret missing the card said "reconnect"
+    and B said nothing. Both read the same thing now."""
+    world["grants"][ME] = "1//refresh"
+    world["configs"][ME] = {"calendar_id": "primary", "client_id": "the-old-client"}
+
+    assert _status_with_current_client(world, monkeypatch, client_id, secret) == {
         "connected": True,
         "needs_reconnect": False,
     }
@@ -409,6 +516,10 @@ def test_with_an_integration_client_the_calendar_goes_through_it_start_to_finish
     assert exchanged == []
     assert response.status_code == 303
     assert world["grants"] == {ME: "1//from-the-integration-client"}
+    # The grant records the client that issued it -- the integration client,
+    # not the sign-in one -- which is what later tells a stranded grant apart
+    # (mkkim68, review of #711).
+    assert world["configs"][ME]["client_id"] == "integration-client"
 
 
 def test_with_an_integration_client_disconnect_revokes_through_it(
@@ -485,7 +596,7 @@ def _client(http: httpx.Client | None = None) -> GoogleOAuthClient:
     )
 
 
-def test_an_offline_url_asks_for_consent_and_keeps_earlier_scopes() -> None:
+def test_an_offline_url_asks_for_consent_and_only_for_its_own_scope() -> None:
     query = parse_qs(
         urlsplit(
             _client().authorization_url(
@@ -495,7 +606,8 @@ def test_an_offline_url_asks_for_consent_and_keeps_earlier_scopes() -> None:
     )
     assert query["access_type"] == ["offline"]
     assert query["prompt"] == ["consent"]
-    assert query["include_granted_scopes"] == ["true"]
+    # Not merged with what the account gave this client before (#760 review).
+    assert "include_granted_scopes" not in query
     assert query["scope"] == [f"openid {CALENDAR_SCOPE}"]
 
 

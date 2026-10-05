@@ -52,6 +52,20 @@ export const getTranscript = (meetingId: string) =>
 export const getMeeting = (meetingId: string) =>
   api.audio<MeetingDetail>(`/meetings/${meetingId}`);
 
+/** S12 "처리 중단". The meeting is `failed` on return and takes a new upload. */
+export const cancelTranscription = (meetingId: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${meetingId}/transcription/cancel`,
+    { method: "POST" },
+  );
+
+/** S12 "다시 시작": run a stalled meeting again from the upload still on the server. */
+export const restartTranscription = (meetingId: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${meetingId}/transcription/restart`,
+    { method: "POST" },
+  );
+
 /**
  * Every meeting this person may see, newest first. The home screen's list (S05).
  *
@@ -66,6 +80,33 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
+
+/**
+ * The token for an invitation link, shown once, and when the link lapses.
+ * `emailed` is whether Gmail took the mail `sendEmail` asked for.
+ */
+export type InvitationIssued = { token: string; expires_at: string; emailed?: boolean };
+
+/**
+ * Invite an address to a team the caller is on (#552). Nobody is added: the
+ * answer is a token for a link, the same shape whatever the address. With
+ * `sendEmail` the server also mails the link from the caller's own Gmail.
+ */
+export const inviteToTeam = (teamId: string, email: string, sendEmail = false) =>
+  api.audio<InvitationIssued>(`/teams/${encodeURIComponent(teamId)}/invitations`, {
+    method: "POST",
+    body: JSON.stringify({ email, send_email: sendEmail }),
+  });
+
+/**
+ * Join the team an invitation link names, as the signed-in owner of the
+ * invited address. Every refusal is the same 404; show one sentence for it.
+ */
+export const acceptInvitation = (token: string) =>
+  api.audio<TeamSummary>("/invitations/accept", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
 
 /** S02: make a workspace with this person on it, and nobody else. */
 export const createTeam = (body: { name: string; role?: string }) =>

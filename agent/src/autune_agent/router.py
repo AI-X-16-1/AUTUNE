@@ -8,6 +8,7 @@
 - ``POST /pending/{id}/approve`` -- approve one; the action runs.
 - ``POST /pending/{id}/reject`` -- reject one, with a reason from a fixed list.
 - ``GET /approvers`` -- a team's members and the approver scopes each holds.
+- ``GET /meeting-label`` -- the title of a meeting the caller may read, for S34's header.
 - ``PUT /approvers/{user_id}`` -- replace one member's scopes (``main/approvers``).
 
 Every route needs a signed-in member of the team it names. The layer answers on
@@ -33,6 +34,7 @@ from autune_core.errors import (
     PermissionDeniedError,
     PrivacyViolationError,
 )
+from autune_integrations.errors import TransientIntegrationError
 
 from .config import get_agent_settings
 from .main.actions import collect_actions
@@ -105,6 +107,16 @@ class ChatRequest(BaseModel):
         if self.team_id is None and self.meeting_id is None:
             raise ValueError("team_id or meeting_id is required")
         return self
+
+
+class AgentBusyError(AutuneError):
+    """The model is out of quota or down: try again in a minute (#419)."""
+
+    code = "agent_busy"
+    status_code = 503
+
+    def __init__(self) -> None:
+        super().__init__("the language model is busy; try again shortly")
 
 
 class ChatMeetingNotFoundError(NotFoundError):
@@ -226,16 +238,20 @@ def chat(
         team_id = meeting.team_id
     assert team_id is not None  # ChatRequest requires one of the two
     _require_member(session, team_id, user.id)
-    row, state = run_and_record(
-        body.message,
-        session=session,
-        router=chat_router,
-        team_id=team_id,
-        meeting_id=body.meeting_id,
-        requested_by=user.id,
-        trigger={"kind": "chat"},
-        asker=tool_model,
-    )
+    try:
+        row, state = run_and_record(
+            body.message,
+            session=session,
+            router=chat_router,
+            team_id=team_id,
+            meeting_id=body.meeting_id,
+            requested_by=user.id,
+            trigger={"kind": "chat"},
+            asker=tool_model,
+        )
+    except TransientIntegrationError as exc:
+        # The run is already recorded as failed; the person is told it is busy.
+        raise AgentBusyError() from exc
     scopes = approver_scopes(session, team_id, user.id)
     waiting = session.scalars(
         select(AgentPendingAction).where(
@@ -254,6 +270,21 @@ def chat(
         queued=len(waiting),
         pending=[_read(session, r) for r in waiting if can_decide(scopes, r)],
     )
+
+
+class MeetingLabel(BaseModel):
+    title: str
+
+
+@router.get("/meeting-label", response_model=MeetingLabel)
+def meeting_label(user: CurrentUser, session: SessionDep, meeting_id: str) -> MeetingLabel:
+    """S34's header names the meeting on screen ("{title} 보고 있음"). The title
+    is module A's; the agent feature calls ``/api/agent`` only, so the layer
+    reads it here. Missing and not-a-member read the same, as in ``/chat``."""
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or not _is_member(session, meeting.team_id, user.id):
+        raise ChatMeetingNotFoundError()
+    return MeetingLabel(title=meeting.title)
 
 
 @router.get("/runs", response_model=list[RunRead])

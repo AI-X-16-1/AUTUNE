@@ -216,7 +216,10 @@ def key_of(configured_settings: ExtractionSettings) -> str:
 def settings(**overrides: str) -> ExtractionSettings:
     # Both key names blank unless a test gives one: a key exported in the shell
     # that runs the suite must not decide what "no key" means.
-    given = {"llm_api_key": "", SHARED_KEY: ""} | overrides
+    # These tests are about what an LLM implementation does once it is on;
+    # that it must be acknowledged first has its own file
+    # (test_llm_acknowledged_392.py).
+    given = {"llm_api_key": "", SHARED_KEY: "", "llm_acknowledged_392": True} | overrides
     return ExtractionSettings(_env_file=None, **given)  # type: ignore[arg-type]
 
 

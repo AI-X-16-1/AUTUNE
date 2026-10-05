@@ -111,11 +111,12 @@ class UserIntegration(Base, TimestampMixin):
     with them (``ON DELETE CASCADE``) -- deleting an account deletes its tokens.
 
     Calendar is here because each person's own tasks go on their own calendar
-    and a date they move there comes back to Autune (#435). A mailbox (#431)
-    has the same shape, but ``gmail`` joins the check constraint only once
-    #431 is decided -- a schema is not written ahead of the decision it
-    serves. Nothing reads a row but code acting for that user: not a
-    teammate, not an admin.
+    and a date they move there comes back to Autune (#435). ``gmail_send`` is
+    a person's grant to send mail as them -- an invitation link from their own
+    address (#552) -- and reads nothing. Reading a mailbox (#431) has the same
+    shape, but ``gmail`` joins the check constraint only once #431 is decided
+    -- a schema is not written ahead of the decision it serves. Nothing reads
+    a row but code acting for that user: not a teammate, not an admin.
 
     Written by ``autune_core``, like ``team_integrations``; modules read it
     through ``load_user_integration``. ``secret`` is Fernet ciphertext.
@@ -125,7 +126,7 @@ class UserIntegration(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "service", name="uq_user_integrations_user_service"),
         CheckConstraint(
-            "service IN ('calendar','slack')",
+            "service IN ('calendar','slack','gmail_send')",
             name="ck_user_integrations_service",
         ),
         # One Slack member is one Autune person: a second confirmed link to the
@@ -157,6 +158,43 @@ class UserIntegration(Base, TimestampMixin):
     write it."""
 
 
+class UserConsent(Base):
+    """One person's agreement to one version of one document -- the terms or
+    the privacy policy, and nothing else (the check constraint).
+
+    **No row here permits voice collection, or any other processing.** A
+    consent that must be refusable and withdrawable is not recorded in this
+    table, which can only say "agreed". Module A's gate on voice data
+    (``voice_profiles_enabled``) does not read it and must not be taught to
+    (mkkim68, review of #715; #92 Q4).
+
+    Written by ``autune_core`` (``consents.record_consents``), like
+    ``user_integrations``, and read only for the person it is about. The
+    row goes with the account. No ``updated_at``: an agreement is not
+    edited, and a changed document is a new version and a new row.
+    """
+
+    __tablename__ = "user_consents"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "document", "version", name="uq_user_consents_user_document_version"
+        ),
+        CheckConstraint("document IN ('terms','privacy')", name="ck_user_consents_document"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    document: Mapped[str] = mapped_column(String(64), nullable=False)
+    """``terms`` or ``privacy`` (``consents.DOCUMENTS``). A third kind of
+    document is a migration and a conversation, not a new string."""
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    agreed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
@@ -171,6 +209,13 @@ class User(Base, TimestampMixin):
     than a shared identities table until a third provider makes that pay off."""
 
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    sessions_valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When this person last signed out. A session token issued up to it is
+    refused (``auth.current_user``); null means they never have, and every
+    unexpired token of theirs is good. Written by ``auth.end_sessions`` only --
+    core's sign-in already writes this row (``last_login_at``), and no module
+    has a reason to touch this column."""
 
     # Same as `Team.members` (#355): leave the memberships to ON DELETE CASCADE,
     # loaded or not.

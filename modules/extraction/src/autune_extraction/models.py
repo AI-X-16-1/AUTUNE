@@ -69,6 +69,175 @@ class TimestampMixin:
     )
 
 
+PROJECT = "prj"
+"""The id prefix of ``ext_projects`` rows -- B's own, not a shared entity's."""
+
+
+class ExtProject(Base):
+    """A project a team works on, as its members name it (the user, 2026-10-04).
+
+    A team holds several projects and one meeting can talk about more than one;
+    the team lists them here so the meeting's decisions and items can be told
+    apart by project and sent out project by project. ``aliases`` are the other
+    names people say for it, one per line ("오튠", "Autune"), matched in what was
+    said (``projects.assign``). ``jira_project_key`` sends a project's issues to
+    its own Jira project instead of the team's one, when set.
+
+    Typed by a team member, not derived from speech: a name and some words. It
+    goes with the team.
+    """
+
+    __tablename__ = "ext_projects"
+    __table_args__ = (UniqueConstraint("team_id", "name", name="uq_ext_projects_team_name"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(PROJECT))
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    aliases: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    jira_project_key: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtProjectSend(Base):
+    """Where a project's minutes for one meeting were sent, per tool (2026-10-04).
+
+    One row per (meeting, project, target): the Notion page id, the Slack
+    message as ``channel:ts``, or the Jira issue key. Sending again updates that
+    copy instead of making a second one. Holds addresses, no text; goes with the
+    meeting, and with the project -- each copied first to
+    ``ext_project_send_cleanup`` so the copy outside goes too.
+
+    ``external_id`` is empty only inside the transaction that claimed the row
+    to make the first copy: two people sending at once make one copy.
+
+    ``content_digest`` is ``service.source_digest`` over the minutes the copy
+    last received -- a hash, not the text. A refresh compares it with the
+    minutes as they are now and leaves a copy that already says them alone, so
+    refreshing is safe to do on every change and to repeat after a failure;
+    a copy whose write failed keeps its old digest and is still found stale
+    by the next one (#787 review).
+    """
+
+    __tablename__ = "ext_project_sends"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    target: Mapped[str] = mapped_column(String(16), primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtMinutesEvent(Base):
+    """A project's minutes as an all-day event on the meeting's day, in the
+    calendar of the person who sent them (2026-10-04).
+
+    Their own calendar, by their own click: team work is not copied into
+    anybody else's (``calendar_sync``). Kept so sending again updates the same
+    event, and so the event goes when the meeting expires or the person's
+    account is deleted (``tasks.queue_meeting_calendar_events``,
+    ``tasks.forget_user_calendar_events``) -- and when the project is deleted
+    (``projects.delete_project``) -- and the event follows what changes after
+    it was sent (``project_send.refresh``). The event id only, no text.
+
+    ``event_id`` is empty only inside the transaction that claimed the row to
+    make the event, so a double click makes one event.
+
+    **A calendar disconnected before the event goes cannot be reached.** The
+    grant is the only way into a person's calendar, so their minutes events
+    stay there -- in their own calendar, put there by their own click, where
+    they can delete them -- and the cleanup row is dropped with a log line
+    after its tries (``tasks.drain_calendar_cleanup``). Removing them at
+    disconnect needs a hook core does not have yet.
+    """
+
+    __tablename__ = "ext_minutes_events"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
+    """As ``ExtProjectSend.content_digest``: a hash of the minutes the event
+    last received, so a refresh leaves an event alone that already says them
+    and asks for its owner's grant only when there is something to write."""
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtProjectRefreshOwed(Base):
+    """A meeting whose project minutes outside still have to be brought in line
+    with what is confirmed now (#787 review).
+
+    A refresh happens after the change it follows is committed, and talks to
+    tools that can be down or disconnected. Without this a failed one was only
+    logged: a sentence its speaker had deleted stayed in the team's Slack,
+    Notion or Jira until the meeting's retention ran out. A refresh that leaves
+    any copy behind writes the meeting here, deleted speech writes it in the
+    transaction that drops the words, and
+    ``tasks.retry_project_minutes_refresh`` tries again until every copy is in
+    line. An id and a count, nothing said; goes with the meeting, whose copies
+    are then retracted through ``ext_project_send_cleanup`` instead.
+    """
+
+    __tablename__ = "ext_project_refresh_owed"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtProjectSendCleanup(Base):
+    """A copy of a project's minutes still to take out of a team's tool, after
+    the meeting or the project it belonged to was deleted (#787 review).
+
+    ``ext_project_sends`` goes with the meeting and with the project, so before
+    either goes its rows are copied here, and ``tasks.drain_project_send_cleanup``
+    retracts each with the team's own connection: the Notion page emptied and
+    trashed, the Slack message deleted, the Jira task emptied and closed.
+    Addresses only, no text. No meeting or project key: the row has to outlive
+    both. ``team_id`` cascades -- with the team goes every connection that
+    could reach the copy.
+    """
+
+    __tablename__ = "ext_project_send_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "target", "external_id", name="uq_ext_project_send_cleanup"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ExtActionItem(Base, TimestampMixin):
     """One trackable commitment, as the user will eventually accept it.
 
@@ -151,6 +320,18 @@ class ExtActionItem(Base, TimestampMixin):
     """A line this came from was corrected after it was made, and what a person
     sees may still carry what was corrected: a summary rewritten from the new
     line, or their own wording (#586). Cleared when a person edits or reviews."""
+
+    project_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="SET NULL"), index=True
+    )
+    """Which of the team's projects this is about (``ext_projects``), or ``NULL``
+    for none found. Set by ``projects.assign`` from what was said, or by a
+    person; a deleted project leaves the row unassigned."""
+
+    project_by_person: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A person chose ``project_id``: the rules never change it again."""
 
     description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
     """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -321,7 +502,8 @@ class ExtExternalRef(Base):
 
 
 class ExtDecisionRef(Base):
-    """The page a confirmed decision became in an outside tool, once.
+    """The page -- or Jira issue -- a confirmed decision became in an outside
+    tool, once.
 
     The same rule as ``ExtExternalRef`` for action items: keyed by the decision and
     the system, claimed before the call, filled in after it. A separate table
@@ -348,6 +530,9 @@ class ExtDecisionRef(Base):
     )
     external_id: Mapped[str | None] = mapped_column(String(64))
     url: Mapped[str | None] = mapped_column(Text)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """For a Jira issue, the cloud id of the site it is on: a key is unique only
+    within a site, as for ``ExtExternalRef.site``. ``None`` for a Notion page."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -408,6 +593,18 @@ class ExtDecision(Base, TimestampMixin):
     """A line this came from was corrected after it was made, and what a person
     sees may still carry what was corrected: a summary rewritten from the new
     line, or their own wording (#586). Cleared when a person edits or reviews."""
+
+    project_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="SET NULL"), index=True
+    )
+    """Which of the team's projects this is about (``ext_projects``), or ``NULL``
+    for none found. Set by ``projects.assign`` from what was said, or by a
+    person; a deleted project leaves the row unassigned."""
+
+    project_by_person: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A person chose ``project_id``: the rules never change it again."""
 
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -611,6 +808,53 @@ def _utc(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
+class ExtWeeklyDigest(Base):
+    """That a person was sent the weekly digest of their open items for one
+    week, through one team's Slack (the user, 2026-10-04). The primary key is
+    the "once", as ``ext_due_reminders``'s is. No text: the message is not
+    kept. Goes with the person and with the team."""
+
+    __tablename__ = "ext_weekly_digests"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    week_start: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtDueReminder(Base):
+    """That an item's assignee was sent a due-date reminder of one kind for one
+    due date (``reminders``). The primary key is the "once": a second run, a
+    redelivered task or two workers find the row and send nothing.
+
+    No text and no person: the message is not kept, and who it went to is
+    the item's assignee at the time, which the item already says. Goes with
+    the item, and so with its meeting.
+
+    A row also stands for a reminder the outbound check refused: it is
+    settled, reported once, and not tried again (review of #751)."""
+
+    __tablename__ = "ext_due_reminders"
+    __table_args__ = (
+        CheckConstraint("kind IN ('due_soon','overdue')", name="ck_ext_due_reminders_kind"),
+    )
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    due_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    """The date the reminder was about. A due date moved later is a new date,
+    and the item is owed a reminder for it."""
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    """When the reminder was settled: sent, or, for a refusal, when the outbound
+    check refused it. Named for the common case."""
+
+
 class ExtConfirmation(Base, TimestampMixin):
     """One ambiguous agreement, and the question to its speaker about it.
 
@@ -749,6 +993,51 @@ class ExtEditEvent(Base):
     )
 
 
+class ExtSyncFailure(Base):
+    """That the last attempt to copy an item to one outside system failed, what
+    kind of failure it was, and when (#680).
+
+    The claim in ``ext_external_refs`` is rolled back when a send fails, so a
+    failure left no trace and the board could only say "sent" or "sending".
+    This row is the trace. **A kind and a time, nothing else**: not the
+    outside service's message, which may echo what was sent, and not what
+    was being sent. One row per item and system -- the latest failure --
+    removed by the next attempt that succeeds, and gone with the item.
+    """
+
+    __tablename__ = "ext_sync_failures"
+    __table_args__ = (
+        CheckConstraint(
+            "system IN ('notion','jira','calendar')", name="ck_ext_sync_failures_system"
+        ),
+        CheckConstraint(
+            "kind IN ('privacy','reconnect','unreachable','rejected')",
+            name="ck_ext_sync_failures_kind",
+        ),
+    )
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    system: Mapped[str] = mapped_column(String(16), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtSyncRetry(Base):
+    """When a person last pressed "다시 시도" for an item (#680, lsh2217's review
+    of #754). Each press runs Notion, the calendar and Jira once more, so a
+    second press inside ``sync_state.RETRY_COOLDOWN`` is refused. One time per
+    item, nothing else; gone with the item."""
+
+    __tablename__ = "ext_sync_retries"
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    retried_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtCalendarEvent(Base):
     """The all-day event a confirmed item's due date became on its assignee's
     own Google Calendar (#435).
@@ -808,6 +1097,56 @@ class ExtCalendarCleanup(Base):
         index=True,
     )
     event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtDueReminderOptOut(Base):
+    """A person who turned the due-date reminders off for themselves (review
+    of #751) -- and with them Monday's digest of their own open items (#792):
+    one switch for Autune's DMs about a person's items. On unless they did:
+    a row means off, and turning them back on deletes it. Only the person,
+    never which items or teams; goes with the account."""
+
+    __tablename__ = "ext_due_reminder_optouts"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtExternalCleanup(Base):
+    """A deleted item's Notion page or Jira issue still owed its cleanup (#692).
+
+    Deleting an item trashes its page and closes its issue in the deleting
+    request, best effort (``tasks.trash_notion_page``, ``tasks.close_jira_issue``).
+    When that call cannot get through, the item and its ``ext_external_refs``
+    row go regardless, so the request records here what it could not do and
+    ``tasks.drain_external_cleanup`` retries it. Ids only -- never what the item
+    said. Keyed to the team, which cascades: a deleted team has nothing left to
+    reach the page with.
+    """
+
+    __tablename__ = "ext_external_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "system", "external_id", name="uq_ext_external_cleanup"),
+        CheckConstraint("system IN ('notion','jira')", name="ck_ext_external_cleanup_system"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("teams.id", ondelete="CASCADE", name="fk_ext_external_cleanup_team"),
+        nullable=False,
+        index=True,
+    )
+    system: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """Jira's cloud id the key is from; a key on another site is someone else's issue."""
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -875,6 +1214,67 @@ class ExtMeetingNote(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtMeetingSummary(Base):
+    """A meeting's summary written by a cloud model (#421 v2, ``summary_impl=llm``).
+
+    Model output over the meeting's consented, masked lines, names put back --
+    meeting content, shown to the team on the 요약 tab. ``source_digest`` is
+    ``service.source_digest`` over the lines it was written from: a summary
+    whose lines have changed since (a correction, a deletion, a change of
+    consent) no longer matches what the meeting says and is not shown
+    (``service.meeting_summary``); the next run writes a new one. Not showing
+    it is not enough for words a person took back, so the row itself goes:
+    deleted speech deletes it outright (``service.forget_speech``), and every
+    extraction and every ``summarize_meeting`` deletes one whose lines have
+    changed before anything else, whether or not a new one can be written
+    (``service.drop_stale_summary``). One per meeting, deleted with it, so it
+    keeps the meeting's retention.
+
+    ``points`` holds one sentence per line: each was checked to be one line.
+    """
+
+    __tablename__ = "ext_meeting_summaries"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    overview: Mapped[str] = mapped_column(Text, nullable=False)
+    points: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtForgottenUtterance(Base):
+    """An utterance its speaker deleted, until module A has removed the row
+    (#421 v2, review of #782).
+
+    B's speech hook commits before A deletes the utterances
+    (``tasks.forget_deleted_speech``), so for a moment a line B was told to
+    forget is still in the shared table. ``service.summary_lines`` leaves out
+    every utterance named here. A summary asked for in that moment is then not
+    written from the deleted words, and one the model was still writing when
+    the hook ran no longer matches the lines when it comes to be stored
+    (``service.store_meeting_summary``).
+
+    An id and a time, nothing that was said. The row goes with the utterance
+    (CASCADE), which is when it stops being needed. If A's deletion fails the
+    row stays and the line stays out of every summary: erring toward deleting
+    more, as the hook itself does.
+    """
+
+    __tablename__ = "ext_forgotten_utterances"
+
+    utterance_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), primary_key=True
+    )
+    forgotten_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

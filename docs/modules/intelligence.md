@@ -59,7 +59,9 @@ See `../architecture/async-pipeline.md`.
 1. **Collect** — gather whatever of `ExtractionResult`, `GapReport`, and
    `ContextLinks` has arrived.
 2. **Quality score** — grade A–F from decision density, gap count, action-item
-   completion rate, and participation balance.
+   confirmation rate (the share of the meeting's items that got confirmed,
+   fixed when the meeting is scored; stored as `action_item_completion_rate`),
+   and participation balance.
 3. **Gap classification** — SetFit classifies each gap's `Gap.title` (not
    `Gap.category` — C's category is free text whose vocabulary is not stable
    across meetings, the reason this step exists at all, and mixing it into the
@@ -191,16 +193,37 @@ foreign keys to another module's tables.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/dashboard/{team_id}` | Dashboard data |
+| GET | `/dashboard/{team_id}` | Dashboard data; action-item completion from B's current counts (below). **Team members only** |
 | GET | `/scores/{meeting_id}` | One meeting's quality score |
 | GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out |
 | GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
 | GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
-| GET | `/reports/{team_id}` | Weekly reports |
+| GET | `/reports/{team_id}` | Weekly reports. **Team members only** |
 | GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
 | PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer says a person edited it (the name is added from `edited_by` when read or posted, never stored), and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. Committed, then announced on `autune.intelligence.meeting_report_changed`; the Report subagent proposes the edited draft's post for approval. Nothing is posted from the card. 409 once posted, 422 with categories for personal data or over 3,000 characters as Slack receives it, 404 for anyone outside the team |
 | POST | `/meeting-reports/{meeting_id}/corrections` | A member corrects a **posted** report whose post reached Slack (202). It waits for approval like an edit: committed, then announced, and the Report subagent proposes `publish_meeting_report_correction` with its `correction_id`; once approved it goes out as a reply under the post. A newer correction replaces one still waiting. 409 for a draft, for a report that never reached Slack, or while an approved correction is being posted (at most five minutes); 422 for an unchanged, empty, too long or personal-data correction |
 | GET | `/me/speaking-ratio/{meeting_id}` | **The requester's own ratio only** |
+
+**Action-item completion on the dashboard (#605).** `action_item_completion_rate`
+is done over confirmed, summed over the team's meetings held in the last four
+weeks (`ACTION_COMPLETION_WINDOW`) in B's latest `TeamActionProgress`. The
+window is fixed rather than the team's retention, so teams compare and the rate
+reads as "now"; the card says "최근 4주 회의". `overdue_action_items` is the
+overdue total over **every** meeting the snapshot listed that has not expired:
+an item past its due date matters however old its meeting is (#800 review).
+`action_completion_meeting_count` is the number of meetings in the four-week
+window, and `action_progress_as_of` when B counted. **A total from fewer than
+three meetings is not shown** (`ACTION_PROGRESS_MIN_MEETINGS`): with one or
+two, the team total is those meetings' counts, and when every item is one
+person's it is that person's record -- the heatmap's floor, for the same
+reason. The card then says the window holds fewer than three meetings. All three are `null` when no snapshot
+has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
+card says the counts did not arrive, never 0%. A fresh snapshot with nothing
+confirmed has no rate and 0 overdue. Team totals only, never one meeting's
+counts. A meeting past `expires_at` is neither stored nor counted.
+`action_item_confirmation_rate` is the quality score's rate averaged over
+scored meetings; the agent tool `team_trend` names both (확정률, 완료율). The
+weekly report still reads the confirmation rate; moving it is the next step.
 
 **Meeting reports on the dashboard (#642, #674).** Every post goes through
 approval (L2), a person's edit included: a report goes out under the bot's name
@@ -392,6 +415,31 @@ exactly what a surveillance feature looks like. Read
   holds, getting easier to re-identify over time rather than harder. Deliver
   it the way S23 delivers speaking ratio (subject only); it does not appear on
   the shared dashboard (S26).
+- **A person who deletes their own speech takes their words out of E too
+  (#587, #614).** `@on_speech_deleted("intelligence")` (registered in
+  `service.py`, which every router import reaches) runs `forget.forget_speech`
+  before A deletes the utterances, applying B's and C's rules to E's copies --
+  the work stays, the words go:
+  - B's copy: an item still awaiting confirmation that was drawn from the
+    speech is dropped, as B deletes such a draft. Any other item, and a
+    decision, reads "삭제된 발화에서 만든 항목" when its text is one of its own
+    deleted lines -- equal, the line with B's " (담당 ..., 기한 ...)" tail, or one
+    containing the other -- and a decision also when every line it came from
+    is deleted. A summary or a person's writing stays. E cannot see B's edit
+    history, so it errs toward replacing. Classifications and ambiguous
+    agreements on the speech are dropped.
+  - Not covered here: the agent layer's run records and pending-action
+    arguments that hold Report output -- mkkim68's, a #614 follow-up.
+  - C's copy: a topic built only from the speech goes with its participation,
+    and a question naming it is cleared -- this covers a meeting C leaves with
+    no topic and does not republish.
+  - D's copy: a replaced decision reads the same in this meeting's lineage and
+    as a later meeting's `previous_statement`; a link to a topic that went is
+    dropped.
+  - Meeting reports and corrections: every replaced text and the deleted line
+    itself are replaced where quoted; the rest stays. A copy already posted to
+    Slack is outside Autune and is not recalled.
+  - The weekly report holds counts and pattern names only and needs nothing.
 
 ## Open questions
 

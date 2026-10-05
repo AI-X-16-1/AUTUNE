@@ -28,7 +28,7 @@ from autune_audio.router import router
 from autune_audio.schemas import SAMPLE_RATE, Transcription, Waveform, Word
 from autune_audio.schemas import Segment as WhisperSegment
 from autune_core import Meeting, TeamMember, User
-from autune_core.auth import SESSION_COOKIE, issue_token
+from autune_core.auth import SESSION_COOKIE, end_sessions, issue_token
 from autune_core.errors import ConfigurationError
 
 FRAME = SAMPLE_RATE // 5
@@ -172,6 +172,29 @@ def test_a_hello_token_wins_over_the_cookie(
     with connect(client, meeting) as ws:
         hello(ws, issue_token(outsider.id))
         assert close_code(ws) == 4403
+
+
+@pytest.mark.parametrize("carried", ["hello", "cookie"])
+def test_a_signed_out_token_does_not_open_a_recording(
+    client: TestClient, db_session: Session, meeting: str, member: User, carried: str
+) -> None:
+    """#727: the socket is refused like any other door, whichever way the token
+    arrives, and the meeting is not moved to ``recording``."""
+    token = issue_token(member.id)
+    end_sessions(member)
+    db_session.flush()
+    before = db_session.get(Meeting, meeting).status
+
+    if carried == "cookie":
+        client.cookies.set(SESSION_COOKIE, token)
+    with connect(client, meeting) as ws:
+        ws.send_text(
+            json.dumps({"type": "hello"} | ({"token": token} if carried == "hello" else {}))
+        )
+        assert close_code(ws) == 4401
+
+    assert db_session.get(Meeting, meeting).status == before
+    assert not registry.is_open(meeting)
 
 
 def test_no_token_and_no_cookie_is_4401(client: TestClient, meeting: str) -> None:

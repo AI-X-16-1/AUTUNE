@@ -21,7 +21,8 @@ from .errors import (
     PermanentIntegrationError,
     TransientIntegrationError,
 )
-from .jira import JiraClient
+from .gmail import GmailClient
+from .jira import JiraClient, JiraIssue
 from .notion import NotionClient
 from .privacy import (
     assert_masked,
@@ -37,8 +38,10 @@ __all__ = [
     "SlackApi",
     "NotionClient",
     "JiraClient",
+    "JiraIssue",
     "CalendarClient",
     "CalendarEvent",
+    "GmailClient",
     "ReconnectRequiredError",
     "refresh_access_token",
     "IntegrationError",

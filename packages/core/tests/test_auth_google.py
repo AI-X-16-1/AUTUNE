@@ -4,8 +4,11 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import re
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 import jwt
@@ -31,6 +34,7 @@ from autune_core.oauth.google import (
     GoogleIdentity,
     GoogleOAuthClient,
     get_google_client,
+    pkce_pair,
 )
 from autune_core.oauth.state import (
     InMemoryStateStore,
@@ -98,6 +102,18 @@ def test_redis_state_store_round_trips_with_a_fake_client() -> None:
     assert store.pop("s") is None
 
 
+def test_a_transaction_keeps_its_pkce_verifier_through_json() -> None:
+    raw = OAuthTransaction(nonce="n", redirect_to="/", code_verifier="v" * 43).to_json()
+    assert OAuthTransaction.from_json(raw).code_verifier == "v" * 43
+
+
+def test_a_transaction_stored_before_pkce_reads_without_a_verifier() -> None:
+    """One started before the deploy is finished after it: its code was
+    issued without a challenge and must be exchanged without a verifier."""
+    raw = '{"nonce": "n", "redirect_to": "/", "created_at": 1.0, "purpose": "sign_in"}'
+    assert OAuthTransaction.from_json(raw).code_verifier is None
+
+
 # --------------------------------------------------------------------------- #
 # GoogleOAuthClient
 # --------------------------------------------------------------------------- #
@@ -149,6 +165,50 @@ def test_authorization_url_carries_the_request_parameters(rsa_key: rsa.RSAPrivat
     assert "client_id=client-123" in url
     assert "state=st" in url and "nonce=no" in url
     assert "scope=openid+email+profile" in url
+
+
+def test_pkce_pair_is_an_s256_challenge_of_a_fresh_verifier() -> None:
+    verifier, challenge = pkce_pair()
+    digest = hashlib.sha256(verifier.encode()).digest()
+    assert challenge == base64.urlsafe_b64encode(digest).decode().rstrip("=")
+    # RFC 7636 section 4.1: 43 to 128 unreserved characters.
+    assert 43 <= len(verifier) <= 128
+    assert re.fullmatch(r"[A-Za-z0-9\-._~]+", verifier)
+    assert pkce_pair()[0] != verifier
+
+
+def test_authorization_url_carries_a_pkce_challenge_when_given_one(
+    rsa_key: rsa.RSAPrivateKey,
+) -> None:
+    query = parse_qs(
+        urlsplit(
+            _client(rsa_key).authorization_url(state="st", nonce="no", code_challenge="ch")
+        ).query
+    )
+    assert query["code_challenge"] == ["ch"]
+    assert query["code_challenge_method"] == ["S256"]
+
+
+def test_authorization_url_without_a_challenge_asks_for_no_pkce(
+    rsa_key: rsa.RSAPrivateKey,
+) -> None:
+    query = parse_qs(urlsplit(_client(rsa_key).authorization_url(state="st", nonce="no")).query)
+    assert "code_challenge" not in query and "code_challenge_method" not in query
+
+
+def test_exchange_sends_the_verifier_only_when_there_is_one(rsa_key: rsa.RSAPrivateKey) -> None:
+    sent: list[dict[str, list[str]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(parse_qs(request.content.decode()))
+        return httpx.Response(200, json={"id_token": "an.id.token"})
+
+    client = _client(rsa_key, http=httpx.Client(transport=httpx.MockTransport(handler)))
+    client.exchange_code("auth-code", code_verifier="the-verifier")
+    client.exchange_code("auth-code")
+
+    assert sent[0]["code_verifier"] == ["the-verifier"]
+    assert "code_verifier" not in sent[1]
 
 
 def test_unconfigured_client_refuses_to_construct() -> None:
@@ -342,13 +402,16 @@ def test_upsert_links_an_existing_magic_link_user_by_email(db: Session) -> None:
 
 
 class FakeGoogleClient:
-    def __init__(self, identity: GoogleIdentity) -> None:
+    def __init__(self, identity: GoogleIdentity, seen: dict[str, object] | None = None) -> None:
         self.identity = identity
+        self.seen = seen if seen is not None else {}
 
-    def authorization_url(self, *, state: str, nonce: str) -> str:
+    def authorization_url(self, *, state: str, nonce: str, code_challenge: str) -> str:
+        self.seen["challenge"] = code_challenge
         return f"https://accounts.google.com/o/oauth2/v2/auth?state={state}&nonce={nonce}"
 
-    def exchange_code(self, code: str) -> str:
+    def exchange_code(self, code: str, *, code_verifier: str | None = None) -> str:
+        self.seen["verifier"] = code_verifier
         return "fake-id-token"
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
@@ -372,7 +435,8 @@ def api(db: Session) -> tuple[TestClient, dict[str, object]]:
     app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[get_state_store] = lambda: state_store
     app.dependency_overrides[get_google_client] = lambda: FakeGoogleClient(
-        holder["identity"]  # type: ignore[arg-type]
+        holder["identity"],  # type: ignore[arg-type]
+        holder,
     )
 
     client = TestClient(app, follow_redirects=False)
@@ -520,6 +584,20 @@ def test_callback_signs_the_user_in_and_sets_a_cookie(
     assert db.query(User).filter(User.google_sub == "sub-1").one()
 
 
+def test_sign_in_sends_a_challenge_and_exchanges_with_its_verifier(
+    api: tuple[TestClient, dict[str, object]],
+) -> None:
+    """#704: the verifier never leaves the server until the exchange, and it
+    is the one the challenge was made from."""
+    client, holder = api
+    _complete_login(client, holder["state_store"])  # type: ignore[arg-type]
+
+    verifier = holder["verifier"]
+    assert isinstance(verifier, str)
+    digest = hashlib.sha256(verifier.encode()).digest()
+    assert holder["challenge"] == base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
 def test_start_binds_the_state_to_this_browser(
     api: tuple[TestClient, dict[str, object]],
 ) -> None:
@@ -636,7 +714,12 @@ def test_me_lists_the_teams_the_person_belongs_to(
     api: tuple[TestClient, dict[str, object]], db: Session
 ) -> None:
     """S28 settings (#496) picks a team's integrations from these -- there is no
-    meeting to name the team there."""
+    meeting to name the team there.
+
+    **First joined, first listed** (#742). The person made ``B팀`` and later
+    accepted an invitation to ``A팀``, whose name sorts earlier. The screens
+    that take ``teams[0]`` as the default must still get the team the person
+    started in, not the one that invited them."""
     client, _ = api
     user = upsert_user_from_google(db, _identity())
     db.add_all(
@@ -647,18 +730,16 @@ def test_me_lists_the_teams_the_person_belongs_to(
         ]
     )
     db.flush()
-    db.add_all(
-        [
-            TeamMember(team_id="team_b", user_id=user.id),
-            TeamMember(team_id="team_a", user_id=user.id),
-        ]
-    )
+    # One at a time: the order of the rows is the order of joining.
+    db.add(TeamMember(team_id="team_b", user_id=user.id))
+    db.flush()
+    db.add(TeamMember(team_id="team_a", user_id=user.id))
     db.commit()
     client.cookies.set(SESSION_COOKIE, issue_token(user.id))
 
     teams = client.get("/api/auth/me").json()["teams"]
 
-    assert teams == [{"id": "team_a", "name": "A팀"}, {"id": "team_b", "name": "B팀"}]
+    assert teams == [{"id": "team_b", "name": "B팀"}, {"id": "team_a", "name": "A팀"}]
 
 
 def test_providers_reports_whether_google_is_configured(

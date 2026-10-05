@@ -51,11 +51,12 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtSyncFailure,
 )
 from autune_extraction.router import router
-from autune_extraction.schemas import ExternalRefRead
+from autune_extraction.schemas import ActionItemCreate, ExternalRefRead
 
-from .conftest import sign_in
+from .conftest import READER, sign_in
 
 MEETING = "mtg_1"
 OTHER_MEETING = "mtg_2"
@@ -80,6 +81,8 @@ TABLES = [
     ExtConfirmation.__table__,
     ExtEditEvent.__table__,
     ExtExternalRef.__table__,
+    # Every read of an item looks these up (#680): its failed copies, its event.
+    ExtSyncFailure.__table__,
     ExtNotionTarget.__table__,
     # ``has_copy_outside`` counts a calendar event as a copy (#672).
     ExtCalendarEvent.__table__,
@@ -488,7 +491,9 @@ def test_the_detail_carries_everything_the_list_does(client: TestClient, session
     detail = client.get(f"{PREFIX}/action-items/act_1").json()
 
     assert {
-        k: v for k, v in detail.items() if k not in ("sources", "context", "related", "history")
+        k: v
+        for k, v in detail.items()
+        if k not in ("sources", "context", "related", "history", "calendar", "confirmation_dm_url")
     } == listed
 
 
@@ -608,6 +613,37 @@ def test_a_meeting_with_nothing_extracted_is_empty_not_missing(client: TestClien
     assert result.ambiguous_agreements == []
 
 
+def test_the_assignee_picker_is_offered_the_meetings_team_by_name(
+    client: TestClient, session: Session
+) -> None:
+    """Id and name, nothing else -- and only the team's members: an account
+    that is not on the team would be an assignment that does not hold (ADR
+    0007 clears it at read time)."""
+    session.add(User(id=READER, email="reader@example.com", display_name="읽는 사람"))
+    session.add(User(id="user_mate", email="mate@example.com", display_name="가나다"))
+    session.add(User(id="user_outsider", email="out@example.com", display_name="남"))
+    session.add(TeamMember(team_id="team_1", user_id="user_mate"))
+    session.add(TeamMember(team_id="team_other", user_id="user_outsider"))
+    session.flush()
+
+    body = client.get(f"{PREFIX}/meetings/{MEETING}/assignable").json()
+
+    assert body == [
+        {"user_id": "user_mate", "name": "가나다"},
+        {"user_id": READER, "name": "읽는 사람"},
+    ]
+
+
+def test_the_assignee_picker_of_somebody_elses_meeting_is_a_404(
+    client: TestClient, session: Session
+) -> None:
+    session.add(Meeting(id="mtg_theirs", team_id="team_other", title="남의 회의"))
+    session.flush()
+
+    assert client.get(f"{PREFIX}/meetings/mtg_theirs/assignable").status_code == 404
+    assert client.get(f"{PREFIX}/meetings/mtg_nope/assignable").status_code == 404
+
+
 def test_a_meeting_that_does_not_exist_is_a_404(client: TestClient) -> None:
     response = client.get(f"{PREFIX}/results/mtg_missing")
 
@@ -684,6 +720,7 @@ def test_the_result_carries_what_the_pipeline_classified(
     ]
 
 
+@pytest.mark.usefixtures("no_sync")
 def test_the_result_reflects_a_correction_made_after_extraction(
     client: TestClient, session: Session
 ) -> None:
@@ -877,6 +914,7 @@ def test_history_names_the_fields_an_edit_changed_and_keeps_no_value(
     assert "2026-10-02" not in str(stored)
 
 
+@pytest.mark.usefixtures("no_sync")
 def test_a_hand_added_item_starts_its_history_with_being_added(
     client: TestClient, session: Session
 ) -> None:
@@ -887,6 +925,35 @@ def test_a_hand_added_item_starts_its_history_with_being_added(
     history = client.get(f"{PREFIX}/action-items/{created['id']}").json()["history"]
 
     assert [(h["kind"], h["fields"]) for h in history] == [("created", [])]
+
+
+def test_a_hand_added_item_is_confirmed_and_its_outside_copies_are_queued(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A person's own item is not a draft for them to confirm (2026-10-04): it
+    goes to 할 일, and its calendar event, Notion page and Jira issue are queued
+    as a confirmation queues them -- a typed due date reaches the calendar."""
+    queued: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", queued.append)
+
+    created = client.post(
+        f"{PREFIX}/action-items",
+        json={"meeting_id": MEETING, "description": "견적서 보내기", "due_date": "2026-10-10"},
+    ).json()
+
+    assert created["status"] == "todo"
+    assert queued == [created["id"]]
+
+
+def test_an_item_the_agent_adds_still_waits_for_the_board(session: Session) -> None:
+    """The chat drafted it; a person has not read it on the board yet."""
+    item = service.create_action_item(
+        session,
+        ActionItemCreate(meeting_id=MEETING, description="채팅이 만든 항목"),
+        origin=next(iter(service.AGENT_ORIGINS)),
+    )
+
+    assert item.status == "needs_confirmation"
 
 
 @pytest.mark.usefixtures("no_sync")
@@ -1012,3 +1079,64 @@ def test_an_earlier_meeting_past_retention_carries_nothing_over(
     carried = client.get(f"{PREFIX}/carried-over/{MEETING}").json()
 
     assert (carried["open"], carried["items"]) == (0, [])
+
+
+# --- several at once (the user, 2026-10-04) ----------------------------------------
+
+
+def test_several_drafts_are_confirmed_at_once_and_each_queues_its_copies(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    queued: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", queued.append)
+    action_item(session, "act_1")
+    action_item(session, "act_2")
+    action_item(session, "act_done", status="todo")
+
+    result = client.post(
+        f"{PREFIX}/action-items/bulk",
+        json={"ids": ["act_1", "act_2", "act_done", "act_nobody"], "action": "confirm"},
+    ).json()
+
+    assert result == {
+        "confirmed": ["act_1", "act_2"],
+        "deleted": [],
+        "skipped": ["act_done", "act_nobody"],
+    }
+    assert queued == ["act_1", "act_2"]
+    assert session.get(ExtActionItem, "act_1").status == "todo"  # type: ignore[union-attr]
+    history = client.get(f"{PREFIX}/action-items/act_1").json()["history"]
+    assert [(h["kind"], h["fields"]) for h in history] == [("edited", ["status"])]
+
+
+def test_several_drafts_are_deleted_at_once_and_a_confirmed_item_is_not(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("remove_calendar_event", "close_jira_issue", "trash_notion_page"):
+        monkeypatch.setattr(tasks, name, lambda _id: None)
+    action_item(session, "act_1")
+    action_item(session, "act_kept", status="in_progress")
+
+    result = client.post(
+        f"{PREFIX}/action-items/bulk", json={"ids": ["act_1", "act_kept"], "action": "delete"}
+    ).json()
+
+    assert result == {"confirmed": [], "deleted": ["act_1"], "skipped": ["act_kept"]}
+    assert session.get(ExtActionItem, "act_1") is None
+    assert session.get(ExtActionItem, "act_kept") is not None
+
+
+def test_another_teams_draft_is_skipped_like_an_unknown_one(
+    client: TestClient, session: Session
+) -> None:
+    action_item(session, "act_theirs", meeting_id=OTHER_MEETING)
+    session.execute(
+        Meeting.__table__.update().where(Meeting.id == OTHER_MEETING).values(team_id="team_2")
+    )
+
+    result = client.post(
+        f"{PREFIX}/action-items/bulk", json={"ids": ["act_theirs"], "action": "confirm"}
+    ).json()
+
+    assert result["skipped"] == ["act_theirs"]
+    assert session.get(ExtActionItem, "act_theirs").status == "needs_confirmation"  # type: ignore[union-attr]

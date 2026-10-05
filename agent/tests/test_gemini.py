@@ -199,3 +199,62 @@ def test_a_reply_with_no_candidates_is_empty_text() -> None:
     )
 
     assert model.step("지시", [], []) == ""
+
+
+def test_a_thought_signature_is_exempt_only_on_a_part() -> None:
+    # A key the guard skips must not hide text anywhere else: model-written
+    # functionCall args are echoed back, and could carry the same key name.
+    sent: list[dict[str, Any]] = []
+    smuggled = [
+        {
+            "role": "model",
+            "parts": [
+                {"functionCall": {"name": "a__b", "args": {"thoughtSignature": "010-1234-5678"}}}
+            ],
+        }
+    ]
+
+    with pytest.raises(PrivacyViolationError):
+        _tools([{"text": "DONE"}], sent).step("지시", smuggled, [])
+    assert sent == []
+
+
+def test_a_role_is_exempt_only_on_a_turn() -> None:
+    sent: list[dict[str, Any]] = []
+    smuggled = [{"role": "user", "parts": [{"text": "q", "role": "010-1234-5678"}]}]
+
+    with pytest.raises(PrivacyViolationError):
+        _tools([{"text": "DONE"}], sent).step("지시", smuggled, [])
+    assert sent == []
+
+
+def _limited_router(sent: list[dict[str, Any]]) -> GeminiRouter:
+    def handle(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(429, json={"error": {"message": "quota"}})
+
+    router = GeminiRouter(api_key="k", model="gemini-test", base_url="https://llm.test/v1beta")
+    router._client._client = httpx.Client(  # noqa: SLF001 - swap the transport only
+        base_url="https://llm.test/v1beta", transport=httpx.MockTransport(handle)
+    )
+    return router
+
+
+def test_compose_falls_back_to_the_summary_when_the_model_is_out_of_quota() -> None:
+    # The tools already answered; a 429 on the last call must not turn that into a 500.
+    outcome = SubagentResult(result=ToolResult(ok=True, summary="열린 액션 2건."))
+
+    assert _limited_router([]).compose("열린 거?", outcome) == "열린 액션 2건."
+
+
+def test_compose_trims_its_findings_to_fit_the_outbound_limit() -> None:
+    sent: list[dict[str, Any]] = []
+    long = [{"title": f"항목 {i}", "body": "가" * 900} for i in range(5)]
+    outcome = SubagentResult(result=ToolResult(ok=True, summary="다섯 건.", items=long))
+
+    _router("답", sent).compose("정리해 줘", outcome)
+
+    text = sent[0]["body"]["contents"][0]["parts"][0]["text"]
+    instructions = sent[0]["body"]["systemInstruction"]["parts"][0]["text"]
+    assert len(text) + len(instructions) <= 3800
+    assert "다섯 건." in text

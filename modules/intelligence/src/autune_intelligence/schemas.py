@@ -147,6 +147,17 @@ class DashboardRead(BaseModel):
     count) so the frontend's weekly bars never silently span a longer window
     or average a partially-covered week. ``alignment`` and ``predictions`` are
     not here — they have their own endpoints (``/heatmap``, ``/predictions``).
+
+    ``action_item_completion_rate`` is done over confirmed across the team's
+    meetings held in the last four weeks (``ACTION_COMPLETION_WINDOW``,
+    ``action_completion_meeting_count`` of them), from B's latest
+    ``TeamActionProgress``; ``overdue_action_items`` is the overdue total over
+    every meeting it listed that has not expired (#605). All are ``None`` with
+    ``action_progress_as_of`` when that snapshot is missing or stale -- unknown,
+    not zero; a fresh one with nothing confirmed has no rate and 0 overdue. A
+    total from fewer than three meetings is ``None`` too (#800 review).
+    ``action_item_confirmation_rate`` is what the quality score uses: the share
+    of each meeting's items that got confirmed, averaged over scored meetings.
     """
 
     team_id: str
@@ -154,6 +165,10 @@ class DashboardRead(BaseModel):
     average_score: float | None
     average_grade: str | None
     action_item_completion_rate: float | None
+    action_completion_meeting_count: int | None
+    overdue_action_items: int | None
+    action_progress_as_of: datetime | None
+    action_item_confirmation_rate: float | None
     recent_scores: list[DashboardScoreEntry]
     gap_distribution: dict[str, int]
 

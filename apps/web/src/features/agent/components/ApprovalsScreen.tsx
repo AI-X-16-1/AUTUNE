@@ -7,6 +7,7 @@ import { ApiError } from "@/shared/api/client";
 import { Button } from "@/shared/ui/Button";
 
 import { approvePending, listPending, rejectPending } from "../api";
+import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
 
 const SUBAGENT_LABEL: Record<string, string> = {
@@ -220,6 +221,17 @@ export function ApprovalsScreen() {
                       className="text-[var(--color-accent-default)]"
                     >
                       회의 보기
+                    </Link>
+                  </>
+                ) : null}
+                {reportLink(item) ? (
+                  <>
+                    {" · "}
+                    <Link
+                      href={reportLink(item)!}
+                      className="text-[var(--color-accent-default)]"
+                    >
+                      대시보드에서 리포트 보기
                     </Link>
                   </>
                 ) : null}

@@ -164,6 +164,15 @@ class MeetingDetail(MeetingState):
     Null otherwise, and before the worker has picked the job up."""
     stage_progress: float | None = None
     """How far through ``stage``, 0..1."""
+    stalled: bool = False
+    """The running attempt's worker stopped writing its heartbeat
+    (``service.is_stalled``). The screen offers 다시 시작 or 취소."""
+    restartable: bool = False
+    """``stalled`` and its upload is still on the server, inside six hours."""
+    cancellable: bool = False
+    """``analyzing`` with an attempt ``queued`` or ``running``."""
+    cancelled: bool = False
+    """``failed`` because a person cancelled, not because something broke."""
 
 
 class MeetingSummary(BaseModel):
@@ -213,6 +222,50 @@ class TeamCreate(BaseModel):
     @classmethod
     def _trim_name(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
+
+
+class InvitationCreate(BaseModel):
+    """An address to invite to the team (#552). Its shape is all that is
+    checked: whether anybody holds an account under it is never looked up."""
+
+    email: str = Field(min_length=3, max_length=320)
+    send_email: bool = False
+    """Also mail the link from the inviter's own Gmail (``invitation_mail``).
+    Off by default: the link is handed over by the inviter unless they ask."""
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _an_address(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        local, at, domain = value.partition("@")
+        if not at or not local or "." not in domain or any(c.isspace() for c in value):
+            raise ValueError("not an email address")
+        if "@" in domain or domain.startswith(".") or domain.endswith("."):
+            raise ValueError("not an email address")
+        return value
+
+
+class InvitationIssued(BaseModel):
+    """The token for the invitation's link, this once, and when it lapses.
+
+    The same fields whatever the address was. Nothing here says whether it
+    has an account, a name, or a place on the team already."""
+
+    token: str
+    expires_at: datetime
+    emailed: bool = False
+    """Whether Gmail took the mail ``send_email`` asked for. It turns on the
+    inviter's own grant and on Gmail, never on the address (``invitation_mail``)."""
+
+
+class InvitationAccept(BaseModel):
+    """The token from an invitation link. Any string is taken and looked up:
+    one that is not a token is simply one that names no invitation, and gets
+    the same answer as every other refusal."""
+
+    token: str = Field(min_length=1, max_length=512)
 
 
 class TeamSummary(BaseModel):

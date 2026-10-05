@@ -34,19 +34,25 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-from autune_integrations.privacy import MASK_CHAR, find_pii
+from autune_integrations.privacy import MASK_CHAR, SEPARATOR_PUNCTUATION, find_pii
+
 
 # Kept inside a numeric span so the value still reads as a phone number or an
 # account. Everything else is content, whoever found the span.
 #
-# The set follows `privacy._SEP`, and has to: a separator the patterns accept
+# Layout follows `privacy._SEP`, and has to: a separator the patterns accept
 # but this masks stops being layout and turns into damage -- `(02)123-4567`
 # came out `(******-4567` with its parenthesis never closed, and `010–1234–5678`
-# lost both dashes. So: the ASCII four, the typographic dashes and the closing
-# parenthesis #211 added, and the two non-ASCII horizontal spaces (no-break,
-# ideographic) that `[^\S\r\n]` matches. Not `(`: a span starts at its first
-# digit, so the opening parenthesis is never inside one.
-_SHAPE_CHARS = "-. +\u2013\u2014)\u00a0\u3000"
+# lost both dashes. It used to be a hand-made copy of the characters, and the
+# copy drifted (#324): a thin space the pattern accepts made a phone number
+# "mixed script" and every digit went, and a card read across lines lost its
+# last four. So it is derived instead -- any whitespace (the card pattern may
+# cross a line break; the others cannot reach one) and the punctuation
+# `privacy` exports, plus `+` for an international prefix. Not `(`: a span
+# starts at its first digit, so the opening parenthesis is never inside one.
+def _layout(char: str) -> bool:
+    return char.isspace() or char in SEPARATOR_PUNCTUATION or char == "+"
+
 
 # The categories `find_pii` produces from a digit shape, and the only ones with
 # a layout worth preserving. Anything else came from the recogniser and is
@@ -233,7 +239,7 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
         # This used to keep `value[:1]`, which left the first digit of a
         # run-together value standing — raised in #125 review as minor, and one
         # digit less minor than it looked.
-        return "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in value)
+        return "".join(char if _layout(char) else MASK_CHAR for char in value)
     if merged:
         # A merged span the recogniser led: a name running into an address, and
         # the first character stays the way a Korean document redacts a name.
@@ -256,7 +262,7 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
         # in it passed through untouched.
         return value[:1] + MASK_CHAR * (len(value) - 1)
 
-    if any(not char.isdigit() and char not in _SHAPE_CHARS for char in value):
+    if any(not char.isdigit() and not _layout(char) for char in value):
         # Written in two scripts, so there is no digit layout to preserve.
         #
         # `_digits_to_keep` counts the characters that are digits, and in a
@@ -270,7 +276,7 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
         # syllables: leaving them is leaving the number spelled out. So a mixed
         # span is hidden whole, for the same reason a merged one is -- the
         # positions the rules count no longer mean what the rules assume.
-        return "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in value)
+        return "".join(char if _layout(char) else MASK_CHAR for char in value)
 
     digits = [c for c in value if c.isdigit()]
     keep = _digits_to_keep(category, digits)
@@ -284,7 +290,7 @@ def _hide(value: str, category: str, *, merged: bool = False) -> str:
             # for "공일공 일이삼사 오육칠팔" is exactly the case patterns cannot
             # describe, and passing the syllables through masked nothing while
             # the counts recorded a masked span.
-            out.append(char if char in _SHAPE_CHARS else MASK_CHAR)
+            out.append(char if _layout(char) else MASK_CHAR)
             continue
         out.append(char if index in keep else MASK_CHAR)
         index += 1
@@ -307,7 +313,7 @@ def hide_reported(span: str) -> str:
     """
     runs = []
     for run in span.split(" "):
-        hidden = "".join(char if char in _SHAPE_CHARS else MASK_CHAR for char in run)
+        hidden = "".join(char if _layout(char) else MASK_CHAR for char in run)
         if MASK_CHAR in hidden and MASK_CHAR * 2 not in hidden:
             hidden += MASK_CHAR
         runs.append(hidden)
