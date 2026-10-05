@@ -622,6 +622,7 @@ def get_dashboard(session: Session, team_id: str) -> DashboardRead:
         average_score=average_score,
         average_grade=_grade_for(average_score) if average_score is not None else None,
         action_item_completion_rate=progress.completion_rate,
+        action_completion_meeting_count=progress.completion_meetings,
         overdue_action_items=progress.overdue,
         action_progress_as_of=progress.as_of,
         action_item_confirmation_rate=(sum(rates) / len(rates)) if rates else None,
@@ -1423,46 +1424,71 @@ doing now rather than over a quarter. A meeting leaving the window moves the
 rate; the card names the window so that reads as what it is."""
 
 
+ACTION_PROGRESS_MIN_MEETINGS: Final = 3
+"""A total drawn from fewer meetings is not shown. With one or two, the team
+total is those meetings' counts, and when every item is one person's it is that
+person's completion record -- what the contract's usage rule forbids (#800
+review). The heatmap's floor (``MIN_MEETINGS_PER_HEATMAP_CELL``) for the same reason."""
+
+
 @dataclass(frozen=True)
 class ActionProgressTotals:
     """The team's totals from its latest snapshot, or ``None`` throughout when
     that snapshot is missing or older than ``ACTION_PROGRESS_STALE_AFTER``.
 
-    ``completion_rate`` is also ``None`` for a fresh snapshot with nothing
-    confirmed (``overdue`` is then 0): no items is not 0% done.
+    ``completion_rate`` is over the meetings held within
+    ``ACTION_COMPLETION_WINDOW`` (``completion_meetings`` of them); ``overdue``
+    over every meeting the snapshot listed that has not expired, since an item
+    past its due date matters however old its meeting is. Either is ``None``
+    when drawn from fewer than ``ACTION_PROGRESS_MIN_MEETINGS`` meetings. With
+    no meetings at all there is nothing to identify: no rate (no items is not
+    0% done) and 0 overdue.
     """
 
     completion_rate: float | None = None
+    completion_meetings: int | None = None
     overdue: int | None = None
     as_of: datetime | None = None
 
 
+def _shown(meetings: int) -> bool:
+    return meetings == 0 or meetings >= ACTION_PROGRESS_MIN_MEETINGS
+
+
 def _action_progress_totals(session: Session, team_id: str, now: datetime) -> ActionProgressTotals:
-    """Done over confirmed, and the overdue count, summed over the team's meetings
-    held within ``ACTION_COMPLETION_WINDOW`` -- team totals only, never one
-    meeting's counts (the contract's usage rule). A meeting with no
-    ``started_at`` is dated by its creation, as A orders meetings."""
+    """Done over confirmed over the team's meetings held within
+    ``ACTION_COMPLETION_WINDOW``, and the overdue count over all of its kept
+    meetings -- team totals only, never one meeting's counts (the contract's
+    usage rule). A meeting with no ``started_at`` is dated by its creation, as
+    A orders meetings."""
     as_of = session.scalar(
         sa.select(IntelActionProgress.as_of).where(IntelActionProgress.team_id == team_id)
     )
     if as_of is None or as_of < now - ACTION_PROGRESS_STALE_AFTER:
         return ActionProgressTotals()
-    confirmed, done, overdue = session.execute(
+    recent = func.coalesce(Meeting.started_at, Meeting.created_at) >= (
+        now - ACTION_COMPLETION_WINDOW
+    )
+    row = IntelActionProgressMeeting
+    meetings, overdue, recent_meetings, confirmed, done = session.execute(
         sa.select(
-            func.coalesce(func.sum(IntelActionProgressMeeting.confirmed), 0),
-            func.coalesce(func.sum(IntelActionProgressMeeting.done), 0),
-            func.coalesce(func.sum(IntelActionProgressMeeting.overdue), 0),
+            func.count(),
+            func.coalesce(func.sum(row.overdue), 0),
+            func.count().filter(recent),
+            func.coalesce(func.sum(row.confirmed).filter(recent), 0),
+            func.coalesce(func.sum(row.done).filter(recent), 0),
         )
-        .join(Meeting, Meeting.id == IntelActionProgressMeeting.meeting_id)
-        .where(
-            IntelActionProgressMeeting.team_id == team_id,
-            _not_expired(now),
-            func.coalesce(Meeting.started_at, Meeting.created_at) >= now - ACTION_COMPLETION_WINDOW,
-        )
+        .join(Meeting, Meeting.id == row.meeting_id)
+        .where(row.team_id == team_id, _not_expired(now))
     ).one()
     return ActionProgressTotals(
-        completion_rate=(done / confirmed) if confirmed else None,
-        overdue=int(overdue),
+        completion_rate=(
+            done / confirmed
+            if confirmed and recent_meetings >= ACTION_PROGRESS_MIN_MEETINGS
+            else None
+        ),
+        completion_meetings=int(recent_meetings),
+        overdue=int(overdue) if _shown(meetings) else None,
         as_of=as_of,
     )
 

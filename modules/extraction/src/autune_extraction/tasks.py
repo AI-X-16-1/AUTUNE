@@ -7,9 +7,10 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from celery import shared_task
 from sqlalchemy import select
@@ -64,6 +65,7 @@ from . import (
     jira_sync,
     notion_backfill,
     notion_setup,
+    project_send,
     projects,
     service,
     sync_state,
@@ -80,9 +82,12 @@ from .models import (
     ExtDecisionRef,
     ExtExternalCleanup,
     ExtExternalRef,
+    ExtMinutesEvent,
+    ExtProjectRefreshOwed,
+    ExtProjectSendCleanup,
 )
 from .pipeline.base import give_roster
-from .pipeline.registry import get_classifier, get_nli, get_resolver
+from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
 
 log = get_logger(__name__)
 
@@ -150,7 +155,9 @@ def on_transcript_ready(payload: dict) -> None:
 
 def _follow_corrections(corrections: service.SourceCorrections) -> None:
     """Queue the outside copies of corrected rows that have them (#586, #657):
-    Notion, Jira and the calendar for an item, Notion for a decision. A failure to queue
+    Notion, Jira and the calendar for an item, Notion for a decision. The
+    project minutes that carried them are rewritten by the run itself, once,
+    at its end (``_extract``). A failure to queue
     is logged: the rows are already right, and the next edit sends them."""
     try:
         for action_item_id in corrections.changed_items:
@@ -233,6 +240,12 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         # Pages of decisions this run dropped: their refs are kept so the
         # pages can be retired, not left live in Notion (#669).
         orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
+        # A written summary of lines this run no longer reads -- corrected,
+        # re-masked, their speaker's consent withdrawn -- goes with the run
+        # that noticed, not when a new one happens to replace it. Here and not
+        # only in ``summarize_meeting``: that task is not queued at all with
+        # ``summary_impl=none``, and may fail (#782 review).
+        service.drop_stale_summary(session, meeting_id)
         # Which of the team's projects each row is about, by what was said.
         # Rows a person placed keep their project.
         projects.assign_meeting(session, meeting_id)
@@ -272,6 +285,368 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    # Its own task, so a provider that is down costs the 요약 tab its paragraph
+    # and never this run its rows (#421 v2). Only when a summarizer is on --
+    # asked of the setting, not by building the summarizer: one switched on
+    # without a key raises there, and this run's rows are already committed
+    # (#782 review). The task is where that is found and logged.
+    if get_settings().summary_impl != "none":
+        try:
+            summarize_meeting.delay(meeting_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
+            log.warning("extraction_summary_not_queued", error=type(exc).__name__)
+    # The project minutes that already went out, brought in line with what
+    # this run left confirmed: a corrected line, and also a confirmed decision
+    # the rebuild no longer has, which no correction names (#787 review). A
+    # meeting that sent nothing costs one query; a copy that already says the
+    # minutes is not written to.
+    refresh_project_minutes(meeting_id)
+
+
+@shared_task(name="autune.extraction.summarize_meeting", acks_late=True)
+def summarize_meeting(meeting_id: str) -> bool:
+    """The 요약 tab's written summary (#421 v2): the meeting's consented lines to
+    ``summary_impl``'s model, the answer stored with the digest of those lines.
+
+    Skipped when no summarizer is on, when the meeting has no lines, and when
+    the stored summary was written from exactly these lines -- a re-extraction
+    that changed no line does not ask again. Reads, then calls the model with no
+    session open, then writes: a transaction is never held across a call that
+    takes seconds. A failed or unusable answer leaves the tab as v1 built it and
+    is logged by meeting id; nothing about it fails the meeting.
+
+    A stored summary of other lines than the meeting has now is deleted before
+    the model is asked, so none of the ways this can end without a new summary
+    -- no lines left, no summarizer, a failed call, an unusable answer -- leaves
+    the old one in the table. And the answer is stored only if the lines are
+    still the ones it was written from (``service.store_meeting_summary``):
+    speech deleted while the model was answering is not written back.
+
+    Returns whether a summary was written.
+    """
+    try:
+        summarizer = get_summarizer()
+    except ValueError as exc:
+        # Switched on without what it needs (a key). Said here, by name of the
+        # error only; the stale summary below still goes.
+        log.error("extraction_summary_not_configured", error=type(exc).__name__)
+        summarizer = None
+    with session_scope() as session:
+        lines = service.summary_lines(session, meeting_id)
+        if service.summary_is_current(session, meeting_id, lines):
+            return False
+        service.drop_stale_summary(session, meeting_id, lines)
+        if summarizer is None or not lines:
+            return False
+        roster = service.team_roster(session, meeting_id)
+        board = service.summary_board(session, meeting_id)
+    give_roster(summarizer, roster)
+    try:
+        written = summarizer.summarize(lines, board=board)
+    except PrivacyViolationError:
+        log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
+        return False
+    except Exception as exc:  # noqa: BLE001 -- the tab keeps v1; logged by id, never the text
+        log.warning("extraction_summary_failed", meeting_id=meeting_id, error=type(exc).__name__)
+        return False
+    if written is None:
+        return False
+    with session_scope() as session:
+        # Written from the lines read above. If they changed while the model
+        # was answering -- a line corrected, or deleted by its speaker -- it is
+        # not stored; the run that follows the change asks again.
+        stored = service.store_meeting_summary(
+            session,
+            meeting_id,
+            overview=written.overview,
+            points=written.points,
+            model_version=written.model_version,
+            lines=lines,
+        )
+    if stored is None:
+        log.info("extraction_summary_discarded_lines_changed", meeting_id=meeting_id)
+        return False
+    log.info("extraction_summary_stored", meeting_id=meeting_id, points=len(written.points))
+    return True
+
+
+def _project_clients(
+    session: Session, team_id: str, targets: Sequence[str]
+) -> project_send.Clients:
+    """The team's tools for its project minutes, each only when chosen and
+    connected. Jira's access is asked for only when Jira was chosen, since it
+    may refresh a token, and with its project checked: a deleted project is
+    not written to."""
+    clients = project_send.Clients()
+    if "notion" in targets:
+        notion = load_integration(session, team_id, "notion")
+        database_id = notion_setup.database_id(session, team_id, notion, "minutes_db_id")
+        if notion is not None and notion.secret and database_id:
+            clients.notion = (NotionClient(notion.secret), database_id)
+    if "slack" in targets:
+        slack = load_integration(session, team_id, "slack")
+        channel = slack.config.get("channel") if slack is not None else None
+        if slack is not None and slack.secret and channel:
+            clients.slack = (SlackClient(slack.secret), str(channel))
+    if "jira" in targets:
+        try:
+            access = jira_access(team_id, check_project=True)
+        except AutuneError:
+            access = None  # a refused grant: reported as not connected
+        if access is not None:
+            clients.jira = (
+                JiraClient.for_cloud(access.access_token, access.cloud_id),
+                access.project_key,
+            )
+    return clients
+
+
+def _close(clients: project_send.Clients) -> None:
+    for pair in (clients.notion, clients.slack, clients.jira):
+        if pair is not None:
+            pair[0].close()
+
+
+def send_project_minutes(
+    session: Session, meeting_id: str, targets: Sequence[str], *, sender_id: str
+) -> tuple[list[project_send.Sent], int]:
+    """The 요약 tab's "프로젝트별로 보내기" (2026-10-04): the team's tools built
+    here, where every client is, and the minutes sent by ``project_send``. Runs
+    in the request -- a person pressed the button and waits to see what went.
+    A tool the team has not connected is reported as such, not tried.
+
+    The calendar is ``sender_id``'s own, through their own grant. No grant, or
+    one refused or issued to another client, is ``not_connected``; Google not
+    answering is ``failed`` -- a person told to connect a calendar they have
+    connected would look in the wrong place."""
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        return [], 0
+    clients = _project_clients(session, meeting.team_id, targets)
+    try:
+        if "calendar" not in targets:
+            return project_send.send(session, meeting_id, targets, clients)
+        with _calendars(session) as calendar_for:
+            try:
+                mine = calendar_for(sender_id)
+            except ReconnectRequiredError:
+                mine = None
+            except Exception as exc:  # noqa: BLE001 -- reported as failed, the rest goes
+                log.warning("extraction_project_calendar_unreachable", error=type(exc).__name__)
+                mine = None
+                clients.calendar_failed = True
+            if mine is not None:
+                clients.calendar = (mine[0], mine[1], sender_id)
+            return project_send.send(session, meeting_id, targets, clients)
+    finally:
+        _close(clients)
+
+
+def refresh_project_minutes(meeting_id: str) -> bool:
+    """The copies of a meeting's project minutes, brought in line with what is
+    confirmed now (``project_send.refresh``): after speech was deleted, a
+    decision taken back, an item deleted or edited, a line masked again --
+    in the team's tools and on the senders' own calendars.
+
+    Called directly, in whatever process made the change -- the API has no
+    Celery app to queue on -- and never raising: the change is committed
+    already and must not fail on a tool. A meeting that sent nothing costs one
+    query. Ids and counts only in the log.
+
+    Not best effort, though (#787 review). When any copy is left behind -- its
+    tool failed, or is not connected -- or the refresh itself broke, the
+    meeting is recorded in ``ext_project_refresh_owed`` and
+    ``retry_project_minutes_refresh`` comes back to it; when every copy is in
+    line the record goes. Returns whether every copy is in line now."""
+    try:
+        with session_scope() as session:
+            targets = project_send.sent_targets(session, meeting_id)
+            team_id = project_send.meeting_team(session, meeting_id)
+            if team_id is None or not (targets or project_send.has_events(session, meeting_id)):
+                project_send.settle_refresh(session, meeting_id)
+                return True
+            clients = _project_clients(session, team_id, targets)
+            try:
+                with _calendars(session) as calendar_for:
+                    sent = project_send.refresh(session, meeting_id, clients, _quiet(calendar_for))
+            finally:
+                _close(clients)
+            if project_send.in_line(sent):
+                project_send.settle_refresh(session, meeting_id)
+                return True
+            project_send.owe_refresh(session, [meeting_id])
+            log.warning(
+                "extraction_project_minutes_refresh_owed",
+                meeting_id=meeting_id,
+                behind=sum(1 for s in sent if s.outcome in ("failed", "not_connected")),
+            )
+            return False
+    except Exception as exc:  # noqa: BLE001 -- the change itself is committed
+        log.warning(
+            "extraction_project_minutes_refresh_failed",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
+    # The refresh broke before it could say what it left behind, and its
+    # session rolled back with it: the record is made in one of its own.
+    try:
+        with session_scope() as session:
+            if project_send.meeting_team(session, meeting_id) is not None:
+                project_send.owe_refresh(session, [meeting_id])
+    except Exception as exc:  # noqa: BLE001 -- nothing left to fall back on but the log
+        log.error(
+            "extraction_project_minutes_refresh_not_recorded",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
+    return False
+
+
+@shared_task(name="autune.extraction.refresh_project_minutes", acks_late=True)
+def refresh_project_minutes_queued(meeting_id: str) -> bool:
+    """``refresh_project_minutes`` on a worker, for a caller that must not wait
+    on Notion, Slack and Jira -- a person deleting their own speech
+    (``forget_deleted_speech``)."""
+    return refresh_project_minutes(meeting_id)
+
+
+PROJECT_REFRESH_BATCH = 50
+"""How many owed meetings one ``retry_project_minutes_refresh`` run takes."""
+
+PROJECT_REFRESH_MAX_ATTEMPTS = 144
+"""Retries before an owed refresh is given up on: a day of them, ten minutes
+apart. Longer than ``CLEANUP_MAX_ATTEMPTS`` on purpose. What is owed here can be
+a sentence its speaker deleted, a tool is more often down for an afternoon
+than for good, and a retry asks nothing of the copies already in line. Giving
+up loses only the retrying: the copy's digest still says it is behind, so the
+next change to the meeting rewrites it."""
+
+
+@shared_task(name="autune.extraction.periodic.retry_project_minutes_refresh")
+@periodic(timedelta(minutes=10))
+def retry_project_minutes_refresh() -> int:
+    """Refresh again the project minutes a refresh left behind (#787 review).
+    Returns how many meetings are in line now.
+
+    One meeting at a time, each in ``refresh_project_minutes``' own
+    transaction. In line: its record is gone. Still behind: the count goes up,
+    and at ``PROJECT_REFRESH_MAX_ATTEMPTS`` it is given up on, said loudly.
+    Ids and counts only."""
+    with session_scope() as session:
+        owed = list(
+            session.scalars(
+                select(ExtProjectRefreshOwed.meeting_id)
+                .order_by(ExtProjectRefreshOwed.created_at, ExtProjectRefreshOwed.meeting_id)
+                .limit(PROJECT_REFRESH_BATCH)
+            )
+        )
+    done = 0
+    for meeting_id in owed:
+        if refresh_project_minutes(meeting_id):
+            done += 1
+            continue
+        with session_scope() as session:
+            row = session.get(ExtProjectRefreshOwed, meeting_id)
+            if row is None:
+                continue
+            row.attempts += 1
+            if row.attempts >= PROJECT_REFRESH_MAX_ATTEMPTS:
+                log.error(
+                    "extraction_project_minutes_refresh_given_up",
+                    meeting_id=meeting_id,
+                    attempts=row.attempts,
+                )
+                session.delete(row)
+    log.info("extraction_project_minutes_refresh_retried", owed=len(owed), in_line=done)
+    return done
+
+
+def _quiet(calendar_for: calendar_sync.CalendarFor) -> project_send.CalendarFor:
+    """``calendar_for`` with a refused grant read as not connected: that
+    person's event cannot be reached now, and the others still can."""
+
+    def lookup(user_id: str) -> tuple[Any, str] | None:
+        try:
+            return calendar_for(user_id)
+        except ReconnectRequiredError:
+            return None
+
+    return lookup
+
+
+def _refresh_minutes_for(item_ids: Iterable[str] = (), decision_ids: Iterable[str] = ()) -> None:
+    """``refresh_project_minutes`` for the meetings of these rows that sent
+    minutes. Best effort, like it. No rows, no query."""
+    items, decisions = list(item_ids), list(decision_ids)
+    if not items and not decisions:
+        return
+    try:
+        with session_scope() as session:
+            meetings = project_send.meetings_with_sends(session, items, decisions)
+    except Exception as exc:  # noqa: BLE001 -- the change itself is committed
+        log.warning("extraction_project_minutes_refresh_failed", error=type(exc).__name__)
+        return
+    for meeting_id in sorted(meetings):
+        refresh_project_minutes(meeting_id)
+
+
+PROJECT_CLEANUP_BATCH = 100
+"""How many queued minutes copies one ``drain_project_send_cleanup`` run takes."""
+
+
+@shared_task(name="autune.extraction.periodic.drain_project_send_cleanup")
+@periodic(timedelta(minutes=10))
+def drain_project_send_cleanup() -> int:
+    """Retract the minutes copies whose meeting or project was deleted (#787
+    review), with each team's own connection. Returns how many went.
+
+    Retracted, or already gone: the row goes. A failure, or a tool no longer
+    connected, keeps it for the next run, up to ``CLEANUP_MAX_ATTEMPTS``; then
+    it is given up on, said loudly -- a person can still remove the copy in the
+    tool. Ids and counts only."""
+    done = 0
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(ExtProjectSendCleanup)
+                .order_by(ExtProjectSendCleanup.id)
+                .limit(PROJECT_CLEANUP_BATCH)
+            )
+        )
+        by_team: dict[str, list[ExtProjectSendCleanup]] = {}
+        for row in rows:
+            by_team.setdefault(row.team_id, []).append(row)
+        for team_id, owed in by_team.items():
+            clients = _project_clients(session, team_id, sorted({r.target for r in owed}))
+            try:
+                for row in owed:
+                    try:
+                        outcome = project_send.retract(row.target, row.external_id, clients)
+                    except Exception as exc:  # noqa: BLE001 -- one copy costs that copy
+                        log.warning(
+                            "extraction_project_copy_retract_failed",
+                            team_id=team_id,
+                            target=row.target,
+                            error=type(exc).__name__,
+                        )
+                        outcome = "failed"
+                    if outcome in ("retracted", "gone"):
+                        session.delete(row)
+                        done += 1
+                        continue
+                    row.attempts += 1
+                    if row.attempts >= CLEANUP_MAX_ATTEMPTS:
+                        log.error(
+                            "extraction_project_copy_given_up",
+                            team_id=team_id,
+                            target=row.target,
+                            reason=outcome,
+                        )
+                        session.delete(row)
+            finally:
+                _close(clients)
+    log.info("extraction_project_copies_retracted", listed=len(rows), retracted=done)
+    return done
 
 
 @shared_task(name="autune.extraction.periodic.reextract_consent_changes")
@@ -770,6 +1145,8 @@ def sync_after_confirmation(action_item_id: str) -> None:
             _record_failure(action_item_id, sync_state.JIRA, sync_state.RECONNECT)
         else:
             _sync_went(action_item_id, sync_state.JIRA)
+    # The project minutes it is in, when they went out: put back, edited.
+    _refresh_minutes_for(item_ids=[action_item_id])
 
 
 @shared_task(name="autune.extraction.sync_item_copies", acks_late=True)
@@ -909,6 +1286,10 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
             raise ReconnectRequiredError(
                 "the calendar grant was issued to another Google client; connect again"
             )
+        if config.config.get("grant_revoked"):
+            # Ended with a revoke of the person's other Google grant (core's
+            # ``_mark_shared_grants``, #760): known gone without asking Google.
+            raise ReconnectRequiredError("the calendar grant was revoked; connect again")
         token = refresh_access_token(
             client_id=client_id, client_secret=client_secret, refresh_token=config.secret
         )
@@ -1393,9 +1774,17 @@ def forget_user_calendar_events(user_id: str) -> None:
                     select(ExtCalendarCleanup).where(ExtCalendarCleanup.user_id == user_id)
                 )
             )
-            ids = [e.event_id for e in events if e.event_id] + [q.event_id for q in queued]
+            # The project minutes they sent to their own calendar, too.
+            minutes = list(
+                session.scalars(select(ExtMinutesEvent).where(ExtMinutesEvent.user_id == user_id))
+            )
+            ids = (
+                [e.event_id for e in events if e.event_id]
+                + [q.event_id for q in queued]
+                + [m.event_id for m in minutes]
+            )
             removed, failed = _remove_events(calendar_for, user_id, ids)
-            for row in [*events, *queued]:
+            for row in [*events, *queued, *minutes]:
                 session.delete(row)
         if failed:
             # Best effort (privacy.md section 4): the account goes on, and these
@@ -1452,7 +1841,9 @@ def _remove_events(
 @on_meeting_deleted("extraction")
 def queue_meeting_calendar_events(meeting_id: str) -> None:
     """Before an expired meeting goes (#581, #588): its items' due-date events,
-    copied into ``ext_calendar_cleanup`` for ``drain_calendar_cleanup``.
+    copied into ``ext_calendar_cleanup`` for ``drain_calendar_cleanup``, and its
+    project minutes' copies into ``ext_project_send_cleanup`` for
+    ``drain_project_send_cleanup`` (#787 review).
 
     Only a copy -- no call to Google here. The hook runs once per meeting
     inside the retention sweep, and a slow or failing calendar must not hold
@@ -1461,6 +1852,7 @@ def queue_meeting_calendar_events(meeting_id: str) -> None:
     unrecorded. Safe to run twice (the queue is unique per user and event).
     """
     with session_scope() as session:
+        minutes = project_send.queue_meeting(session, meeting_id)
         rows = session.execute(
             select(ExtCalendarEvent.user_id, ExtCalendarEvent.event_id).where(
                 ExtCalendarEvent.meeting_id == meeting_id,
@@ -1473,7 +1865,12 @@ def queue_meeting_calendar_events(meeting_id: str) -> None:
                 .values([{"user_id": user, "event_id": event} for user, event in rows])
                 .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
             )
-    log.info("extraction_meeting_calendar_events_queued", meeting_id=meeting_id, events=len(rows))
+    log.info(
+        "extraction_meeting_calendar_events_queued",
+        meeting_id=meeting_id,
+        events=len(rows),
+        minutes_copies=minutes,
+    )
 
 
 @shared_task(name="autune.extraction.periodic.drain_calendar_cleanup")
@@ -1694,9 +2091,22 @@ def _clean_up_one(
 
 @shared_task(name="autune.extraction.sync_decision", acks_late=True)
 def sync_decision(decision_id: str) -> None:
-    """Step 7 for one decision a person just confirmed: its Notion page, once.
-    And for one that stopped being confirmed, or was deleted, while it had a
-    page: that page is retired (``service.sync_decision_to_notion``, #669).
+    """Step 7 for one decision a person just confirmed: its Notion page and its
+    Jira issue, once each. And for one that stopped being confirmed, or was
+    deleted, while it had them: both are retired (#669).
+
+    The Jira half runs whatever the Notion half did -- a Notion that is down
+    must not keep the issue from being made or retired -- and a Jira failure is
+    logged, not raised. A Notion failure is raised after, as before.
+    """
+    try:
+        _sync_decision_notion(decision_id)
+    finally:
+        _sync_decision_jira_logged(decision_id)
+
+
+def _sync_decision_notion(decision_id: str) -> None:
+    """The Notion half (``service.sync_decision_to_notion``).
 
     ``sync_action_item``'s rules, for the team's decision database
     (``decision_db_id`` in its Notion config). A team that connected Notion for
@@ -1739,13 +2149,87 @@ def sync_decision_after_confirmation(decision_id: str) -> None:
     failing the confirmation that started it. Catches ``PrivacyViolationError``
     the same way and for the same reason -- see that function's own note."""
     try:
-        sync_decision(decision_id)
+        _sync_decision_notion(decision_id)
     except IntegrationError:
         log.warning("extraction_notion_decision_sync_failed", decision_id=decision_id)
     except PrivacyViolationError:
         log.warning(
             "extraction_notion_decision_sync_blocked_by_privacy_guard", decision_id=decision_id
         )
+    # Separately, so a Notion failure never costs Jira its issue.
+    _sync_decision_jira_logged(decision_id)
+    # The project minutes it is in, when they went out: taken back (#669), edited.
+    _refresh_minutes_for(decision_ids=[decision_id])
+
+
+def sync_decision_jira(decision_id: str) -> None:
+    """The Jira half of a decision's sync (``jira_sync.sync_decision_to_jira``):
+    its issue in the team's chosen project, made, rewritten or retired.
+
+    Skipped, not failed, for a team that has not connected Jira or chosen a
+    project, or whose connection needs a reconnect -- ``sync_action_item_jira``'s
+    rules, and like it no self-retry. A deleted decision is found through its
+    ref, which outlives it and names the meeting.
+    """
+    with session_scope() as session:
+        decision = session.get(ExtDecision, decision_id)
+        if decision is not None:
+            meeting_id: str | None = decision.meeting_id
+        else:
+            ref = session.get(ExtDecisionRef, (decision_id, jira_sync.JIRA))
+            meeting_id = ref.meeting_id if ref is not None else None
+        meeting = session.get(Meeting, meeting_id) if meeting_id else None
+        if meeting is None:
+            return
+        access = jira_access(meeting.team_id, check_project=True)
+        if access is None or not access.project_key:
+            log.info("extraction_jira_not_connected", decision_id=decision_id)
+            return
+        config = load_integration(session, meeting.team_id, jira_sync.JIRA)
+        client = JiraClient.for_cloud(access.access_token, access.cloud_id)
+        try:
+            jira_sync.sync_decision_to_jira(
+                session,
+                client,
+                decision_id=decision_id,
+                project_key=access.project_key,
+                site=access.cloud_id,
+                site_url=config.config.get("site_url") if config is not None else None,
+            )
+        finally:
+            client.close()
+
+
+def _sync_decision_jira_logged(decision_id: str) -> None:
+    """``sync_decision_jira``, a failure logged by its class. ``AutuneError``
+    covers a refused grant as well as an integration error; the outbound
+    check's refusal is caught the same way."""
+    try:
+        sync_decision_jira(decision_id)
+    except (AutuneError, PrivacyViolationError) as exc:
+        log.warning(
+            "extraction_jira_decision_sync_failed",
+            decision_id=decision_id,
+            error=type(exc).__name__,
+        )
+
+
+@shared_task(name="autune.extraction.periodic.retire_decision_issues")
+@periodic(timedelta(minutes=10))
+def retire_decision_issues() -> int:
+    """Retire, on a timer, the Jira issues of decisions that are gone or no
+    longer confirmed -- what ``retire_decision_pages`` is for Notion (#683).
+    A decision's issue is retired right after the change; when that one call
+    failed, a deleted decision has no next change to try again on. Returns
+    how many were tried. A tick with nothing to retire calls Jira not at all.
+    Ids and counts only."""
+    with session_scope() as session:
+        owed = jira_sync.decision_issues_to_retire(session)
+    for decision_id, _meeting_id in owed:
+        _sync_decision_jira_logged(decision_id)
+    if owed:
+        log.info("extraction_jira_decision_issues_retired", listed=len(owed))
+    return len(owed)
 
 
 @shared_task(name="autune.extraction.update_confirmation_dm", acks_late=True)
@@ -1795,8 +2279,9 @@ def update_confirmation_dm(utterance_id: str) -> bool:
 def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """Before a person's own speech is deleted (#582, #587): the items and
     decisions drawn from it keep the work and drop the words
-    (``service.forget_speech``), and their copies in Notion, Jira and the
-    calendar are queued to follow -- a confirmed row's, and those of an item
+    (``service.forget_speech``), the project minutes that carried them are
+    owed a rewrite and queued for it (``refresh_project_minutes``), and their copies in Notion, Jira
+    and the calendar are queued to follow -- a confirmed row's, and those of an item
     moved back to 확인 필요 that still has them (#657).
 
     The database part raises on failure, so A's deletion stops rather than
@@ -1810,7 +2295,17 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """
     with session_scope() as session:
         done = service.forget_speech(session, utterance_ids)
+        # Owed from the same commit that drops the words: whatever happens to
+        # the queue or the tools after this, the retry knows (#787 review).
+        minutes_owed = project_send.owe_refresh(
+            session,
+            project_send.meetings_with_sends(session, done.changed_items, done.changed_decisions),
+        )
     try:
+        # Queued, not run here: the person deleting their speech does not wait
+        # on three tools, and a refresh that cannot be queued is still owed.
+        for meeting_id in minutes_owed:
+            refresh_project_minutes_queued.delay(meeting_id)
         for action_item_id in done.changed_items:
             sync_item_copies.delay(action_item_id)
         for decision_id in done.changed_decisions:

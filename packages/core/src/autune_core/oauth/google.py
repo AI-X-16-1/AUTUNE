@@ -22,7 +22,9 @@ No Google access token is kept — sign-in needs the ID token and nothing else.
 returns is theirs, stored in ``user_integrations``. It goes to the deployment's
 integration client when one is set (``get_google_integration_client``) and to
 the sign-in client otherwise -- the same redirect URI either way, since one
-callback finishes both.
+callback finishes both. **Sending mail as the person** (``gmail.send``, #552)
+is a third request of the same shape, its grant stored apart from the
+calendar's.
 """
 
 from __future__ import annotations
@@ -62,6 +64,11 @@ SCOPE = "openid email profile"
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 """Read and write events -- a person's own due dates on their primary calendar.
 Not ``calendar``: nothing here manages calendars or sharing."""
+
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+"""Send mail as the person -- an invitation link from their own address (#552).
+Sends only: nothing in a mailbox can be read with it. A sensitive scope, not
+a restricted one, unlike reading a mailbox (#431)."""
 
 REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
 
@@ -141,9 +148,14 @@ class GoogleOAuthClient:
         code_challenge: str | None = None,
     ) -> str:
         """Sign-in by default. ``offline`` asks for a refresh token as well:
-        ``prompt=consent`` because Google hands one out only on a consent screen,
-        and ``include_granted_scopes`` so connecting a calendar keeps sign-in's
-        scopes rather than replacing them."""
+        ``prompt=consent`` because Google hands one out only on a consent screen.
+
+        **No ``include_granted_scopes``.** With it, a refresh token carries every
+        scope the account ever gave this client, so a calendar token could send
+        mail and a mail token could write the calendar (mkkim68, review of
+        #760). Without it each token carries what its own consent asked for.
+        Earlier grants are not taken away by a later consent either way, and
+        sign-in keeps no token, so nothing relied on the merge."""
         params = {
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
@@ -154,8 +166,6 @@ class GoogleOAuthClient:
             "access_type": "offline" if offline else "online",
             "prompt": "consent" if offline else "select_account",
         }
-        if offline:
-            params["include_granted_scopes"] = "true"
         if code_challenge:
             params["code_challenge"] = code_challenge
             params["code_challenge_method"] = "S256"
