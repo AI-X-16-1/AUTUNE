@@ -16,6 +16,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal, Protocol
 
 from sqlalchemy import ColumnElement, Select, and_, delete, func, or_, select, update
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session, selectinload
 
@@ -89,7 +90,9 @@ from .models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
+    ExtForgottenUtterance,
     ExtMeetingNote,
+    ExtMeetingSummary,
     ExtProject,
     ExtSyncFailure,
     ExtWeeklyDigest,
@@ -117,6 +120,7 @@ from .schemas import (
     DecisionReviewUpdate,
     EditHistoryEntry,
     ExternalRefRead,
+    GeneratedSummary,
     MeetingReview,
     MeetingSummary,
     MyConfirmation,
@@ -741,6 +745,26 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
     ids = set(utterance_ids)
     if not ids:
         return SpeechForgotten()
+    # A written summary restates the meeting, deleted lines included, and is
+    # model output nobody accepted: it goes, and the next run writes one from
+    # what is left (#421 v2). Deleting the row is not the whole of it. This
+    # commits before A deletes the utterances, and a model may be writing a
+    # summary of them right now. So the lines are also marked forgotten, which
+    # takes them out of ``summary_lines`` from here on, and both happen under
+    # the lock ``store_meeting_summary`` takes: a summary stored before this
+    # is deleted by it, and one stored after it finds its lines changed and is
+    # not stored (#782 review). In id order, so two deletions cannot deadlock.
+    meeting_ids = sorted(
+        set(session.scalars(select(Utterance.meeting_id).where(Utterance.id.in_(ids))))
+    )
+    for meeting_id in meeting_ids:
+        lock_summary(session, meeting_id)
+    session.execute(
+        _insert_if_absent_into(session, ExtForgottenUtterance)
+        .from_select(["utterance_id"], select(Utterance.id).where(Utterance.id.in_(ids)))
+        .on_conflict_do_nothing(index_elements=["utterance_id"])
+    )
+    session.execute(delete(ExtMeetingSummary).where(ExtMeetingSummary.meeting_id.in_(meeting_ids)))
     items = session.scalars(
         select(ExtActionItem)
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
@@ -3814,6 +3838,11 @@ def meeting_summary(
         )
     )
     note = session.get(ExtMeetingNote, meeting_id)
+    written = session.get(ExtMeetingSummary, meeting_id)
+    if written is not None and written.source_digest != source_digest(
+        summary_lines(session, meeting_id)
+    ):
+        written = None  # its lines changed since; the next run writes a new one
     placed = {
         decision_id: project_id
         for decision_id, project_id in session.execute(
@@ -3850,6 +3879,14 @@ def meeting_summary(
         ),
         note=note.body if note is not None else None,
         note_updated_at=note.updated_at if note is not None else None,
+        generated=GeneratedSummary(
+            overview=written.overview,
+            points=[p for p in written.points.split("\n") if p],
+            model_version=written.model_version,
+            created_at=written.created_at,
+        )
+        if written is not None
+        else None,
         projects=[project_read(p) for p in team_projects],
     )
 
@@ -3861,6 +3898,170 @@ def project_read(row: ExtProject) -> ProjectRead:
         aliases=[a for a in row.aliases.split("\n") if a],
         jira_project_key=row.jira_project_key,
     )
+
+
+def summary_lines(session: Session, meeting_id: str) -> list[str]:
+    """What a written summary of this meeting may be made from (#421 v2): the
+    stored, masked lines of the speakers who consented, in spoken order, blank
+    ones left out -- the same lines the classifier reads (privacy.md section 5).
+    Also what ``ExtMeetingSummary.source_digest`` is taken over, so a summary is
+    shown only while these are still what it was written from.
+
+    A line its speaker has deleted is out from the moment B's hook ran, though
+    A removes the row a little later (``ExtForgottenUtterance``)."""
+    consented = consented_utterance_ids(session, meeting_id)
+    forgotten = set(
+        session.scalars(
+            select(ExtForgottenUtterance.utterance_id).where(
+                ExtForgottenUtterance.utterance_id.in_(
+                    select(Utterance.id).where(Utterance.meeting_id == meeting_id)
+                )
+            )
+        )
+    )
+    return [
+        u.text
+        for u in stored_transcript(session, meeting_id)
+        if u.id in consented and u.id not in forgotten and u.text
+    ]
+
+
+def summary_board(session: Session, meeting_id: str) -> list[str]:
+    """The run's own decisions and items as lines for the summarizer's last call
+    (#421 v2), so the paragraph agrees with the rows under it on the tab.
+
+    **Only what a model wrote from the masked lines.** A decision or an item a
+    person typed (``origin=user``), a description a person edited, a reviewer's
+    rewording: none of it passed module A's masking, and it is not sent out --
+    a phone number typed into an item would also make the outbound check refuse
+    every summary of the meeting. A rejected decision is not the meeting's and
+    is left out. Each line says whether a person has confirmed it yet.
+    """
+    rejected = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                ExtDecisionReview.status == "rejected",
+            )
+        )
+    )
+    confirmed = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                ExtDecisionReview.status == "confirmed",
+            )
+        )
+    )
+    rows: list[str] = []
+    for decision in session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
+        .order_by(ExtDecision.created_at, ExtDecision.id)
+    ):
+        if decision.id in rejected:
+            continue
+        state = "확정" if decision.id in confirmed else "확인 전"
+        rows.append(f"결정({state}): {decision.statement}")
+    for item in session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id == meeting_id, ExtActionItem.origin == "model")
+        .order_by(ExtActionItem.created_at, ExtActionItem.id)
+    ):
+        if _person_wrote_description(session, item.id):
+            continue
+        state = "확인 전" if item.status == ActionStatus.NEEDS_CONFIRMATION.value else "확정"
+        rows.append(f"할 일({state}): {item.description}")
+    return rows
+
+
+def summary_is_current(session: Session, meeting_id: str, lines: Sequence[str]) -> bool:
+    """A stored summary was written from exactly ``lines`` -- asking again would
+    spend a provider's quota on the answer already here."""
+    written = session.get(ExtMeetingSummary, meeting_id)
+    return written is not None and written.source_digest == source_digest(lines)
+
+
+def lock_summary(session: Session, meeting_id: str) -> None:
+    """Hold the meeting's summary lock for the rest of ``session``'s transaction.
+
+    What makes storing a summary and forgetting speech take turns
+    (``store_meeting_summary``, ``forget_speech``). A row lock cannot: a first
+    summary has no row yet for the deletion to wait on. Keyed in B's own
+    namespace, like ``notion_setup.lock_setup``. PostgreSQL only; SQLite (unit
+    tests) has no such lock and runs one writer anyway."""
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.execute(
+        sql_text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"extraction.meeting_summary:{meeting_id}"},
+    )
+
+
+def drop_stale_summary(
+    session: Session, meeting_id: str, lines: Sequence[str] | None = None
+) -> bool:
+    """Delete the meeting's stored summary unless it was written from exactly
+    the lines the meeting has now (``lines``, read here when not given).
+
+    ``meeting_summary`` already does not show such a summary, but hiding is not
+    removing: the text restates lines that were since corrected, re-masked or
+    withdrawn from analysis, and it would stay in the table for as long as no
+    new summary replaced it -- for good when the last consenting speaker
+    withdrew, the model failed, or ``summary_impl`` went back to ``none``. So
+    every extraction calls this in its own transaction, model or no model, and
+    ``summarize_meeting`` calls it before it asks (#782 review).
+
+    Returns whether a row was deleted."""
+    written = session.get(ExtMeetingSummary, meeting_id)
+    if written is None:
+        return False
+    if lines is None:
+        lines = summary_lines(session, meeting_id)
+    if written.source_digest == source_digest(lines):
+        return False
+    session.delete(written)
+    session.flush()
+    return True
+
+
+def store_meeting_summary(
+    session: Session,
+    meeting_id: str,
+    *,
+    overview: str,
+    points: Sequence[str],
+    model_version: str,
+    lines: Sequence[str],
+) -> ExtMeetingSummary | None:
+    """Replace the meeting's written summary with this one, made from ``lines``
+    -- unless the meeting's lines are no longer ``lines``.
+
+    The model took seconds to answer, with no transaction open. A line may
+    have been corrected, withdrawn or deleted by its speaker meanwhile, and a
+    summary of the old lines must not be written after the fact: it would not
+    be shown, and it would still be stored. So the lines are read again here,
+    under the lock ``forget_speech`` holds while it marks lines forgotten, and
+    when they differ nothing is stored and whatever row there was is deleted
+    (#782 review). Returns the stored row, or ``None`` when it was not stored.
+    """
+    lock_summary(session, meeting_id)
+    row = session.get(ExtMeetingSummary, meeting_id, populate_existing=True)
+    if source_digest(summary_lines(session, meeting_id)) != source_digest(lines):
+        if row is not None:
+            session.delete(row)
+            session.flush()
+        return None
+    if row is None:
+        row = ExtMeetingSummary(meeting_id=meeting_id)
+        session.add(row)
+    row.overview = overview
+    row.points = "\n".join(points)
+    row.model_version = model_version
+    row.source_digest = source_digest(lines)
+    row.created_at = datetime.now(UTC)
+    session.flush()
+    return row
 
 
 def set_meeting_note(session: Session, meeting_id: str, body: str) -> ExtMeetingNote | None:

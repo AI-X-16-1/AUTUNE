@@ -289,6 +289,18 @@ export interface ProjectDraft {
  * `MeetingSummary` (`GET /summary/{meeting_id}`, #421): S15's 요약 tab, v1 —
  * B's rows in three levels and the team's memo. No model wrote any of it.
  */
+/**
+ * A summary of the whole meeting written by a cloud model (#421 v2). Only
+ * when the deployment turned it on, and only while the lines it was written
+ * from are unchanged.
+ */
+export interface GeneratedSummary {
+  overview: string;
+  points: string[];
+  model_version: string;
+  created_at: string;
+}
+
 export interface MeetingSummary {
   meeting_id: string;
   /** Confirmed first, then pending; a rejected decision is not listed. */
@@ -299,6 +311,8 @@ export interface MeetingSummary {
   ambiguous_waiting: number;
   note: string | null;
   note_updated_at: string | null;
+  /** v2: absent or null when no current summary is written. */
+  generated?: GeneratedSummary | null;
   /** The team's projects, to group the decisions and items by. */
   projects?: Project[];
 }
