@@ -11,6 +11,7 @@ This is not the integration suite: no Postgres, no migrations.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
@@ -928,3 +929,129 @@ def test_the_dismissal_records_nobody(client: TestClient, session: Session) -> N
 
     assert MEMBER not in str(body)
     assert set(body) == {"gap_id", "meeting_id", "dismissed"}
+
+
+# --- the team-wide list (#550) ----------------------------------------------
+
+
+def _team_gaps(client: TestClient, *severities: str, team_id: str = TEAM) -> list[dict]:
+    params: list[tuple[str, str]] = [("team_id", team_id)]
+    params += [("severity", severity) for severity in severities]
+    response = client.get(f"{PREFIX}/gaps", params=params)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _severity(session: Session, gap_id: str, severity: str) -> None:
+    session.get(GapGap, gap_id).severity = severity
+    session.flush()
+
+
+def test_the_team_list_runs_newest_meeting_first_then_by_risk(
+    client: TestClient, session: Session
+) -> None:
+    session.get(Meeting, MEETING).started_at = datetime(2026, 10, 1, tzinfo=UTC)
+    session.get(Meeting, OTHER_MEETING).started_at = datetime(2026, 10, 3, tzinfo=UTC)
+    gap(session, "gap_old", meeting_id=MEETING, risk_score=0.95)
+    gap(session, "gap_new_low_risk", meeting_id=OTHER_MEETING, risk_score=0.75)
+    gap(session, "gap_new_high_risk", meeting_id=OTHER_MEETING, risk_score=0.9)
+
+    rows = _team_gaps(client)
+
+    assert [row["gap_id"] for row in rows] == ["gap_new_high_risk", "gap_new_low_risk", "gap_old"]
+    assert rows[0]["meeting_id"] == OTHER_MEETING
+    assert rows[0]["meeting_title"] == "주간 회의"
+
+
+def test_a_meeting_that_never_started_is_dated_by_when_it_was_registered(
+    client: TestClient, session: Session
+) -> None:
+    gap(session, "gap_1")
+
+    (row,) = _team_gaps(client)
+
+    assert row["meeting_date"].startswith(str(session.get(Meeting, MEETING).created_at.date()))
+
+
+def test_the_team_list_shows_high_alone_unless_asked(client: TestClient, session: Session) -> None:
+    """S20's precision rule: medium and low are behind a toggle, not gone."""
+    gap(session, "gap_high")
+    _severity(session, gap(session, "gap_medium", risk_score=0.6), "medium")
+    _severity(session, gap(session, "gap_low", risk_score=0.3), "low")
+
+    assert [row["gap_id"] for row in _team_gaps(client)] == ["gap_high"]
+    assert {row["gap_id"] for row in _team_gaps(client, "high", "medium", "low")} == {
+        "gap_high",
+        "gap_medium",
+        "gap_low",
+    }
+
+
+def test_an_unknown_severity_is_a_422(client: TestClient) -> None:
+    response = client.get(f"{PREFIX}/gaps", params={"team_id": TEAM, "severity": "urgent"})
+
+    assert response.status_code == 422
+
+
+def test_a_dismissed_gap_leaves_the_team_list(client: TestClient, session: Session) -> None:
+    gap(session, "gap_open")
+    gap(session, "gap_dismissed", dismissed=True)
+
+    assert [row["gap_id"] for row in _team_gaps(client)] == ["gap_open"]
+
+
+def test_the_team_list_holds_no_other_teams_gap(client: TestClient, session: Session) -> None:
+    gap(session, "gap_ours")
+    gap(session, "gap_theirs", meeting_id=FOREIGN_MEETING)
+
+    assert [row["gap_id"] for row in _team_gaps(client)] == ["gap_ours"]
+
+
+def test_the_team_list_carries_no_people_and_no_topics(
+    client: TestClient, session: Session
+) -> None:
+    """A list across every meeting is where reading silence along a person would
+    be easiest (privacy.md section 3); a reader who wants the why opens the
+    meeting."""
+    topic_id = topic(session, "top_1")
+    spoke_on(session, topic_id, participant(session, "par_01"), spoke=False)
+    gap(session, "gap_1", related=(topic_id,))
+
+    (row,) = _team_gaps(client)
+
+    assert not {"participation", "related_topic_ids", "silent", "spoke"} & set(row)
+    assert "par_01" not in json.dumps(row)
+
+
+def test_another_team_is_indistinguishable_from_one_that_does_not_exist(
+    client: TestClient, session: Session
+) -> None:
+    gap(session, "gap_theirs", meeting_id=FOREIGN_MEETING)
+
+    foreign = client.get(f"{PREFIX}/gaps", params={"team_id": OTHER_TEAM})
+    unknown = client.get(f"{PREFIX}/gaps", params={"team_id": "team_no_such_thing"})
+
+    assert foreign.status_code == unknown.status_code == 404
+    assert foreign.json()["error"]["code"] == unknown.json()["error"]["code"]
+    assert "gap_theirs" not in foreign.text
+
+
+def test_the_team_list_needs_a_caller(anonymous: TestClient) -> None:
+    assert anonymous.get(f"{PREFIX}/gaps", params={"team_id": TEAM}).status_code == 403
+
+
+def test_the_team_list_is_capped(client: TestClient, session: Session) -> None:
+    for n in range(service.TEAM_GAPS_LIMIT + 1):
+        session.add(
+            GapGap(
+                id=f"gap_{n:04d}",
+                meeting_id=MEETING,
+                category="technical_spec",
+                title="성능 요구사항이 정해지지 않았습니다",
+                severity="high",
+                risk_score=0.9,
+            )
+        )
+    session.flush()
+
+    assert len(_team_gaps(client)) == service.TEAM_GAPS_LIMIT
