@@ -16,7 +16,7 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -45,6 +45,8 @@ from .schemas import (
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
+    DueReminderSetting,
+    DueReminderSettingIn,
     JiraProjectIssues,
     MeetingNoteUpdate,
     MeetingReview,
@@ -233,6 +235,12 @@ def update_action_item(
     # send. The same rule a deleted speech and a corrected line use (#657).
     if service.copies_follow(session, item):
         background.add_task(tasks.sync_after_confirmation, item.id)
+    else:
+        # No copy of its own to follow, but the project minutes of its meeting
+        # may carry it: an item moved back to 확인 필요, or edited, whose only
+        # copy outside is those minutes (#787 review). ``sync_after_confirmation``
+        # ends with the same refresh.
+        background.add_task(tasks.refresh_project_minutes, item.meeting_id)
     return response
 
 
@@ -335,8 +343,10 @@ def review_decision(
 
     Confirming it sends its Notion page (#30); rewording an already-confirmed
     decision updates the same page instead of leaving it stale; taking the
-    confirmation back takes the page out of Notion (#669)."""
+    confirmation back takes the page out of Notion (#669), and the decision
+    out of the project minutes that carried it."""
     decision = service.readable_decision(session, decision_id, reader)
+    meeting_id = decision.meeting_id
     # Built before the commit, for the reason ``create_action_item`` gives.
     response = service.review_decision(session, decision, payload)
     session.commit()
@@ -346,6 +356,11 @@ def review_decision(
     # it too while it has a page: the same task retires that page (#669).
     if response.status == "confirmed" or service.decision_has_page(session, decision_id):
         background.add_task(tasks.sync_decision_after_confirmation, decision_id)
+    else:
+        # No page to retire, but the meeting's project minutes may have gone to
+        # Slack or Jira alone and still state it (#787 review). The task above
+        # ends with the same refresh.
+        background.add_task(tasks.refresh_project_minutes, meeting_id)
     return response
 
 
@@ -515,14 +530,20 @@ def delete_decision(
 
     The model's would come back on the next run, so rejecting is what keeps it
     gone. See ``service.delete_decision``. Either way a page its confirmation
-    made is taken out of Notion after the response (#669).
+    made is taken out of Notion after the response (#669), and the project
+    minutes that carried it are rewritten without it.
     """
     decision = service.readable_decision(session, decision_id, reader)
     had_page = service.decision_has_page(session, decision_id)
+    # Taken before the row goes: a decision a person added is really deleted,
+    # and nothing could say afterwards which meeting's minutes to rewrite
+    # (#787 review).
+    meeting_id = decision.meeting_id
     service.delete_decision(session, decision)
     session.commit()
     if had_page:
         background.add_task(tasks.sync_decision_after_confirmation, decision_id)
+    background.add_task(tasks.refresh_project_minutes, meeting_id)
 
 
 def _member_team(
@@ -567,6 +588,25 @@ def answer_confirmation(
     if payload.answer == "commitment":
         background.add_task(tasks.summarise_confirmed_draft.delay, utterance_id)
     return response
+
+
+@router.get("/me/due-reminders", response_model=DueReminderSetting)
+def my_due_reminders(session: SessionDep, reader: CurrentUser) -> DueReminderSetting:
+    """Whether the caller gets due-date reminders by Slack DM. Their own only:
+    there is no parameter naming anybody else."""
+    return DueReminderSetting(
+        on=service.due_reminders_on(session, reader.id), sent_here=get_settings().due_reminders
+    )
+
+
+@router.put("/me/due-reminders", response_model=DueReminderSetting)
+def set_my_due_reminders(
+    payload: DueReminderSettingIn, session: SessionDep, reader: CurrentUser
+) -> DueReminderSetting:
+    """Turn the caller's own due-date reminders on or off (review of #751)."""
+    on = service.set_due_reminders(session, reader.id, on=payload.on, now=datetime.now(tz=UTC))
+    session.commit()
+    return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
 
 
 @router.post("/jira/backfill")

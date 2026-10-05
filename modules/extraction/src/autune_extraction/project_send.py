@@ -38,6 +38,14 @@ message deleted, the Jira task emptied and closed. A deleted meeting or project
 queues its copies in ``ext_project_send_cleanup`` for the same retraction
 (``tasks.drain_project_send_cleanup``).
 
+**A refresh can be repeated, and is until it has worked.** Each copy's row
+keeps a digest of the minutes it last received, and ``refresh`` leaves a copy
+alone that already says what is confirmed now: it costs nothing to refresh on
+every change, and a second try rewrites only what the first one missed. A
+refresh that leaves a copy behind -- a tool down, a token expired, not
+connected -- records the meeting in ``ext_project_refresh_owed``, and
+``tasks.retry_project_minutes_refresh`` tries again.
+
 **What leaves** is the same text the item and decision syncs already send to
 the same tools -- descriptions, statements, the assignee's name and the due
 date -- plus the team's and the project's names. Every request goes through
@@ -67,6 +75,7 @@ from .models import (
     ExtDecision,
     ExtMinutesEvent,
     ExtProject,
+    ExtProjectRefreshOwed,
     ExtProjectSend,
     ExtProjectSendCleanup,
 )
@@ -116,6 +125,12 @@ class Minutes:
         return "\n".join(parts).rstrip()
 
 
+def _digest(m: Minutes) -> str:
+    """What ``ExtProjectSend.content_digest`` holds for a copy that received
+    ``m``: a hash of everything the copy shows, not reversible."""
+    return service.source_digest([m.text])
+
+
 def _fit(text: str, budget: int = REQUEST_BUDGET) -> str:
     """``text`` cut at a line so it fits one request, saying how much was left
     out. Nothing is added but a count."""
@@ -139,7 +154,8 @@ class Sent:
     target: str
     outcome: str
     """``created``, ``updated``, ``retracted``, ``not_connected``, ``no_date``
-    (a calendar event for a meeting with no recorded day) or ``failed``."""
+    (a calendar event for a meeting with no recorded day) or ``failed``;
+    from ``refresh`` also ``unchanged``, a copy that already says the minutes."""
 
 
 @dataclass
@@ -274,11 +290,14 @@ def _create_notion_page(notion: Any, m: Minutes, meeting_id: str, database_id: s
     try:
         for run in rest:
             notion.request("PATCH", f"/blocks/{page_id}/children", json={"children": run})
-    except Exception:
+    except Exception as failed:
         try:
             _retract_notion(notion, page_id)
-        except Exception as exc:  # noqa: BLE001 -- the first error is the one to raise
+        except Exception as exc:  # noqa: BLE001 -- owed, not lost
+            # Half a page is live and no row will ever name it: its address
+            # goes up with the error so the caller can queue the retraction.
             log.warning("extraction_project_partial_page_kept", error=type(exc).__name__)
+            raise _PartialPageError(page_id) from failed
         raise
     return page_id
 
@@ -402,6 +421,14 @@ class _OldCopyOwedError(Exception):
         self.page_id = page_id
 
 
+class _PartialPageError(Exception):
+    """A new Notion page got only part of its body and could not be retracted."""
+
+    def __init__(self, page_id: str) -> None:
+        super().__init__(page_id)
+        self.page_id = page_id
+
+
 def _event_body(m: Minutes) -> dict[str, Any]:
     """An all-day event on the meeting's day that leaves the day free:
     ``transparency: transparent`` -- minutes are a note, not a commitment, and
@@ -484,31 +511,38 @@ def _send_one(session: Session, meeting_id: str, m: Minutes, target: str, client
     The row is claimed before anything is sent -- ``INSERT ... ON CONFLICT DO
     NOTHING`` and then a locked read -- so a second person sending at the same
     moment waits for the first and updates the copy the first one made,
-    instead of making another. A failure rolls back this copy's row only."""
+    instead of making another. A failure rolls back this copy's row only, and
+    with it the digest: the copy still counts as not saying these minutes."""
     if target == "calendar":
         return _to_calendar(session, meeting_id, m, clients)
     if not _connected(target, m, clients):
         return "not_connected"
     key = {"meeting_id": meeting_id, "project_id": m.project_id, "target": target}
-    with session.begin_nested():
-        session.execute(
-            service._insert_if_absent_into(session, ExtProjectSend)
-            .values(**key, external_id="")
-            .on_conflict_do_nothing(index_elements=["meeting_id", "project_id", "target"])
-        )
-        row = session.execute(
-            select(ExtProjectSend)
-            .filter_by(**key)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        ).scalar_one()
-        old = row.external_id
-        try:
-            row.external_id = _write(m, meeting_id, target, old, clients)
-        except _OldCopyOwedError as owed:
-            row.external_id = owed.page_id
-            _queue(session, meeting_team(session, meeting_id), [(target, old)])
-        session.flush()
+    try:
+        with session.begin_nested():
+            session.execute(
+                service._insert_if_absent_into(session, ExtProjectSend)
+                .values(**key, external_id="")
+                .on_conflict_do_nothing(index_elements=["meeting_id", "project_id", "target"])
+            )
+            row = session.execute(
+                select(ExtProjectSend)
+                .filter_by(**key)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).scalar_one()
+            old = row.external_id
+            try:
+                row.external_id = _write(m, meeting_id, target, old, clients)
+            except _OldCopyOwedError as owed:
+                row.external_id = owed.page_id
+                _queue(session, meeting_team(session, meeting_id), [(target, old)])
+            row.content_digest = _digest(m)
+            session.flush()
+    except _PartialPageError as kept:
+        # Outside the savepoint that just rolled back: this must be recorded.
+        _queue(session, meeting_team(session, meeting_id), [(target, kept.page_id)])
+        raise
     return "updated" if old else "created"
 
 
@@ -623,13 +657,34 @@ def _retract_row(session: Session, row: ExtProjectSend, clients: Clients) -> str
 def _emptied(
     session: Session, meeting_id: str, kept: set[str], targets: Sequence[str]
 ) -> list[ExtProjectSend]:
-    """The meeting's copies whose project has nothing confirmed any more."""
+    """The meeting's copies whose project has nothing confirmed any more, in
+    the order ``refresh`` takes them (``_in_send_order``)."""
     query = select(ExtProjectSend).where(
         ExtProjectSend.meeting_id == meeting_id, ExtProjectSend.target.in_(targets)
     )
     if kept:
         query = query.where(ExtProjectSend.project_id.not_in(kept))
-    return list(session.scalars(query))
+    return _in_send_order(session.scalars(query), [])
+
+
+def _in_send_order(
+    rows: Iterable[ExtProjectSend], projects: Sequence[Minutes]
+) -> list[ExtProjectSend]:
+    """``rows`` in the order ``send`` locks them: the projects that have
+    minutes in ``minutes``' order, each tool in ``TARGETS``' order, then the
+    emptied ones by project id. A row's lock is held to the end of the
+    transaction, so a send and a refresh of one meeting that took its rows in
+    different orders could each wait on the other (#787 review)."""
+    place = {m.project_id: n for n, m in enumerate(projects)}
+    return sorted(
+        rows,
+        key=lambda r: (
+            r.project_id not in place,
+            place.get(r.project_id, 0),
+            r.project_id,
+            TARGETS.index(r.target) if r.target in TARGETS else len(TARGETS),
+        ),
+    )
 
 
 def send(
@@ -775,7 +830,12 @@ def refresh(
 
     The minutes events on people's own calendars too, each through its owner's
     grant (``calendar_for``): nobody else can touch another person's calendar,
-    so this is the only way an event there loses a deleted sentence."""
+    so this is the only way an event there loses a deleted sentence.
+
+    A copy that already says the minutes as they are now is left alone and
+    reported ``unchanged`` (``ExtProjectSend.content_digest``): nothing is
+    asked of its tool. So this can run after every change, and again after a
+    failure, without a new Notion page each time."""
     existing = list(
         session.scalars(select(ExtProjectSend).where(ExtProjectSend.meeting_id == meeting_id))
     )
@@ -786,10 +846,12 @@ def refresh(
     by_id = {m.project_id: m for m in projects}
     names = _names(session, meeting_id)
     out: list[Sent] = []
-    for row in existing:
+    for row in _in_send_order(existing, projects):
         m = by_id.get(row.project_id)
         project = (row.project_id, names.get(row.project_id, ""))
-        if m is None:
+        if m is not None and row.external_id and row.content_digest == _digest(m):
+            out.append(Sent(project[0], project[1], row.target, "unchanged"))
+        elif m is None:
             out.append(
                 _try(
                     session,
@@ -842,3 +904,31 @@ def _refresh_event(
     return _to_calendar(
         session, meeting_id, m, Clients(calendar=(calendar, calendar_id, event.user_id))
     )
+
+
+def in_line(sent: Iterable[Sent]) -> bool:
+    """Whether a refresh left no copy behind. ``not_connected`` counts as left
+    behind: the copy is still out there saying what it said."""
+    return all(s.outcome not in ("failed", "not_connected") for s in sent)
+
+
+def owe_refresh(session: Session, meeting_ids: Iterable[str]) -> list[str]:
+    """Record that these meetings' copies still have to be refreshed
+    (``ext_project_refresh_owed``). Safe to repeat: a meeting already owed
+    keeps its row and its count. Returns the ids, sorted."""
+    ids = sorted(set(meeting_ids))
+    if ids:
+        session.execute(
+            service._insert_if_absent_into(session, ExtProjectRefreshOwed)
+            .values([{"meeting_id": meeting_id} for meeting_id in ids])
+            .on_conflict_do_nothing(index_elements=["meeting_id"])
+        )
+    return ids
+
+
+def settle_refresh(session: Session, meeting_id: str) -> None:
+    """The meeting's copies are in line: nothing is owed any more."""
+    owed = session.get(ExtProjectRefreshOwed, meeting_id)
+    if owed is not None:
+        session.delete(owed)
+        session.flush()

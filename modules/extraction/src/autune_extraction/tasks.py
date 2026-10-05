@@ -43,6 +43,7 @@ from autune_core import (
     users_with_integration,
 )
 from autune_core.deletion import on_meeting_deleted, on_speech_deleted, on_user_deleted
+from autune_core.integrations_config import IntegrationConfig
 from autune_core.jira_connection import JiraAccess
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_core.settings import get_settings as get_core_settings
@@ -82,6 +83,7 @@ from .models import (
     ExtExternalCleanup,
     ExtExternalRef,
     ExtMinutesEvent,
+    ExtProjectRefreshOwed,
     ExtProjectSendCleanup,
 )
 from .pipeline.base import give_roster
@@ -153,8 +155,9 @@ def on_transcript_ready(payload: dict) -> None:
 
 def _follow_corrections(corrections: service.SourceCorrections) -> None:
     """Queue the outside copies of corrected rows that have them (#586, #657):
-    Notion, Jira and the calendar for an item, Notion for a decision -- and
-    rewrite the project minutes that carried them. A failure to queue
+    Notion, Jira and the calendar for an item, Notion for a decision. The
+    project minutes that carried them are rewritten by the run itself, once,
+    at its end (``_extract``). A failure to queue
     is logged: the rows are already right, and the next edit sends them."""
     try:
         for action_item_id in corrections.changed_items:
@@ -163,7 +166,6 @@ def _follow_corrections(corrections: service.SourceCorrections) -> None:
             sync_decision.delay(decision_id)
     except Exception as exc:  # noqa: BLE001 -- the correction itself is committed
         log.warning("extraction_corrections_not_queued", error=type(exc).__name__)
-    _refresh_minutes_for(corrections.changed_items, corrections.changed_decisions)
     if corrections.changed_items or corrections.changed_decisions or corrections.flagged:
         log.info(
             "extraction_sources_corrected",
@@ -277,6 +279,12 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # Step 8, after the writes have committed. The payload is never logged:
     # decision statements and item descriptions are meeting content.
     publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    # The project minutes that already went out, brought in line with what
+    # this run left confirmed: a corrected line, and also a confirmed decision
+    # the rebuild no longer has, which no correction names (#787 review). A
+    # meeting that sent nothing costs one query; a copy that already says the
+    # minutes is not written to.
+    refresh_project_minutes(meeting_id)
 
 
 def _project_clients(
@@ -351,34 +359,123 @@ def send_project_minutes(
         _close(clients)
 
 
-def refresh_project_minutes(meeting_id: str) -> None:
+def refresh_project_minutes(meeting_id: str) -> bool:
     """The copies of a meeting's project minutes, brought in line with what is
     confirmed now (``project_send.refresh``): after speech was deleted, a
     decision taken back, an item deleted or edited, a line masked again --
     in the team's tools and on the senders' own calendars.
 
     Called directly, in whatever process made the change -- the API has no
-    Celery app to queue on -- and best effort: the change is committed
+    Celery app to queue on -- and never raising: the change is committed
     already and must not fail on a tool. A meeting that sent nothing costs one
-    query. Ids and counts only in the log."""
+    query. Ids and counts only in the log.
+
+    Not best effort, though (#787 review). When any copy is left behind -- its
+    tool failed, or is not connected -- or the refresh itself broke, the
+    meeting is recorded in ``ext_project_refresh_owed`` and
+    ``retry_project_minutes_refresh`` comes back to it; when every copy is in
+    line the record goes. Returns whether every copy is in line now."""
     try:
         with session_scope() as session:
             targets = project_send.sent_targets(session, meeting_id)
             team_id = project_send.meeting_team(session, meeting_id)
             if team_id is None or not (targets or project_send.has_events(session, meeting_id)):
-                return
+                project_send.settle_refresh(session, meeting_id)
+                return True
             clients = _project_clients(session, team_id, targets)
             try:
                 with _calendars(session) as calendar_for:
-                    project_send.refresh(session, meeting_id, clients, _quiet(calendar_for))
+                    sent = project_send.refresh(session, meeting_id, clients, _quiet(calendar_for))
             finally:
                 _close(clients)
+            if project_send.in_line(sent):
+                project_send.settle_refresh(session, meeting_id)
+                return True
+            project_send.owe_refresh(session, [meeting_id])
+            log.warning(
+                "extraction_project_minutes_refresh_owed",
+                meeting_id=meeting_id,
+                behind=sum(1 for s in sent if s.outcome in ("failed", "not_connected")),
+            )
+            return False
     except Exception as exc:  # noqa: BLE001 -- the change itself is committed
         log.warning(
             "extraction_project_minutes_refresh_failed",
             meeting_id=meeting_id,
             error=type(exc).__name__,
         )
+    # The refresh broke before it could say what it left behind, and its
+    # session rolled back with it: the record is made in one of its own.
+    try:
+        with session_scope() as session:
+            if project_send.meeting_team(session, meeting_id) is not None:
+                project_send.owe_refresh(session, [meeting_id])
+    except Exception as exc:  # noqa: BLE001 -- nothing left to fall back on but the log
+        log.error(
+            "extraction_project_minutes_refresh_not_recorded",
+            meeting_id=meeting_id,
+            error=type(exc).__name__,
+        )
+    return False
+
+
+@shared_task(name="autune.extraction.refresh_project_minutes", acks_late=True)
+def refresh_project_minutes_queued(meeting_id: str) -> bool:
+    """``refresh_project_minutes`` on a worker, for a caller that must not wait
+    on Notion, Slack and Jira -- a person deleting their own speech
+    (``forget_deleted_speech``)."""
+    return refresh_project_minutes(meeting_id)
+
+
+PROJECT_REFRESH_BATCH = 50
+"""How many owed meetings one ``retry_project_minutes_refresh`` run takes."""
+
+PROJECT_REFRESH_MAX_ATTEMPTS = 144
+"""Retries before an owed refresh is given up on: a day of them, ten minutes
+apart. Longer than ``CLEANUP_MAX_ATTEMPTS`` on purpose. What is owed here can be
+a sentence its speaker deleted, a tool is more often down for an afternoon
+than for good, and a retry asks nothing of the copies already in line. Giving
+up loses only the retrying: the copy's digest still says it is behind, so the
+next change to the meeting rewrites it."""
+
+
+@shared_task(name="autune.extraction.periodic.retry_project_minutes_refresh")
+@periodic(timedelta(minutes=10))
+def retry_project_minutes_refresh() -> int:
+    """Refresh again the project minutes a refresh left behind (#787 review).
+    Returns how many meetings are in line now.
+
+    One meeting at a time, each in ``refresh_project_minutes``' own
+    transaction. In line: its record is gone. Still behind: the count goes up,
+    and at ``PROJECT_REFRESH_MAX_ATTEMPTS`` it is given up on, said loudly.
+    Ids and counts only."""
+    with session_scope() as session:
+        owed = list(
+            session.scalars(
+                select(ExtProjectRefreshOwed.meeting_id)
+                .order_by(ExtProjectRefreshOwed.created_at, ExtProjectRefreshOwed.meeting_id)
+                .limit(PROJECT_REFRESH_BATCH)
+            )
+        )
+    done = 0
+    for meeting_id in owed:
+        if refresh_project_minutes(meeting_id):
+            done += 1
+            continue
+        with session_scope() as session:
+            row = session.get(ExtProjectRefreshOwed, meeting_id)
+            if row is None:
+                continue
+            row.attempts += 1
+            if row.attempts >= PROJECT_REFRESH_MAX_ATTEMPTS:
+                log.error(
+                    "extraction_project_minutes_refresh_given_up",
+                    meeting_id=meeting_id,
+                    attempts=row.attempts,
+                )
+                session.delete(row)
+    log.info("extraction_project_minutes_refresh_retried", owed=len(owed), in_line=done)
+    return done
 
 
 def _quiet(calendar_for: calendar_sync.CalendarFor) -> project_send.CalendarFor:
@@ -1465,7 +1562,7 @@ def trash_notion_page(action_item_id: str) -> None:
                 return
             client = NotionClient(config.secret)
             try:
-                client.trash_page(owed[1])
+                service.trash_item_page(client, owed[1], config.config.get("action_properties"))
             finally:
                 client.close()
             log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
@@ -1776,7 +1873,7 @@ def drain_external_cleanup() -> int:
     done = 0
     tried = 0
     jira_for: dict[str, JiraAccess | None] = {}
-    notion_for: dict[str, str | None] = {}
+    notion_for: dict[str, IntegrationConfig | None] = {}
     with session_scope() as session:
         # A team whose connection cannot be read this run -- a token refresh
         # that timed out or got a 5xx, a secret that would not decrypt -- is
@@ -1785,14 +1882,14 @@ def drain_external_cleanup() -> int:
         # already cleaned: closed issues noted twice next run, counted
         # attempts lost, every team behind it kept waiting (PARK, review of
         # #764).
-        def notion_token(team_id: str) -> str | None:
+        def notion_config(team_id: str) -> IntegrationConfig | None:
             if team_id not in notion_for:
                 try:
                     config = load_integration(session, team_id, "notion")
                 except Exception as exc:  # noqa: BLE001 -- that team only, this run only
                     _connection_unread(team_id, "notion", exc)
                     config = None
-                notion_for[team_id] = config.secret if config is not None else None
+                notion_for[team_id] = config if config is not None and config.secret else None
             return notion_for[team_id]
 
         def jira(team_id: str) -> JiraAccess | None:
@@ -1828,18 +1925,18 @@ def drain_external_cleanup() -> int:
             for row in rows:
                 if tried >= CLEANUP_BATCH:
                     break
-                token: str | None = None
+                notion: IntegrationConfig | None = None
                 access: JiraAccess | None = None
                 if row.system == "notion":
-                    token = notion_token(row.team_id)
-                    if not token:
+                    notion = notion_config(row.team_id)
+                    if notion is None:
                         continue
                 else:
                     access = jira(row.team_id)
                     if access is None:
                         continue
                 tried += 1
-                done += _clean_up_one(session, row, token, access)
+                done += _clean_up_one(session, row, notion, access)
     log.info("extraction_external_cleanup_drained", tried=tried, done=done)
     return done
 
@@ -1856,7 +1953,7 @@ def _connection_unread(team_id: str, system: str, exc: Exception) -> None:
 def _clean_up_one(
     session: Session,
     row: ExtExternalCleanup,
-    notion_token: str | None,
+    notion_config: IntegrationConfig | None,
     access: JiraAccess | None,
 ) -> int:
     """One owed page or issue, with the team's connection already in hand; 1
@@ -1864,10 +1961,13 @@ def _clean_up_one(
     ids = {"team_id": row.team_id, "system": row.system, "external_id": row.external_id}
     try:
         if row.system == "notion":
-            assert notion_token is not None
-            notion = NotionClient(notion_token)
+            assert notion_config is not None and notion_config.secret
+            notion = NotionClient(notion_config.secret)
             try:
-                notion.trash_page(row.external_id)
+                # Retitled first, as at deletion (#768).
+                service.trash_item_page(
+                    notion, row.external_id, notion_config.config.get("action_properties")
+                )
             finally:
                 notion.close()
         else:
@@ -2008,7 +2108,7 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """Before a person's own speech is deleted (#582, #587): the items and
     decisions drawn from it keep the work and drop the words
     (``service.forget_speech``), the project minutes that carried them are
-    rewritten (``refresh_project_minutes``), and their copies in Notion, Jira
+    owed a rewrite and queued for it (``refresh_project_minutes``), and their copies in Notion, Jira
     and the calendar are queued to follow -- a confirmed row's, and those of an item
     moved back to 확인 필요 that still has them (#657).
 
@@ -2023,8 +2123,17 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """
     with session_scope() as session:
         done = service.forget_speech(session, utterance_ids)
-    _refresh_minutes_for(done.changed_items, done.changed_decisions)
+        # Owed from the same commit that drops the words: whatever happens to
+        # the queue or the tools after this, the retry knows (#787 review).
+        minutes_owed = project_send.owe_refresh(
+            session,
+            project_send.meetings_with_sends(session, done.changed_items, done.changed_decisions),
+        )
     try:
+        # Queued, not run here: the person deleting their speech does not wait
+        # on three tools, and a refresh that cannot be queued is still owed.
+        for meeting_id in minutes_owed:
+            refresh_project_minutes_queued.delay(meeting_id)
         for action_item_id in done.changed_items:
             sync_item_copies.delay(action_item_id)
         for decision_id in done.changed_decisions:
