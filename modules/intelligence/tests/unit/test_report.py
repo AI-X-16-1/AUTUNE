@@ -96,6 +96,30 @@ def test_body_includes_action_item_progress_when_given() -> None:
     assert "9/14 09:00 기준" in body  # Korean time
 
 
+def test_body_blames_the_floor_only_below_three_meetings() -> None:
+    """Three meetings or more without a rate means nothing was confirmed (#809 review)."""
+
+    def body(meetings: int) -> str:
+        return service._report_body_markdown(
+            period_start=date(2026, 9, 7),
+            period_end=date(2026, 9, 14),
+            meeting_count=2,
+            average_value=0.9,
+            grade_distribution={"A": 2},
+            gap_distribution={},
+            partial_meeting_count=0,
+            progress=service.ActionProgressTotals(
+                completion_meetings=meetings,
+                overdue=0,
+                as_of=datetime(2026, 9, 14, 0, 0, tzinfo=UTC),
+            ),
+        )
+
+    assert "3건 미만" in body(2)
+    assert "3건 미만" not in body(4)
+    assert "확정된 액션 아이템이 없습니다" in body(4)
+
+
 def test_body_omits_the_completion_line_when_not_given() -> None:
     body = service._report_body_markdown(
         period_start=date(2026, 9, 7),

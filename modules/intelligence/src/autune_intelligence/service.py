@@ -771,7 +771,7 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
     counted = progress.as_of.astimezone(_KST)
     if progress.completion_rate is not None:
         lines = [f"액션 아이템 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
-    elif progress.completion_meetings:
+    elif 0 < (progress.completion_meetings or 0) < ACTION_PROGRESS_MIN_MEETINGS:
         lines = ["최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
     else:
         lines = ["최근 4주 회의에서 확정된 액션 아이템이 없습니다."]
