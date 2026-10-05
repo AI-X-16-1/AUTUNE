@@ -52,6 +52,20 @@ export const getTranscript = (meetingId: string) =>
 export const getMeeting = (meetingId: string) =>
   api.audio<MeetingDetail>(`/meetings/${meetingId}`);
 
+/** S12 "처리 중단". The meeting is `failed` on return and takes a new upload. */
+export const cancelTranscription = (meetingId: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${meetingId}/transcription/cancel`,
+    { method: "POST" },
+  );
+
+/** S12 "다시 시작": run a stalled meeting again from the upload still on the server. */
+export const restartTranscription = (meetingId: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${meetingId}/transcription/restart`,
+    { method: "POST" },
+  );
+
 /**
  * Every meeting this person may see, newest first. The home screen's list (S05).
  *

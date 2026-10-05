@@ -1160,14 +1160,9 @@ def _rethread(
             version.change_type = change.value
             version.nli_label = nli_label
             version.confidence = _clamp(score)
-            present = _confirmed_attendance(session, version.meeting_id)
-            if present is None:
-                version.key_stakeholders_absent = []
-            else:
-                known = _meeting_user_ids(session, *prior_meeting_ids)
-                version.key_stakeholders_absent = sorted(
-                    _current_team_member_ids(session, thread.team_id, known - present)
-                )
+            version.key_stakeholders_absent = _absent_for(
+                session, thread.team_id, version.meeting_id, prior_meeting_ids
+            )
         version.nli_version = model_version
         prior_meeting_ids.append(version.meeting_id)
 
@@ -1256,6 +1251,102 @@ def _confirmed_attendance(session: Session, meeting_id: str) -> set[str] | None:
     if not user_ids or any(user_id is None for user_id in user_ids):
         return None
     return {user_id for user_id in user_ids if user_id is not None}
+
+
+def _absent_for(
+    session: Session, team_id: str, meeting_id: str, prior_meeting_ids: Sequence[str]
+) -> list[str]:
+    """Who the thread knew from ``prior_meeting_ids`` and ``meeting_id`` lacks.
+
+    Empty while ``meeting_id``'s speakers are not all named
+    (``_confirmed_attendance``), and never more than the thread team's *current*
+    members (``_current_team_member_ids``). Sorted, so two calls over the same
+    rows agree and a refresh can tell a real change from a reordering.
+    """
+    present = _confirmed_attendance(session, meeting_id)
+    if present is None:
+        return []
+    known = _meeting_user_ids(session, *prior_meeting_ids)
+    return sorted(_current_team_member_ids(session, team_id, known - present))
+
+
+ABSENCE_REFRESH_WINDOW = timedelta(days=30)
+"""How far back ``refresh_absence`` looks, by the version's meeting time. Naming a
+speaker is something a person does soon after a meeting; a thread older than this
+is left as ``_rethread`` last wrote it."""
+
+ABSENCE_REFRESH_LIMIT = 200
+"""Versions looked at per run, newest meeting first, so one run is bounded. A team
+with more than this many changed decisions in the window leaves the oldest
+unrefreshed until the newer ones age out."""
+
+
+def refresh_absence(session: Session, *, now: datetime | None = None) -> int:
+    """Recompute ``key_stakeholders_absent`` for versions whose attendance was
+    named after the lineage was built (#360). Returns how many versions changed.
+
+    ``_rethread`` records nobody absent while a meeting has an unnamed voice
+    (``_confirmed_attendance``), which is the state of every meeting when its
+    lineage is built: module A names a speaker only when a person confirms one
+    in the app (#370). Nothing announces that, and #360 settled on consumers
+    reading it back rather than on a new event, so this runs on a timer and
+    reads ``participants`` again. It computes only the absence (``_absent_for``,
+    the same call ``_rethread`` makes): no NLI, and no change to ``change_type``
+    or to anything else on the row.
+
+    **Nothing is sent.** Not to Slack, and not as a second ``ContextLinks``:
+    ``republish`` would reopen module E's aggregation for one old meeting days
+    later, for a field E parses and does not use (the same reasoning as #536's
+    for module B's assignees). The corrected value is what the next publish,
+    reprocess or ``rederive`` carries, and what ``collect_drift_notices`` reads
+    if a catch-up drift warning is still owed. A DM telling someone a decision
+    changed without them, days after the meeting, is a product decision this
+    does not make.
+
+    Follows a re-identification too (A can move a speaker label from one person
+    to another), because it recomputes from ``participants`` each run rather
+    than writing once. Idempotent and safe to overlap: two runs over the same
+    rows compute the same list. Absent user ids are personal and never leave
+    this function in a log line; the count is all it returns.
+    """
+    moment = now or datetime.now(UTC)
+    candidates = session.execute(
+        select(CtxDecisionVersion.id, CtxDecisionVersion.thread_id)
+        .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+        .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+        .where(
+            CtxDecisionVersion.change_type != ChangeType.NEW.value,
+            _meeting_time() >= moment - ABSENCE_REFRESH_WINDOW,
+            *visible_meeting_clauses(CtxDecision.team_id),
+        )
+        .order_by(_meeting_time().desc(), CtxDecisionVersion.id)
+        .limit(ABSENCE_REFRESH_LIMIT)
+    ).all()
+    wanted = {version_id for version_id, _thread in candidates}
+    changed = 0
+    for thread_id in dict.fromkeys(thread for _version, thread in candidates):
+        thread = session.get(CtxDecision, thread_id)
+        if thread is None:
+            continue
+        versions = session.scalars(
+            select(CtxDecisionVersion)
+            .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+            .where(
+                CtxDecisionVersion.thread_id == thread_id,
+                *visible_meeting_clauses(thread.team_id),
+            )
+            .order_by(_meeting_time(), CtxDecisionVersion.id)
+        ).all()
+        prior_meeting_ids: list[str] = []
+        for version in versions:
+            if version.id in wanted:
+                absent = _absent_for(session, thread.team_id, version.meeting_id, prior_meeting_ids)
+                if absent != version.key_stakeholders_absent:
+                    version.key_stakeholders_absent = absent
+                    changed += 1
+            prior_meeting_ids.append(version.meeting_id)
+    session.flush()
+    return changed
 
 
 def _current_team_member_ids(session: Session, team_id: str, user_ids: set[str]) -> set[str]:

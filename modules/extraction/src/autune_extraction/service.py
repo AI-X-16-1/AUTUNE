@@ -86,6 +86,7 @@ from .models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtDueReminder,
+    ExtDueReminderOptOut,
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
@@ -3314,6 +3315,8 @@ def due_reminders_to_send(session: Session, *, now: datetime) -> list[DueReminde
             ExtActionItem.due_date >= today - timedelta(days=reminders.OVERDUE_DAYS),
             ExtActionItem.due_date <= today + timedelta(days=1),
             or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+            # Somebody who turned them off is not told (review of #751).
+            ExtActionItem.assignee_id.not_in(select(ExtDueReminderOptOut.user_id)),
         )
         .order_by(ExtActionItem.due_date, ExtActionItem.id)
     ).all()
@@ -3375,6 +3378,7 @@ def send_due_reminder(
         or item.due_date != reminder.due_date
         or item.assignee_id != reminder.assignee_id
         or not _is_team_member(session, user_id=reminder.assignee_id, team_id=reminder.team_id)
+        or not due_reminders_on(session, reminder.assignee_id)
     ):
         return False
     claimed = session.execute(
@@ -3402,6 +3406,31 @@ def send_due_reminder(
         ),
     )
     return True
+
+
+def due_reminders_on(session: Session, user_id: str) -> bool:
+    """Whether this person gets due-date reminders: yes unless they turned them
+    off (``ExtDueReminderOptOut``)."""
+    return session.get(ExtDueReminderOptOut, user_id) is None
+
+
+def set_due_reminders(session: Session, user_id: str, *, on: bool, now: datetime) -> bool:
+    """Turn this person's own reminders on or off; what they are now. Only the
+    caller's own -- the route passes the signed-in person, and there is no way
+    to name another."""
+    if on:
+        session.execute(delete(ExtDueReminderOptOut).where(ExtDueReminderOptOut.user_id == user_id))
+    else:
+        # Insert-if-absent, not get-then-add: two requests at once (two tabs, a
+        # double click) would otherwise both add and the second hit the primary
+        # key (lsh2217, review of #771).
+        session.execute(
+            _insert_if_absent_into(session, ExtDueReminderOptOut)
+            .values(user_id=user_id, created_at=now)
+            .on_conflict_do_nothing(index_elements=["user_id"])
+        )
+    session.flush()
+    return on
 
 
 def settle_refused_due_reminder(session: Session, reminder: DueReminder, *, now: datetime) -> None:
@@ -4191,6 +4220,41 @@ receive pages at all -- merged, every default name came along and Notion refused
 the whole page for the properties that database does not have, so that team got
 none. Raised in review of #294.
 """
+
+
+ITEM_DELETED_TEXT = "삭제된 액션아이템"
+"""What a deleted item's page is retitled to before it goes to Notion's trash
+(#768), as a decision's is (``DECISION_PUT_BACK_TEXT``, #669): the trash keeps
+a page restorable for 30 days, and with this title the item's sentence is not
+what it keeps."""
+
+
+def trash_item_page(
+    notion: NotionPages, page_id: str, property_names: Mapping[str, str] | None
+) -> None:
+    """A deleted item's Notion page, retitled to ``ITEM_DELETED_TEXT`` and then
+    moved to the trash (#768).
+
+    A page Notion refuses to edit -- already archived or deleted by a person --
+    is trashed as it is: ``trash_page`` treats that as done. A team map with no
+    ``title`` names nothing to retitle, so the page goes as it is, said loudly,
+    the rule decisions follow (#679). A transient failure of either call is
+    the caller's: the deleting request owes the page to
+    ``ext_external_cleanup``, and the retry retitles first again. Notion's own
+    page history, on a plan that keeps it, still shows the earlier title
+    (``privacy.md`` section 6)."""
+    names = property_names or NOTION_PROPERTIES
+    if "title" in names:
+        retitled = {
+            names["title"]: {"title": [{"type": "text", "text": {"content": ITEM_DELETED_TEXT}}]}
+        }
+        try:
+            notion.update_page(page_id, retitled)
+        except PermanentIntegrationError:
+            log.info("extraction_notion_item_page_not_retitled", page_id=page_id)
+    else:
+        log.warning("extraction_notion_item_trashed_without_retitle", page_id=page_id)
+    notion.trash_page(page_id)
 
 
 NOTION_STATUS_LABELS: Mapping[str, str] = {
