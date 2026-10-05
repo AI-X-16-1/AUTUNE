@@ -475,10 +475,17 @@ never an undercounted partial and a quiet team's bars never silently span more
 than eight weeks. Bucketing by week is still the frontend's job."""
 
 
-def get_score(session: Session, meeting_id: str) -> IntelScore:
-    """The meeting's quality score, or a 404 that names no meeting content."""
+def get_score(session: Session, meeting_id: str, *, user_id: str | None = None) -> IntelScore:
+    """The meeting's quality score, or a 404 that names no meeting content.
+
+    With ``user_id``, only for a member of the meeting's team: anyone else gets
+    the same 404, so whether the meeting exists does not leak. E's agent tools
+    call it without one; who may run them is the agent layer's to decide.
+    """
     row = session.get(IntelScore, meeting_id)
-    if row is None:
+    if row is None or (
+        user_id is not None and not _is_member(session, user_id=user_id, team_id=row.team_id)
+    ):
         raise NotFoundError("intelligence score", meeting_id)
     return row
 
@@ -1496,7 +1503,7 @@ def _action_progress_totals(session: Session, team_id: str, now: datetime) -> Ac
 # --- the dashboard's meeting-report card (10/2) --------------------------------------
 #
 # A report is meeting text, so these check that the person asking is on the team,
-# unlike the older aggregate routes (#156). Any member may edit a draft until it
+# as every route of this module now does (#814). Any member may edit a draft until it
 # is posted. An edit takes a new ``draft_id``, so an approval given for the
 # model's text can never post it. Nothing is posted from the card: the edit is
 # announced (``autune.intelligence.meeting_report_changed``) and the Report

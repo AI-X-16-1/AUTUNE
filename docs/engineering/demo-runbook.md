@@ -322,7 +322,7 @@ modules:
 | B | `autune.extraction.on_transcript_ready` received, then `autune.extraction.completed` published | `GET /api/extraction/results/$MEETING` |
 | C | `autune.gap.on_transcript_ready` received, then `autune.gap.completed` published | `GET /api/gap/reports/$MEETING`, or open `/meetings/$MEETING/gap` (S20). Once #284 lands the `curl` needs `-H "$AUTH"` |
 | D | `autune.context.on_transcript_ready` … `autune.context.completed` | `GET /api/context/links/$MEETING` |
-| E | records B, C and D and aggregates when all three have reported; the timeout is the fallback if one never does | `GET /api/intelligence/scores/$MEETING` |
+| E | records B, C and D and aggregates when all three have reported; the timeout is the fallback if one never does | `GET /api/intelligence/scores/$MEETING` with `-H "$AUTH"` -- a member of the meeting's team only (#812 follow-up) |
 
 If B's result is empty and the consent step (3, step 4 or 3b.3) was skipped, that is why.
 
