@@ -179,6 +179,9 @@ agreement, and sync the result to Notion and Jira.
    A retire that fails is tried again at the decision's next change, and for
    a decision that is gone only when the Notion backfill runs — on
    connecting Notion or by hand, not on a timer (#669).
+   A deleted action item's page is retitled "삭제된 액션아이템" the same way
+   before it goes to the trash (#768), at deletion and when
+   `drain_external_cleanup` retries it.
    A confirmed item with a due date also goes on its **assignee's own Google
    Calendar** as an all-day event with no attendees, through that person's grant
    in `user_integrations` (#435, #444); team work is not copied into anyone's
@@ -273,11 +276,13 @@ confirmation DM's quotation is #586's second part.
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
 | `ext_calendar_polls` | When each person's calendar was last read back |
 | `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
+| `ext_external_cleanup` | A deleted item's Notion page or Jira issue the deleting request could not trash or close: team, system, page id or issue key, and Jira's site. Ids only. Retried by `drain_external_cleanup` every ten minutes; a team not connected now is kept, a transient failure counted up to five, a refusal or another site's key dropped (#692). `team_id` cascades |
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_sync_failures` | That an item's latest copy to Notion, Jira or a calendar failed: the system, one of four kinds (`privacy`, `reconnect`, `unreachable`, `rejected`) and the time (#680). Never the outside service's message, never what was being sent. Removed by the next copy that goes through; goes with the item |
 | `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
+| `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결). On unless a row says off; the person and when, nothing else. Goes with the account |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |

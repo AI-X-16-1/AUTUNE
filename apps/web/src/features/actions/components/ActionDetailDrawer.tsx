@@ -534,6 +534,7 @@ const FIELD_LABELS: Record<string, string> = {
   assignee_label: "담당자",
   due_date: "기한",
   status: "상태",
+  project_id: "프로젝트",
 };
 
 function historyText(entry: EditHistoryEntry): string {

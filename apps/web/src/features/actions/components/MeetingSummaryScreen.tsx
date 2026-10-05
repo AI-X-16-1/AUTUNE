@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { CopyMinutes } from "./CopyMinutes";
+import { ProjectGroups } from "./ProjectGroups";
 import { getSummary, putSummaryNote } from "../api";
 import { isOverdue } from "../dates";
 import { COLUMNS, COLUMN_LABELS, MAX_NOTE_CHARS } from "../types";
@@ -28,7 +29,9 @@ const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as cons
  * Nothing here was written by a model: the statements and descriptions are the
  * ones the review already shows, and the counts are counts. A prose summary by
  * an LLM is v2 and waits on #392. Pending decisions carry the ochre dot, the
- * spec's mark for something still waiting on a person.
+ * spec's mark for something still waiting on a person. A team that lists
+ * projects also gets the decisions and items grouped by project
+ * (`ProjectGroups`, 2026-10-04) above the plain lists.
  */
 export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
@@ -94,6 +97,14 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
           />
         </dl>
       </section>
+
+      {summary.projects && summary.projects.length > 0 ? (
+        <ProjectGroups
+          meetingId={meetingId}
+          summary={summary}
+          onChange={setSummary}
+        />
+      ) : null}
 
       <section aria-label="결정">
         <Heading>결정</Heading>

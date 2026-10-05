@@ -509,12 +509,24 @@ lineage view (S22), which reads to a user as a bug.
    alone would mark people absent from a meeting they spoke in and send each of
    them a drift DM saying so. The accepted cost is a missed warning: a meeting
    with a guest who never resolves to an account never reports an absence, and
-   a confirmation made later is not picked up until the thread is next
-   re-chained (the re-trigger is #360's question). "Every speaker named" is not
+   a confirmation made later is picked up by `periodic.refresh_absence`
+   (below), not by a new event. "Every speaker named" is not
    a roll call either: module A writes a participant row only for a speaker
    label that spoke, so a stakeholder who attended without speaking has no row
    and is still counted absent — a false DM this rule narrows but does not
    remove.
+   **Refreshing after a speaker is named (#360).** `autune.context.periodic.refresh_absence`
+   runs every ten minutes, takes the changed versions of the last 30 days (at most 200,
+   newest meeting first), and recomputes only this list with the same `_absent_for` that
+   the step above uses: no NLI, no change to `change_type`. It reads `participants` again
+   each run rather than writing once, so it also follows module A moving a speaker label
+   from one person to another. **It sends nothing and publishes nothing**: not a Slack
+   message, and not a second `ContextLinks` (a `republish` would reopen module E's
+   aggregation for one old meeting days later, for a field E parses and does not use,
+   the reasoning of #536). The corrected list is what the next publish, reprocess or
+   `rederive` carries, and what `collect_drift_notices` reads if a catch-up drift warning
+   is still owed. Whether to tell someone, days later, that a decision changed without them
+   is a separate decision. Module B settled on the same shape (`fill_identified_assignees`).
 5. Mark `ctx_meeting_status.lineage_done` (and `extraction_seen`), then call
    `autune.context.publish_if_ready` — or `autune.context.republish` when
    the meeting had already published with its lineage (a rerun of B; see
