@@ -34,7 +34,7 @@ jobs:
       AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
       # Required: the provider key under its shared name, which module B
       # reads when its own is blank (#701). The compose file sets B's
-      # classifier to `llm`, and without a key B refuses to build it -- on
+      # classifier and its resolver to `llm`, and without a key B builds neither -- on
       # the first meeting, after the deploy looked fine. "Check
       # configuration" refuses before that.
       AUTUNE_LLM_API_KEY: ${{ secrets.AUTUNE_LLM_API_KEY }}
@@ -86,7 +86,7 @@ jobs:
           if not defined AUTUNE_SECRET_KEY (echo AUTUNE_SECRET_KEY secret is not set & exit /b 1)
           if not defined DEV_BASIC_AUTH_PASSWORD (echo DEV_BASIC_AUTH_PASSWORD secret is not set & exit /b 1)
           if not defined DEV_PUBLIC_HOST (echo DEV_PUBLIC_HOST repository variable is not set & exit /b 1)
-          if not defined AUTUNE_LLM_API_KEY (echo AUTUNE_LLM_API_KEY secret is not set and the compose file sets module B's classifier to llm & exit /b 1)
+          if not defined AUTUNE_LLM_API_KEY (echo AUTUNE_LLM_API_KEY secret is not set and the compose file sets module B's classifier and resolver to llm & exit /b 1)
           if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID if not defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET (echo AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET secret is not set and its CLIENT_ID is & exit /b 1)
           if defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET if not defined AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID (echo AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID secret is not set and its CLIENT_SECRET is & exit /b 1)
           set NEEDS_KEY=

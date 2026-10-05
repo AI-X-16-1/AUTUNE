@@ -64,7 +64,7 @@ x-python: &python
     AUTUNE_AGENT_LLM_API_KEY: ${AUTUNE_AGENT_LLM_API_KEY:-}
     # The provider key under its shared name. Module B reads it when its own
     # AUTUNE_EXTRACTION_LLM_API_KEY is blank (#701); no other module reads it.
-    # A key selects nothing by itself: the classifier lines below do.
+    # A key selects nothing by itself: the classifier and resolver lines below do.
     AUTUNE_LLM_API_KEY: ${AUTUNE_LLM_API_KEY:-}
     # Module B's classifier is the cloud model on this site (decided by the
     # user, 2026-10-05, for the 10-09 gate and the 10-12 demo; #392): Gemini
@@ -72,26 +72,41 @@ x-python: &python
     # fallback off. The code's defaults are unchanged; this is this deployment
     # only. With `fake` the board showed what a keyword rule made of each line.
     #
-    # WHAT LEAVES THIS SERVER because of it: every utterance of a meeting from
-    # speakers who consented, as module A masked it, with the names on the
-    # team's roster replaced (#411) -- text only, no speaker, id or time. A
+    # Module B's resolver is the cloud model too (decided by the user,
+    # 2026-10-02): it rewrites a commitment or a decision that points at
+    # nothing ("그럴게") into a sentence that says what, from the lines around
+    # it and the lines about the same thing, and records which lines it used.
+    # With `fake` the board showed the utterance as it was said. Its models are
+    # the code's defaults (`resolver_model`, and `resolver_second_model`, asked
+    # once when the first answer fails a check): the blank fallback above is
+    # the classifier's only.
+    #
+    # WHAT LEAVES THIS SERVER because of the classifier: every utterance of a
+    # meeting from speakers who consented, as module A masked it, with the
+    # names on the team's roster replaced (#411) -- text only, no speaker, id
+    # or time. Because of the resolver, some of those lines go a second time:
+    # for each commitment and decision the classifier finds, that utterance and
+    # its neighbours, masked and with the roster's names replaced (#530). A
     # name that is not on the roster goes as it was said. Nothing else of B
-    # calls a provider: the resolver is not set to `llm`, and both NLI lines
-    # stay `fake`.
+    # calls a provider: both NLI lines stay `fake`.
     #
     # A REAL MEETING NEEDS A PAID KEY, and #392 answered. Nothing in the code
     # can tell a real meeting from a dummy one, or a paid key from a free one.
-    # The fourth line is the switch #392 asks for: B refuses to load an `llm`
-    # implementation without it.
+    # AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392 is the switch #392 asks for: B
+    # refuses to load an `llm` implementation without it, classifier or
+    # resolver.
     #
-    # TURNING IT OFF takes two places, in one change: here, put `fake` back and
-    # remove the three lines under it; and in .github/workflows/dev.yml, make
-    # AUTUNE_LLM_API_KEY optional again (the comment above it and its line in
-    # "Check configuration"). Left required, a deploy without the key is
-    # refused although nothing needs it.
+    # TURNING IT OFF takes two places, in one change: here, put `fake` back on
+    # the classifier and remove the four lines under it; and in
+    # .github/workflows/dev.yml, make AUTUNE_LLM_API_KEY optional again (the
+    # comment above it and its line in "Check configuration"). Left required, a
+    # deploy without the key is refused although nothing needs it. Turning off
+    # only the resolver is its one line: the key and the acknowledgement stay,
+    # because the classifier still needs both.
     AUTUNE_EXTRACTION_CLASSIFIER_IMPL: llm
     AUTUNE_EXTRACTION_LLM_MODEL: gemini-3.5-flash-lite
     AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL: ""
+    AUTUNE_EXTRACTION_RESOLVER_IMPL: llm
     AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392: "true"
     # The NLI implementations scripts/up.sh runs without --real-models, for
     # the reason it gives: both NLI checkpoints are a private repo (#172).
