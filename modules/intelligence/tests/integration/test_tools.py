@@ -156,12 +156,16 @@ def test_team_trend_names_both_rates_and_keeps_them_apart(db_session: Session, t
 
     m = _new_meeting(db_session, team)
     _score(db_session, m, team, action_item_completion_rate=0.9)
+    others = [_new_meeting(db_session, team) for _ in range(2)]
     service.store_action_progress(
         db_session,
         TeamActionProgress(
             team_id=team,
             as_of=datetime.now(UTC),
-            meetings=[{"meeting_id": m, "confirmed": 4, "done": 1, "overdue": 2}],
+            meetings=[
+                {"meeting_id": m, "confirmed": 4, "done": 1, "overdue": 2},
+                *({"meeting_id": o, "confirmed": 4, "done": 1, "overdue": 0} for o in others),
+            ],
         ),
     )
 
@@ -179,13 +183,13 @@ def test_team_trend_names_completion_before_any_meeting_is_scored(
     from autune_contracts import TeamActionProgress
     from autune_intelligence import service
 
-    m = _new_meeting(db_session, team)
+    meetings = [_new_meeting(db_session, team) for _ in range(3)]
     service.store_action_progress(
         db_session,
         TeamActionProgress(
             team_id=team,
             as_of=datetime.now(UTC),
-            meetings=[{"meeting_id": m, "confirmed": 2, "done": 1, "overdue": 0}],
+            meetings=[{"meeting_id": m, "confirmed": 2, "done": 1, "overdue": 0} for m in meetings],
         ),
     )
 
