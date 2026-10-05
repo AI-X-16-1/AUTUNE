@@ -871,6 +871,19 @@ class ExtNotificationPause(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtPublicHoliday(Base):
+    """A public holiday in Korea, as Google's public holiday calendar listed it
+    at the last read (``days_off.py``, the user 2026-10-05). No digest goes on
+    one. Dates of public record: nothing here is about a person, a team or a
+    meeting. Replaced whole on every read; ``read_at`` is that read's time,
+    and a table with none newer than ``days_off.FRESH_FOR`` is not used."""
+
+    __tablename__ = "ext_public_holidays"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtDueReminder(Base):
     """That an item's assignee was sent a due-date reminder of one kind for one
     due date (``reminders``). The primary key is the "once": a second run, a

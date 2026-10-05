@@ -194,6 +194,23 @@ class ExtractionSettings(BaseSettings):
     the first run messages people's real Slack accounts.
     """
 
+    public_holiday_calendar: bool = True
+    """``AUTUNE_EXTRACTION_PUBLIC_HOLIDAY_CALENDAR``: whether Korea's public
+    holidays are read from Google's public holiday calendar
+    (``days_off.fetch_public_holidays``). A ``GET`` of a public file with no
+    credentials, made only where a digest is switched on. Off, or failing, the
+    table in code answers instead. On by default: the request carries nothing.
+    """
+
+    leave_from_calendar: bool = False
+    """``AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR``: whether a person with a
+    connected Google Calendar is not sent a digest while that calendar marks
+    them out of office (``days_off.away_now``). Off by default: it is a read
+    of a person's calendar beyond Autune's own events -- out-of-office times
+    only, never stored -- and a deployment turns it on once what it tells
+    people about the calendar connection says so (docs/architecture/privacy.md).
+    """
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 

@@ -437,6 +437,16 @@ class NotificationPause(BaseModel):
     ends_on: date | None = None
 
 
+class NotificationPauseRead(NotificationPause):
+    """The caller's pause as it stands, and what else holds their digests back
+    here. ``calendar_leave`` says whether this deployment also reads
+    out-of-office time from a calendar the person connected
+    (``AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR``), so the screen can say so
+    where it is true and stay silent where it is not."""
+
+    calendar_leave: bool = False
+
+
 class MeetingNoteUpdate(BaseModel):
     """The memo, whole. Blank removes it."""
 

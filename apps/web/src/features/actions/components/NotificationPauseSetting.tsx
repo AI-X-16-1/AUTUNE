@@ -6,6 +6,7 @@ import {
   getNotificationPause,
   setNotificationPause,
   type NotificationPause,
+  type NotificationPauseRead,
 } from "../api";
 
 /**
@@ -14,13 +15,13 @@ import {
  * changes only their own; nobody else's dates are shown here or anywhere.
  */
 export function NotificationPauseSetting() {
-  const [saved, setSaved] = useState<NotificationPause | null>(null);
+  const [saved, setSaved] = useState<NotificationPauseRead | null>(null);
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
 
-  const show = (answer: NotificationPause) => {
+  const show = (answer: NotificationPauseRead) => {
     setSaved(answer);
     setFirst(answer.starts_on ?? "");
     setLast(answer.ends_on ?? "");
@@ -98,6 +99,12 @@ export function NotificationPauseSetting() {
         {saved.starts_on !== null && saved.ends_on !== null
           ? `${saved.starts_on}부터 ${saved.ends_on}까지 보내지 않습니다. 마감 알림은 그대로 갑니다.`
           : "기간을 정하면 그동안 보내지 않습니다. 마감 알림은 그대로 갑니다."}
+      </span>
+      <span className="text-[var(--color-ink-muted)]" style={meta}>
+        공휴일에는 보내지 않습니다.
+        {saved.calendar_leave
+          ? " 연결한 Google 캘린더에 '부재중' 일정이 있는 시간에도 보내지 않습니다. 부재중 일정의 시간만 읽고, 다른 일정은 읽지 않습니다."
+          : ""}
       </span>
       {backwards && (
         <span

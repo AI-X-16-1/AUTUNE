@@ -270,12 +270,17 @@ export interface NotificationPause {
   ends_on: string | null;
 }
 
+/** The pause as it stands, and whether this server also reads out-of-office time from a connected calendar. */
+export interface NotificationPauseRead extends NotificationPause {
+  calendar_leave?: boolean;
+}
+
 export const getNotificationPause = () =>
-  api.extraction<NotificationPause>("/me/notification-pause");
+  api.extraction<NotificationPauseRead>("/me/notification-pause");
 
 /** Only the caller's own: the request names nobody. Both null clears it. */
 export const setNotificationPause = (pause: NotificationPause) =>
-  api.extraction<NotificationPause>("/me/notification-pause", {
+  api.extraction<NotificationPauseRead>("/me/notification-pause", {
     method: "PUT",
     body: JSON.stringify(pause),
   });

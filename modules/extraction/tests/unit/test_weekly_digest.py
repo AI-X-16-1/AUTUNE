@@ -66,6 +66,9 @@ def _defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_settings",
         lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
     )
+    # No public holidays here: the Monday these tests use, 2026-10-05, is one
+    # (the substitute day for 개천절). Holidays are test_days_off.py's.
+    monkeypatch.setattr(service.days_off, "is_public_holiday", lambda *_, **__: False)
 
 
 @pytest.fixture

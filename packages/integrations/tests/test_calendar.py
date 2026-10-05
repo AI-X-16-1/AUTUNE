@@ -280,3 +280,62 @@ def test_the_fake_invites_like_the_client_and_checks_the_rest() -> None:
             "2026-10-06T11:00:00+09:00",
             [],
         )
+
+
+# --- out of office ----------------------------------------------------------------
+
+
+def test_out_of_office_asks_for_that_kind_of_event_and_for_times_only() -> None:
+    """The one read of events Autune did not make is narrowed at Google twice:
+    by kind, and to the times. A title Google sent anyway is not returned."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/calendar/v3/calendars/primary/events"
+        seen.update(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "items": [
+                    {
+                        "summary": "a title Google should not have sent",
+                        "start": {"dateTime": "2026-10-06T09:00:00+09:00"},
+                        "end": {"dateTime": "2026-10-06T18:00:00+09:00"},
+                    },
+                    {"start": {"date": "2026-10-07"}, "end": {"date": "2026-10-09"}},
+                    {
+                        "status": "cancelled",
+                        "start": {"date": "2026-10-10"},
+                        "end": {"date": "2026-10-11"},
+                    },
+                    {"start": {}, "end": {}},
+                ]
+            },
+        )
+
+    windows = client(handler).out_of_office("primary", START, END)
+
+    assert seen["eventTypes"] == "outOfOffice"
+    assert seen["fields"] == "items(start,end,status)"
+    assert seen["singleEvents"] == "true"
+    assert windows == [
+        (
+            datetime.fromisoformat("2026-10-06T09:00:00+09:00"),
+            datetime.fromisoformat("2026-10-06T18:00:00+09:00"),
+        ),
+        (date(2026, 10, 7), date(2026, 10, 9)),
+    ]
+    assert "title" not in repr(windows)
+
+
+def test_out_of_office_with_none_is_empty_and_a_refusal_is_raised() -> None:
+    assert client(lambda r: httpx.Response(200, json={})).out_of_office("primary", START, END) == []
+    with pytest.raises(PermanentIntegrationError):
+        client(lambda r: httpx.Response(403, json={})).out_of_office("primary", START, END)
+    with pytest.raises(TransientIntegrationError):
+        client(lambda r: httpx.Response(503, json={})).out_of_office("primary", START, END)
+
+
+def test_the_fake_answers_out_of_office_with_what_a_test_put_in() -> None:
+    fake = FakeCalendar(away=[(date(2026, 10, 7), date(2026, 10, 9))])
+    assert fake.out_of_office("primary", START, END) == [(date(2026, 10, 7), date(2026, 10, 9))]
