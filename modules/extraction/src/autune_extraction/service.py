@@ -56,7 +56,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import reminders
+from . import reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -90,6 +90,7 @@ from .models import (
     ExtExtractionRun,
     ExtMeetingNote,
     ExtProject,
+    ExtSyncFailure,
     ExtWeeklyDigest,
 )
 from .noun_form import tidy
@@ -126,6 +127,7 @@ from .schemas import (
     ReviewDecision,
     SourceUtterance,
     SummaryDecision,
+    SyncFailureRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -1064,6 +1066,7 @@ def read_model(
     assignee_name: str | None = None,
     summary: str | None = None,
     sync_refs: list[ExternalRefRead] | None = None,
+    sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
 ) -> ActionItemRead:
@@ -1131,6 +1134,7 @@ def read_model(
         is_candidate=is_candidate,
         summary=summary,
         sync_refs=sync_refs or [],
+        sync_failures=sync_failures or [],
     )
 
 
@@ -1173,14 +1177,26 @@ def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[
     return set(rows)
 
 
-def read_one(session: Session, item: ExtActionItem) -> ActionItemRead:
-    """``read_model`` for a single item a route just wrote, with its assignee
-    looked up. No summary or sync refs -- the routes that write never sent
-    them."""
+def read_one(
+    session: Session, item: ExtActionItem, *, reader_id: str | None = None
+) -> ActionItemRead:
+    """``read_model`` for a single item a route just wrote, read the way the list
+    reads it -- assignee, summary, copies outside and standing failures.
+
+    The board replaces its copy of the item with this answer. Without the
+    summary, the copies and the failures, an edit made the card's link and its
+    red "연동 실패" disappear until the next reload (review of #754).
+    ``reader_id`` is the caller, for the failure a calendar shows only to its
+    assignee (``sync_state.failures_for``)."""
     name = assignee_names(session, [item]).get(item.assignee_id) if item.assignee_id else None
     return read_model(
         item,
         assignee_name=name,
+        summary=action_item_summaries(session, [item]).get(item.id),
+        sync_refs=action_item_external_refs(session, [item.id]).get(item.id, []),
+        sync_failures=sync_state.failures_for(session, [item], reader_id=reader_id).get(
+            item.id, []
+        ),
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
     )
@@ -1392,6 +1408,9 @@ def list_action_items(
     departed = departed_assignees(session, items)
     summaries = action_item_summaries(session, items)
     refs = action_item_external_refs(session, [item.id for item in items])
+    # ``visible_to`` is the reader on the route; B's own callers pass none and
+    # so get no calendar failure, which is one person's to see.
+    failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
     return [
         read_model(
@@ -1399,6 +1418,7 @@ def list_action_items(
             assignee_name=names.get(item.assignee_id) if item.assignee_id else None,
             summary=summaries.get(item.id),
             sync_refs=refs.get(item.id, []),
+            sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
         )
@@ -1588,6 +1608,7 @@ def read_detail(
     name = names.get(item.assignee_id) if item.assignee_id else None
     summary = action_item_summaries(session, [item]).get(item.id)
     refs = action_item_external_refs(session, [item.id]).get(item.id, [])
+    failures = sync_state.failures_for(session, [item], reader_id=reader_id).get(item.id, [])
     departed = item.id in departed_assignees(session, [item])
     hidden = originals_hidden(item)
     return ActionItemDetail(
@@ -1596,9 +1617,14 @@ def read_detail(
             assignee_name=name,
             summary=summary,
             sync_refs=refs,
+            sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         ).model_dump(),
+        # Why there is no calendar event, where there is none (#680). What is
+        # missing from the item is said to any reader; anything about the
+        # assignee's calendar only to the assignee.
+        calendar=sync_state.calendar_state(session, item, reader_id=reader_id),
         sources=[] if hidden else source_utterances(session, item.id),
         context=[]
         if hidden
@@ -3371,6 +3397,28 @@ def send_due_reminder(
     return True
 
 
+def settle_refused_due_reminder(session: Session, reminder: DueReminder, *, now: datetime) -> None:
+    """Keep the claim of a reminder the outbound check refused, so the next run
+    does not try it again (review of #751).
+
+    The refused send rolled its own claim back with it. Left like that, the
+    same description was refused every ten minutes for as long as the
+    reminder stayed owed -- three days for an overdue one -- and each time
+    raised the same violation. The row now stands for "settled": sent, or
+    refused and reported once. A description corrected afterwards is not
+    reminded about that date; moving the date makes a new reminder."""
+    session.execute(
+        _insert_if_absent_into(session, ExtDueReminder)
+        .values(
+            action_item_id=reminder.action_item_id,
+            kind=reminder.kind,
+            due_date=reminder.due_date,
+            sent_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=["action_item_id", "kind", "due_date"])
+    )
+
+
 @dataclass(frozen=True)
 class WeeklyDigest:
     """One digest owed: whose, through which team's Slack, for which week. The
@@ -4012,6 +4060,9 @@ class NotionPages(Protocol):
     both fit."""
 
     def create_page(self, database_id: str, properties: dict[str, Any]) -> str: ...
+    def find_pages(
+        self, database_id: str, *, title_property: str, title: str, created_after: datetime
+    ) -> list[str]: ...
     def update_page(self, page_id: str, properties: dict[str, Any]) -> None: ...
     def trash_page(self, page_id: str) -> bool: ...
     def page_state(self, page_id: str) -> str: ...
@@ -4339,7 +4390,9 @@ def sync_action_item_to_notion(
 
     meeting = session.get(Meeting, item.meeting_id)
     properties = notion_properties(item, meeting.title if meeting else None, names)
-    page_id = notion.create_page(database_id, properties)
+    page_id = _page_a_lost_create_made(session, notion, item, database_id, names, properties)
+    if page_id is None:
+        page_id = notion.create_page(database_id, properties)
 
     ref = session.get(ExtExternalRef, (item.id, NOTION))
     assert ref is not None
@@ -4347,6 +4400,69 @@ def sync_action_item_to_notion(
     ref.url = notion_url(page_id)
     log.info("extraction_notion_synced", action_item_id=item.id, meeting_id=item.meeting_id)
     return ref
+
+
+LOST_CREATE_WINDOW = timedelta(minutes=10)
+"""How long before a recorded "no answer" a create that may have arrived can
+have been made: the request's own timeout, with room for a clock apart."""
+
+
+def _page_a_lost_create_made(
+    session: Session,
+    notion: NotionPages,
+    item: ExtActionItem,
+    database_id: str,
+    names: Mapping[str, str],
+    properties: dict[str, Any],
+) -> str | None:
+    """The page an earlier create made though it timed out on our side, when
+    there is exactly one; it is updated and kept instead of making a second
+    (mkkim68 and lsh2217, reviews of #754).
+
+    Asked only when the item's last Notion copy failed as ``unreachable`` --
+    the one failure that may have arrived -- and only for pages with exactly
+    the item's title made from shortly before that failure on, leaving out
+    any page another item's ref already holds. None found:
+    the create did not arrive, make the page. More than one: nothing here can
+    tell which is this item's, so none is taken and a page is made, as before.
+    A team map with no title has nothing to look for."""
+    failure = session.get(ExtSyncFailure, (item.id, NOTION))
+    if failure is None or failure.kind != sync_state.UNREACHABLE or "title" not in names:
+        return None
+    # The very title the create sends, read back from the properties it is
+    # built from, so the two cannot drift apart (mkkim68, review of #777).
+    title = properties[names["title"]]["title"][0]["text"]["content"]
+    failed_at = failure.failed_at
+    if failed_at.tzinfo is None:
+        failed_at = failed_at.replace(tzinfo=UTC)
+    found = notion.find_pages(
+        database_id,
+        title_property=names["title"],
+        title=title,
+        created_after=failed_at - LOST_CREATE_WINDOW,
+    )
+    # Items share sentences ("회의록 공유"): a page another item already holds
+    # is that item's, never this one's lost create. Taken, the two would share
+    # one page and overwrite each other (mkkim68, review of #777).
+    if found:
+        held = set(
+            session.scalars(
+                select(ExtExternalRef.external_id).where(
+                    ExtExternalRef.system == NOTION,
+                    ExtExternalRef.external_id.in_(found),
+                    ExtExternalRef.action_item_id != item.id,
+                )
+            )
+        )
+        found = [page_id for page_id in found if page_id not in held]
+    if len(found) != 1:
+        log.info(
+            "extraction_notion_lost_create_not_found", action_item_id=item.id, found=len(found)
+        )
+        return None
+    notion.update_page(found[0], properties)
+    log.info("extraction_notion_lost_create_adopted", action_item_id=item.id)
+    return found[0]
 
 
 DECISION_NOTION_PROPERTIES: Mapping[str, str] = {

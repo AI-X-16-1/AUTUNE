@@ -7,6 +7,7 @@ import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
 import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CONFIRMED_NOTICE, confirms } from "../board";
@@ -410,6 +411,13 @@ export function ActionDetailDrawer({
                   </div>
                 ))}
               </div>
+            </section>
+          ) : null}
+
+          {(item.sync_failures?.length ?? 0) > 0 || quotation.calendar ? (
+            <section className="mt-6">
+              <SectionTitle>연동 상태</SectionTitle>
+              <SyncStatus item={item} calendar={quotation.calendar ?? null} />
             </section>
           ) : null}
 
