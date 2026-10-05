@@ -407,7 +407,9 @@ the feature needs.
     when the item or the meeting is deleted; Autune keeps only that a
     reminder of that kind went (`ext_due_reminders`), and that goes with
     the item. A reminder the outbound check refuses is not sent, is
-    reported once, and keeps that same row so it is not tried again.
+    reported once, and keeps that same row so it is not tried again. Each
+    person can turn their own reminders off, and only their own
+    (`ext_due_reminder_optouts`, which goes with the account).
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes

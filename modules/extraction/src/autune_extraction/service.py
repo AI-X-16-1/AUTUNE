@@ -85,6 +85,7 @@ from .models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtDueReminder,
+    ExtDueReminderOptOut,
     ExtEditEvent,
     ExtExternalRef,
     ExtExtractionRun,
@@ -3290,6 +3291,8 @@ def due_reminders_to_send(session: Session, *, now: datetime) -> list[DueReminde
             ExtActionItem.due_date >= today - timedelta(days=reminders.OVERDUE_DAYS),
             ExtActionItem.due_date <= today + timedelta(days=1),
             or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+            # Somebody who turned them off is not told (review of #751).
+            ExtActionItem.assignee_id.not_in(select(ExtDueReminderOptOut.user_id)),
         )
         .order_by(ExtActionItem.due_date, ExtActionItem.id)
     ).all()
@@ -3351,6 +3354,7 @@ def send_due_reminder(
         or item.due_date != reminder.due_date
         or item.assignee_id != reminder.assignee_id
         or not _is_team_member(session, user_id=reminder.assignee_id, team_id=reminder.team_id)
+        or not due_reminders_on(session, reminder.assignee_id)
     ):
         return False
     claimed = session.execute(
@@ -3378,6 +3382,31 @@ def send_due_reminder(
         ),
     )
     return True
+
+
+def due_reminders_on(session: Session, user_id: str) -> bool:
+    """Whether this person gets due-date reminders: yes unless they turned them
+    off (``ExtDueReminderOptOut``)."""
+    return session.get(ExtDueReminderOptOut, user_id) is None
+
+
+def set_due_reminders(session: Session, user_id: str, *, on: bool, now: datetime) -> bool:
+    """Turn this person's own reminders on or off; what they are now. Only the
+    caller's own -- the route passes the signed-in person, and there is no way
+    to name another."""
+    if on:
+        session.execute(delete(ExtDueReminderOptOut).where(ExtDueReminderOptOut.user_id == user_id))
+    else:
+        # Insert-if-absent, not get-then-add: two requests at once (two tabs, a
+        # double click) would otherwise both add and the second hit the primary
+        # key (lsh2217, review of #771).
+        session.execute(
+            _insert_if_absent_into(session, ExtDueReminderOptOut)
+            .values(user_id=user_id, created_at=now)
+            .on_conflict_do_nothing(index_elements=["user_id"])
+        )
+    session.flush()
+    return on
 
 
 def settle_refused_due_reminder(session: Session, reminder: DueReminder, *, now: datetime) -> None:
