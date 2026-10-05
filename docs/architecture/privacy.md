@@ -439,7 +439,7 @@ the feature needs.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
-    hold) and today's work (late, due today, in progress; the rest as a
+    hold -- made, given to them, or confirmed since) and today's work (late, due today, in progress; the rest as a
     count). It carries what a reminder carries about each item -- its
     description, a late item's due date, the meeting's title -- and a link to
     the board; no utterance, and nobody else's items. "What changed" is read

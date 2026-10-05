@@ -3698,6 +3698,11 @@ MAX_PAUSE_DAYS = 92
 """The longest range a person may pause for: a quarter. A typo in the year
 must not silence a person's digests until they notice."""
 
+MAX_PAUSE_AHEAD_DAYS = 366
+"""How far ahead a pause may start: a year. A range in 2099 is a typo too, and
+it would sit in the table -- a date somebody is away -- for as long (review of
+#833)."""
+
 
 def notification_pause(session: Session, user_id: str) -> ExtNotificationPause | None:
     """The days this person asked for no morning DM and no Monday digest, if
@@ -3744,8 +3749,11 @@ def set_notification_pause(
         raise ValidationError("a pause cannot end before it starts")
     if (ends_on - starts_on).days >= MAX_PAUSE_DAYS:
         raise ValidationError(f"a pause may be {MAX_PAUSE_DAYS} days at most")
-    if ends_on < reminders.korean_day(now):
+    today = reminders.korean_day(now)
+    if ends_on < today:
         raise ValidationError("a pause that has already ended would change nothing")
+    if (starts_on - today).days > MAX_PAUSE_AHEAD_DAYS:
+        raise ValidationError(f"a pause may start {MAX_PAUSE_AHEAD_DAYS} days ahead at most")
     pause = ExtNotificationPause(
         user_id=user_id, starts_on=starts_on, ends_on=ends_on, created_at=now
     )
@@ -3832,10 +3840,15 @@ def daily_digest_content(
     **What changed** comes from ``ext_edit_events``, which keeps that an item
     was edited, which fields, and when -- never a value and never who. So
     "done" is an item of theirs that is done now and whose status was edited
-    since; "taken on" is an open item of theirs that was created since or
-    whose assignee was edited since. Nothing else is claimed: an item moved
-    between 할 일 and 진행 중 is not called new, and whoever made the edit is
-    not known and not said.
+    since; "taken on" is an open item of theirs that was created since, whose
+    assignee was edited since, or that was **confirmed** since
+    (``_confirmed_since``) -- the usual way a person comes to hold an item: the
+    model drafts it in ``needs_confirmation`` with no ``created`` event, and a
+    person's confirmation is its first status edit (review of #833). Nothing
+    else is claimed: an item moved between 할 일 and 진행 중 is not called new,
+    and whoever made the edit is not known and not said. One thing leaves no
+    mark at all and is not seen: an already confirmed item given to a person
+    by ``fill_identified_assignees``.
 
     **Today** is their open items: late ones, the ones due today, then the
     ones in progress -- each item once, in the first that fits -- and the
@@ -3874,11 +3887,19 @@ def daily_digest_content(
     due_today: list[reminders.DigestLine] = []
     in_progress: list[reminders.DigestLine] = []
     others = 0
-    for item, _team, title in _open_items_of(
-        session, user_id=owed.user_id, team_id=owed.team_id, now=now
-    ):
+    open_rows = _open_items_of(session, user_id=owed.user_id, team_id=owed.team_id, now=now)
+    confirmed = _confirmed_since(
+        session,
+        [
+            item.id
+            for item, _team, _title in open_rows
+            if item.origin != "user" and "status" in marks.get(item.id, set())
+        ],
+        since=since,
+    )
+    for item, _team, title in open_rows:
         line = reminders.DigestLine(item.description, item.due_date, title)
-        if marks.get(item.id, set()) & {"created", "assignee_id"}:
+        if marks.get(item.id, set()) & {"created", "assignee_id"} or item.id in confirmed:
             taken_on.append(line)
         if item.due_date is not None and item.due_date < owed.day:
             late.append(line)
@@ -3896,6 +3917,31 @@ def daily_digest_content(
         in_progress=in_progress,
         others=others,
     )
+
+
+def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: datetime) -> set[str]:
+    """Which of these items -- not made by a person, and with a status edit
+    after ``since`` -- left ``needs_confirmation`` after ``since``.
+
+    Such an item is born in ``needs_confirmation`` and every way out of it is
+    ``update_action_item``, which records a status edit: so its **first**
+    status edit is its confirmation, and it was confirmed since exactly when
+    it has none from before. An edit from before edits named their fields
+    (#109) may have been one, and then the item is not called new.
+    """
+    if not item_ids:
+        return set()
+    earlier = set(
+        session.scalars(
+            select(ExtEditEvent.action_item_id).where(
+                ExtEditEvent.action_item_id.in_(item_ids),
+                ExtEditEvent.kind == "edited",
+                ExtEditEvent.created_at <= since,
+                or_(ExtEditEvent.fields.is_(None), ExtEditEvent.fields.like("%status%")),
+            )
+        )
+    )
+    return set(item_ids) - earlier
 
 
 def send_daily_digest(

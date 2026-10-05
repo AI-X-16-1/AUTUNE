@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
 
+from autune_contracts.enums import ActionStatus
 from autune_core import (
     Base,
     Meeting,
@@ -47,6 +48,7 @@ from autune_extraction.models import (
 )
 from autune_extraction.reminders import DailyDigest, DigestLine, build_daily_digest, daily_day
 from autune_extraction.router import router
+from autune_extraction.schemas import ActionItemUpdate
 from autune_integrations.errors import TransientIntegrationError
 from autune_integrations.fakes import FakeSlack as CheckedSlack
 
@@ -245,7 +247,9 @@ def test_what_changed_is_read_from_the_edits_since_the_last_one(session: Session
     edited(session, "act_old", "status", at=datetime(2026, 9, 1, tzinfo=UTC))  # long ago
     edited(session, "act_today", "assignee_id", at=MONDAY_NOON_KST)
     edited(session, "act_later", kind="created", at=MONDAY_NOON_KST)
-    edited(session, "act_doing", "status", at=MONDAY_NOON_KST)  # moved to 진행 중: not "new"
+    # Confirmed long ago, moved to 진행 중 yesterday: not "new".
+    edited(session, "act_doing", "status", at=datetime(2026, 9, 1, tzinfo=UTC))
+    edited(session, "act_doing", "status", at=MONDAY_NOON_KST)
     edited(session, "act_lee", "status", at=MONDAY_NOON_KST)  # somebody else's
     edited(session, "act_lee_done", "status", at=MONDAY_NOON_KST)  # and finished by them
     edited(session, "act_other_done", "status", at=MONDAY_NOON_KST)  # theirs, another team's
@@ -263,6 +267,109 @@ def test_what_changed_is_read_from_the_edits_since_the_last_one(session: Session
     assert [line.description for line in content.due_today] == ["오늘 일"]
     assert [line.description for line in content.in_progress] == ["하던 일"]
     assert content.others == 1, "the item due later: counted, not listed"
+
+
+def content_for(session: Session) -> reminders.DailyDigest:
+    return service.daily_digest_content(
+        session,
+        owed_for(session),  # type: ignore[arg-type]
+        since=reminders.previous_morning(TUESDAY).astimezone(UTC),
+        now=TUESDAY_10_KST,
+    )
+
+
+def drafted(session: Session, item_id: str, *, origin: str = "model") -> ExtActionItem:
+    """One more item of user_kim's on team_1, as the pipeline or the chat
+    drafts it: ``needs_confirmation``, and no ``created`` event."""
+    item = ExtActionItem(
+        id=item_id,
+        meeting_id="mtg_team_1",
+        description=f"{item_id} 초안",
+        assignee_id="user_kim",
+        status="needs_confirmation",
+        confidence=0.9,
+        origin=origin,
+    )
+    session.add(item)
+    session.flush()
+    return item
+
+
+def moved(session: Session, item: ExtActionItem, status: ActionStatus, *, at: datetime) -> None:
+    """A status change through the real ``update_action_item`` -- so the edit
+    event is whatever that function records -- stamped ``at``."""
+    before = {e.id for e in session.query(ExtEditEvent)}
+    service.update_action_item(session, item, ActionItemUpdate(status=status))
+    session.flush()
+    (event,) = [e for e in session.query(ExtEditEvent) if e.id not in before]
+    event.created_at = at
+    session.flush()
+
+
+@pytest.mark.parametrize("origin", ["model", "chat"])
+def test_an_item_confirmed_since_the_last_one_is_newly_held(session: Session, origin: str) -> None:
+    """Review of #833: the usual way a person comes to hold an item. The draft
+    has no ``created`` event and confirming it records only a status edit --
+    read from fixtures that wrote ``created`` by hand, yesterday's confirmed
+    items came out as "nothing changed"."""
+    item = drafted(session, "act_new", origin=origin)
+    assert "act_new 초안" not in [line.description for line in content_for(session).taken_on]
+
+    moved(session, item, ActionStatus.TODO, at=MONDAY_NOON_KST)
+
+    assert [line.description for line in content_for(session).taken_on] == ["act_new 초안"]
+
+
+def test_an_item_confirmed_straight_into_progress_is_newly_held_too(session: Session) -> None:
+    item = drafted(session, "act_new")
+
+    moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
+
+    content = content_for(session)
+    assert [line.description for line in content.taken_on] == ["act_new 초안"]
+    assert "act_new 초안" in [line.description for line in content.in_progress]
+
+
+def test_an_item_confirmed_before_and_only_moved_since_is_not_new(session: Session) -> None:
+    item = drafted(session, "act_old_draft")
+    moved(session, item, ActionStatus.TODO, at=datetime(2026, 9, 20, tzinfo=UTC))
+
+    moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
+
+    assert content_for(session).taken_on == []
+
+
+def test_a_persons_own_item_moved_since_is_not_new(session: Session) -> None:
+    """Made by a person, so born past ``needs_confirmation``: its first status
+    edit is a move, not a confirmation."""
+    item = drafted(session, "act_mine", origin="user")
+    item.status = "todo"
+    session.flush()
+
+    moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
+
+    assert content_for(session).taken_on == []
+
+
+def test_an_edit_from_before_fields_were_named_may_have_been_the_confirmation(
+    session: Session,
+) -> None:
+    item = drafted(session, "act_legacy")
+    session.add(
+        ExtEditEvent(
+            meeting_id="mtg_team_1",
+            action_item_id="act_legacy",
+            kind="edited",
+            fields=None,
+            created_at=datetime(2026, 9, 1, tzinfo=UTC),
+        )
+    )
+    item.status = "todo"
+    session.flush()
+
+    moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
+
+    assert content_for(session).taken_on == []
 
 
 def test_a_meeting_past_its_retention_is_in_neither_half(session: Session) -> None:
@@ -410,6 +517,7 @@ def test_a_pause_is_one_range_replaced_or_cleared(session: Session) -> None:
         pytest.param(date(2026, 10, 6), None, id="half-a-range"),
         pytest.param(date(2026, 10, 6), date(2027, 10, 6), id="a-year"),
         pytest.param(date(2026, 9, 1), date(2026, 9, 3), id="already-over"),
+        pytest.param(date(2099, 1, 1), date(2099, 1, 5), id="decades-ahead"),
     ],
 )
 def test_a_pause_that_makes_no_sense_is_refused_and_changes_nothing(

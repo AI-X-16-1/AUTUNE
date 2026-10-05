@@ -15,9 +15,11 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, Team, TeamMember, User
 from autune_extraction import service
 from autune_extraction.models import ExtActionItem, ExtDailyDigest, ExtEditEvent
+from autune_extraction.schemas import ActionItemUpdate
 
 TUESDAY = date(2026, 10, 6)
 TUESDAY_10_KST = datetime(2026, 10, 6, 1, 0, tzinfo=UTC)
@@ -182,3 +184,44 @@ def test_the_database_refuses_a_range_that_ends_before_it_starts(
             },
         )
     assert count(db_session, "ext_notification_pauses") == 0
+
+
+def test_a_draft_confirmed_since_the_last_one_is_newly_held(
+    db_session: Session, person: dict[str, str]
+) -> None:
+    """Review of #833, on the database that compares the event times for real:
+    a model's draft has no ``created`` event, and its confirmation is its first
+    status edit."""
+    meeting_id = db_session.scalars(sa.select(Meeting.id)).one()
+    fresh, old = (
+        ExtActionItem(
+            meeting_id=meeting_id,
+            description=text,
+            assignee_id=person["user"],
+            status="needs_confirmation",
+            confidence=0.9,
+            origin="model",
+        )
+        for text in ("어제 확인한 일", "지난달에 확인한 일")
+    )
+    db_session.add_all([fresh, old])
+    db_session.flush()
+    for item, status, at in (
+        (old, ActionStatus.TODO, datetime(2026, 9, 1, tzinfo=UTC)),
+        (old, ActionStatus.IN_PROGRESS, MONDAY_NOON_KST),
+        (fresh, ActionStatus.TODO, MONDAY_NOON_KST),
+    ):
+        before = set(db_session.scalars(sa.select(ExtEditEvent.id)))
+        service.update_action_item(db_session, item, ActionItemUpdate(status=status))
+        db_session.flush()
+        (event,) = [e for e in db_session.query(ExtEditEvent) if e.id not in before]
+        event.created_at = at
+        db_session.flush()
+    slack = FakeSlack()
+    (owed,) = service.daily_digests_to_send(db_session, now=TUESDAY_10_KST)
+
+    service.send_daily_digest(db_session, slack, owed, now=TUESDAY_10_KST)
+
+    text = slack.sent[0][1]
+    assert "• 새로 맡음: 어제 확인한 일 · 주간 회의" in text
+    assert "새로 맡음: 지난달에 확인한 일" not in text
