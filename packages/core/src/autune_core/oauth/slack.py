@@ -5,12 +5,15 @@ click and gets an alert channel made for it (#428).
    scopes below.
 2. ``exchange_code`` trades the code for the workspace's bot token
    (``oauth.v2.access``).
-3. ``create_alert_channel`` makes a **private** ``#autune`` and invites the
-   person who installed, so the modules that post (D's briefing, E's report)
-   have a channel without anyone typing an id. It never joins a channel that
+3. ``create_alert_channel`` makes a **private** channel named after the team
+   (``channel_name_for``: "제품팀" -> ``#제품팀``, "Growth Squad" ->
+   ``#growth-squad``; the user, 2026-10-04) and invites the person who
+   installed, so the modules that post (D's briefing, E's report) have a
+   channel without anyone typing an id. A team name Slack will not take as a
+   channel name falls back to ``#autune``. It never joins a channel that
    already exists: two Autune teams in one workspace, or a company channel that
-   happens to be called ``#autune``, would otherwise read one team's decisions
-   (review of #468). A taken name becomes ``#autune-2``, ``#autune-3``...
+   happens to have the same name, would otherwise read one team's decisions
+   (review of #468). A taken name becomes ``#name-2``, ``#name-3``...
 
 **The token is the workspace bot's**, as Notion's is: bot scopes survive the
 installer leaving (``external-approvals.md``). Only bot scopes are asked for.
@@ -28,6 +31,7 @@ Slack requires an **HTTPS** redirect URL, so this flow cannot finish on plain
 from __future__ import annotations
 
 import contextlib
+import re
 import secrets
 from dataclasses import dataclass
 from functools import lru_cache
@@ -53,6 +57,33 @@ BOT_SCOPES = (
 )
 
 NAME_ATTEMPTS = 10
+
+MAX_CHANNEL_NAME = 70
+"""Slack allows 80 characters; this leaves room for ``-10``."""
+
+_INVALID_NAME = frozenset(
+    {
+        "invalid_name",
+        "invalid_name_maxlength",
+        "invalid_name_punctuation",
+        "invalid_name_required",
+        "invalid_name_specials",
+    }
+)
+"""Slack's answers to a name it will not take as a channel name."""
+
+_NOT_IN_A_NAME = re.compile(r"[^\w-]+")
+
+
+def channel_name_for(team_name: str, fallback: str) -> str:
+    """The alert channel's name for a team called ``team_name``: lower case,
+    spaces and punctuation as single hyphens, letters of any script and digits
+    kept ("제품팀" stays "제품팀"), at most ``MAX_CHANNEL_NAME`` characters --
+    or ``fallback`` when nothing is left. Slack may still refuse a name this
+    lets through; ``create_alert_channel`` then uses ``fallback``."""
+    name = _NOT_IN_A_NAME.sub("-", team_name.strip().lower())
+    name = re.sub(r"-{2,}", "-", name).strip("-_")[:MAX_CHANNEL_NAME].strip("-_")
+    return name or fallback
 
 
 class SlackIdentityRefusedError(AutuneError):
@@ -235,13 +266,18 @@ class SlackOAuthClient:
             installer_id=str((body.get("authed_user") or {}).get("id", "")),
         )
 
-    def create_alert_channel(self, token: str, name: str, *, invite: str) -> SlackChannel:
+    def create_alert_channel(
+        self, token: str, name: str, *, invite: str, fallback: str = ""
+    ) -> SlackChannel:
         """A new **private** channel for the team's alerts, with ``invite`` (the
         installer) in it; they add the rest of the team. ``#name`` first, then
         ``#name-2`` and on while a name is taken -- whoever holds it, the bot
-        does not join it."""
+        does not join it. A name Slack will not take at all (its
+        ``invalid_name*`` answers) starts over from ``fallback``, when one is
+        given and differs."""
         if not invite:
             raise AutuneError("Slack did not say who installed, so nobody could be invited")
+        allow = {"name_taken"} | (_INVALID_NAME if fallback and fallback != name else set())
         for attempt in range(1, NAME_ATTEMPTS + 1):
             candidate = name if attempt == 1 else f"{name}-{attempt}"
             created = self._call(
@@ -249,8 +285,10 @@ class SlackOAuthClient:
                 data={"name": candidate, "is_private": "true"},
                 token=token,
                 refused="Slack refused to create the channel",
-                allow={"name_taken"},
+                allow=allow,
             )
+            if created.get("error") in _INVALID_NAME:
+                return self.create_alert_channel(token, fallback, invite=invite)
             if not created.get("ok"):
                 continue
             channel = SlackChannel(

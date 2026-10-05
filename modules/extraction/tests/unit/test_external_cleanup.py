@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
 
-from autune_core import Base, JiraAccess, Meeting
+from autune_core import AutuneError, Base, JiraAccess, Meeting
 from autune_core.integrations_config import IntegrationConfig
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_extraction import tasks
@@ -390,6 +390,42 @@ def test_rows_of_unconnected_teams_do_not_keep_a_connected_team_waiting(
     left = session.scalars(select(ExtExternalCleanup)).all()
     assert len(left) == tasks.CLEANUP_BATCH + 5
     assert {r.attempts for r in left} == {0}
+
+
+def test_a_team_whose_connection_cannot_be_read_does_not_roll_the_run_back(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PARK, review of #764: one team's token refresh failing for now must
+    not end the run -- the rows already cleaned stay cleaned, the failing
+    team's rows stay owed with no attempt counted."""
+    other = "team_flaky"
+    session.add(Meeting(id="mtg_flaky", team_id=other, title="t"))
+    session.add(ExtExternalCleanup(team_id=other, system="jira", external_id="FLK-1", site=CLOUD))
+    session.add(ExtExternalCleanup(team_id=other, system="notion", external_id="flaky-page"))
+    session.commit()
+    owe(session, "notion", "page-1")
+
+    def notion_config(_s: Session, team: str, _n: str) -> object:
+        if team == other:
+            raise ValueError("secret would not decrypt")
+        return NOTION
+
+    def access(team: str, **_kw: object) -> JiraAccess | None:
+        if team == other:
+            raise AutuneError("atlassian answered 503")
+        return JiraAccess("token", CLOUD, "AUT")
+
+    monkeypatch.setattr(tasks, "load_integration", notion_config)
+    monkeypatch.setattr(tasks, "jira_access", access)
+
+    assert tasks.drain_external_cleanup() == 1
+
+    assert Notion.trashed == ["page-1"]
+    session.expire_all()
+    left = {
+        (r.system, r.external_id, r.attempts) for r in session.scalars(select(ExtExternalCleanup))
+    }
+    assert left == {("jira", "FLK-1", 0), ("notion", "flaky-page", 0)}
 
 
 def test_a_run_tries_at_most_one_batch(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:

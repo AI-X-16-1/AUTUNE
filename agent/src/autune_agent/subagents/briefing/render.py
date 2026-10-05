@@ -86,9 +86,9 @@ def agenda_section(agenda: ToolResult | None) -> Finding | None:
     if usable is None:
         return None
     if not usable.items:
-        return _section("이번 회의에서 다룰 Jira 이슈", [usable.summary])
+        return _section("팀의 열린 Jira 이슈", [usable.summary])
     lines = [f"• {i.title} — {i.body}" if i.body else f"• {i.title}" for i in usable.items]
-    return _section("이번 회의에서 다룰 Jira 이슈", lines, more=usable.truncated)
+    return _section("팀의 열린 Jira 이슈", lines, more=usable.truncated)
 
 
 def actions_section(actions: ToolResult | None) -> Finding | None:

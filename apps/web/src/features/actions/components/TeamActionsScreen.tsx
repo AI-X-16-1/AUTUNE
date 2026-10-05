@@ -10,6 +10,7 @@ import { JiraOpenIssues } from "./JiraOpenIssues";
 import { isOverdue, localToday } from "../dates";
 import { useActionItems } from "../hooks/useActionItems";
 import type { ActionItemRead } from "../types";
+import { bulkActionItems } from "../api";
 
 /**
  * S17 across every meeting — the sidebar's "액션아이템".
@@ -36,7 +37,7 @@ import type { ActionItemRead } from "../types";
 type Tab = "all" | "mine" | "overdue";
 
 export function TeamActionsScreen({ me }: { me: string | null }) {
-  const { items, settled, error, edit, remove } = useActionItems({});
+  const { items, settled, error, edit, remove, reload } = useActionItems({});
   const [tab, setTab] = useState<Tab>("all");
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
 
@@ -81,6 +82,11 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
                 onSelect={setSelectedId}
                 showMeeting
                 onMove={(id, status) => edit(id, { status })}
+                onBulk={async (ids, action) => {
+                  const done = await bulkActionItems(ids, action);
+                  await reload();
+                  return done;
+                }}
               />
             </>
           )}

@@ -141,7 +141,7 @@ def test_a_meeting_becomes_four_sections_in_a_fixed_order_and_proposes_nothing()
     assert outcome.result.ok
     assert [item.title for item in outcome.result.items] == [
         "지난 회의에서 이어받는 결정",
-        "이번 회의에서 다룰 Jira 이슈",
+        "팀의 열린 Jira 이슈",
         "기한이 지났거나 다가온 액션 아이템",
         "지난 회의에서 닫히지 않은 갭",
     ]
@@ -158,7 +158,7 @@ def test_the_sections_read_what_each_module_returned() -> None:
         "지난 주간 회의 · 2026-09-23 · 같은 제목의 지난 회의 · 주제: 검색 정렬"
     )
     assert "• 검색 정렬은 관련도순으로 한다 (번복)" in recap
-    assert sections["이번 회의에서 다룰 Jira 이슈"] == "• 결제 모듈 API 명세 정리 — AUT-1 · 진행 중"
+    assert sections["팀의 열린 Jira 이슈"] == "• 결제 모듈 API 명세 정리 — AUT-1 · 진행 중"
     assert (
         "• API 스펙 작성 — 백엔드 · 2026-09-30 · 기한 지남 · todo"
         in (sections["기한이 지났거나 다가온 액션 아이템"])
@@ -197,7 +197,7 @@ def test_a_brief_not_composed_yet_says_the_link_is_unknown_and_skips_the_gap_rea
     assert "아직 정해지지 않았습니다" in outcome.result.summary
     assert spies["gaps"].calls == []
     # The other halves still go; skipping the gap read is not "could not read".
-    assert "이번 회의에서 다룰 Jira 이슈" in sections
+    assert "팀의 열린 Jira 이슈" in sections
     assert "읽지 못한" not in outcome.result.summary
 
 
@@ -206,10 +206,7 @@ def test_a_tool_that_answered_none_keeps_its_section_in_its_own_words() -> None:
 
     outcome = _run("브리프", _registry(_spies(agenda=empty)), scope_meeting=MEETING)
 
-    assert (
-        _sections(outcome)["이번 회의에서 다룰 Jira 이슈"]
-        == "이 회의에 연결된 Jira 이슈가 없습니다."
-    )
+    assert _sections(outcome)["팀의 열린 Jira 이슈"] == "이 회의에 연결된 Jira 이슈가 없습니다."
 
 
 def test_a_missing_tool_drops_its_section_and_the_summary_says_what_was_not_read() -> None:
@@ -219,7 +216,7 @@ def test_a_missing_tool_drops_its_section_and_the_summary_says_what_was_not_read
 
     outcome = _run("브리프", registry, scope_meeting=MEETING)
 
-    assert "이번 회의에서 다룰 Jira 이슈" not in _sections(outcome)
+    assert "팀의 열린 Jira 이슈" not in _sections(outcome)
     assert outcome.result.ok
     assert "읽지 못한 부분: Jira 안건." in outcome.result.summary
 
