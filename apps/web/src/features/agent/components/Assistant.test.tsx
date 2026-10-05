@@ -103,32 +103,34 @@ describe("Assistant launcher alert", () => {
     ).toBeTruthy();
   });
 
-  it("shows nothing when nothing waits, or the queue cannot be read", async () => {
-    const listed = vi.spyOn(api, "listPending").mockResolvedValueOnce([]);
+  async function shownFor(
+    answer: () => Promise<PendingAction[]>,
+  ): Promise<boolean> {
+    const listed = vi.spyOn(api, "listPending").mockImplementation(answer);
     render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
     await waitFor(() => expect(listed).toHaveBeenCalled());
-    expect(
-      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
-    ).toBeNull();
-    cleanup();
+    return screen.queryByLabelText("승인을 기다리는 제안이 있습니다") !== null;
+  }
 
-    // An approval interrupted mid-run comes back as needs_check; it is never
-    // re-run, so there is nothing left to approve (#759 review).
-    listed.mockResolvedValueOnce([
-      { ...WAITING, status: "approved", needs_check: true },
-    ]);
-    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
-    await waitFor(() => expect(listed).toHaveBeenCalledTimes(2));
-    expect(
-      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
-    ).toBeNull();
-    cleanup();
+  it("shows nothing when nothing waits", async () => {
+    expect(await shownFor(async () => [])).toBe(false);
+  });
 
-    listed.mockRejectedValueOnce(new Error("offline"));
-    render(<Assistant teamId="team_1" userName="민경" pathname="/" />);
-    await waitFor(() => expect(listed).toHaveBeenCalledTimes(2));
+  it("shows nothing for an approval interrupted mid-run", async () => {
+    // It comes back as needs_check and is never re-run: nothing to approve (#759 review).
+    const interrupted = {
+      ...WAITING,
+      status: "approved" as PendingStatus,
+      needs_check: true,
+    };
+    expect(await shownFor(async () => [interrupted])).toBe(false);
+  });
+
+  it("shows nothing when the queue cannot be read", async () => {
     expect(
-      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
-    ).toBeNull();
+      await shownFor(async () => {
+        throw new Error("offline");
+      }),
+    ).toBe(false);
   });
 });
