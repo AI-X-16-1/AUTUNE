@@ -264,6 +264,22 @@ export const setDueReminders = (on: boolean) =>
     body: JSON.stringify({ on }),
   });
 
+/** The caller's own leave dates (`YYYY-MM-DD`, both included); both null is no pause. */
+export interface NotificationPause {
+  starts_on: string | null;
+  ends_on: string | null;
+}
+
+export const getNotificationPause = () =>
+  api.extraction<NotificationPause>("/me/notification-pause");
+
+/** Only the caller's own: the request names nobody. Both null clears it. */
+export const setNotificationPause = (pause: NotificationPause) =>
+  api.extraction<NotificationPause>("/me/notification-pause", {
+    method: "PUT",
+    body: JSON.stringify(pause),
+  });
+
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */
 export const getReview = (meetingId: string) =>
   api.extraction<MeetingReview>(`/reviews/${encodeURIComponent(meetingId)}`);

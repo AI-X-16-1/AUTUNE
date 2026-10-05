@@ -67,6 +67,7 @@ from . import (
     notion_setup,
     project_send,
     projects,
+    reminders,
     service,
     sync_state,
 )
@@ -870,6 +871,18 @@ def send_weekly_digests() -> list[str]:
                 went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
         except PrivacyViolationError:
             refused.append(digest.user_id)
+            # Reported once: the week's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    service.settle_refused_weekly_digest(session, digest, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_weekly_digest_refusal_not_kept",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
             continue
         except SlackRecipientNotLinkedError:
             not_linked += 1
@@ -897,6 +910,100 @@ def send_weekly_digests() -> list[str]:
             f"{', '.join(refused)}"
         )
     return sent
+
+
+@shared_task(name="autune.extraction.periodic.send_daily_digests")
+@periodic(timedelta(minutes=10))
+def send_daily_digests() -> list[str]:
+    """The morning DM: to each person alone, what changed on their own items
+    since the last one and what is theirs to do today (the user, 2026-10-05;
+    ``service.daily_digests_to_send``). Returns the user ids one went to.
+
+    ``send_weekly_digests``' shape, for the same reasons: each DM claimed and
+    sent in its own transaction, a team without Slack or a person without a
+    linked account skipped and looked at again next run, an unexpected error
+    that one DM's, and a privacy refusal never swallowed -- raised after the
+    rest are sent. Every ten minutes; outside a Tuesday-to-Friday morning in
+    Korea it finds nothing owed. Nobody who turned their reminders off, and
+    nobody on a day they paused, is in the list.
+    """
+    if not get_settings().daily_digest:
+        return []
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = service.daily_digests_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({d.team_id for d in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent: list[str] = []
+    refused: list[str] = []
+    not_linked = 0
+    for digest in owed:
+        secret = secrets[digest.team_id]
+        if secret is None:
+            continue
+        try:
+            with session_scope() as session:
+                went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
+        except PrivacyViolationError:
+            refused.append(digest.user_id)
+            # Reported once: the day's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    service.settle_refused_daily_digest(session, digest, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_daily_digest_refusal_not_kept",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+            log.warning(
+                "extraction_daily_digest_failed",
+                user_id=digest.user_id,
+                team_id=digest.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent.append(digest.user_id)
+    if owed:
+        log.info(
+            "extraction_daily_digests_sent",
+            owed=len(owed),
+            sent=len(sent),
+            not_linked=not_linked,
+        )
+    if refused:
+        raise PrivacyViolationError(
+            f"morning digest refused by the outbound check for {len(refused)} person(s): "
+            f"{', '.join(refused)}"
+        )
+    return sent
+
+
+@shared_task(name="autune.extraction.periodic.forget_ended_notification_pauses")
+@periodic(timedelta(hours=1))
+def forget_ended_notification_pauses() -> int:
+    """Delete the pauses that have ended (``service.forget_ended_pauses``):
+    when a person was away is kept only while it stops a message. Its own
+    task, so it runs whether or not a deployment sends either digest. Returns
+    how many went; counts only in the log."""
+    with session_scope() as session:
+        gone = service.forget_ended_pauses(
+            session, today=reminders.korean_day(datetime.now(tz=UTC))
+        )
+    if gone:
+        log.info("extraction_notification_pauses_forgotten", count=gone)
+    return gone
 
 
 @shared_task(name="autune.extraction.periodic.remind_due_items")

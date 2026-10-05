@@ -291,6 +291,8 @@ confirmation DM's quotation is #586's second part.
 | `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
 | `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
 | `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
+| `ext_daily_digests` | That a person was sent the morning DM for one day through one team's Slack. The primary key is the "once", and the latest row's time is where the next DM's "since the last one" starts; the message is not kept. Goes with the person and with the team |
+| `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
 | `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
@@ -426,6 +428,14 @@ other module's tables.
   and to nobody else; only for a confirmed, unfinished item whose assignee is
   an account on the meeting's team. Off by default:
   `AUTUNE_EXTRACTION_DUE_REMINDERS=true` turns it on
+- A DM to each person on a Tuesday-to-Friday morning (09:00–12:00 Korea time):
+  what changed on their own items since the last one and what is theirs to do
+  today (`reminders.build_daily_digest`,
+  `autune.extraction.periodic.send_daily_digests`). Monday has the weekly
+  digest instead and a weekend has nothing. Not sent to a person who turned
+  their reminders off, or on a day inside their own leave dates
+  (`/me/notification-pause`), which stop Monday's digest too. Off by default:
+  `AUTUNE_EXTRACTION_DAILY_DIGEST=true` turns it on
 - Role-specific reports (Phase 2)
 
 ## AI stack

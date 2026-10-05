@@ -199,6 +199,15 @@ class ExtractionSettings(BaseSettings):
     Slack and the person linked their account.
     """
 
+    daily_digest: bool = False
+    """``AUTUNE_EXTRACTION_DAILY_DIGEST``: whether each person is sent, on a
+    Tuesday-to-Friday morning in Korea, a Slack DM of what changed on their own
+    items since the last one and what is theirs to do today
+    (``reminders.build_daily_digest``, the user, 2026-10-05). Monday has the
+    weekly digest instead. Off by default for the reason ``due_reminders`` is:
+    the first run messages people's real Slack accounts.
+    """
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 
