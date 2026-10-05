@@ -6,6 +6,7 @@ import { Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
+import { JiraOpenIssues } from "./JiraOpenIssues";
 import { isOverdue, localToday } from "../dates";
 import { useActionItems } from "../hooks/useActionItems";
 import type { ActionItemRead } from "../types";
@@ -27,6 +28,9 @@ import type { ActionItemRead } from "../types";
  *
  * No add form: an item is added to a meeting, and this screen has none. That
  * stays on the meeting's own actions tab.
+ *
+ * Under the board, the open issues of the Jira projects the caller's teams
+ * connected -- viewed on request and never imported (`JiraOpenIssues`).
  */
 
 type Tab = "all" | "mine" | "overdue";
@@ -81,6 +85,8 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
             </>
           )}
         </div>
+
+        <JiraOpenIssues />
       </div>
 
       {selected !== undefined ? (
