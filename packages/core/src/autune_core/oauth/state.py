@@ -28,7 +28,15 @@ _KEY_PREFIX = "oauth:state:"
 class OAuthTransaction:
     """What ``/google/start`` needs to remember until the callback returns."""
 
-    __slots__ = ("nonce", "redirect_to", "created_at", "purpose", "user_id", "team_id")
+    __slots__ = (
+        "nonce",
+        "redirect_to",
+        "created_at",
+        "purpose",
+        "user_id",
+        "team_id",
+        "code_verifier",
+    )
 
     def __init__(
         self,
@@ -39,6 +47,7 @@ class OAuthTransaction:
         purpose: str = "sign_in",
         user_id: str | None = None,
         team_id: str | None = None,
+        code_verifier: str | None = None,
     ) -> None:
         self.nonce = nonce
         self.redirect_to = redirect_to
@@ -53,6 +62,11 @@ class OAuthTransaction:
         """Who started a ``calendar`` or ``jira`` connect. Set from their session at start and
         never from the callback's request, so the grant lands on the person who
         asked for it."""
+        self.code_verifier = code_verifier
+        """The PKCE verifier whose challenge went out with the authorization
+        request (#704), sent back with the code. ``None`` for a provider that
+        is not sent a challenge, and for a transaction stored before PKCE: its
+        code was issued without a challenge and is exchanged without one."""
 
     def to_json(self) -> str:
         return json.dumps(
@@ -63,6 +77,7 @@ class OAuthTransaction:
                 "purpose": self.purpose,
                 "user_id": self.user_id,
                 "team_id": self.team_id,
+                "code_verifier": self.code_verifier,
             }
         )
 
@@ -75,6 +90,7 @@ class OAuthTransaction:
             purpose=data.get("purpose", "sign_in"),
             user_id=data.get("user_id"),
             team_id=data.get("team_id"),
+            code_verifier=data.get("code_verifier"),
             created_at=data.get("created_at"),
         )
 

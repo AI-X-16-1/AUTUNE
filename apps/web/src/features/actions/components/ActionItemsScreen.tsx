@@ -8,7 +8,6 @@ import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { CalendarConnect } from "./CalendarConnect";
 import { CarriedOverActions } from "./CarriedOverActions";
-import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
 import { MyConfirmations } from "./MyConfirmations";
 import { SlackConnect } from "./SlackConnect";
@@ -19,6 +18,7 @@ import { listProjects } from "../api";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import type { Project } from "../types";
 import { useActionItems } from "../hooks/useActionItems";
+import { bulkActionItems } from "../api";
 
 /**
  * One meeting's review: its decisions to confirm (S15, #246) above the action
@@ -105,8 +105,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             연동 설정
           </Link>
           <CalendarConnect />
-          <SlackMeConnect />
-          <JiraConnect meetingId={meetingId} />
+            <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
         </div>
@@ -151,6 +150,11 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
                 onSelect={setSelectedId}
                 add={{ meetingId, onAdd: add }}
                 onMove={(id, status) => edit(id, { status })}
+                onBulk={async (ids, action) => {
+                  const done = await bulkActionItems(ids, action);
+                  await reload();
+                  return done;
+                }}
               />
             </>
           )}
