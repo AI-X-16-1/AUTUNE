@@ -8,15 +8,15 @@ import { CalendarConnect } from "./CalendarConnect";
 import { JiraConnect } from "./JiraConnect";
 import { NotionConnect } from "./NotionConnect";
 import { SlackConnect } from "./SlackConnect";
-import { SlackMeConnect } from "./SlackMeConnect";
 
 type Team = SessionUser["teams"][number];
 
 /**
  * S28, 설정 › 연동 (#496): every connection in one place, with no meeting to
- * name the team. The person's own (Google Calendar, their Slack account) come
- * first; the team's (Slack workspace, Jira, Notion) follow for the team chosen
- * here -- the first by default, a choice when they belong to several. Any
+ * name the team. The person's own (Google Calendar) comes first; the team's
+ * (Slack workspace, Jira, Notion) follow for the team chosen here -- the first
+ * by default, a choice when they belong to several. The person's own Slack
+ * link (DM 받기) is under the team's Slack, shown once that is connected. Any
  * member may connect a team's integration: there is no admin role yet (#592).
  *
  * The same components the 액션 tab shows, given the team instead of a meeting;
@@ -65,7 +65,6 @@ export function IntegrationSettingsScreen() {
           내 연결
         </h2>
         <CalendarConnect />
-        <SlackMeConnect />
       </section>
 
       <section aria-label="팀 연결" className="flex flex-col gap-2">
