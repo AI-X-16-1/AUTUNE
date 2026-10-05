@@ -352,9 +352,13 @@ function Reason({
           "의미 비교는 발화를 저장하지 않아 인용할 수 없습니다."
         );
       default:
+        // Missing means no topic matched and no keyword was said (and, with the
+        // embedder on, no utterance was near the item's examples). Name the two
+        // checks every run makes; whether the embedder ran is not sent.
         return (
-          `이 항목을 가리키는 표현(${quoted(explanation.keywords.slice(0, 5))} 등)이 회의에서 ` +
-          `한 번도 나오지 않아 누락으로 판정했습니다.`
+          `이 항목에 해당하는 토픽이 없었고, 이 항목을 가리키는 표현(` +
+          `${quoted(explanation.keywords.slice(0, 5))} 등)도 회의에서 한 번도 나오지 않아 ` +
+          `누락으로 판정했습니다.`
         );
     }
   })();
