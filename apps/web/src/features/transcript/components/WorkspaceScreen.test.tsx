@@ -41,8 +41,9 @@ describe("WorkspaceScreen", () => {
 
     inviteToTeam.mockResolvedValue({ token: "tok_abc", expires_at: "2026-10-09T10:00:00Z" });
     fireEvent.change(screen.getByLabelText("초대할 이메일 주소"), { target: { value: "a@example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "초대 링크 만들기" }));
+    fireEvent.click(screen.getByRole("button", { name: "초대 링크 복사" }));
 
+    // No clipboard in this environment, so the link is put on the screen.
     await screen.findByLabelText("a@example.com 초대 링크");
     expect(inviteToTeam).toHaveBeenCalledExactlyOnceWith("team_new", "a@example.com");
   });
