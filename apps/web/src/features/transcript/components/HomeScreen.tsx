@@ -14,6 +14,8 @@ import { useMeetings, type MeetingsState } from "../hooks/useMeetings";
 import { STATUS_DOT, STATUS_LABEL, isBeingRecorded } from "../status";
 import type { MeetingSummary } from "../types";
 
+import { TeamScope } from "./TeamScope";
+
 /**
  * S05, the front door — every meeting this person can see, newest first.
  *
@@ -37,57 +39,74 @@ import type { MeetingSummary } from "../types";
  * slot: one link per row, nothing nested inside it, and the target is the
  * screen that decides what to draw.
  *
+ * **One team at a time** (the user, 2026-10-05). Somebody on several teams
+ * saw every team's meetings in one list, with nothing on a row to say whose
+ * it was. `TeamScope` -- the row of team chips the dashboard, decisions and
+ * gaps screens already sit under -- now sits above this list too: the first
+ * team (a pinned one, if they pinned any) is shown, and the list is that
+ * team's (`GET /meetings?team_id=`). Somebody on one team sees no row and the
+ * same list as before. There is no "all teams" view: a team is always chosen,
+ * as on those screens.
+ *
  * S05 in the spec is more than this: a next-meeting block, "things for me",
  * unresolved gaps, retention countdowns. Three of those four are other
  * features' data and #239 is the open question about how one page composes
  * features. What is here is the list, which is what makes the rest reachable.
  */
 export function HomeScreen() {
-  const state = useMeetings();
   useSendTeamlessToWorkspace();
-
-  // S03 replaces the whole screen, not just the list: with no meetings there
-  // is no "최근 회의" to title, and the first upload is the screen's subject.
-  if (state.status === "ready" && state.meetings.length === 0) {
-    return <FirstMeeting />;
-  }
 
   return (
     // S05's content column: the page gutter from the panel's left edge, not
     // centred. The shell's top bar already says "홈" and the sidebar holds the
     // one primary action ("회의 시작"), so the screen opens straight on its
-    // first section, as S05 does. 720 is the reading width — a list of meeting
-    // titles stretched across the panel is a line your eye has to travel back
-    // across.
+    // first section, as S05 does.
     <main style={{ padding: "var(--space-24) var(--space-page)" }}>
-      <section className="max-w-[720px]" aria-labelledby="home-meetings">
-        <header className="flex items-baseline gap-2.5" style={{ marginBottom: "var(--space-4)" }}>
-          <h1
-            id="home-meetings"
-            className="text-ink-strong"
-            style={{
-              fontSize: "var(--text-heading)",
-              fontWeight: "var(--text-heading-weight)",
-            }}
-          >
-            최근 회의
-          </h1>
-          {state.status === "ready" && state.meetings.length > 0 && (
-            <span
-              className="text-[var(--color-ink-muted)]"
-              style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-label)", fontWeight: 500 }}
-            >
-              {state.meetings.length}
-            </span>
-          )}
-        </header>
-
-        {body(state)}
-      </section>
+      <TeamScope>{(teamId) => <TeamMeetings teamId={teamId} />}</TeamScope>
     </main>
   );
 }
 
+/** One team's meetings: the list, or the first-meeting screen when it has none. */
+function TeamMeetings({ teamId }: { teamId: string }) {
+  const state = useMeetings(teamId);
+
+  // S03 replaces the list, not the team row above it: with no meetings there
+  // is no "최근 회의" to title and the first upload is the subject -- but
+  // somebody on several teams must still be able to pick another one.
+  if (state.status === "ready" && state.meetings.length === 0) {
+    return <FirstMeeting />;
+  }
+
+  return (
+    // 720 is the reading width — a list of meeting titles stretched across the
+    // panel is a line your eye has to travel back across.
+    <section className="max-w-[720px]" aria-labelledby="home-meetings">
+      <header className="flex items-baseline gap-2.5" style={{ marginBottom: "var(--space-4)" }}>
+        <h1
+          id="home-meetings"
+          className="text-ink-strong"
+          style={{
+            fontSize: "var(--text-heading)",
+            fontWeight: "var(--text-heading-weight)",
+          }}
+        >
+          최근 회의
+        </h1>
+        {state.status === "ready" && state.meetings.length > 0 && (
+          <span
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-label)", fontWeight: 500 }}
+          >
+            {state.meetings.length}
+          </span>
+        )}
+      </header>
+
+      {body(state)}
+    </section>
+  );
+}
 function body(state: MeetingsState) {
   if (state.status === "loading") {
     return (
@@ -252,7 +271,9 @@ function FirstMeeting() {
   const router = useRouter();
 
   return (
-    <main style={{ padding: "var(--space-24) var(--space-page)" }}>
+    // No padding of its own: `HomeScreen`'s `main` is the page, and the team
+    // row sits above this.
+    <div>
       <h1
         className="text-[var(--color-ink-strong)]"
         style={{
@@ -336,6 +357,6 @@ function FirstMeeting() {
           />
         </div>
       </div>
-    </main>
+    </div>
   );
 }

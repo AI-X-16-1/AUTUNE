@@ -143,8 +143,9 @@ def running_stage(session: Session, *, meeting_id: str) -> tuple[str | None, flo
     return (row.stage, row.stage_progress) if row else (None, None)
 
 
-def meetings_for(session: Session, *, member: User) -> list[Meeting]:
-    """Every meeting ``member`` may see, newest first. The home screen's list (S05).
+def meetings_for(session: Session, *, member: User, team_id: str | None = None) -> list[Meeting]:
+    """Every meeting ``member`` may see, newest first -- or, with ``team_id``,
+    those of that one team of theirs. The home screen's list (S05).
 
     **The membership join is the authorisation, and that is the whole point of
     this function.** Every other read in this module is handed a meeting id and
@@ -155,12 +156,16 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
     database to whoever holds a token. There is no branch in this function for
     that reason: no ``all`` flag, no admin path, no "if no teams then".
 
-    **No ``team_id`` filter, deliberately.** The home screen shows what the
-    person can see, and a browser that wants one team's meetings already has
-    them here -- it knows which team each row belongs to as soon as it needs to.
-    A parameter would be a second authorisation path (a team id the caller is
-    not on has to be refused, not quietly emptied) for a narrowing nothing asks
-    for yet. S05's per-team view adds it when there is a screen behind it.
+    **``team_id`` narrows; it does not authorise.** The home screen now shows
+    one team at a time (the user, 2026-10-05: somebody on several teams saw
+    every team's meetings in one list), and the rows carry no team for a
+    browser to sort them by -- ``MeetingSummary`` has four fields -- so the
+    narrowing is done here. A team the caller is not on is refused
+    (``require_team_member``), not quietly emptied: an empty list would say
+    "that team has no meetings", which is an answer about a team they may not
+    ask about. And the membership join below stays in the query either way, so
+    the filter is a second condition on rows the join already allowed, never a
+    replacement for it.
 
     **Ordered by ``coalesce(started_at, created_at)``.** ``started_at`` is null
     for a recording uploaded after the fact (``create_meeting``), and ordering on
@@ -176,14 +181,15 @@ def meetings_for(session: Session, *, member: User) -> list[Meeting]:
     counts: see ``MeetingSummary``.
     """
     ordering = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
-    return list(
-        session.scalars(
-            sa.select(Meeting)
-            .join(TeamMember, TeamMember.team_id == Meeting.team_id)
-            .where(TeamMember.user_id == member.id)
-            .order_by(ordering.desc(), Meeting.id.desc())
-        )
+    query = (
+        sa.select(Meeting)
+        .join(TeamMember, TeamMember.team_id == Meeting.team_id)
+        .where(TeamMember.user_id == member.id)
     )
+    if team_id is not None:
+        require_team_member(session, user_id=member.id, team_id=team_id)
+        query = query.where(Meeting.team_id == team_id)
+    return list(session.scalars(query.order_by(ordering.desc(), Meeting.id.desc())))
 
 
 def teams_for(session: Session, *, member: User) -> list[Team]:
