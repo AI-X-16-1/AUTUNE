@@ -113,6 +113,13 @@ class ExtProjectSend(Base):
 
     ``external_id`` is empty only inside the transaction that claimed the row
     to make the first copy: two people sending at once make one copy.
+
+    ``content_digest`` is ``service.source_digest`` over the minutes the copy
+    last received -- a hash, not the text. A refresh compares it with the
+    minutes as they are now and leaves a copy that already says them alone, so
+    refreshing is safe to do on every change and to repeat after a failure;
+    a copy whose write failed keeps its old digest and is still found stale
+    by the next one (#787 review).
     """
 
     __tablename__ = "ext_project_sends"
@@ -125,8 +132,35 @@ class ExtProjectSend(Base):
     )
     target: Mapped[str] = mapped_column(String(16), primary_key=True)
     external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_digest: Mapped[str | None] = mapped_column(String(64))
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtProjectRefreshOwed(Base):
+    """A meeting whose project minutes outside still have to be brought in line
+    with what is confirmed now (#787 review).
+
+    A refresh happens after the change it follows is committed, and talks to
+    tools that can be down or disconnected. Without this a failed one was only
+    logged: a sentence its speaker had deleted stayed in the team's Slack,
+    Notion or Jira until the meeting's retention ran out. A refresh that leaves
+    any copy behind writes the meeting here, deleted speech writes it in the
+    transaction that drops the words, and
+    ``tasks.retry_project_minutes_refresh`` tries again until every copy is in
+    line. An id and a count, nothing said; goes with the meeting, whose copies
+    are then retracted through ``ext_project_send_cleanup`` instead.
+    """
+
+    __tablename__ = "ext_project_refresh_owed"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

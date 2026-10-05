@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -39,9 +40,11 @@ from autune_extraction.models import (
     ExtDecision,
     ExtDecisionReview,
     ExtProject,
+    ExtProjectRefreshOwed,
     ExtProjectSend,
     ExtProjectSendCleanup,
 )
+from autune_extraction.pipeline import FakeClassifier, FakeNli
 from autune_extraction.router import router
 from autune_integrations.errors import PermanentIntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
@@ -537,3 +540,352 @@ def test_the_meetings_that_sent_minutes_are_found_from_their_rows(session: Sessi
 
     assert project_send.meetings_with_sends(session, ["act_ok"], []) == {MEETING}
     assert project_send.meetings_with_sends(session, [], ["dec_app"]) == {MEETING}
+
+
+# --- a refresh can be repeated, and is until it has worked (#787 review) -----------
+
+
+def test_a_refresh_leaves_a_copy_that_already_says_the_minutes_alone(session: Session) -> None:
+    tools, notion, slack, jira = clients()
+    project_send.send(session, MEETING, ["notion", "slack", "jira"], tools)
+
+    refreshed = project_send.refresh(session, MEETING, tools)
+
+    assert {s.outcome for s in refreshed} == {"unchanged"} and len(refreshed) == 6
+    assert len(notion.pages) == 2 and notion.trashed == [], "no new page for the same minutes"
+    assert slack.updated == [] and jira.updated == []
+
+
+def test_a_refresh_rewrites_only_the_copies_whose_minutes_changed(session: Session) -> None:
+    tools, _, slack, _ = clients()
+    project_send.send(session, MEETING, ["slack"], tools)
+    _withdraw(session, "dec_ok")  # Autune's minutes change; App's do not
+
+    refreshed = project_send.refresh(session, MEETING, tools)
+
+    assert {(s.project_id, s.outcome) for s in refreshed} == {
+        ("prj_a", "updated"),
+        ("prj_b", "unchanged"),
+    }
+    assert [ts for _, ts, _ in slack.updated] == ["17000.1"]
+
+
+class SlackDownForEdits(FakeSlack):
+    def update_message(self, channel: str, ts: str, text: str) -> None:
+        raise PermanentIntegrationError("slack refused")
+
+
+def test_a_copy_whose_rewrite_failed_is_still_behind_at_the_next_refresh(
+    session: Session,
+) -> None:
+    """The digest moves only with a write that went: a failed copy must not
+    look in line afterwards."""
+    tools, _, slack, _ = clients()
+    project_send.send(session, MEETING, ["slack"], tools)
+    _withdraw(session, "dec_ok")
+    tools.slack = (SlackDownForEdits(), "C_TEAM")
+
+    failed = project_send.refresh(session, MEETING, tools)
+
+    assert {(s.project_id, s.outcome) for s in failed} == {
+        ("prj_a", "failed"),
+        ("prj_b", "unchanged"),
+    }
+    assert project_send.in_line(failed) is False
+
+    tools.slack = (slack, "C_TEAM")
+    again = project_send.refresh(session, MEETING, tools)
+
+    assert {(s.project_id, s.outcome) for s in again} == {
+        ("prj_a", "updated"),
+        ("prj_b", "unchanged"),
+    }
+    assert project_send.in_line(again) is True
+    assert "배포는 금요일" not in slack.updated[-1][2]
+
+
+def test_a_refresh_takes_the_copies_in_the_order_a_send_does(session: Session) -> None:
+    """Each row's lock is held to the end of the transaction, so a send and a
+    refresh that took one meeting's rows in different orders could deadlock."""
+    tools, _, _, _ = clients()
+    sent, _ = project_send.send(session, MEETING, ["notion", "slack", "jira"], tools)
+    for row in session.query(ExtProjectSend):
+        row.content_digest = None  # every copy behind
+    session.flush()
+
+    refreshed = project_send.refresh(session, MEETING, tools)
+
+    assert [(s.project_id, s.target) for s in refreshed] == [(s.project_id, s.target) for s in sent]
+    assert [s.target for s in refreshed[:3]] == ["notion", "slack", "jira"]
+
+
+class NotionThatKeepsHalfAPage(FakeNotion):
+    """Appends fail, and so does taking the page back."""
+
+    def __init__(self) -> None:
+        super().__init__(fail_appends=True)
+
+    def update_page(self, page_id: str, properties: dict[str, Any]) -> None:
+        raise PermanentIntegrationError("notion refused the retraction too")
+
+
+def test_half_a_page_that_cannot_be_taken_back_is_queued_for_cleanup(session: Session) -> None:
+    """It is live, holds the minutes' first lines, and no row names it: without
+    the queue nothing would ever find it again."""
+    for n in range(120):
+        session.add(
+            ExtActionItem(
+                id=f"act_long{n}",
+                meeting_id=MEETING,
+                description=f"{n}번째 아주 긴 할 일 설명입니다 " * 3,
+                status="todo",
+                confidence=0.9,
+                origin="model",
+                project_id="prj_a",
+            )
+        )
+    session.flush()
+    tools, _, _, _ = clients()
+    tools.notion = (NotionThatKeepsHalfAPage(), "db_minutes")
+
+    sent, _ = project_send.send(session, MEETING, ["notion"], tools)
+
+    assert {(s.project_id, s.outcome) for s in sent} == {("prj_a", "failed"), ("prj_b", "created")}
+    assert session.query(ExtProjectSend).filter_by(project_id="prj_a").count() == 0
+    queued = {(r.target, r.external_id) for r in session.query(ExtProjectSendCleanup)}
+    assert queued == {("notion", "page_1")}
+
+
+@pytest.fixture
+def in_tasks(session: Session, monkeypatch: pytest.MonkeyPatch) -> project_send.Clients:
+    """``tasks`` on this session, with tools a test can swap: Slack sent to."""
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        yield session
+
+    tools, _, _, _ = clients()
+    project_send.send(session, MEETING, ["slack"], tools)
+    monkeypatch.setattr(tasks, "session_scope", same_session)
+    monkeypatch.setattr(tasks, "_project_clients", lambda *_: tools)
+    return tools
+
+
+def _owed(session: Session) -> ExtProjectRefreshOwed | None:
+    session.flush()  # the shared session never commits; do not expire what it holds
+    return session.get(ExtProjectRefreshOwed, MEETING)
+
+
+def test_a_refresh_that_leaves_a_copy_behind_is_owed_and_retried_until_in_line(
+    session: Session, in_tasks: project_send.Clients
+) -> None:
+    """Before: the failure was logged and the deleted sentence stayed outside
+    for as long as the meeting was kept."""
+    working = in_tasks.slack
+    assert working is not None
+    _withdraw(session, "dec_ok")
+    in_tasks.slack = (SlackDownForEdits(), "C_TEAM")
+
+    assert tasks.refresh_project_minutes(MEETING) is False
+    assert _owed(session) is not None
+
+    assert tasks.retry_project_minutes_refresh() == 0
+    owed = _owed(session)
+    assert owed is not None and owed.attempts == 1
+
+    in_tasks.slack = working
+    assert tasks.retry_project_minutes_refresh() == 1
+    assert _owed(session) is None
+    assert "배포는 금요일" not in working[0].updated[-1][2]
+
+
+def test_a_tool_no_longer_connected_leaves_the_refresh_owed(
+    session: Session, in_tasks: project_send.Clients
+) -> None:
+    _withdraw(session, "dec_ok")
+    in_tasks.slack = None
+
+    assert tasks.refresh_project_minutes(MEETING) is False
+    assert _owed(session) is not None
+
+
+def test_a_refresh_that_breaks_outright_is_owed_too(
+    session: Session, in_tasks: project_send.Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: Any) -> project_send.Clients:
+        raise RuntimeError("could not even build the clients")
+
+    monkeypatch.setattr(tasks, "_project_clients", broken)
+
+    assert tasks.refresh_project_minutes(MEETING) is False
+    assert _owed(session) is not None
+
+
+def test_a_refresh_with_nothing_behind_owes_nothing_and_settles_what_was_owed(
+    session: Session, in_tasks: project_send.Clients
+) -> None:
+    project_send.owe_refresh(session, [MEETING])
+    project_send.owe_refresh(session, [MEETING])  # safe to repeat
+
+    assert tasks.refresh_project_minutes(MEETING) is True
+    assert _owed(session) is None
+
+
+def test_an_owed_refresh_is_given_up_on_only_after_its_attempts(
+    session: Session, in_tasks: project_send.Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tasks, "PROJECT_REFRESH_MAX_ATTEMPTS", 3)
+    _withdraw(session, "dec_ok")
+    in_tasks.slack = None
+    tasks.refresh_project_minutes(MEETING)
+
+    tasks.retry_project_minutes_refresh()
+    tasks.retry_project_minutes_refresh()
+    owed = _owed(session)
+    assert owed is not None and owed.attempts == 2
+
+    tasks.retry_project_minutes_refresh()
+    assert _owed(session) is None
+    stale = session.get(ExtProjectSend, (MEETING, "prj_a", "slack"))
+    assert stale is not None
+    assert stale.content_digest != project_send._digest(
+        project_send.minutes(session, MEETING)[0][0]
+    )
+
+
+def test_deleted_speech_owes_the_refresh_in_its_own_commit_and_queues_it(
+    session: Session, in_tasks: project_send.Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The person deleting their speech does not wait on the tools, and the
+    rewrite is on record before anything is asked of a queue."""
+    queued: list[str] = []
+    monkeypatch.setattr(
+        tasks.service,
+        "forget_speech",
+        lambda _session, _ids: service.SpeechForgotten(changed_items=("act_ok",)),
+    )
+    monkeypatch.setattr(
+        tasks, "refresh_project_minutes_queued", SimpleNamespace(delay=queued.append)
+    )
+    monkeypatch.setattr(tasks, "sync_item_copies", SimpleNamespace(delay=lambda _id: None))
+    working = in_tasks.slack
+    assert working is not None
+
+    tasks.forget_deleted_speech("user_1", ["utt_1"])
+
+    assert queued == [MEETING]
+    assert _owed(session) is not None
+    assert working[0].updated == [], "nothing asked of Slack inside the deletion"
+
+
+def test_deleted_speech_is_still_owed_when_nothing_can_be_queued(
+    session: Session, in_tasks: project_send.Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_broker(_meeting_id: str) -> None:
+        raise ConnectionError("broker down")
+
+    monkeypatch.setattr(
+        tasks.service,
+        "forget_speech",
+        lambda _session, _ids: service.SpeechForgotten(changed_decisions=("dec_ok",)),
+    )
+    monkeypatch.setattr(tasks, "refresh_project_minutes_queued", SimpleNamespace(delay=no_broker))
+
+    tasks.forget_deleted_speech("user_1", ["utt_1"])  # does not raise
+
+    assert _owed(session) is not None
+
+
+def test_every_extraction_ends_with_one_refresh_of_its_meeting(
+    session: Session, in_tasks: project_send.Clients, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A confirmed decision the rebuild no longer has is named by no
+    correction; the run itself has to bring the minutes in line."""
+    refreshed: list[str] = []
+    monkeypatch.setattr(tasks, "refresh_project_minutes", refreshed.append)
+    monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
+    monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    monkeypatch.setattr(tasks, "publish", lambda *_args, **_kwargs: None)
+    for task in ("sync_item_copies", "sync_decision", "update_confirmation_dm"):
+        monkeypatch.setattr(tasks, task, SimpleNamespace(delay=lambda _id: None))
+
+    tasks._extract(MEETING, [])
+
+    assert refreshed == [MEETING]
+
+
+# --- every change that takes a row out of the minutes refreshes them (#787 review) ---
+
+
+@pytest.fixture
+def api(session: Session, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, list[str]]:
+    """The router on this session, and the meetings a refresh was asked for.
+    The two sync tasks are recorded apart: they end with a refresh of their own."""
+    refreshed: list[str] = []
+    monkeypatch.setattr(tasks, "refresh_project_minutes", refreshed.append)
+    monkeypatch.setattr(
+        tasks, "sync_decision_after_confirmation", lambda _id: refreshed.append("via decision sync")
+    )
+    monkeypatch.setattr(
+        tasks, "sync_after_confirmation", lambda _id: refreshed.append("via item sync")
+    )
+    app = FastAPI()
+
+    @app.exception_handler(AutuneError)
+    async def _render(_: Request, exc: AutuneError) -> JSONResponse:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    app.include_router(router, prefix=PREFIX)
+    app.dependency_overrides[get_session] = lambda: session
+    sign_in(app, session, team_id=TEAM)
+    return TestClient(app), refreshed
+
+
+def test_taking_a_confirmation_back_refreshes_the_minutes_with_no_notion_page(
+    api: tuple[TestClient, list[str]],
+) -> None:
+    """A team that sent its minutes to Slack or Jira alone has no decision
+    page, and the withdrawn decision stayed in the copy."""
+    client, refreshed = api
+
+    answer = client.patch(f"{PREFIX}/decisions/dec_ok", json={"status": "pending"})
+
+    assert answer.status_code == 200
+    assert refreshed == [MEETING]
+
+
+def test_deleting_a_decision_a_person_added_refreshes_its_meetings_minutes(
+    session: Session, api: tuple[TestClient, list[str]]
+) -> None:
+    """The row is really deleted, so the meeting has to be read before."""
+    session.add(
+        ExtDecision(
+            id="dec_typed",
+            meeting_id=MEETING,
+            statement="사람이 적은 결정",
+            confidence=1.0,
+            origin="user",
+            project_id="prj_a",
+        )
+    )
+    session.flush()
+    client, refreshed = api
+
+    answer = client.delete(f"{PREFIX}/decisions/dec_typed")
+
+    assert answer.status_code == 204
+    assert session.get(ExtDecision, "dec_typed") is None
+    assert refreshed == [MEETING]
+
+
+def test_moving_an_item_back_to_needs_confirmation_refreshes_the_minutes(
+    api: tuple[TestClient, list[str]],
+) -> None:
+    """Its only copy outside is the minutes, so nothing of its own follows --
+    and an unconfirmed item stayed in them (#246)."""
+    client, refreshed = api
+
+    answer = client.patch(f"{PREFIX}/action-items/act_ok", json={"status": "needs_confirmation"})
+
+    assert answer.status_code == 200
+    assert refreshed == [MEETING]
