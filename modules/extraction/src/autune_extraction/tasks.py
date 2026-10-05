@@ -59,7 +59,15 @@ from autune_integrations import (
 )
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from . import calendar_sync, jira_sync, notion_backfill, notion_setup, service, sync_state
+from . import (
+    calendar_sync,
+    jira_sync,
+    notion_backfill,
+    notion_setup,
+    projects,
+    service,
+    sync_state,
+)
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
 from .models import (
@@ -225,6 +233,9 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         # Pages of decisions this run dropped: their refs are kept so the
         # pages can be retired, not left live in Notion (#669).
         orphaned_pages = service.decision_pages_without_a_decision(session, meeting_id)
+        # Which of the team's projects each row is about, by what was said.
+        # Rows a person placed keep their project.
+        projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
         result = service.result_for_meeting(session, meeting_id)

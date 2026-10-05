@@ -15,6 +15,8 @@ import type {
   ReviewDecision,
   ConfirmationAnswer,
   MyConfirmation,
+  Project,
+  ProjectDraft,
 } from "./types";
 
 export { api };
@@ -140,10 +142,14 @@ export const bulkActionItems = (ids: string[], action: "confirm" | "delete") =>
     body: JSON.stringify({ ids, action }),
   });
 
-/** A `DELETE` answered 204: an empty success is not a parse failure. */
-async function withoutBody(path: string): Promise<void> {
+/** A request answered 204 (a `DELETE` unless told otherwise): an empty
+ * success is not a parse failure. */
+async function withoutBody(
+  path: string,
+  init: RequestInit = { method: "DELETE" },
+): Promise<void> {
   try {
-    await api.extraction<void>(path, { method: "DELETE" });
+    await api.extraction<void>(path, init);
   } catch (cause) {
     if (cause instanceof SyntaxError) return;
     throw cause;
@@ -178,6 +184,47 @@ export const putSummaryNote = (meetingId: string, body: string) =>
     method: "PUT",
     body: JSON.stringify({ body }),
   });
+
+/** The team's projects, named by one of its meetings or by the team. */
+export const listProjects = (scope: IntegrationScope) =>
+  api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
+
+export const createProject = (teamId: string, draft: ProjectDraft) =>
+  api.extraction<Project>(`/projects?team_id=${encodeURIComponent(teamId)}`, {
+    method: "POST",
+    body: JSON.stringify(draft),
+  });
+
+export const updateProject = (teamId: string, id: string, draft: ProjectDraft) =>
+  api.extraction<Project>(
+    `/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`,
+    { method: "PUT", body: JSON.stringify(draft) },
+  );
+
+/** Delete a project; what was in it becomes 미분류. */
+export const deleteProject = (teamId: string, id: string) =>
+  withoutBody(`/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`);
+
+/** Put an item in one of its team's projects, or none (`null`). */
+export const placeActionItem = (id: string, projectId: string | null) =>
+  api.extraction<ActionItemRead>(`/action-items/${encodeURIComponent(id)}/project`, {
+    method: "PUT",
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+/** Put a decision in one of its team's projects, or none. Answered 204. */
+export const placeDecision = (id: string, projectId: string | null) =>
+  withoutBody(`/decisions/${encodeURIComponent(id)}/project`, {
+    method: "PUT",
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+/** Place the meeting's rows in the team's projects again, by the rules. */
+export const assignSummaryProjects = (meetingId: string) =>
+  api.extraction<MeetingSummary>(
+    `/summary/${encodeURIComponent(meetingId)}/projects/assign`,
+    { method: "POST" },
+  );
 
 /** The caller's own due-date reminders by Slack DM (review of #751). */
 export interface DueReminderSetting {
