@@ -364,12 +364,16 @@ def test_every_name_langsmith_reads_is_refused(variable: str) -> None:
 
 @pytest.mark.parametrize("variable", ALL_TRACING)
 def test_the_refusal_matches_what_langsmith_itself_switches_on(
-    variable: str, monkeypatch: pytest.MonkeyPatch
+    variable: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:
     # Against the installed LangSmith, so a release that reads another name, or
     # stops reading one, shows up here rather than in a trace that left the guard.
     from langsmith import utils
 
+    # LangSmith caches what it read (lru_cache); left "on", every later graph in
+    # the run would try to upload its state (#819 review). Undo the environment,
+    # then forget the cached answer.
+    request.addfinalizer(lambda: (monkeypatch.undo(), utils.get_env_var.cache_clear()))
     for name in ALL_TRACING:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(variable, "true")
