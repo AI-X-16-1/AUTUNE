@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from autune_gap.schemas import (
+    CoveredExplanationRead,
     EvidenceRead,
     GapDismissal,
     GapExplanationRead,
@@ -107,6 +108,7 @@ def test_the_web_explanation_mirrors_are_current() -> None:
         ("GapExplanations", GapExplanations),
         ("GapExplanation", GapExplanationRead),
         ("GapEvidence", EvidenceRead),
+        ("CoveredExplanation", CoveredExplanationRead),
         ("ScoreBreakdown", ScoreBreakdownRead),
         ("ScorePart", ScorePartRead),
     ):

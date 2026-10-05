@@ -222,6 +222,24 @@ class GapExplanationRead(BaseModel):
     breakdown: ScoreBreakdownRead | None = None
 
 
+class CoveredExplanationRead(BaseModel):
+    """Why one checklist item was read as covered: the topic that settled it.
+
+    A covered item has no ``gap_gaps`` row, so nothing was stored about it. The
+    topic is found again over the stored graph with the rule the pipeline used
+    (``detect.match``): the item's most central matching topic, at or above
+    ``partial_centrality``. When today's rule no longer reaches that -- the
+    template or the threshold moved since the meeting was analysed --
+    ``topic_label`` is null and the screen says it cannot show the reason,
+    rather than offering one the verdict was not reached on.
+    """
+
+    item_key: str
+    topic_label: str | None = None
+    topic_centrality: float | None = None
+    evidence: list[EvidenceRead] = Field(default_factory=list)
+
+
 class GapExplanations(BaseModel):
     """Everything S20 shows beside a gap that ``GapReport`` does not carry.
 
@@ -242,6 +260,9 @@ class GapExplanations(BaseModel):
     high_threshold: float
     medium_threshold: float
     gaps: list[GapExplanationRead] = Field(default_factory=list)
+    covered: list[CoveredExplanationRead] = Field(default_factory=list)
+    """One per item the rail reads as covered, in template order. Empty for a
+    meeting not analysed, where nothing is covered."""
 
 
 class TeamGapRead(BaseModel):

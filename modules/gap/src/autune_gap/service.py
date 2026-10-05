@@ -54,6 +54,7 @@ from autune_gap.pipeline import (
     get_template_verifier,
 )
 from autune_gap.schemas import (
+    CoveredExplanationRead,
     EvidenceRead,
     GapDismissal,
     GapExplanationRead,
@@ -1181,7 +1182,46 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
         high_threshold=thresholds.high,
         medium_threshold=thresholds.medium,
         gaps=explained,
+        covered=_explain_covered(session, meeting_id, chosen, views, thresholds),
     )
+
+
+def _explain_covered(
+    session: Session,
+    meeting_id: str,
+    chosen: template.Template,
+    views: dict[str, detect.TopicView],
+    thresholds: detect.Thresholds,
+) -> list[CoveredExplanationRead]:
+    """The topic each covered item rests on, found again over the stored graph.
+
+    Covered is what ``template_comparison`` reads: an analysed meeting, and no
+    gap row for the item -- dismissed or not, a row is a gap. The topic is
+    ``detect.match``'s first, held to the same ``classify`` rule; one that no
+    longer clears it is not offered as the reason (``CoveredExplanationRead``).
+    """
+    if not views:
+        return []
+    raised = set(
+        session.scalars(
+            select(GapGap.template_item_key).where(
+                GapGap.meeting_id == meeting_id, GapGap.template_key == chosen.key
+            )
+        )
+    )
+    topics = list(views.values())
+    covered = []
+    for item in chosen.items:
+        if item.key in raised:
+            continue
+        reason = CoveredExplanationRead(item_key=item.key)
+        matched = detect.match(item, topics)
+        if detect.classify(matched, False, thresholds) is detect.Coverage.COVERED:
+            reason.topic_label = matched[0].label
+            reason.topic_centrality = matched[0].centrality
+            reason.evidence = _topic_evidence(session, matched[0].id)
+        covered.append(reason)
+    return covered
 
 
 def _topic_evidence(session: Session, topic_id: str) -> list[EvidenceRead]:

@@ -387,7 +387,7 @@ function Reason({
 }
 
 /** One quote, its time first. The time links to the transcript tab. */
-function EvidenceQuote({ quote, meetingId }: { quote: GapEvidence; meetingId?: string }) {
+export function EvidenceQuote({ quote, meetingId }: { quote: GapEvidence; meetingId?: string }) {
   const time = clock(quote.start_sec);
   return (
     <Quote>
