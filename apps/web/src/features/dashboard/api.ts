@@ -7,6 +7,7 @@ import type {
   HeatmapCell,
   MeetingReport,
   PredictionsRead,
+  WeeklyReportSchedule,
 } from "./types";
 
 export { api };
@@ -22,6 +23,22 @@ export const getGapTitles = (teamId: string) =>
 
 export const getPredictions = (teamId: string) =>
   api.intelligence<PredictionsRead>(`/predictions/${encodeURIComponent(teamId)}`);
+
+/** When the team's weekly report goes out — members only (#227). */
+export const getWeeklyReportSchedule = (teamId: string) =>
+  api.intelligence<WeeklyReportSchedule>(
+    `/weekly-report-schedule/${encodeURIComponent(teamId)}`,
+  );
+
+/** A member changes it; the next slot follows it. */
+export const setWeeklyReportSchedule = (
+  teamId: string,
+  schedule: Pick<WeeklyReportSchedule, "weekday" | "hour" | "send_empty">,
+) =>
+  api.intelligence<WeeklyReportSchedule>(
+    `/weekly-report-schedule/${encodeURIComponent(teamId)}`,
+    { method: "PUT", body: JSON.stringify(schedule) },
+  );
 
 /** The team's meeting reports for the dashboard card — members only. */
 export const getMeetingReports = (teamId: string) =>

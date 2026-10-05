@@ -34,7 +34,7 @@
 | 회의 전 | 자료 분석 → 어젠다 초안 → 프리미팅 브리프 _(Phase 2)_                                             |
 | 회의 중 | 실시간 전사 + 화자 분리 + 중간 요약                                                               |
 | 회의 후 | 액션아이템 추출·추적, 갭 탐지, 과거 회의 맥락 연결, 개인 발언 비중 피드백, Slack·Notion·Jira 전송 |
-| 축적 후 | 결정 계보 추적, 팀 커뮤니케이션 대시보드, 미스얼라인먼트 예측                                     |
+| 축적 후 | 결정 히스토리 추적, 팀 커뮤니케이션 대시보드, 미스얼라인먼트 예측                                     |
 
 **핵심 차별점:** 회의가 쌓일수록 맥락 연결·갭 패턴·예측 정확도가 올라가는
 데이터 네트워크 효과. 그리고 개인정보를 설계 단계에서 보호하는 유일한 도구입니다.
@@ -66,7 +66,7 @@
 | **A. Audio Pipeline**  | 녹음 → 화자별 전사 → 개인정보 마스킹 → 원본 삭제                        | Whisper, Pyannote, Speaker Embedding | 김민경 |
 | **B. 구조화 추출**     | 발화 5종 분류 → 액션아이템 카드 → 모호 동의 NLI 검증 → Notion·Jira 연동 | DeBERTa 분류기, NLI                  | 강민구 |
 | **C. 갭 탐지**         | 토픽 그래프 → 참여도 매트릭스 → 템플릿 대조 → 리스크 스코어링           | spaCy NER, NetworkX, Graph Centrality | 박재경 |
-| **D. 회의 맥락 엔진**  | 과거 회의 토픽 연결 → 결정 계보 추적 → 어젠다·브리프 생성               | Sentence-BERT, BM25, Cross-encoder   | 문민재 |
+| **D. 회의 맥락 엔진**  | 과거 회의 토픽 연결 → 결정 히스토리 추적 → 어젠다·브리프 생성               | Sentence-BERT, BM25, Cross-encoder   | 문민재 |
 | **E. 회의 인텔리전스** | 품질 점수 → 갭 분류 → 예측 → 히트맵 → 주간 리포트                       | SetFit, XGBoost, Prophet             | 이승환 |
 
 A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack·Notion·Jira로 결과를
@@ -119,7 +119,7 @@ A가 만든 전사 결과를 B·C·D가 **병렬로** 소비하고, 각자 Slack
 | ----------- | ------------------------------------------------------------------------------- |
 | Backend     | FastAPI (Python 3.12), Celery + Redis                                           |
 | Frontend    | Next.js + Tailwind (Node 22)                                                    |
-| Database    | PostgreSQL + pgvector — 구조화 데이터, 임베딩 검색, 토픽 그래프, 결정 계보를 모두 담습니다 |
+| Database    | PostgreSQL + pgvector — 구조화 데이터, 임베딩 검색, 토픽 그래프, 결정 히스토리를 모두 담습니다 |
 | 패키지 관리 | uv workspace (Python), pnpm workspace (JS)                                      |
 | 연동        | Slack Bolt, Notion API, Jira REST API, Google Calendar API                      |
 

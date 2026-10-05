@@ -271,6 +271,16 @@ def test_generate_weekly_report_posts_to_the_configured_channel(
     db_session: Session, team: str
 ) -> None:
     _connect_slack(db_session, team, config={"channel": "C123"})
+    # An empty week is posted only on a team that asked for those (#227).
+    db_session.add(
+        service.IntelTeamSettings(
+            team_id=team,
+            weekly_report_weekday=0,
+            weekly_report_hour=9,
+            weekly_report_send_empty=True,
+        )
+    )
+    db_session.flush()
 
     with patch.object(tasks, "SlackClient") as slack_client_cls:
         tasks.generate_weekly_report(team, period_end="2026-09-14")

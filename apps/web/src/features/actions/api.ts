@@ -191,6 +191,12 @@ export const putSummaryNote = (meetingId: string, body: string) =>
 export const listProjects = (scope: IntegrationScope) =>
   api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
 
+/** Words said often in the team's meetings that no project has yet. */
+export const listProjectSuggestions = (teamId: string) =>
+  api.extraction<{ word: string; count: number }[]>(
+    `/projects/suggestions?team_id=${encodeURIComponent(teamId)}`,
+  );
+
 /** Every project of every team the reader is on, for the board across meetings. */
 export const listMyProjects = () => api.extraction<Project[]>("/projects/mine");
 
@@ -256,6 +262,27 @@ export const setDueReminders = (on: boolean) =>
   api.extraction<DueReminderSetting>("/me/due-reminders", {
     method: "PUT",
     body: JSON.stringify({ on }),
+  });
+
+/** The caller's own leave dates (`YYYY-MM-DD`, both included); both null is no pause. */
+export interface NotificationPause {
+  starts_on: string | null;
+  ends_on: string | null;
+}
+
+/** The pause as it stands, and whether this server also reads out-of-office time from a connected calendar. */
+export interface NotificationPauseRead extends NotificationPause {
+  calendar_leave?: boolean;
+}
+
+export const getNotificationPause = () =>
+  api.extraction<NotificationPauseRead>("/me/notification-pause");
+
+/** Only the caller's own: the request names nobody. Both null clears it. */
+export const setNotificationPause = (pause: NotificationPause) =>
+  api.extraction<NotificationPauseRead>("/me/notification-pause", {
+    method: "PUT",
+    body: JSON.stringify(pause),
   });
 
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */

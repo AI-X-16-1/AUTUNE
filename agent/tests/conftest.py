@@ -62,3 +62,15 @@ def team(session: Session) -> dict[str, str]:
     session.add(meeting)
     session.commit()
     return {"team": team.id, "member": member.id, "outsider": outsider.id, "meeting": meeting.id}
+
+
+@pytest.fixture(autouse=True)
+def _langsmith_reads_the_environment_afresh() -> Iterator[None]:
+    """LangSmith caches environment reads (``langsmith.utils.get_env_var`` is an
+    lru_cache). A test that turns tracing on for a moment would otherwise leave
+    every later graph uploading its state past the privacy guard (#819 review)."""
+    from langsmith import utils
+
+    utils.get_env_var.cache_clear()
+    yield
+    utils.get_env_var.cache_clear()

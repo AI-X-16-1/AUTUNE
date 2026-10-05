@@ -142,12 +142,14 @@ def team_trend(session: Session, team_id: str) -> dict[str, Any]:
     """
     dashboard = service.get_dashboard(session, team_id)
     # B's counts do not wait for E's scores (#800 review): say them either way.
-    completion = (
-        f" 최근 4주 회의의 액션아이템 완료율 {dashboard.action_item_completion_rate:.0%},"
-        f" 기한 지난 항목 {dashboard.overdue_action_items}건."
-        if dashboard.action_item_completion_rate is not None
-        else ""
-    )
+    completion = ""
+    if dashboard.action_item_completion_rate is not None:
+        completion += (
+            f" 최근 4주 회의의 액션아이템 완료율 {dashboard.action_item_completion_rate:.0%}."
+        )
+    if dashboard.overdue_action_items is not None:
+        # Over every kept meeting, not the four weeks, and shown on its own floor.
+        completion += f" 기한 지난 항목 {dashboard.overdue_action_items}건(보관 중인 회의 전체)."
     if dashboard.meeting_count == 0:
         return _result(summary="이 팀에는 점수가 매겨진 회의가 없습니다." + completion, items=[])
 

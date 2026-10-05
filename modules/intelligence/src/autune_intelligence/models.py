@@ -199,7 +199,14 @@ class IntelMeetingReport(Base, TimestampMixin):
 
 
 class IntelReport(Base, TimestampMixin):
-    """One generated weekly report per team per period."""
+    """One generated weekly report per team per period.
+
+    ``posted_at`` is set when the post to the team's channel is claimed, before
+    it is sent, and cleared if sending fails, so a report goes out once
+    (#227). ``not_posted`` says why one never will: ``"empty"`` for a week
+    with nothing to say on a team that did not ask for those, ``"refused"``
+    for a body the outbound check refused (#821 review).
+    """
 
     __tablename__ = "intel_reports"
 
@@ -211,6 +218,39 @@ class IntelReport(Base, TimestampMixin):
     body_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     metrics_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     source_meeting_ids: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    not_posted: Mapped[str | None] = mapped_column(String(16))
+
+
+class IntelTeamSettings(Base, TimestampMixin):
+    """When a team's weekly report goes out, and whether an empty week does (#227).
+
+    No row means the defaults: Monday 09:00 KST, empty weeks not posted. Any
+    member may change it, as any member may change the team's retention;
+    ``updated_by`` says who did. Deleted with its team.
+    """
+
+    __tablename__ = "intel_team_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "weekly_report_weekday BETWEEN 0 AND 6", name="ck_intel_team_settings_weekday"
+        ),
+        CheckConstraint("weekly_report_hour BETWEEN 0 AND 23", name="ck_intel_team_settings_hour"),
+    )
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    weekly_report_weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    """0 is Monday, as ``date.weekday``."""
+    weekly_report_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    """The hour in Korean time (``ACTION_PROGRESS_TODAY_ZONE``)."""
+    weekly_report_send_empty: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=false()
+    )
+    updated_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
 
 
 class IntelActionProgress(Base, TimestampMixin):

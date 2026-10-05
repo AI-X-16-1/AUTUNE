@@ -82,6 +82,7 @@ assigned by similarity alone. Design:
 | `aud_masking_events` | Planned, not built. Would count masked spans by category, for the recall metric — **never the masked content** |
 | `aud_corrections` | Planned, not built. Would hold user corrections to speaker attribution and text, for accuracy improvement |
 | `aud_team_invitations` | A pending invitation to a team (#552): the team, the invited address, who invited, when it lapses, and the SHA-256 of the link's token. Not a membership — `invitations.accept` is the only place a row becomes one, and the row goes when it does |
+| `aud_speaker_names` | A name typed for a speaker with no account on the team (a guest), for one meeting only. No user id, no voice profile, and not published in `TranscriptReady` — other modules see an unidentified speaker. Cascades with the meeting |
 
 Plus the shared entities in `packages/core`, which A writes.
 
@@ -89,8 +90,10 @@ Plus the shared entities in `packages/core`, which A writes.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/teams` | The teams the caller may open a meeting for; feeds `POST /meetings` |
+| GET | `/teams` | The teams the caller may open a meeting for, the ones they pinned first and then in the order joined; the first is the default. Feeds `POST /meetings` |
+| PUT / DELETE | `/teams/{team_id}/pin` | Pin a team to the top of the caller's own list (at most three; a fourth is 409 `too_many_pinned_teams`) or take the pin off. Answers with the list as it now stands. The pin is on the caller's membership and shows in nobody else's list |
 | POST | `/meetings` | Open a meeting for a team, before there is any audio |
+| GET | `/meetings` | The meetings of the caller's teams, newest first: id, title, status and start time, no counts. With `?team_id=` those of that one team, which is what the home screen asks for; a team the caller is not on is 403, not an empty list |
 | GET | `/meetings/{meeting_id}` | Title, status and the two privacy flags. What S12 polls |
 | POST | `/meetings/{meeting_id}/recording` | Upload a recording and queue transcription (202) |
 | GET | `/jobs/{job_id}` | Job status and progress (planned) |
@@ -100,6 +103,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | PATCH | `/utterances/{id}` | Correct speaker or text (planned — no route exists yet; would back `aud_corrections`) |
 | GET | `/meetings/{meeting_id}/speakers` | Each speaker label in the meeting, and the nearest candidate profile above `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD`, if any |
 | POST | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member confirms who a speaker is; fills `Participant.user_id` and copies the vector into that person's profile |
+| PUT | `/meetings/{meeting_id}/speakers/{speaker_label}/name` | Names a speaker with no account on the team, for this meeting only. No user id, no voice profile, not published |
 | DELETE | `/me/voice-profile` | Deletes every profile row for the caller |
 | GET | `/me/data` | S29 "내 데이터": counts of the caller's own speech, voice profile and consent attestations (`account.my_data`) |
 | GET | `/me/export` | S29 download: the caller's own utterances (masked, as stored), voice-profile metadata (never the vector), consents and teams, as a JSON attachment |
@@ -109,7 +113,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET / DELETE | `/teams/{team_id}/masking-rules[/{rule_id}]` | The team's own masking shapes learned from S30 reports (`A-#####`, never the text); S29 lists and removes them |
 | GET / PATCH | `/teams/{team_id}/privacy` | S29 retention window, 30/90/180/365 days. Any member may change it (no admin role exists); applies to meetings held afterwards |
 | GET | `/teams/{team_id}/members` | Id and display name of each team member, for the confirmation picker |
-| POST | `/teams/{team_id}/invitations` | A member invites an address (#552). Answers with the link's token once and its expiry — the same shape whatever the address; nobody is looked up and nobody is added |
+| POST | `/teams/{team_id}/invitations` | A member invites an address (#552). Answers with the link's token once and its expiry — the same shape whatever the address; nobody is looked up and nobody is added. With `send_email`, the link is also mailed from the member's own Gmail (`invitation_mail`), and `emailed` says whether Gmail took it |
 | POST | `/invitations/accept` | The signed-in owner of the invited address joins the team. Every refusal — unknown, used, expired, another account — is the same 404 |
 
 ### Live transcription runs in the API process

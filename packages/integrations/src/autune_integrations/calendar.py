@@ -13,6 +13,12 @@ date they moved there. Follow-up's approved meeting is ``create_event``.
 Google returns only Autune's own events, so reading a date back never reads
 the rest of a person's calendar.
 
+**One read is of events Autune did not make: when a person is out of office.**
+``out_of_office`` asks Google for out-of-office events only and for their
+times only, so module B can hold back that person's own digest while they are
+away. No title or description is requested, and nothing it returns is about
+anybody but the calendar's owner.
+
 **Availability is busy windows only** -- never event titles, attendees or
 places, which are other people's data. ``free_busy`` is the only read that
 covers people other than the calendar's owner, and Google's own free/busy
@@ -235,6 +241,36 @@ class CalendarClient(HttpClient):
                 for b in entry.get("busy", [])
             ]
         return answer
+
+    def out_of_office(
+        self, calendar_id: str, time_min: datetime, time_max: datetime
+    ) -> list[tuple[datetime | date, datetime | date]]:
+        """When the calendar's owner is marked out of office between two
+        instants: the start and end of each such event, and nothing else.
+
+        The one read of a person's own calendar that is not of Autune's own
+        events, so it is narrowed twice at Google: ``eventTypes=outOfOffice``
+        returns no other kind of event, and ``fields`` asks for the times
+        only -- no title, no description, no attendee is in the answer to be
+        mishandled. An all-day entry's pair is ``date``\\ s with an exclusive
+        end, as ``CalendarEvent``'s. Google offers out-of-office events to
+        Workspace accounts; a calendar that has none answers with nothing.
+        """
+        params = {
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "singleEvents": "true",
+            "eventTypes": "outOfOffice",
+            "maxResults": "50",
+            "fields": "items(start,end,status)",
+        }
+        body = self.request("GET", f"/calendars/{calendar_id}/events", params=params)
+        windows: list[tuple[datetime | date, datetime | date]] = []
+        for raw in body.get("items", []):
+            start, end = _when(raw.get("start")), _when(raw.get("end"))
+            if raw.get("status") != "cancelled" and start is not None and end is not None:
+                windows.append((start, end))
+        return windows
 
     # --- writes ----------------------------------------------------------------
 

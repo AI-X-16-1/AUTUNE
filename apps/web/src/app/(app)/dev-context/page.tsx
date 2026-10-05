@@ -80,7 +80,7 @@ export default async function DevContextPage({
           className="text-[var(--color-ink-strong)]"
           style={{ fontSize: "var(--text-heading)", fontWeight: "var(--text-heading-weight)" }}
         >
-          S22 — 결정 계보
+          S22 — 결정 히스토리
         </header>
         <div className="mt-2">
           {teamId ? (

@@ -94,8 +94,11 @@ stalled = status == 'running'
           AND coalesce(heartbeat_at, created_at) < now() - stall_after_s
 ```
 
-A `queued` job is never stalled: one worker busy with an earlier meeting and a
-lost message look the same from here. It can still be cancelled.
+A `queued` job counts as stalled after 15 minutes in the queue (`QUEUE_STALL`,
+added after the #757 review): a lost message and a long wait look the same
+from here, and restarting one that was only waiting costs it its place, since
+its late message is declined. Ages are measured on the database's clock
+(`db_now`), the clock that stamps `heartbeat_at` and `created_at`.
 
 New settings in `autune_audio.config`, both provisional and recorded in
 `HISTORY.md`: `heartbeat_interval_s = 30`, `stall_after_s = 120`.
@@ -136,9 +139,9 @@ All in `modules/audio` (router, service, schemas). No contract changes.
 - Requires the latest job `running` and stalled; otherwise 409 `not_stalled`.
 - Requires the meeting `analyzing`: a worker that died between `mark_complete`
   and `mark_published` leaves a stale `running` job on a delivered meeting.
-- Requires the upload `{job_id}.upload` to exist and to be younger than
-  `orphan_after_hours` minus a 10-minute margin by mtime, so the sweep cannot
-  take it from the restarted job; otherwise 409 `recording_gone`.
+- Requires the upload `{job_id}.upload` to exist with at least three of its
+  six hours left by mtime (`RESTART_NEEDS`, after the #757 review), so the
+  sweep cannot take it from the restarted job; otherwise 409 `recording_gone`.
 - "Latest job" is the live (`queued`/`running`) one if there is one, else the
   newest by `created_at`: that stamp is the transaction start and can be out of
   order across two uploads seconds apart.

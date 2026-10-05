@@ -165,3 +165,96 @@ def build_weekly_digest(lines: Sequence[DigestLine], *, today: date, board_url: 
         out.append(f"외 {len(ordered) - DIGEST_MAX_LINES}개")
     out.append(board_url)
     return "\n".join(out)
+
+
+# --- the morning DM (the user, 2026-10-05) -------------------------------------
+
+DAILY_WEEKDAYS = (1, 2, 3, 4)
+"""Tuesday to Friday, in Korea. Monday is the weekly digest's -- the whole
+week's open work -- and nobody is sent both; nothing goes on a weekend."""
+
+DAILY_FROM = time(9, 0)
+DAILY_UNTIL = time(12, 0)
+"""Korea time. A morning message goes in the morning: a worker that was down
+until the afternoon does not send "good morning" at four."""
+
+DAILY_MAX_LINES = 5
+"""Items listed under each heading; the rest are counted."""
+
+DAILY_LOOKBACK = timedelta(days=7)
+"""How far back "since the last one" may reach, for someone whose last morning
+DM was long ago or never: a week of changes, not a history."""
+
+
+def daily_day(now: datetime) -> date | None:
+    """The day a morning DM sent at ``now`` is for -- or ``None`` when ``now``
+    is not a Tuesday-to-Friday morning in Korea, and nothing goes."""
+    local = now.astimezone(KST)
+    if not DAILY_FROM <= local.time() < DAILY_UNTIL:
+        return None
+    return local.date() if local.weekday() in DAILY_WEEKDAYS else None
+
+
+def previous_morning(day: date) -> datetime:
+    """When "yesterday" starts for a morning DM on ``day`` with no earlier one
+    to count from: the start of the day before, in Korea."""
+    return datetime.combine(day - timedelta(days=1), time.min, tzinfo=KST)
+
+
+@dataclass(frozen=True)
+class DailyDigest:
+    """What one person's morning DM says, already chosen and ordered.
+
+    ``done`` and ``taken_on`` are what changed since their last morning DM;
+    ``late``, ``due_today`` and ``in_progress`` are today's work, each item in
+    the first of the three it fits; ``others`` counts their remaining open
+    items, which the board lists."""
+
+    done: Sequence[DigestLine] = ()
+    taken_on: Sequence[DigestLine] = ()
+    late: Sequence[DigestLine] = ()
+    due_today: Sequence[DigestLine] = ()
+    in_progress: Sequence[DigestLine] = ()
+    others: int = 0
+
+    @property
+    def empty(self) -> bool:
+        """Nothing changed and nothing is open: there is no message to send."""
+        return not (
+            self.done
+            or self.taken_on
+            or self.late
+            or self.due_today
+            or self.in_progress
+            or self.others
+        )
+
+
+def _daily_lines(label: str, lines: Sequence[DigestLine], *, dated: bool) -> list[str]:
+    out: list[str] = []
+    for line in lines[:DAILY_MAX_LINES]:
+        when = f"({line.due_date.isoformat()})" if dated and line.due_date is not None else ""
+        where = f" · {slack_escape(line.meeting_title)}" if line.meeting_title else ""
+        out.append(f"• {label}{when}: {slack_escape(line.description)}{where}")
+    if len(lines) > DAILY_MAX_LINES:
+        out.append(f"• {label} 외 {len(lines) - DAILY_MAX_LINES}개")
+    return out
+
+
+def build_daily_digest(digest: DailyDigest, *, board_url: str) -> str:
+    """The morning DM as plain text: what changed since the last one, then
+    today's work -- late first -- then how many other items are open, and
+    where to see all of them."""
+    out = ["좋은 아침입니다. 지난 진행 상황과 오늘 할 일입니다.", "지난 진행 상황"]
+    changed = _daily_lines("완료", digest.done, dated=False)
+    changed += _daily_lines("새로 맡음", digest.taken_on, dated=False)
+    out += changed or ["• 바뀐 것이 없습니다."]
+    out.append("오늘 할 일")
+    today = _daily_lines("기한 지남", digest.late, dated=True)
+    today += _daily_lines("오늘 기한", digest.due_today, dated=False)
+    today += _daily_lines("진행 중", digest.in_progress, dated=False)
+    out += today or ["• 오늘 기한이거나 진행 중인 항목이 없습니다."]
+    if digest.others:
+        out.append(f"그 밖의 열린 액션 아이템 {digest.others}개")
+    out.append(board_url)
+    return "\n".join(out)

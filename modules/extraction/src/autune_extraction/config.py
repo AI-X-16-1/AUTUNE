@@ -144,16 +144,30 @@ class ExtractionSettings(BaseSettings):
     """
 
     nli_impl: str = "local"
-    """Which NLI model to run for step 4 (#12): ``local``, ``hosted`` or
-    ``fake``. No ``external``: step 4 reads a commitment or ambiguous
-    utterance's own text, so an external implementation is the privacy.md
-    section 6 question ``classifier_impl=llm`` is waiting on (#392).
+    """Which NLI model to run for step 4 (#12): ``local``, ``hosted``, ``fake``
+    or ``llm``.
 
-    Mirrors ``classifier_impl``'s ``local``/``hosted``/``fake`` rather than
-    module D's own ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different
-    module (modules never import each other) and this module's own classifier
-    config is the closer precedent to stay consistent with.
+    ``llm`` (``pipeline.nli_llm``) sends the masked text of a meeting's
+    ``ambiguous`` utterances to the cloud model ``nli_model`` names. Step 4
+    reads an utterance's own text, so this is the privacy.md section 6
+    question ``classifier_impl=llm`` is waiting on (#392): it is not the
+    default, and without ``llm_acknowledged_392`` the settings refuse to load.
+
+    Mirrors ``classifier_impl``'s names rather than module D's own
+    ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different module (modules
+    never import each other) and this module's own classifier config is the
+    closer precedent to stay consistent with.
     """
+
+    nli_model: str = "gemini-3.8-flash"
+    """The model ``nli_impl=llm`` asks (the user, 2026-10-05). The stronger one
+    on purpose: step 4 is a handful of utterances a meeting, batched into one
+    request as a rule, and its answer decides whether a weak "네" becomes
+    somebody's task. Free tier: 5 requests a minute, 20 a day."""
+
+    nli_fallback_model: str = ""
+    """Asked instead when ``nli_model`` stays unavailable. Blank by default: no
+    second model answers step 4 unless a deployment names one."""
 
     nli_checkpoint: str = ""
     """Pinned, and recorded as the classification's model version once NLI
@@ -183,6 +197,32 @@ class ExtractionSettings(BaseSettings):
     (``reminders.build_weekly_digest``, the user, 2026-10-04). Off by default
     for the reason ``due_reminders`` is; sends only where a team connected
     Slack and the person linked their account.
+    """
+
+    daily_digest: bool = False
+    """``AUTUNE_EXTRACTION_DAILY_DIGEST``: whether each person is sent, on a
+    Tuesday-to-Friday morning in Korea, a Slack DM of what changed on their own
+    items since the last one and what is theirs to do today
+    (``reminders.build_daily_digest``, the user, 2026-10-05). Monday has the
+    weekly digest instead. Off by default for the reason ``due_reminders`` is:
+    the first run messages people's real Slack accounts.
+    """
+
+    public_holiday_calendar: bool = True
+    """``AUTUNE_EXTRACTION_PUBLIC_HOLIDAY_CALENDAR``: whether Korea's public
+    holidays are read from Google's public holiday calendar
+    (``days_off.fetch_public_holidays``). A ``GET`` of a public file with no
+    credentials, made only where a digest is switched on. Off, or failing, the
+    table in code answers instead. On by default: the request carries nothing.
+    """
+
+    leave_from_calendar: bool = False
+    """``AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR``: whether a person with a
+    connected Google Calendar is not sent a digest while that calendar marks
+    them out of office (``days_off.away_now``). Off by default: it is a read
+    of a person's calendar beyond Autune's own events -- out-of-office times
+    only, never stored -- and a deployment turns it on once what it tells
+    people about the calendar connection says so (docs/architecture/privacy.md).
     """
 
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
@@ -372,6 +412,7 @@ class ExtractionSettings(BaseSettings):
             ("CLASSIFIER_IMPL", self.classifier_impl),
             ("RESOLVER_IMPL", self.resolver_impl),
             ("SUMMARY_IMPL", self.summary_impl),
+            ("NLI_IMPL", self.nli_impl),
         ):
             if value in CLOUD_IMPLS:
                 raise ValueError(
