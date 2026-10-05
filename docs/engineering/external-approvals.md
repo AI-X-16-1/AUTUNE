@@ -149,16 +149,17 @@ Do not widen this list without a reason written down.
 
 **Widened for the one-click install (#428):** `groups:write`. A team that
 installs Autune with "Add to Slack" gets an alert channel without anyone typing
-a channel id: the install creates a **private** `#autune` and invites the
-person who installed (their member id comes back with the install, so no
+a channel id: the install creates a **private** channel named after the team
+(`#제품팀`, `#growth-squad`; `#autune` when the team's name cannot be a channel
+name -- `oauth.slack.channel_name_for`) and invites the person who installed (their member id comes back with the install, so no
 directory read), and stores it as the channel D's briefings and E's reports
 post to. The installer adds the rest of the team.
 
 It never joins an existing channel. D posts decision statements and E posts
-meeting reports; joining a `#autune` that already exists would hand them to
-whoever is in it -- a second Autune team in the same workspace, or a company
-channel that happens to share the name (review of #468). A taken name becomes
-`#autune-2`, `#autune-3` and so on. An earlier draft asked for
+meeting reports; joining a channel of that name that already exists would hand
+them to whoever is in it -- a second Autune team in the same workspace, or a
+company channel that happens to share the name (review of #468). A taken name
+becomes `#name-2`, `#name-3` and so on. An earlier draft asked for
 `channels:manage` and `channels:join` to create or join a *public* channel;
 both are gone.
 
@@ -168,7 +169,7 @@ and `.invite` -- the two we call -- and also `.rename`, `.archive`, `.kick`,
 `.setTopic` and `.setPurpose` on private channels the bot is a member of. We
 call `.rename` and `.archive` only on the channel we just made when the
 installer could not be invited to it -- renamed first, because an archived
-channel keeps its name and would push the next install to `#autune-2`. Slack offers no narrower scope for creating a private
+channel keeps its name and would push the next install to `#name-2`. Slack offers no narrower scope for creating a private
 channel.
 
 Still no user scope and no `users:read.email`. Slack accepts only an **HTTPS**

@@ -144,16 +144,30 @@ class ExtractionSettings(BaseSettings):
     """
 
     nli_impl: str = "local"
-    """Which NLI model to run for step 4 (#12): ``local``, ``hosted`` or
-    ``fake``. No ``external``: step 4 reads a commitment or ambiguous
-    utterance's own text, so an external implementation is the privacy.md
-    section 6 question ``classifier_impl=llm`` is waiting on (#392).
+    """Which NLI model to run for step 4 (#12): ``local``, ``hosted``, ``fake``
+    or ``llm``.
 
-    Mirrors ``classifier_impl``'s ``local``/``hosted``/``fake`` rather than
-    module D's own ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different
-    module (modules never import each other) and this module's own classifier
-    config is the closer precedent to stay consistent with.
+    ``llm`` (``pipeline.nli_llm``) sends the masked text of a meeting's
+    ``ambiguous`` utterances to the cloud model ``nli_model`` names. Step 4
+    reads an utterance's own text, so this is the privacy.md section 6
+    question ``classifier_impl=llm`` is waiting on (#392): it is not the
+    default, and without ``llm_acknowledged_392`` the settings refuse to load.
+
+    Mirrors ``classifier_impl``'s names rather than module D's own
+    ``AUTUNE_CONTEXT_NLI_*`` naming -- module D is a different module (modules
+    never import each other) and this module's own classifier config is the
+    closer precedent to stay consistent with.
     """
+
+    nli_model: str = "gemini-3.8-flash"
+    """The model ``nli_impl=llm`` asks (the user, 2026-10-05). The stronger one
+    on purpose: step 4 is a handful of utterances a meeting, batched into one
+    request as a rule, and its answer decides whether a weak "네" becomes
+    somebody's task. Free tier: 5 requests a minute, 20 a day."""
+
+    nli_fallback_model: str = ""
+    """Asked instead when ``nli_model`` stays unavailable. Blank by default: no
+    second model answers step 4 unless a deployment names one."""
 
     nli_checkpoint: str = ""
     """Pinned, and recorded as the classification's model version once NLI
@@ -168,6 +182,22 @@ class ExtractionSettings(BaseSettings):
     nli_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``nli_impl=local``. Mirrors
     ``classifier_device``."""
+
+    due_reminders: bool = False
+    """``AUTUNE_EXTRACTION_DUE_REMINDERS``: whether an item's assignee is sent a
+    Slack DM the day before its due date and after it passes (``reminders``).
+    **Off by default** -- a DM to a person is something a deployment turns on,
+    not something it has to remember to stop. ``true`` turns it on, and even
+    then it sends only where a team connected Slack and the assignee linked
+    their account."""
+
+    weekly_digest: bool = False
+    """``AUTUNE_EXTRACTION_WEEKLY_DIGEST``: whether each person is sent, on
+    Monday in Korea, a Slack DM listing their own open action items
+    (``reminders.build_weekly_digest``, the user, 2026-10-04). Off by default
+    for the reason ``due_reminders`` is; sends only where a team connected
+    Slack and the person linked their account.
+    """
 
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
@@ -215,8 +245,8 @@ class ExtractionSettings(BaseSettings):
     code cannot check: nothing marks a meeting as a dummy, and nothing says
     which tier a key is. What the code can do is make sending speech to a
     provider something a deployment says twice. With ``classifier_impl`` set
-    to ``llm`` or ``llm_checked``, or ``resolver_impl`` set to ``llm``, and
-    this not true, these settings refuse to load.
+    to ``llm`` or ``llm_checked``, or ``resolver_impl`` or ``summary_impl``
+    set to ``llm``, and this not true, these settings refuse to load.
 
     **It turns nothing on.** Set alone, it changes nothing.
 
@@ -263,6 +293,20 @@ class ExtractionSettings(BaseSettings):
     resolver_device: str = "cpu"
     """``cpu`` or ``cuda``, for ``resolver_impl=local``. Mirrors
     ``classifier_device``."""
+
+    summary_impl: str = "none"
+    """``none`` or ``llm``: whether a meeting gets a summary written by a cloud
+    model on the 요약 tab (#421 v2). ``llm`` sends the meeting's consented,
+    masked lines out, the team's names replaced, so it is opt-in and needs
+    ``llm_acknowledged_392`` like every other cloud setting. ``none`` leaves
+    the tab as v1 built it, from B's own rows."""
+
+    summary_model: str = "gemini-3.5-flash-lite"
+    """The model ``summary_impl=llm`` asks. The cheap one: a meeting takes a
+    call per section and one to combine them."""
+
+    summary_fallback_model: str = "gemini-3.8-flash"
+    """Asked instead when ``summary_model`` stays unavailable. Blank disables it."""
 
     embedder_impl: str = "fake"
     """Which embedder backs the resolver's similarity check: ``local``,
@@ -341,6 +385,8 @@ class ExtractionSettings(BaseSettings):
         for name, value in (
             ("CLASSIFIER_IMPL", self.classifier_impl),
             ("RESOLVER_IMPL", self.resolver_impl),
+            ("SUMMARY_IMPL", self.summary_impl),
+            ("NLI_IMPL", self.nli_impl),
         ):
             if value in CLOUD_IMPLS:
                 raise ValueError(

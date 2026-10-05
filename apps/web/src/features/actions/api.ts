@@ -15,6 +15,10 @@ import type {
   ReviewDecision,
   ConfirmationAnswer,
   MyConfirmation,
+  Project,
+  ProjectDraft,
+  ProjectSendReport,
+  SendTarget,
 } from "./types";
 
 export { api };
@@ -121,10 +125,33 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
 export const deleteActionItem = (id: string) =>
   withoutBody(`/action-items/${encodeURIComponent(id)}`);
 
-/** A `DELETE` answered 204: an empty success is not a parse failure. */
-async function withoutBody(path: string): Promise<void> {
+/** What a bulk confirm or delete did, id by id. */
+export interface BulkActionResult {
+  confirmed: string[];
+  deleted: string[];
+  /** Unknown, another team's, or no longer in 확인 필요. */
+  skipped: string[];
+}
+
+/**
+ * Confirm or delete several 확인 필요 items at once (the user, 2026-10-04).
+ * Each goes the way a single one does: a confirmation is recorded and sends
+ * the item's copies; a deletion closes them first.
+ */
+export const bulkActionItems = (ids: string[], action: "confirm" | "delete") =>
+  api.extraction<BulkActionResult>("/action-items/bulk", {
+    method: "POST",
+    body: JSON.stringify({ ids, action }),
+  });
+
+/** A request answered 204 (a `DELETE` unless told otherwise): an empty
+ * success is not a parse failure. */
+async function withoutBody(
+  path: string,
+  init: RequestInit = { method: "DELETE" },
+): Promise<void> {
   try {
-    await api.extraction<void>(path, { method: "DELETE" });
+    await api.extraction<void>(path, init);
   } catch (cause) {
     if (cause instanceof SyntaxError) return;
     throw cause;
@@ -160,6 +187,83 @@ export const putSummaryNote = (meetingId: string, body: string) =>
     body: JSON.stringify({ body }),
   });
 
+/** The team's projects, named by one of its meetings or by the team. */
+export const listProjects = (scope: IntegrationScope) =>
+  api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
+
+/** Words said often in the team's meetings that no project has yet. */
+export const listProjectSuggestions = (teamId: string) =>
+  api.extraction<{ word: string; count: number }[]>(
+    `/projects/suggestions?team_id=${encodeURIComponent(teamId)}`,
+  );
+
+/** Every project of every team the reader is on, for the board across meetings. */
+export const listMyProjects = () => api.extraction<Project[]>("/projects/mine");
+
+export const createProject = (teamId: string, draft: ProjectDraft) =>
+  api.extraction<Project>(`/projects?team_id=${encodeURIComponent(teamId)}`, {
+    method: "POST",
+    body: JSON.stringify(draft),
+  });
+
+export const updateProject = (teamId: string, id: string, draft: ProjectDraft) =>
+  api.extraction<Project>(
+    `/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`,
+    { method: "PUT", body: JSON.stringify(draft) },
+  );
+
+/** Delete a project; what was in it becomes 미분류. */
+export const deleteProject = (teamId: string, id: string) =>
+  withoutBody(`/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`);
+
+/** Put an item in one of its team's projects, or none (`null`). */
+export const placeActionItem = (id: string, projectId: string | null) =>
+  api.extraction<ActionItemRead>(`/action-items/${encodeURIComponent(id)}/project`, {
+    method: "PUT",
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+/** Put a decision in one of its team's projects, or none. Answered 204. */
+export const placeDecision = (id: string, projectId: string | null) =>
+  withoutBody(`/decisions/${encodeURIComponent(id)}/project`, {
+    method: "PUT",
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+/**
+ * Send each project's confirmed decisions and items, as "팀-프로젝트-날짜", to
+ * the chosen tools. Sending again updates the same copies.
+ */
+export const sendSummaryProjects = (meetingId: string, targets: SendTarget[]) =>
+  api.extraction<ProjectSendReport>(
+    `/summary/${encodeURIComponent(meetingId)}/projects/send`,
+    { method: "POST", body: JSON.stringify({ targets }) },
+  );
+
+/** Place the meeting's rows in the team's projects again, by the rules. */
+export const assignSummaryProjects = (meetingId: string) =>
+  api.extraction<MeetingSummary>(
+    `/summary/${encodeURIComponent(meetingId)}/projects/assign`,
+    { method: "POST" },
+  );
+
+/** The caller's own due-date reminders by Slack DM (review of #751). */
+export interface DueReminderSetting {
+  /** On unless the caller turned them off. */
+  on: boolean;
+  /** Whether this server sends reminders at all; when not, the switch changes nothing yet. */
+  sent_here: boolean;
+}
+
+export const getDueReminders = () => api.extraction<DueReminderSetting>("/me/due-reminders");
+
+/** Only the caller's own: the request names nobody. */
+export const setDueReminders = (on: boolean) =>
+  api.extraction<DueReminderSetting>("/me/due-reminders", {
+    method: "PUT",
+    body: JSON.stringify({ on }),
+  });
+
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */
 export const getReview = (meetingId: string) =>
   api.extraction<MeetingReview>(`/reviews/${encodeURIComponent(meetingId)}`);
@@ -190,6 +294,16 @@ export const createDecision = (meetingId: string, statement: string) =>
  */
 export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeURIComponent(id)}`);
 
+/**
+ * Send one item to the team's connected tools again -- "다시 시도" beside a
+ * failed copy (#680). Answers before the sync runs: `queued` is false for an
+ * item that was never confirmed, which has nothing outside to retry.
+ */
+export const retrySync = (id: string) =>
+  api.extraction<{ queued: boolean }>(`/action-items/${encodeURIComponent(id)}/sync`, {
+    method: "POST",
+  });
+
 /** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>
   api.extraction<void>(`/results/${meetingId}/sync`, { method: "POST" });
@@ -204,6 +318,37 @@ export const backfillJira = (scope: IntegrationScope) =>
     `/jira/backfill?${scopeQuery(scope)}`,
     { method: "POST" },
   );
+
+export interface JiraIssue {
+  key: string;
+  summary: string;
+  status: string | null;
+  status_category: string | null;
+  assignee: string | null;
+  due_date: string | null;
+  /** The issue in the team's Jira, or null when the server could not build a safe link. */
+  url: string | null;
+  /** True for an issue Autune made from an action item. */
+  from_autune: boolean;
+}
+
+export interface JiraProjectIssues {
+  team_id: string;
+  team_name: string;
+  project_key: string | null;
+  state: "ok" | "no_project" | "needs_reconnect" | "unavailable";
+  issues: JiraIssue[];
+  /** Jira has more open issues than were read. */
+  more: boolean;
+}
+
+/**
+ * The open issues of the Jira projects the caller's teams connected, read from
+ * Jira by the server at this moment and stored nowhere. A team that never
+ * connected Jira is not in the answer.
+ */
+export const listJiraOpenIssues = () =>
+  api.extraction<JiraProjectIssues[]>("/jira/issues");
 
 export interface NotionPage {
   id: string;

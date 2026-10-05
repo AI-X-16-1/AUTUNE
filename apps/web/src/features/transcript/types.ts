@@ -82,6 +82,14 @@ export type MeetingDetail = {
   stage: ProcessingStage | null;
   /** How far through `stage`, 0..1. */
   stage_progress: number | null;
+  /** The running attempt's worker stopped writing its heartbeat. */
+  stalled: boolean;
+  /** `stalled`, and its upload is still on the server. */
+  restartable: boolean;
+  /** `analyzing` with an attempt queued or running. */
+  cancellable: boolean;
+  /** `failed` because a person cancelled it. */
+  cancelled: boolean;
 };
 
 /** `autune_audio.progress.STAGES`, in the order the worker runs them. */

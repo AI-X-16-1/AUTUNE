@@ -192,6 +192,7 @@ def _resolve(key: str, raw: dict[str, dict[str, Any]], seen: tuple[str, ...]) ->
     own = f"{key}.{document['version']}"
 
     if parent is None:
+        _refuse_shared_keywords(key, items)
         return Template(key=key, name=document["name"], version=own, items=items)
 
     inherited = {item.key for item in parent.items}
@@ -200,6 +201,7 @@ def _resolve(key: str, raw: dict[str, dict[str, Any]], seen: tuple[str, ...]) ->
         # Two items with one key would give two gaps the same natural identity,
         # and `service` keys a re-run's rows on exactly that.
         raise ConfigurationError(f"template {key!r} redefines inherited items: {clash}")
+    _refuse_shared_keywords(key, (*parent.items, *items))
 
     return Template(
         key=key,
@@ -207,6 +209,29 @@ def _resolve(key: str, raw: dict[str, dict[str, Any]], seen: tuple[str, ...]) ->
         version=f"{parent.version}+{own}",
         items=(*parent.items, *items),
     )
+
+
+def _refuse_shared_keywords(template_key: str, items: tuple[TemplateItem, ...]) -> None:
+    """No keyword of one item may equal or sit inside a keyword of another.
+
+    Matching is containment (``detect.match`` and the spoken check both), so
+    "실패" in two items, or "단계" in one and "단계적" in another, makes one
+    utterance touch two items at once: both turn partial on a single word, and
+    the meeting is credited twice for having said it once. Checked on the
+    merged template, because the overlap that slipped in was across ``extends``.
+    """
+    clashes = sorted(
+        f"{first.key}:{a} / {second.key}:{b}"
+        for i, first in enumerate(items)
+        for second in items[i + 1 :]
+        for a in first.keywords
+        for b in second.keywords
+        if a in b or b in a
+    )
+    if clashes:
+        raise ConfigurationError(
+            f"template {template_key!r} has keywords shared between items: {clashes}"
+        )
 
 
 def _question_about(entry: dict[str, Any], template_key: str) -> str:

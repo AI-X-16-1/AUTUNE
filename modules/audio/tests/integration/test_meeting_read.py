@@ -89,6 +89,10 @@ def test_a_member_reads_the_meetings_status_and_flags(
         "team_id": team,
         "stage": None,
         "stage_progress": None,
+        "stalled": False,
+        "restartable": False,
+        "cancellable": False,
+        "cancelled": False,
     }
 
 

@@ -110,7 +110,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET / DELETE | `/teams/{team_id}/masking-rules[/{rule_id}]` | The team's own masking shapes learned from S30 reports (`A-#####`, never the text); S29 lists and removes them |
 | GET / PATCH | `/teams/{team_id}/privacy` | S29 retention window, 30/90/180/365 days. Any member may change it (no admin role exists); applies to meetings held afterwards |
 | GET | `/teams/{team_id}/members` | Id and display name of each team member, for the confirmation picker |
-| POST | `/teams/{team_id}/invitations` | A member invites an address (#552). Answers with the link's token once and its expiry — the same shape whatever the address; nobody is looked up and nobody is added |
+| POST | `/teams/{team_id}/invitations` | A member invites an address (#552). Answers with the link's token once and its expiry — the same shape whatever the address; nobody is looked up and nobody is added. With `send_email`, the link is also mailed from the member's own Gmail (`invitation_mail`), and `emailed` says whether Gmail took it |
 | POST | `/invitations/accept` | The signed-in owner of the invited address joins the team. Every refusal — unknown, used, expired, another account — is the same 404 |
 
 ### Live transcription runs in the API process

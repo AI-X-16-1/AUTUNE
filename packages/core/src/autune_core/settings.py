@@ -76,7 +76,8 @@ class Settings(BaseSettings):
     google_integration_client_id: str = ""
     google_integration_client_secret: str = ""
     """A second Google OAuth client, for what a person connects after signing in
-    -- their own calendar today (#435), mail when it exists. Sign-in keeps
+    -- their own calendar (#435) and sending an invitation from their own Gmail
+    (#552). Sign-in keeps
     ``google_client_id``: an identity-only client and one that asks for
     someone's calendar are reviewed by Google on different terms, and need not
     share a consent screen.
@@ -113,7 +114,9 @@ class Settings(BaseSettings):
     """The /api/auth/slack/callback URL on the web origin. Slack accepts only an
     **HTTPS** redirect URL, so plain http://localhost cannot finish the flow."""
     slack_channel_name: str = "autune"
-    """The alert channel a one-click install makes, or joins when it exists."""
+    """The alert channel's name when the team's own name cannot be one: an
+    install names the channel after the team (``oauth.slack.channel_name_for``)
+    and falls back to this. It never joins an existing channel."""
 
     retention_days: int = 90
     """Analysis results are deleted after this many days.

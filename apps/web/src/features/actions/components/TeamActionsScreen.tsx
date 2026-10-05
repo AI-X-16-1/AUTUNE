@@ -1,14 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
+import { JiraOpenIssues } from "./JiraOpenIssues";
+import { ProjectFilter } from "./ProjectFilter";
+import { ProjectProgressStrip } from "./ProjectProgressStrip";
+import { bulkActionItems, listMyProjects } from "../api";
 import { isOverdue, localToday } from "../dates";
 import { useActionItems } from "../hooks/useActionItems";
-import type { ActionItemRead } from "../types";
+import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
+import { projectProgress } from "../projectProgress";
+import type { ActionItemRead, Project } from "../types";
 
 /**
  * S17 across every meeting — the sidebar's "액션아이템".
@@ -27,12 +33,15 @@ import type { ActionItemRead } from "../types";
  *
  * No add form: an item is added to a meeting, and this screen has none. That
  * stays on the meeting's own actions tab.
+ *
+ * Under the board, the open issues of the Jira projects the caller's teams
+ * connected -- viewed on request and never imported (`JiraOpenIssues`).
  */
 
 type Tab = "all" | "mine" | "overdue";
 
 export function TeamActionsScreen({ me }: { me: string | null }) {
-  const { items, settled, error, edit, remove } = useActionItems({});
+  const { items, settled, error, edit, remove, reload } = useActionItems({});
   const [tab, setTab] = useState<Tab>("all");
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
 
@@ -43,7 +52,24 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
     return { all: items, mine, overdue } satisfies Record<Tab, ActionItemRead[]>;
   }, [items, me, today]);
 
-  const shown = lists[tab];
+  // The project filter (2026-10-04), across every team the person is on.
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [project, setProject] = useState<ProjectChoice>(ALL_PROJECTS);
+  useEffect(() => {
+    let alive = true;
+    listMyProjects()
+      .then((list) => alive && setProjects(list))
+      .catch(() => alive && setProjects([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const shown = inProject(lists[tab], project);
+  const progress = useMemo(
+    () => projectProgress(items, projects, today),
+    [items, projects, today],
+  );
   const selected = items.find((item) => item.id === selectedId);
 
   return (
@@ -62,6 +88,12 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
           onChange={setTab}
         />
 
+        <div className="mt-3">
+          <ProjectFilter projects={projects} value={project} onChange={setProject} />
+        </div>
+
+        <ProjectProgressStrip lines={progress} value={project} onChoose={setProject} />
+
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
             <Note>액션 아이템을 불러오는 중입니다.</Note>
@@ -77,10 +109,17 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
                 onSelect={setSelectedId}
                 showMeeting
                 onMove={(id, status) => edit(id, { status })}
+                onBulk={async (ids, action) => {
+                  const done = await bulkActionItems(ids, action);
+                  await reload();
+                  return done;
+                }}
               />
             </>
           )}
         </div>
+
+        <JiraOpenIssues />
       </div>
 
       {selected !== undefined ? (

@@ -52,6 +52,20 @@ The uploaded recording exists only for the duration of transcription.
   may point at a directory this process does not own (#351).
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
+- A live recording lives in the recording tab's memory until its upload
+  succeeds, then the tab drops it. **The one browser copy allowed:** when that
+  upload fails and the server does not have the recording, the person who
+  recorded may save the file to their own device by pressing "파일로 저장"
+  (`recordingFile.saveRecordingFile`); without the save, closing the tab loses
+  the meeting. "Does not have" is checked, not assumed
+  (`recordingFile.serverHasRecording`): after a 409, a gateway error or no
+  answer, the tab reads the meeting, and only a meeting already past
+  `recording` means the server took it -- then the tab drops its copy as it
+  does after a success. A 409 alone does not: the API also answers 409 while
+  the live session still holds the meeting, having received nothing. Only when the tab cannot confirm that does it keep offering
+  the save. Nothing saves on its own. Autune cannot delete a saved file, which
+  holds the other attendees' voices too, so the screen asks the person to
+  delete it once it is uploaded.
 
 **Forbidden:**
 - Persisting the recording to object storage, a mounted volume, or a database
@@ -303,7 +317,16 @@ retention sweep, and the next invitation made for that team), when a new
 invitation to the same address replaces it, when the team or the inviter's
 account is deleted, and when the invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
-ids, never the address. Until it is accepted an invitation changes nothing
+ids, never the address.
+
+The inviter may have the link **mailed from their own Gmail** (#552), when
+they ask and only through their own `gmail.send` grant -- Autune runs no mail
+server and holds no shared sender. That hands the address and the link to
+Google, as the inviter pasting it into their own mail would. The message names
+the inviter and the team, never the invited address; it is built and sent
+inside the request that made the invitation, so the token never enters a Celery
+payload; and the answer says only whether Gmail took it, which does not depend
+on whether the address has an account here. Until it is accepted an invitation changes nothing
 about what the invited person, or the team, can read.
 
 **Copies outside Autune** (decided with the user, 2026-10-01; #588). Retention
@@ -354,11 +377,26 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
+- A cloud model is never the default, and in module B it has to be switched on
+  twice (#392). B's classifier, resolver, meeting summary and step-4 NLI send
+  text to a provider only when their implementation is set to `llm` (or
+  `llm_checked`), and B's settings refuse to load that unless
+  `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well. Each sends
+  masked text of consenting speakers only, with the team's names replaced:
+  the classifier every utterance in windows, the resolver a commitment and
+  the lines around it, the summary the meeting in sections, and NLI only the
+  utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
+  cannot tell a real meeting from a dummy one, or a paid key from a free one --
+  it makes sending speech out something a deployment says deliberately. Until
+  #392 is decided, only demo meetings go through a deployment that sets it.
+  This is module B's alone: the agent's, C's and D's cloud switches are their
+  owners' and have no second switch today.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune moves its page to Notion's trash, where the
-    team can restore it for 30 days. Retention and meeting deletion do not
+    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    and then moves it to Notion's trash, where the team can restore it for
+    30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
     the page is retitled first and trashed second, so what the trash holds
     for those 30 days is not the statement (#669). One exception: when the
@@ -376,14 +414,66 @@ the feature needs.
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
     description, due date and assignee's Jira account only.
+    One read brings content back the other way: a team's screen can list
+    the open issues of the project it connected (key, title, status,
+    assignee's display name, due date), read from Jira when a member asks
+    and passed through. None of it is stored or logged, so there is nothing
+    of the team's Jira for Autune to retain or delete. It is read with the
+    team's connection -- the grant of the person who connected it -- so
+    every member of the Autune team sees those titles, whether or not they
+    have an account on the Jira site (decided with the user, 2026-10-02).
+    An issue with a Jira security level is left out of that list: the level
+    restricts it to some people on the site, and the grant it is read with
+    would otherwise pass its title to everyone on the team.
+  - **Slack, a due-date reminder:** a direct message to an action item's
+    assignee -- their own linked account, through the bot of the team that
+    held the meeting -- the day before its due date and once after it
+    passes. To that person and nobody else: no channel, no manager, no count
+    of what anybody has missed. It carries the item's description, its due
+    date, the meeting's title and a link to the meeting's board; no
+    utterance. A message already delivered stays in that person's Slack
+    when the item or the meeting is deleted; Autune keeps only that a
+    reminder of that kind went (`ext_due_reminders`), and that goes with
+    the item. A reminder the outbound check refuses is not sent, is
+    reported once, and keeps that same row so it is not tried again. Each
+    person can turn their own reminders off, and only their own
+    (`ext_due_reminder_optouts`, which goes with the account); the same
+    switch stops Monday's DM of that person's own open items (#792), which
+    carries the same things about each item and goes to nobody else either.
+  - **A copy that failed (#680):** Autune keeps, per item and system, only
+    the kind of the latest failure and its time (`ext_sync_failures`) --
+    never the outside service's message or what was being sent. It goes
+    when the next copy goes through, and with the item. A failed copy to a
+    person's own calendar is shown only to that person.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
     yet: its rows cascade in the database with no call to each person's
-    calendar (a deletion hook is the follow-up). A deleted account cannot: its
-    grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
-    is left to reach the calendar with. Each event is only the item's
+    calendar (a deletion hook is the follow-up). A deleted account has its
+    events removed first, by B's user hook, with the person's own grant; then
+    the grant is revoked at Google (#763), and the row goes with the account
+    (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
+    unreachable Google leaves the events on the calendar and the grant listed
+    under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
+  - **A person's Google grants themselves (#760 review):** a deleted
+    account's refresh tokens are revoked at Google before its rows go, the
+    calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
+    `revoke_google_grants`, #763) -- best effort, as above: when Google does
+    not answer, Autune still holds no copy afterwards, so nothing can use the
+    token, and the person sees Autune under their Google account's
+    third-party access until they remove it there. Disconnecting in Autune
+    revokes too, and a
+    revoke can end the person's other grant from the same Google account,
+    which is then shown as needing a reconnect. Each grant asks for its own
+    scope only, and a token that comes back carrying another grant's scope
+    is refused -- refused, not revoked: it is never stored, and it stays valid
+    at Google until the person connects again or removes Autune's access
+    there. A calendar connected before #760 may carry sign-in's scopes
+    (`openid email profile`) through `include_granted_scopes`; nothing
+    before #760 asked for `gmail.send`, so no stored grant carries both
+    personal scopes. Reconnecting the calendar gives it a token with its own
+    scope only.
 
 ## 7. Review checklist
 

@@ -48,7 +48,12 @@ export function Dashboard({ teamId }: { teamId: string }) {
       </div>
 
       <div style={{ gridColumn: "1 / -1" }}>
-        <ActionCompletionRate rate={dashboard.action_item_completion_rate} />
+        <ActionCompletionRate
+          rate={dashboard.action_item_completion_rate}
+          meetings={dashboard.action_completion_meeting_count}
+          overdue={dashboard.overdue_action_items}
+          asOf={dashboard.action_progress_as_of}
+        />
       </div>
 
       <PredictionCard predictions={predictions} />

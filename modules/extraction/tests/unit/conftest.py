@@ -25,6 +25,14 @@ CLOSE_JIRA_ISSUE = tasks.close_jira_issue
 
 TRASH_NOTION_PAGE = tasks.trash_notion_page
 
+SYNC_DECISION_JIRA = tasks.sync_decision_jira
+
+SYNC_FAILED = tasks._sync_failed
+
+SYNC_WENT = tasks._sync_went
+
+RECORD_FAILURE = tasks._record_failure
+
 
 @pytest.fixture(autouse=True)
 def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,6 +45,12 @@ def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tasks, "sync_action_item_jira", lambda _action_item_id: None)
     monkeypatch.setattr(tasks, "close_jira_issue", lambda _action_item_id: None)
     monkeypatch.setattr(tasks, "trash_notion_page", lambda _action_item_id: None)
+    monkeypatch.setattr(tasks, "sync_decision_jira", lambda _decision_id: None)
+    # The bookkeeping after each copy (#680) opens its own ``session_scope``
+    # too. ``test_sync_failures`` puts the real ones back.
+    monkeypatch.setattr(tasks, "_sync_failed", lambda _id, _system, _exc: None)
+    monkeypatch.setattr(tasks, "_sync_went", lambda _id, _system: None)
+    monkeypatch.setattr(tasks, "_record_failure", lambda _id, _system, _kind: None)
 
 
 def sign_in(app: FastAPI, session: Session, *, team_id: str = "team_1") -> None:

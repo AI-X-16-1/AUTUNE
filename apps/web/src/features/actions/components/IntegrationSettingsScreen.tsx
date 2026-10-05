@@ -5,18 +5,20 @@ import { useEffect, useState } from "react";
 import { getSession, type SessionUser } from "@/shared/api/auth";
 
 import { CalendarConnect } from "./CalendarConnect";
+import { DueReminderSetting } from "./DueReminderSetting";
 import { JiraConnect } from "./JiraConnect";
 import { NotionConnect } from "./NotionConnect";
+import { ProjectSettings } from "./ProjectSettings";
 import { SlackConnect } from "./SlackConnect";
-import { SlackMeConnect } from "./SlackMeConnect";
 
 type Team = SessionUser["teams"][number];
 
 /**
  * S28, 설정 › 연동 (#496): every connection in one place, with no meeting to
- * name the team. The person's own (Google Calendar, their Slack account) come
- * first; the team's (Slack workspace, Jira, Notion) follow for the team chosen
- * here -- the first by default, a choice when they belong to several. Any
+ * name the team. The person's own (Google Calendar) comes first; the team's
+ * (Slack workspace, Jira, Notion) follow for the team chosen here -- the first
+ * by default, a choice when they belong to several. The person's own Slack
+ * link (DM 받기) is under the team's Slack, shown once that is connected. Any
  * member may connect a team's integration: there is no admin role yet (#592).
  *
  * The same components the 액션 tab shows, given the team instead of a meeting;
@@ -65,7 +67,7 @@ export function IntegrationSettingsScreen() {
           내 연결
         </h2>
         <CalendarConnect />
-        <SlackMeConnect />
+        <DueReminderSetting />
       </section>
 
       <section aria-label="팀 연결" className="flex flex-col gap-2">
@@ -101,6 +103,13 @@ export function IntegrationSettingsScreen() {
             <SlackConnect key={`slack-${teamId}`} teamId={teamId} />
             <JiraConnect key={`jira-${teamId}`} teamId={teamId} />
             <NotionConnect key={`notion-${teamId}`} teamId={teamId} />
+            <h3
+              className="mt-4 text-[var(--color-ink-strong)]"
+              style={heading}
+            >
+              프로젝트
+            </h3>
+            <ProjectSettings key={`projects-${teamId}`} teamId={teamId} />
           </>
         )}
         <p className="text-[var(--color-ink-muted)]" style={meta}>

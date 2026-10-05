@@ -28,7 +28,7 @@ absence of a prefix is what marks a table as shared.
 | `teams` | An organization or squad |
 | `team_members` | User ↔ team membership and role, and whether the person pinned the team to the top of their own list (`pinned_at`) |
 | `team_integrations` | One team's connection to Notion, Jira, Slack or Calendar |
-| `user_integrations` | One person's own connection to their Google Calendar |
+| `user_integrations` | One person's own Google grants: their calendar, and sending mail as them (`gmail_send`, #552) |
 | `user_consents` | One person's agreement to one version of the terms or the privacy policy |
 | `meetings` | One analysis unit |
 | `participants` | One voice at a meeting, identified or not — usually one person, not always; see below |
@@ -72,7 +72,8 @@ the screen that shows them (the web app's legal pages, not on main until
 is refused for a missing row.
 
 `user_integrations` is the per-person counterpart (#59, #435): a person's own
-calendar, which only they can grant and which is deleted with their
+calendar, or their grant to send mail as them (`gmail_send`, #552 -- `gmail.send`
+only, nothing in the mailbox is read; reading one is #431's), which only they can grant and which is deleted with their
 account (`ON DELETE CASCADE`). The same rule applies — written by `packages/core`,
 read by modules through `load_user_integration`, and only ever read by code
 acting for that person. A module's own sync state for it goes in its own

@@ -70,7 +70,7 @@ export function CalendarConnect() {
       setConnected(false);
       setNote(
         revoked
-          ? "캘린더 연결을 해제했습니다."
+          ? "캘린더 연결을 해제했습니다. 같은 Google 계정의 Gmail 연결도 다시 해야 할 수 있습니다."
           : "연결을 해제했습니다. Google 계정 설정에서 Autune 접근도 확인해 주세요.",
       );
     } catch {

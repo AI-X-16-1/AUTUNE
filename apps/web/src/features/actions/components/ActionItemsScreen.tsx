@@ -2,19 +2,23 @@
 
 import type { Route } from "next";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { CalendarConnect } from "./CalendarConnect";
 import { CarriedOverActions } from "./CarriedOverActions";
-import { SlackMeConnect } from "./SlackMeConnect";
 import { JiraConnect } from "./JiraConnect";
 import { MyConfirmations } from "./MyConfirmations";
 import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
+import { ProjectFilter } from "./ProjectFilter";
+import { listProjects } from "../api";
+import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
+import type { Project } from "../types";
 import { useActionItems } from "../hooks/useActionItems";
+import { bulkActionItems } from "../api";
 
 /**
  * One meeting's review: its decisions to confirm (S15, #246) above the action
@@ -49,6 +53,18 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  // The project filter (2026-10-04): the meeting's team's projects.
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [project, setProject] = useState<ProjectChoice>(ALL_PROJECTS);
+  useEffect(() => {
+    let alive = true;
+    listProjects({ meetingId })
+      .then((list) => alive && setProjects(list))
+      .catch(() => alive && setProjects([]));
+    return () => {
+      alive = false;
+    };
+  }, [meetingId]);
   const selected = items.find((item) => item.id === selectedId);
 
   return (
@@ -89,8 +105,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             연동 설정
           </Link>
           <CalendarConnect />
-          <SlackMeConnect />
-          <JiraConnect meetingId={meetingId} />
+            <JiraConnect meetingId={meetingId} />
           <SlackConnect meetingId={meetingId} />
           <NotionConnect meetingId={meetingId} />
         </div>
@@ -128,12 +143,18 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
                   이 회의에서 추출된 액션 아이템이 없습니다. 놓친 항목은 직접 추가할 수 있습니다.
                 </Note>
               ) : null}
+              <ProjectFilter projects={projects} value={project} onChange={setProject} />
               <ActionBoard
-                items={items}
+                items={inProject(items, project)}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 add={{ meetingId, onAdd: add }}
                 onMove={(id, status) => edit(id, { status })}
+                onBulk={async (ids, action) => {
+                  const done = await bulkActionItems(ids, action);
+                  await reload();
+                  return done;
+                }}
               />
             </>
           )}

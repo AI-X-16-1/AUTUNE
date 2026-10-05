@@ -10,7 +10,7 @@ Nullable with no default: applying this pins nothing, so every list keeps the
 join order it had.
 
 Revision ID: f2a6b9d4c8e1
-Revises: e1f5a8c3d7b2
+Revises: 7c2f9a4e1b85
 Create Date: 2026-10-02 20:00:00.000000
 """
 
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "f2a6b9d4c8e1"
-down_revision: str | None = "e1f5a8c3d7b2"  # core: users.sessions_valid_from
+down_revision: str | None = "7c2f9a4e1b85"  # core: user_integrations gmail_send (#760)
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

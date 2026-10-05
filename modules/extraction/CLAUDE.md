@@ -54,8 +54,13 @@ built from it.
 `ext_action_item_related`, `ext_decision_related`,
 `ext_edit_events`, `ext_decisions`, `ext_decision_sources`, `ext_external_refs`,
 `ext_confirmations`, `ext_decision_reviews`, `ext_decision_refs`,
-`ext_calendar_events`, `ext_calendar_polls`, `ext_calendar_cleanup`, `ext_notion_targets`,
-`ext_extraction_runs`, `ext_meeting_notes`.
+`ext_calendar_events`, `ext_calendar_polls`, `ext_calendar_cleanup`, `ext_external_cleanup`,
+`ext_due_reminders`, `ext_due_reminder_optouts`, `ext_notion_targets`, `ext_sync_failures`,
+`ext_sync_retries`,
+`ext_extraction_runs`, `ext_meeting_notes`, `ext_meeting_summaries`,
+`ext_forgotten_utterances`, `ext_weekly_digests`, `ext_projects`,
+`ext_project_sends`, `ext_project_send_cleanup`, `ext_project_refresh_owed`,
+`ext_minutes_events`.
 
 The list in `/docs/modules/extraction.md` is the same set; keep the two together.
 This one drifted once already — the B/D boundary commit updated "Publishes" here

@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtSyncFailure,
 )
 from autune_integrations import IntegrationError, TransientIntegrationError
 from autune_integrations.fakes import FakeNotion
@@ -47,6 +48,8 @@ TABLES = [
     ExtDecisionSource.__table__,
     ExtDecisionReview.__table__,
     ExtDecisionRef.__table__,
+    # A create looks for a page a timed-out one made (#754 review).
+    ExtSyncFailure.__table__,
 ]
 
 

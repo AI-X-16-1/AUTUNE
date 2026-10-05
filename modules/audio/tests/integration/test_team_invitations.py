@@ -112,7 +112,8 @@ def test_an_invitation_is_a_pending_row_and_not_a_membership(
     assert response.status_code == 201
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
-    assert set(body) == {"token", "expires_at"}
+    assert set(body) == {"token", "expires_at", "emailed"}
+    assert body["emailed"] is False  # nobody asked for mail
     assert len(body["token"]) >= 43  # 32 bytes, url-safe
     (row,) = rows(db_session, team)
     assert row.email == "newcomer@example.com"
@@ -148,7 +149,7 @@ def test_the_answer_is_the_same_whatever_the_address(
 
     assert {response.status_code for response in answers} == {201}
     assert {frozenset(response.json()) for response in answers} == {
-        frozenset({"token", "expires_at"})
+        frozenset({"token", "expires_at", "emailed"})
     }
     for response in answers:
         assert "받은 사람" not in response.text
