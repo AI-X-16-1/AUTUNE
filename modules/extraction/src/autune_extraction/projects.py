@@ -130,6 +130,18 @@ def team_projects(session: Session, team_id: str) -> list[ExtProject]:
     )
 
 
+def reader_projects(session: Session, user_id: str) -> list[ExtProject]:
+    """The projects of every team ``user_id`` is on, team by team."""
+    return list(
+        session.scalars(
+            select(ExtProject)
+            .join(TeamMember, TeamMember.team_id == ExtProject.team_id)
+            .where(TeamMember.user_id == user_id)
+            .order_by(ExtProject.team_id, ExtProject.created_at, ExtProject.id)
+        )
+    )
+
+
 def _as_projects(rows: Sequence[ExtProject]) -> list[Project]:
     return [
         Project(row.id, (row.name, *[a for a in row.aliases.split("\n") if a.strip()]))

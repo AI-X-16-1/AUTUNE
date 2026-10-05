@@ -195,6 +195,9 @@ export const listProjectSuggestions = (teamId: string) =>
     `/projects/suggestions?team_id=${encodeURIComponent(teamId)}`,
   );
 
+/** Every project of every team the reader is on, for the board across meetings. */
+export const listMyProjects = () => api.extraction<Project[]>("/projects/mine");
+
 export const createProject = (teamId: string, draft: ProjectDraft) =>
   api.extraction<Project>(`/projects?team_id=${encodeURIComponent(teamId)}`, {
     method: "POST",

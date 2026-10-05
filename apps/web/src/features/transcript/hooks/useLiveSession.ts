@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Utterance } from "@autune/contracts";
 
 import { getToken, liveSocketUrl, uploadRecording } from "../api";
+import { recordingToSave, saveRecordingFile, serverHasRecording } from "../recordingFile";
 import type { LiveRow } from "../types";
 
 export type LivePhase =
@@ -28,6 +29,8 @@ export type LiveSession = {
   resume: () => void;
   stop: () => Promise<void>;
   retryUpload: () => Promise<void>;
+  /** Saves the recording to this computer. Only does anything after a failed upload. */
+  saveRecording: () => void;
   /** Clears a refusal so the gate can try `start()` again. Only valid from `"error"`. */
   reset: () => void;
 };
@@ -158,10 +161,26 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       blob.current = null;
       setPhase("done");
     } catch (caught) {
+      // A lost response is not a lost upload: if the server has the
+      // recording, the tab drops its copy as it does after a success, and
+      // there is nothing left to retry or save (`serverHasRecording`).
+      if (await serverHasRecording(meetingId, caught)) {
+        blob.current = null;
+        setPhase("done");
+        return;
+      }
       setError(caught instanceof Error ? caught.message : "업로드에 실패했습니다.");
       setPhase("upload_failed");
     }
   }, [meetingId]);
+
+  /** Save the recording to this computer -- only after a failed upload the
+   * server does not have, the one moment the tab holds the only copy
+   * (`recordingFile`). Checked here, not only by which button is drawn. */
+  const saveRecording = useCallback(() => {
+    const recording = recordingToSave(phase, blob.current);
+    if (recording) saveRecordingFile(recording, meetingId);
+  }, [meetingId, phase]);
 
   const start = useCallback(async () => {
     // Already connecting or connected: never open a second socket/recorder
@@ -436,5 +455,5 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     setElapsed(0);
   }, [phase]);
 
-  return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload, reset };
+  return { phase, rows, elapsedSeconds, liveLost, error, start, pause, resume, stop, retryUpload: upload, saveRecording, reset };
 }

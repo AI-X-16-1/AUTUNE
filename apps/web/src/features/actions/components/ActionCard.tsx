@@ -2,6 +2,7 @@ import { MaskedText, StatusDot } from "@/shared/ui";
 
 import { SYSTEM_LABEL } from "./SyncStatus";
 import { isOverdue } from "../dates";
+import { staleLabel } from "../stale";
 import { isCandidate } from "../types";
 import type { ActionItemRead, SourceUtterance } from "../types";
 
@@ -137,6 +138,16 @@ export function ActionCard({
       </div>
 
       <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
+        {staleLabel(item) ? (
+          // Carried through meeting after meeting unfinished (2026-10-04): the
+          // ochre of something waiting on a person, as text.
+          <span
+            className="text-[var(--color-signal-attention)]"
+            style={{ fontWeight: "var(--text-status-weight)" }}
+          >
+            {staleLabel(item)}
+          </span>
+        ) : null}
         {item.needs_reassignment ? (
           // Text, not a fill: red belongs to elapsing time and failure
           // (ui-spec section 0), and this is neither -- it is work nobody holds.

@@ -387,3 +387,12 @@ def test_meetings_not_yet_held_or_failed_are_not_read(client: TestClient, sessio
 
 def test_suggestions_are_for_the_teams_members_only(client: TestClient) -> None:
     assert client.get(f"{PREFIX}/projects/suggestions?team_id=team_2").status_code == 404
+
+
+def test_mine_lists_the_projects_of_my_teams_only(client: TestClient, session: Session) -> None:
+    session.add(ExtProject(id="prj_x", team_id="team_2", name="남의 프로젝트", aliases=""))
+    session.flush()
+
+    mine = client.get(f"{PREFIX}/projects/mine").json()
+
+    assert [p["id"] for p in mine] == ["prj_a", "prj_b"]
