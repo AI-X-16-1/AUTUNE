@@ -134,26 +134,33 @@ function GapRow({ gap }: { gap: TeamGap }) {
   return (
     <li
       className="grid border-b border-[var(--color-hairline)]"
-      style={{ gridTemplateColumns: "auto 1fr auto", gap: "var(--space-12)", padding: "10px 0" }}
+      style={{ gridTemplateColumns: "auto 1fr", gap: "var(--space-12)", padding: "10px 0" }}
     >
       <StatusDot variant={DOT[gap.severity]} className="mt-2" />
-      <span className="min-w-0">
-        <span
-          className="block text-[var(--color-ink-strong)]"
-          style={{ fontSize: "var(--text-rowBody)" }}
-        >
-          <MaskedText>{gap.title}</MaskedText>
-        </span>
-        {gap.suggested_question ? (
+      {/* The score wraps under the title when the row is narrow, as on S20's
+          cards, rather than squeezing the title to a character per line. */}
+      <span
+        className="flex min-w-0 flex-wrap items-start justify-between"
+        style={{ columnGap: "var(--space-12)", rowGap: "var(--space-4)" }}
+      >
+        <span className="min-w-0 flex-1" style={{ flexBasis: "12rem" }}>
           <span
-            className="block text-[var(--color-ink-muted)]"
-            style={{ fontSize: "var(--text-metaSmall)" }}
+            className="block text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-rowBody)" }}
           >
-            <MaskedText>{gap.suggested_question}</MaskedText>
+            <MaskedText>{gap.title}</MaskedText>
           </span>
-        ) : null}
+          {gap.suggested_question ? (
+            <span
+              className="block text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              <MaskedText>{gap.suggested_question}</MaskedText>
+            </span>
+          ) : null}
+        </span>
+        <ScoreLabel level={gap.severity} score={gap.risk_score} />
       </span>
-      <ScoreLabel level={gap.severity} score={gap.risk_score} />
     </li>
   );
 }
