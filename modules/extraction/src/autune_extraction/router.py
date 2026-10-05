@@ -29,7 +29,7 @@ from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import jira_issues, notion_connect, service, tasks
+from . import jira_issues, notion_connect, service, sync_state, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -155,6 +155,14 @@ def retry_action_item_sync(
     item = service.readable_action_item(session, action_item_id, reader)
     queued = service.copies_follow(session, item)
     if queued:
+        # A second press within ``RETRY_COOLDOWN`` is refused (429) rather than
+        # running the three syncs again (lsh2217, review of #754).
+        if not sync_state.claim_retry(session, item.id):
+            raise sync_state.RetryTooSoonError(
+                "this item was sent again a moment ago",
+                retry_after_seconds=int(sync_state.RETRY_COOLDOWN.total_seconds()),
+            )
+        session.commit()
         background.add_task(tasks.sync_after_confirmation, item.id)
     return {"queued": queued}
 
@@ -183,7 +191,7 @@ def create_action_item(
     # used to fail here after the item was already saved: the client got a 500
     # for a write that had happened, and a retry made a second item. Failing
     # first lets ``get_session`` roll it back.
-    response = service.read_one(session, item)
+    response = service.read_one(session, item, reader_id=reader.id)
     session.commit()
     if service.copies_follow(session, item):
         background.add_task(tasks.sync_after_confirmation, item.id)
@@ -206,7 +214,7 @@ def update_action_item(
     # Before the commit, for the reason ``create_action_item`` gives: an edit
     # answered with a 500 must not also have been saved, or it counts twice
     # in edit cost when the client retries.
-    response = service.read_one(session, item)
+    response = service.read_one(session, item, reader_id=reader.id)
     session.commit()
     # After the response, so the sync reads the committed row and the board is
     # not held on Notion. Confirming or any later edit queues the same task --

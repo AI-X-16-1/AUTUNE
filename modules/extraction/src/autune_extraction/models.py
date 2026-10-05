@@ -827,6 +827,20 @@ class ExtSyncFailure(Base):
     failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtSyncRetry(Base):
+    """When a person last pressed "다시 시도" for an item (#680, lsh2217's review
+    of #754). Each press runs Notion, the calendar and Jira once more, so a
+    second press inside ``sync_state.RETRY_COOLDOWN`` is refused. One time per
+    item, nothing else; gone with the item."""
+
+    __tablename__ = "ext_sync_retries"
+
+    action_item_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_action_items.id", ondelete="CASCADE"), primary_key=True
+    )
+    retried_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtCalendarEvent(Base):
     """The all-day event a confirmed item's due date became on its assignee's
     own Google Calendar (#435).

@@ -159,8 +159,12 @@ agreement, and sync the result to Notion and Jira.
    makes a new one; if someone archives it, it is left archived (#403). The
    board does not say so yet: later edits to that item stop reaching Notion
    and only the log records it. S18's integration row is where an "archived in
-   Notion" state belongs once it exists. A team without Notion connected is
-   skipped. Not
+   Notion" state belongs once it exists. A create that timed out on our side
+   may still have made the page: when the item's last Notion copy failed as
+   `unreachable`, the next create first asks the database for a live page
+   with exactly the item's title made since shortly before that failure, and
+   keeps it if there is exactly one (review of #754). A team without Notion
+   connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
@@ -272,6 +276,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_sync_failures` | That an item's latest copy to Notion, Jira or a calendar failed: the system, one of four kinds (`privacy`, `reconnect`, `unreachable`, `rejected`) and the time (#680). Never the outside service's message, never what was being sent. Removed by the next copy that goes through; goes with the item |
+| `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
