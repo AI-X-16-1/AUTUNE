@@ -288,6 +288,13 @@ confirmation DM's quotation is #586's second part.
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
+| `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
+| `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
+| `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
+| `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
+| `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
+| `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
+| `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
 
 **The summary tab (S15 요약, #421, WBS 4.9).** B owns it. v1 is structured and
 uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
@@ -296,9 +303,13 @@ open questions were asked and how many ambiguous agreements still wait for
 their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
 memo, blank removes it). The tab reads it in three levels -- counts, then the
 decisions and items, then their source lines on the 액션 tab. Nothing leaves,
-so it serves real meetings whatever #392 decides. A prose summary by an LLM
-over the whole meeting -- chunk summaries under the outbound limit, then a
-summary of those -- is v2 and waits on #392.
+so it serves real meetings whatever #392 decides. v2 adds a prose summary by
+a cloud model over the whole meeting -- section summaries under the outbound
+limit, then a summary of those -- stored in `ext_meeting_summaries` and shown
+above v1's rows. It is off by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`)
+and, like every cloud implementation in this module, refused at start-up
+without `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until
+#392 is decided.
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,
