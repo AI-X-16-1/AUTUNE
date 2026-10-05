@@ -60,9 +60,14 @@
  * - a name typed for a voice with no account (#836) is kept for that one
  *   meeting and goes with it; a pinned team (#747) is a mark on the person's
  *   own membership (제2조, 제3조).
- * - NOT here yet: reading out-of-office time from a connected calendar and
- *   the public-holiday table (#838, open). When it merges the Google Calendar
- *   row and what the connection says it reads must change with it.
+ * - out-of-office time is READ from a connected calendar, where the operator
+ *   turned it on (#838; off by default): the start and end of out-of-office
+ *   events only, asked about the moment a digest would go, and not stored.
+ *   That is a collection from Google, not a provision to it, so it is in
+ *   제2조 and 제3조 and in the Slack row's account of when a digest does not go
+ *   -- not in the Google Calendar row of 제5조, which lists what is SENT.
+ *   Public holidays come from a public calendar with no credentials and are
+ *   nobody's personal data; the Slack row says only that no digest goes then.
  * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
  *   item's or a decision's page stays as the team's record; a deleted item's
  *   page is trashed and its issue closed, retried (#764); a project's minutes
@@ -242,6 +247,11 @@ const PRIVACY: LegalDocument = {
             "이용자의 입력",
           ],
           [
+            "부재중 일정의 시각",
+            "이용자가 연결한 Google Calendar의 부재중 일정의 시작 및 종료 시각(회사가 해당 기능을 활성화한 경우에 한함). 일정의 제목, 내용, 참석자 및 그 밖의 일정은 조회하지 않습니다",
+            "이용자가 연결한 Google Calendar로부터 조회",
+          ],
+          [
             "연동 정보",
             "Slack, Notion, Jira, Google Calendar의 접근 토큰 및 연동 설정, 초대 메일을 보내기 위하여 이용자가 연결한 Gmail의 접근 토큰(메일 보내기 권한에 한하며 메일함을 읽는 권한은 받지 않습니다)",
             "이용자가 외부 서비스를 연결할 때 해당 서비스로부터 제공받음",
@@ -296,6 +306,10 @@ const PRIVACY: LegalDocument = {
           [
             "본인이 정한 알림 중지 기간",
             "정한 종료일이 지날 때까지. 종료일이 지나면 파기하며, 이용자가 해제하거나 탈퇴하는 때에도 파기합니다.",
+          ],
+          [
+            "부재중 일정의 시각",
+            "저장하지 않습니다. 본인에게 월요일 요약 또는 아침 요약을 보낼지 판단하는 때에 조회하여 그 판단에만 쓰고 보관하지 않습니다.",
           ],
           [
             "계정이 없는 참석자에 대하여 직접 입력한 이름",
@@ -360,7 +374,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수. 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다). 팀 채널에 보내는 회의 리포트, 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭, 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수. 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다). 팀 채널에 보내는 회의 리포트, 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭, 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",
