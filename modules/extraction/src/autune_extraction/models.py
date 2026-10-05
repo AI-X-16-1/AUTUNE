@@ -69,6 +69,39 @@ class TimestampMixin:
     )
 
 
+PROJECT = "prj"
+"""The id prefix of ``ext_projects`` rows -- B's own, not a shared entity's."""
+
+
+class ExtProject(Base):
+    """A project a team works on, as its members name it (the user, 2026-10-04).
+
+    A team holds several projects and one meeting can talk about more than one;
+    the team lists them here so the meeting's decisions and items can be told
+    apart by project and sent out project by project. ``aliases`` are the other
+    names people say for it, one per line ("오튠", "Autune"), matched in what was
+    said (``projects.assign``). ``jira_project_key`` sends a project's issues to
+    its own Jira project instead of the team's one, when set.
+
+    Typed by a team member, not derived from speech: a name and some words. It
+    goes with the team.
+    """
+
+    __tablename__ = "ext_projects"
+    __table_args__ = (UniqueConstraint("team_id", "name", name="uq_ext_projects_team_name"),)
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(PROJECT))
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    aliases: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    jira_project_key: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtActionItem(Base, TimestampMixin):
     """One trackable commitment, as the user will eventually accept it.
 
@@ -151,6 +184,18 @@ class ExtActionItem(Base, TimestampMixin):
     """A line this came from was corrected after it was made, and what a person
     sees may still carry what was corrected: a summary rewritten from the new
     line, or their own wording (#586). Cleared when a person edits or reviews."""
+
+    project_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="SET NULL"), index=True
+    )
+    """Which of the team's projects this is about (``ext_projects``), or ``NULL``
+    for none found. Set by ``projects.assign`` from what was said, or by a
+    person; a deleted project leaves the row unassigned."""
+
+    project_by_person: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A person chose ``project_id``: the rules never change it again."""
 
     description_resolved: Mapped[bool] = mapped_column(nullable=False, default=False)
     """True when ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -408,6 +453,18 @@ class ExtDecision(Base, TimestampMixin):
     """A line this came from was corrected after it was made, and what a person
     sees may still carry what was corrected: a summary rewritten from the new
     line, or their own wording (#586). Cleared when a person edits or reviews."""
+
+    project_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("ext_projects.id", ondelete="SET NULL"), index=True
+    )
+    """Which of the team's projects this is about (``ext_projects``), or ``NULL``
+    for none found. Set by ``projects.assign`` from what was said, or by a
+    person; a deleted project leaves the row unassigned."""
+
+    project_by_person: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """A person chose ``project_id``: the rules never change it again."""
 
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -900,6 +957,55 @@ class ExtCalendarCleanup(Base):
         index=True,
     )
     event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ExtDueReminderOptOut(Base):
+    """A person who turned the due-date reminders off for themselves (review
+    of #751). On unless they did: a row means off, and turning them back on
+    deletes it. Only the person, never which items or teams; goes with the
+    account."""
+
+    __tablename__ = "ext_due_reminder_optouts"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtExternalCleanup(Base):
+    """A deleted item's Notion page or Jira issue still owed its cleanup (#692).
+
+    Deleting an item trashes its page and closes its issue in the deleting
+    request, best effort (``tasks.trash_notion_page``, ``tasks.close_jira_issue``).
+    When that call cannot get through, the item and its ``ext_external_refs``
+    row go regardless, so the request records here what it could not do and
+    ``tasks.drain_external_cleanup`` retries it. Ids only -- never what the item
+    said. Keyed to the team, which cascades: a deleted team has nothing left to
+    reach the page with.
+    """
+
+    __tablename__ = "ext_external_cleanup"
+    __table_args__ = (
+        UniqueConstraint("team_id", "system", "external_id", name="uq_ext_external_cleanup"),
+        CheckConstraint("system IN ('notion','jira')", name="ck_ext_external_cleanup_system"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("teams.id", ondelete="CASCADE", name="fk_ext_external_cleanup_team"),
+        nullable=False,
+        index=True,
+    )
+    system: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    site: Mapped[str | None] = mapped_column(String(64))
+    """Jira's cloud id the key is from; a key on another site is someone else's issue."""
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -49,8 +49,10 @@ class GapSettings(BaseSettings):
     thinly the meeting covered it, and how much of the room was silent on it.
 
     Relative, not absolute — ``detect.score`` renormalises over the signals it
-    could actually measure, so a missing item scores on the first two alone
-    instead of being charged a zero for participation it has no topic to read."""
+    could actually measure. A missing item has no topic to read a centrality or
+    a silence off, so it scores on the template weight alone, which makes its
+    score exactly the item's ``weight``; a matched topic with no participation
+    measured scores on the first two."""
 
     ner_impl: str = "spacy"
     """Which entity extractor to run: ``spacy`` or ``fake``.

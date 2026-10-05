@@ -23,6 +23,7 @@ from autune_gap.schemas import (
     GapExplanations,
     ScoreBreakdownRead,
     ScorePartRead,
+    TeamGapRead,
     TemplateComparison,
     TemplateItemRead,
     TemplateRead,
@@ -110,3 +111,9 @@ def test_the_web_explanation_mirrors_are_current() -> None:
         ("ScorePart", ScorePartRead),
     ):
         assert ts_fields(interface) == set(model.model_fields), f"{interface}: update {TYPES_TS}"
+
+
+def test_the_web_team_gap_mirror_is_current() -> None:
+    """The team-wide list (#550). Pinned in both directions: a field added on
+    the Python side -- a topic or a person, say -- has to be added here on purpose."""
+    assert ts_fields("TeamGap") == set(TeamGapRead.model_fields), f"update {TYPES_TS}"

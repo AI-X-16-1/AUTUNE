@@ -242,3 +242,29 @@ class GapExplanations(BaseModel):
     high_threshold: float
     medium_threshold: float
     gaps: list[GapExplanationRead] = Field(default_factory=list)
+
+
+class TeamGapRead(BaseModel):
+    """One open gap on the team-wide list -- the sidebar's "갭 리포트" (#550).
+
+    The gap as S20 shows it, plus the meeting it belongs to so the row can say
+    where it came from and link back to that meeting's report.
+
+    **No people and no topics.** S20 shows a gap beside the topics it was
+    inferred from and who was silent on them; a list across every meeting is
+    where reading that along a person would be easiest, and it is the reading
+    privacy.md section 3 forbids. A reader who wants the why opens the meeting.
+    """
+
+    gap_id: str
+    meeting_id: str
+    meeting_title: str
+    meeting_date: datetime
+    """When the meeting started, or when it was registered if it never did --
+    the same date S20's breadcrumb shows."""
+    category: str
+    title: str
+    severity: str
+    risk_score: float = Field(ge=0, le=1)
+    template_item: str | None = None
+    suggested_question: str | None = None

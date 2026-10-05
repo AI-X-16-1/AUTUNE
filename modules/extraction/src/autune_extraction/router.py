@@ -16,7 +16,7 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -29,7 +29,7 @@ from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import jira_issues, notion_connect, service, sync_state, tasks
+from . import jira_issues, notion_connect, projects, service, sync_state, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -38,17 +38,24 @@ from .schemas import (
     ActionItemRead,
     ActionItemUpdate,
     Assignable,
+    BulkActionItems,
+    BulkActionResult,
     CarriedOver,
     ConfirmationAnswerIn,
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
+    DueReminderSetting,
+    DueReminderSettingIn,
     JiraProjectIssues,
     MeetingNoteUpdate,
     MeetingReview,
     MeetingSummary,
     MyConfirmation,
     Outbound,
+    ProjectPlacement,
+    ProjectRead,
+    ProjectWrite,
     ReviewDecision,
 )
 
@@ -228,6 +235,51 @@ def update_action_item(
     return response
 
 
+@router.post("/action-items/bulk", response_model=BulkActionResult)
+def bulk_action_items(
+    payload: BulkActionItems,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
+) -> BulkActionResult:
+    """Confirm or delete several items in one go (the user, 2026-10-04).
+
+    Only items still in 확인 필요 are touched: this is the triage of what the
+    model drafted, not a way to move or delete the board. Each item goes
+    through the path a single one takes -- ``service.update_action_item``
+    records a confirmation as an edit and queues the item's calendar event,
+    Notion page and Jira issue after the commit; a deletion closes its outside
+    copies first, as ``delete_action_item`` does. An id the reader cannot read,
+    or one past 확인 필요, is reported as skipped, the same for both: telling
+    them apart would say which ids exist on other teams.
+    """
+    confirmed: list[str] = []
+    deleted: list[str] = []
+    skipped: list[str] = []
+    for action_item_id in dict.fromkeys(payload.ids):
+        try:
+            item = service.readable_action_item(session, action_item_id, reader)
+        except NotFoundError:
+            skipped.append(action_item_id)
+            continue
+        if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            skipped.append(action_item_id)
+            continue
+        if payload.action == "confirm":
+            service.update_action_item(session, item, ActionItemUpdate(status=ActionStatus.TODO))
+            confirmed.append(item.id)
+        else:
+            tasks.remove_calendar_event(item.id)
+            tasks.close_jira_issue(item.id)
+            tasks.trash_notion_page(item.id)
+            service.delete_action_item(session, item)
+            deleted.append(action_item_id)
+    session.commit()
+    for action_item_id in confirmed:
+        background.add_task(tasks.sync_after_confirmation, action_item_id)
+    return BulkActionResult(confirmed=confirmed, deleted=deleted, skipped=skipped)
+
+
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_action_item(action_item_id: str, session: SessionDep, reader: CurrentUser) -> None:
     """Delete an item the model got wrong.
@@ -310,6 +362,105 @@ def put_summary_note(
     return response
 
 
+@router.post("/summary/{meeting_id}/projects/assign", response_model=MeetingSummary)
+def assign_summary_projects(
+    meeting_id: str, session: SessionDep, reader: CurrentUser
+) -> MeetingSummary:
+    """Place the meeting's decisions and items in the team's projects again, by
+    the rules (``projects.assign_meeting``) -- after a project was added or
+    renamed. What a person placed stays."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    projects.assign_meeting(session, meeting_id)
+    response = service.meeting_summary(session, meeting_id)
+    session.commit()
+    return response
+
+
+@router.get("/projects/mine", response_model=list[ProjectRead])
+def my_projects(session: SessionDep, reader: CurrentUser) -> list[ProjectRead]:
+    """Every project of every team the reader is on -- for the board across
+    meetings, which filters by project without a meeting to name the team."""
+    return [service.project_read(row) for row in projects.reader_projects(session, reader.id)]
+
+
+@router.get("/projects", response_model=list[ProjectRead])
+def list_projects(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> list[ProjectRead]:
+    """The team's projects, named by one of its meetings or by the team (S28)."""
+    team = _member_team(session, reader, meeting_id, team_id)
+    return [service.project_read(row) for row in projects.team_projects(session, team)]
+
+
+@router.post("/projects", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
+def create_project(
+    payload: ProjectWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> ProjectRead:
+    """Add a project to the team. Any member, as with the team's integrations."""
+    team = _member_team(session, reader, None, team_id)
+    row = projects.save_project(
+        session,
+        team,
+        name=payload.name,
+        aliases=payload.aliases,
+        jira_project_key=payload.jira_project_key,
+    )
+    response = service.project_read(row)
+    session.commit()
+    return response
+
+
+@router.put("/projects/{project_id}", response_model=ProjectRead)
+def update_project(
+    project_id: str, payload: ProjectWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> ProjectRead:
+    team = _member_team(session, reader, None, team_id)
+    row = projects.save_project(
+        session,
+        team,
+        name=payload.name,
+        aliases=payload.aliases,
+        jira_project_key=payload.jira_project_key,
+        project_id=project_id,
+    )
+    response = service.project_read(row)
+    session.commit()
+    return response
+
+
+@router.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(project_id: str, team_id: str, session: SessionDep, reader: CurrentUser) -> None:
+    """Delete a project; what was in it becomes 미분류."""
+    team = _member_team(session, reader, None, team_id)
+    projects.delete_project(session, team, project_id)
+    session.commit()
+
+
+@router.put("/action-items/{action_item_id}/project", response_model=ActionItemRead)
+def place_action_item(
+    action_item_id: str, payload: ProjectPlacement, session: SessionDep, reader: CurrentUser
+) -> ActionItemRead:
+    """Put an item in one of its team's projects, or none."""
+    item = service.readable_action_item(session, action_item_id, reader)
+    projects.place(session, item, payload.project_id)
+    response = service.read_one(session, item)
+    session.commit()
+    return response
+
+
+@router.put("/decisions/{decision_id}/project", status_code=status.HTTP_204_NO_CONTENT)
+def place_decision(
+    decision_id: str, payload: ProjectPlacement, session: SessionDep, reader: CurrentUser
+) -> None:
+    """Put a decision in one of its team's projects, or none."""
+    decision = service.readable_decision(session, decision_id, reader)
+    projects.place(session, decision, payload.project_id)
+    session.commit()
+
+
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
 def get_outbound(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Outbound:
     """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
@@ -390,6 +541,25 @@ def answer_confirmation(
     if payload.answer == "commitment":
         background.add_task(tasks.summarise_confirmed_draft.delay, utterance_id)
     return response
+
+
+@router.get("/me/due-reminders", response_model=DueReminderSetting)
+def my_due_reminders(session: SessionDep, reader: CurrentUser) -> DueReminderSetting:
+    """Whether the caller gets due-date reminders by Slack DM. Their own only:
+    there is no parameter naming anybody else."""
+    return DueReminderSetting(
+        on=service.due_reminders_on(session, reader.id), sent_here=get_settings().due_reminders
+    )
+
+
+@router.put("/me/due-reminders", response_model=DueReminderSetting)
+def set_my_due_reminders(
+    payload: DueReminderSettingIn, session: SessionDep, reader: CurrentUser
+) -> DueReminderSetting:
+    """Turn the caller's own due-date reminders on or off (review of #751)."""
+    on = service.set_due_reminders(session, reader.id, on=payload.on, now=datetime.now(tz=UTC))
+    session.commit()
+    return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
 
 
 @router.post("/jira/backfill")

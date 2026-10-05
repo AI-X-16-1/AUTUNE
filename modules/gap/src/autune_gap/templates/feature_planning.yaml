@@ -15,7 +15,7 @@
 
 key: feature_planning
 name: "기능 기획"
-version: 3
+version: 4
 extends: general
 
 items:
@@ -49,7 +49,10 @@ items:
     category: next_step
     item: "롤아웃·실험 방법"
     weight: 0.7
-    keywords: ["롤아웃", "배포", "실험", "ab", "점진", "단계적", "플래그"]
+    # Not "단계적": it contains general's "단계", so every "단계적 배포" also
+    # touched the next-step item, and the loader now refuses that. "배포"
+    # still catches the phrase. Version 4.
+    keywords: ["롤아웃", "배포", "실험", "ab", "점진", "플래그"]
     question: "이 기능을 누구에게 먼저 열고, 효과는 어떻게 확인합니까?"
     question_about: "{topic}의 롤아웃 대상과 효과 확인 방법은 무엇입니까?"
     ask_about_subject: true
@@ -62,7 +65,11 @@ items:
     category: risk
     item: "에러 처리"
     weight: 0.7
-    keywords: ["에러", "오류", "실패", "예외", "타임아웃", "재시도", "폴백"]
+    # Not "실패" or "예외": general's risk item has both, so one "실패" made
+    # both items partial at once. This template always carries the risk item
+    # (`extends: general`), which keeps the words; this item keeps the ones only
+    # error handling says. Version 4.
+    keywords: ["에러", "오류", "타임아웃", "재시도", "폴백"]
     question: "이 기능이 실패했을 때 사용자에게 무엇이 보입니까?"
     question_about: "{topic}에서 실패가 났을 때 사용자에게 무엇이 보입니까?"
     ask_about_subject: true

@@ -259,6 +259,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | (uvicorn `--workers`) | A | **Leave at 1.** The live channel's one-session-per-meeting claim (`live/registry.py`) is per process: a second worker lets a second session onto the same meeting, and accepts an upload the other worker's open socket should have refused (409) |
 | `AUTUNE_AUDIO_LIVE_MLX_MODEL` | A | The mlx-whisper weights, a Hugging Face repo. Default `mlx-community/whisper-large-v3-turbo` |
 | `AUTUNE_AUDIO_ORPHAN_AFTER_HOURS` | A | A job still `queued`/`running` after this long has no worker; the sweep fails it and deletes its file. Default `6` |
+| `AUTUNE_AUDIO_HEARTBEAT_INTERVAL_S` | A | How often a running transcription writes its heartbeat and checks whether it was cancelled. Default `30` |
+| `AUTUNE_AUDIO_STALL_AFTER_S` | A | A running transcription whose heartbeat is older than this has no worker and may be restarted. Default `120` |
 | `AUTUNE_AUDIO_HF_TOKEN` | A | Hugging Face token for the gated pyannote models |
 | `AUTUNE_AUDIO_DIARIZATION_NUM_SPEAKERS` | A | Exactly how many people spoke, when the room knows (#325). Unset by default: pyannote clusters freely, and a wrong number is worse than none. Deployment-wide for now; the per-meeting field comes with S10. Must be ≥ 1; the settings refuse to load otherwise |
 | `AUTUNE_AUDIO_DIARIZATION_MIN_SPEAKERS` / `…_MAX_SPEAKERS` | A | Bounds instead of an exact count. Ignored when `…_NUM_SPEAKERS` is set. Each must be ≥ 1; the settings refuse to load otherwise |
