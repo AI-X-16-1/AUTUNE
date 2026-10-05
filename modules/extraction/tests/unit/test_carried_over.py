@@ -8,7 +8,7 @@ the order the popup lists them in, and that another team gets nothing.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 import pytest
 from fastapi import FastAPI, Request
@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
 from autune_core import AutuneError, Base, Meeting, TeamMember, User, Utterance, get_session
-from autune_extraction import service
+from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import ExtActionItem
 from autune_extraction.router import router
@@ -66,6 +66,7 @@ def session() -> Iterator[Session]:
                     team_id=team_id,
                     title=f"{meeting_id} 회의",
                     started_at=NOW - timedelta(days=days_ago),
+                    status="complete",
                 )
             )
         s.flush()
@@ -180,3 +181,93 @@ def test_another_teams_meeting_is_not_found(client: TestClient, session: Session
 
     assert client.get(f"{PREFIX}/carried-over/mtg_other").status_code == 404
     assert client.get(f"{PREFIX}/carried-over/mtg_missing").status_code == 404
+
+
+# --- carried through meeting after meeting (the user, 2026-10-04) ------------------
+
+
+AFTER_ALL = NOW + timedelta(days=8)
+"""A clock past every fixture meeting, mtg_later included."""
+
+
+@pytest.fixture
+def frozen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Routes read the wall clock; hold it past every fixture meeting."""
+
+    class _Clock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> _Clock:
+            return cls.fromtimestamp(AFTER_ALL.timestamp(), tz)
+
+    monkeypatch.setattr(service, "datetime", _Clock)
+
+
+def test_each_open_item_counts_the_meetings_held_since_its_own(session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+    item(session, "act_last", "mtg_last")
+    item(session, "act_old_done", "mtg_old", status="done")
+    rows = [session.get(ExtActionItem, i) for i in ("act_old", "act_last", "act_old_done")]
+
+    counts = service.meetings_since(session, [r for r in rows if r is not None], now=AFTER_ALL)
+
+    # team_1 held mtg_last, mtg_now and mtg_later after mtg_old; team_2's do not count.
+    assert counts == {"act_old": 3, "act_last": 2}
+
+
+def test_a_meeting_not_yet_held_or_failed_carries_nothing(session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+    row = session.get(ExtActionItem, "act_old")
+    assert row is not None
+
+    # Before mtg_later's date it has not happened yet.
+    assert service.meetings_since(session, [row], now=NOW) == {"act_old": 2}
+
+    # A meeting whose recording failed, or one booked but never started.
+    for meeting_id, status in (("mtg_failed", "failed"), ("mtg_booked", "scheduled")):
+        session.add(
+            Meeting(
+                id=meeting_id,
+                team_id="team_1",
+                title="x",
+                started_at=NOW - timedelta(days=1),
+                status=status,
+            )
+        )
+    session.flush()
+    assert service.meetings_since(session, [row], now=AFTER_ALL) == {"act_old": 3}
+
+
+@pytest.mark.usefixtures("frozen")
+def test_the_popup_counts_and_marks_the_stuck_ones(session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+    item(session, "act_last", "mtg_last")
+
+    result = service.carried_over(session, "mtg_later", today=TODAY)
+
+    assert result.stale == 1
+    marked = {i.id: i.carried_meetings for i in result.items}
+    assert marked == {"act_old": 3, "act_last": 2}
+    assert result.items[0].id == "act_old", "stuck first among the not-overdue"
+
+
+@pytest.mark.usefixtures("frozen")
+def test_the_board_carries_the_count(client: TestClient, session: Session) -> None:
+    item(session, "act_old", "mtg_old")
+
+    listed = client.get(f"{PREFIX}/action-items?meeting_id=mtg_old").json()
+
+    assert [i["carried_meetings"] for i in listed] == [3]
+
+
+@pytest.mark.usefixtures("frozen")
+def test_an_edit_answers_with_the_count(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The copy sync runs on a real database; this is about the answer.
+    monkeypatch.setattr(tasks, "sync_after_confirmation", lambda _action_item_id: None)
+    item(session, "act_old", "mtg_old")
+
+    edited = client.patch(f"{PREFIX}/action-items/act_old", json={"due_date": "2026-10-20"})
+
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["carried_meetings"] == 3

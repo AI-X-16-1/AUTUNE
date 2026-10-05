@@ -15,6 +15,8 @@ import type {
   ReviewDecision,
   ConfirmationAnswer,
   MyConfirmation,
+  Project,
+  ProjectDraft,
 } from "./types";
 
 export { api };
@@ -121,10 +123,33 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
 export const deleteActionItem = (id: string) =>
   withoutBody(`/action-items/${encodeURIComponent(id)}`);
 
-/** A `DELETE` answered 204: an empty success is not a parse failure. */
-async function withoutBody(path: string): Promise<void> {
+/** What a bulk confirm or delete did, id by id. */
+export interface BulkActionResult {
+  confirmed: string[];
+  deleted: string[];
+  /** Unknown, another team's, or no longer in 확인 필요. */
+  skipped: string[];
+}
+
+/**
+ * Confirm or delete several 확인 필요 items at once (the user, 2026-10-04).
+ * Each goes the way a single one does: a confirmation is recorded and sends
+ * the item's copies; a deletion closes them first.
+ */
+export const bulkActionItems = (ids: string[], action: "confirm" | "delete") =>
+  api.extraction<BulkActionResult>("/action-items/bulk", {
+    method: "POST",
+    body: JSON.stringify({ ids, action }),
+  });
+
+/** A request answered 204 (a `DELETE` unless told otherwise): an empty
+ * success is not a parse failure. */
+async function withoutBody(
+  path: string,
+  init: RequestInit = { method: "DELETE" },
+): Promise<void> {
   try {
-    await api.extraction<void>(path, { method: "DELETE" });
+    await api.extraction<void>(path, init);
   } catch (cause) {
     if (cause instanceof SyntaxError) return;
     throw cause;
@@ -160,6 +185,67 @@ export const putSummaryNote = (meetingId: string, body: string) =>
     body: JSON.stringify({ body }),
   });
 
+/** The team's projects, named by one of its meetings or by the team. */
+export const listProjects = (scope: IntegrationScope) =>
+  api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
+
+/** Every project of every team the reader is on, for the board across meetings. */
+export const listMyProjects = () => api.extraction<Project[]>("/projects/mine");
+
+export const createProject = (teamId: string, draft: ProjectDraft) =>
+  api.extraction<Project>(`/projects?team_id=${encodeURIComponent(teamId)}`, {
+    method: "POST",
+    body: JSON.stringify(draft),
+  });
+
+export const updateProject = (teamId: string, id: string, draft: ProjectDraft) =>
+  api.extraction<Project>(
+    `/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`,
+    { method: "PUT", body: JSON.stringify(draft) },
+  );
+
+/** Delete a project; what was in it becomes 미분류. */
+export const deleteProject = (teamId: string, id: string) =>
+  withoutBody(`/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`);
+
+/** Put an item in one of its team's projects, or none (`null`). */
+export const placeActionItem = (id: string, projectId: string | null) =>
+  api.extraction<ActionItemRead>(`/action-items/${encodeURIComponent(id)}/project`, {
+    method: "PUT",
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+/** Put a decision in one of its team's projects, or none. Answered 204. */
+export const placeDecision = (id: string, projectId: string | null) =>
+  withoutBody(`/decisions/${encodeURIComponent(id)}/project`, {
+    method: "PUT",
+    body: JSON.stringify({ project_id: projectId }),
+  });
+
+/** Place the meeting's rows in the team's projects again, by the rules. */
+export const assignSummaryProjects = (meetingId: string) =>
+  api.extraction<MeetingSummary>(
+    `/summary/${encodeURIComponent(meetingId)}/projects/assign`,
+    { method: "POST" },
+  );
+
+/** The caller's own due-date reminders by Slack DM (review of #751). */
+export interface DueReminderSetting {
+  /** On unless the caller turned them off. */
+  on: boolean;
+  /** Whether this server sends reminders at all; when not, the switch changes nothing yet. */
+  sent_here: boolean;
+}
+
+export const getDueReminders = () => api.extraction<DueReminderSetting>("/me/due-reminders");
+
+/** Only the caller's own: the request names nobody. */
+export const setDueReminders = (on: boolean) =>
+  api.extraction<DueReminderSetting>("/me/due-reminders", {
+    method: "PUT",
+    body: JSON.stringify({ on }),
+  });
+
 /** Everything in one meeting that needs a person before it goes anywhere (#246). */
 export const getReview = (meetingId: string) =>
   api.extraction<MeetingReview>(`/reviews/${encodeURIComponent(meetingId)}`);
@@ -189,6 +275,16 @@ export const createDecision = (meetingId: string, statement: string) =>
  * next run cannot propose it again — the server decides which.
  */
 export const deleteDecision = (id: string) => withoutBody(`/decisions/${encodeURIComponent(id)}`);
+
+/**
+ * Send one item to the team's connected tools again -- "다시 시도" beside a
+ * failed copy (#680). Answers before the sync runs: `queued` is false for an
+ * item that was never confirmed, which has nothing outside to retry.
+ */
+export const retrySync = (id: string) =>
+  api.extraction<{ queued: boolean }>(`/action-items/${encodeURIComponent(id)}/sync`, {
+    method: "POST",
+  });
 
 /** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>

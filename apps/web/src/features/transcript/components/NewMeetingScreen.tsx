@@ -12,9 +12,8 @@ import {
   listTeams,
   uploadRecording,
 } from "../api";
+import { ACCEPTED_EXTENSIONS, acceptsRecording } from "../recordingFile";
 import type { TeamSummary } from "../types";
-
-const ACCEPTED = [".mp3", ".wav", ".m4a"];
 
 type Source = "live" | "file";
 /** Matches `MAX_UPLOAD_BYTES` in `modules/audio/src/autune_audio/config.py` and S03's dropzone. */
@@ -362,7 +361,7 @@ export function NewMeetingScreen({
               >
                 <input
                   type="file"
-                  accept={ACCEPTED.join(",")}
+                  accept={ACCEPTED_EXTENSIONS.join(",")}
                   className="sr-only"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 />
@@ -381,7 +380,7 @@ export function NewMeetingScreen({
                 >
                   {file
                     ? formatBytes(file.size)
-                    : "mp3 · wav · m4a · 최대 500MB"}
+                    : "mp3 · wav · m4a · webm · 최대 500MB"}
                 </span>
               </label>
               {fileProblem ? (
@@ -686,9 +685,7 @@ function Field({
 }
 
 function validate(file: File): string | null {
-  const dot = file.name.lastIndexOf(".");
-  const ext = dot === -1 ? "" : file.name.slice(dot).toLowerCase();
-  if (!ACCEPTED.includes(ext)) return "mp3, wav, m4a 파일만 올릴 수 있습니다.";
+  if (!acceptsRecording(file.name)) return "mp3, wav, m4a, webm 파일만 올릴 수 있습니다.";
   if (file.size > MAX_BYTES) return "500MB 를 넘는 파일은 올릴 수 없습니다.";
   return null;
 }

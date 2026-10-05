@@ -513,28 +513,55 @@ def _scrubbed(
     the target and in the lines around it -- "[사람1]" in the context and in the
     target is one person, which is what lets the model resolve "그분" to them.
     """
-    texts = [
+    (scrubbed,), surface = _scrubbed_all([request], roster)
+    return scrubbed, surface
+
+
+def _texts(request: ResolutionRequest) -> list[str]:
+    return [
         *request.context,
         request.target,
         *request.context_after,
         *(text for _, text in request.related),
     ]
+
+
+def _scrubbed_all(
+    requests: Sequence[ResolutionRequest], roster: Sequence[str]
+) -> tuple[list[ResolutionRequest], dict[str, str]]:
+    """``_scrubbed`` over several requests sent in one prompt, through one
+    substitution: a person is the same number in every item, so the numbers in
+    one prompt never name two people."""
+    texts = [text for request in requests for text in _texts(request)]
     replaced, surface = substitute_names_mapped(texts, roster)
-    before = len(request.context)
-    after = before + 1 + len(request.context_after)
-    return (
-        replace(
-            request,
-            target=replaced[before],
-            context=tuple(replaced[:before]),
-            context_after=tuple(replaced[before + 1 : after]),
-            related=tuple(
-                (line_id, text)
-                for (line_id, _), text in zip(request.related, replaced[after:], strict=True)
-            ),
-        ),
-        surface,
-    )
+    out: list[ResolutionRequest] = []
+    at = 0
+    for request in requests:
+        before = at + len(request.context)
+        after = before + 1 + len(request.context_after)
+        end = after + len(request.related)
+        out.append(
+            replace(
+                request,
+                target=replaced[before],
+                context=tuple(replaced[at:before]),
+                context_after=tuple(replaced[before + 1 : after]),
+                related=tuple(
+                    (line_id, text)
+                    for (line_id, _), text in zip(request.related, replaced[after:end], strict=True)
+                ),
+            )
+        )
+        at = end
+    return out, surface
+
+
+def _own_surface(sent: ResolutionRequest, surface: dict[str, str]) -> dict[str, str]:
+    """The placeholders that occur in ``sent`` and what they stood for. An answer
+    in a batch is restored with these only: a placeholder from another item is a
+    person this item never mentioned, which ``_restored`` refuses as invented."""
+    own = {marked for text in _texts(sent) for marked in _PLACEHOLDER.findall(text)}
+    return {marked: name for marked, name in surface.items() if marked in own}
 
 
 def _restored(answer: str, surface: dict[str, str]) -> str | None:
@@ -597,13 +624,15 @@ def _sound(answer: str, request: ResolutionRequest) -> bool:
     return len(answer) <= max(80, MAX_GROWTH * len(request.target))
 
 
-_SUMMARY_PROMPT = """\
+_SUMMARY_INTRO = """\
 다음은 회의 발화 목록입니다. 앞의 번호는 이 목록 안에서만 쓰는 번호이고, [대상]이 정리할 \
 문장입니다. [앞]과 [뒤]는 대상 바로 앞뒤의 발화, [관련]은 회의의 다른 곳에서 비슷한 \
 말을 한 발화입니다 (관련 없는 것도 섞여 있을 수 있습니다).
 
 {lines}
 
+"""
+_SUMMARY_TASK = """\
 [대상] 문장에서 "그거", "그건", "이거", "저희 팀", "표", "이번 빌드" 같은 대명사나 빠져 있는 \
 대상을, 위 발화들([앞], [뒤], [관련] 모두)이 실제로 가리키는 것으로 채워 한 문장으로 다시 \
 쓰세요.
@@ -639,15 +668,20 @@ _SUMMARY_PROMPT = """\
 3 [대상] 그건 제가 이번 배포에 넣을게요
 {{"summary": "로그인 오류 수정은 제가 이번 배포에 넣을게요", "used": [2]}}
 
+"""
+_SUMMARY_OUTPUT = """\
 JSON 하나만 출력하세요: {{"summary": "다시 쓴 한 문장", "used": [번호, ...]}}
 """
-_DECISION_PROMPT = """\
+_SUMMARY_PROMPT = _SUMMARY_INTRO + _SUMMARY_TASK + _SUMMARY_OUTPUT
+_DECISION_INTRO = """\
 다음은 회의 발화 목록입니다. 앞의 번호는 이 목록 안에서만 쓰는 번호이고, [대상]은 회의에서 \
 무언가를 하기로 정한 말입니다. [앞]과 [뒤]는 대상 바로 앞뒤의 발화, [관련]은 회의의 다른 \
 곳에서 비슷한 말을 한 발화입니다 (관련 없는 것도 섞여 있을 수 있습니다).
 
 {lines}
 
+"""
+_DECISION_TASK = """\
 이 회의에서 무엇이 결정되었는지를 한 문장으로 쓰세요. [대상]이 "그렇게 하죠", "그 방향으로 \
 가요"처럼 가리키기만 하면, 위 발화들에서 가리키는 것을 찾아 구체적으로 쓰세요.
 
@@ -679,8 +713,36 @@ _DECISION_PROMPT = """\
 3 [대상] 네 그걸로 가죠
 {{"summary": "회의실은 다음 달부터 예약제로 운영하기로 했습니다", "used": [2]}}
 
+"""
+_DECISION_OUTPUT = """\
 JSON 하나만 출력하세요: {{"summary": "결정된 내용 한 문장", "used": [번호, ...]}}
 """
+_DECISION_PROMPT = _DECISION_INTRO + _DECISION_TASK + _DECISION_OUTPUT
+_BATCH_SCOPE = """\
+항목마다 번호가 1부터 다시 시작하고, 그 번호는 그 항목 안에서만 씁니다. [앞]과 [뒤]는 대상 \
+바로 앞뒤의 발화, [관련]은 회의의 다른 곳에서 비슷한 말을 한 발화입니다 (관련 없는 것도 섞여 \
+있을 수 있습니다). 항목은 서로 따로입니다. 한 항목을 쓸 때는 그 항목의 발화만 보세요.
+
+{items}
+
+아래 규칙과 예시는 항목 하나를 쓰는 방법입니다. 항목마다 따로 적용하세요.
+
+"""
+_BATCH_INTRO = {
+    "commitment": "다음은 회의 발화를 항목별로 나눈 목록입니다. "
+    "항목마다 [대상]이 정리할 문장입니다. " + _BATCH_SCOPE,
+    "decision": "다음은 회의 발화를 항목별로 나눈 목록입니다. "
+    "항목마다 [대상]은 회의에서 무언가를 하기로 정한 말입니다. " + _BATCH_SCOPE,
+}
+_BATCH_OUTPUT = """\
+항목마다 예시와 같은 답을 쓰고 "item"에 항목 번호를 적으세요. 모든 항목에 답하세요. JSON 하나만 \
+출력하세요: {{"items": [{{"item": 1, "summary": "...", "used": [번호, ...]}}, ...]}}
+"""
+"""The batch form of the two prompts (``LlmResolver._resolve_batch``): the same
+rules and worked examples, word for word, between an introduction that says the
+lines come in separately numbered items and an answer that is one list. Only the
+framing is new -- what a good answer for one item looks like is what was measured
+on the single prompt (2026-09-30)."""
 MAX_USED = 4
 _LABELS = ("앞", "대상", "뒤", "관련")
 
@@ -706,6 +768,19 @@ def _summary_prompt(numbered: list[tuple[str, str, str]], purpose: str = "commit
     lines = "\n".join(f"{n} [{label}] {text}" for n, (_, label, text) in enumerate(numbered, 1))
     template = _DECISION_PROMPT if purpose == "decision" else _SUMMARY_PROMPT
     return template.format(lines=lines)
+
+
+def _batch_prompt(items: list[list[tuple[str, str, str]]], purpose: str = "commitment") -> str:
+    """Several requests' numbered lines in one prompt, each item numbered from 1."""
+    blocks = [
+        f"항목 {k}\n"
+        + "\n".join(f"{n} [{label}] {text}" for n, (_, label, text) in enumerate(lines, 1))
+        for k, lines in enumerate(items, 1)
+    ]
+    decision = purpose == "decision"
+    intro = _BATCH_INTRO["decision" if decision else "commitment"]
+    task = _DECISION_TASK if decision else _SUMMARY_TASK
+    return (intro + task + _BATCH_OUTPUT).format(items="\n\n".join(blocks))
 
 
 _CITED_NUMBER = re.compile(r"\D*(\d+)\D*")
@@ -819,6 +894,23 @@ def _cut_like(request: ResolutionRequest, fitted: ResolutionRequest) -> Resoluti
     )
 
 
+MAX_BATCH = 6
+"""Requests per call at most when they carry ids (``LlmResolver._batches``).
+One call per item spent a free tier on one long meeting -- the second model
+allows twenty calls a day -- and batching is what keeps a meeting inside it.
+The cap bounds what one unreadable answer costs: every item in that call loses
+its first try. The outbound limit usually stops a batch sooner, since the
+shared rules and examples take a third of it."""
+
+_Item = tuple[int, ResolutionRequest]
+"""A request and its position in the meeting's list."""
+_Sent = tuple[int, ResolutionRequest, dict[str, str], list[tuple[str, str, str]]]
+"""An item as sent in a batch: position, request, its own placeholders, its lines."""
+_Prepared = tuple[
+    dict[str, Any], ResolutionRequest, dict[str, str], list[tuple[str, str, str]] | None
+]
+"""A single request as sent: body, request cut to it, placeholders, lines."""
+
 MAX_ESCALATIONS = 5
 """Second-model calls per meeting at most. The second model's free tier allows
 twenty a day (#530 review); one meeting of unsound first answers must not spend
@@ -842,6 +934,14 @@ class LlmResolver(GeminiClient):
     every request through ``HttpClient``, whose outbound check refuses an
     unmasked number, address or account. A free-tier key may let the provider
     keep what it is sent, so it is for dummy meetings only (#392).
+
+    **Several items per call.** A meeting's id-carrying requests -- every item
+    and decision summary -- share calls, up to ``MAX_BATCH`` each and within the
+    outbound limit, instead of one call apiece: a long meeting no longer spends
+    a free tier's daily allowance on itself. Each item keeps its own numbered
+    lines, the names are numbered once across the call, and each answer passes
+    the same checks a single one does (``_resolve_batch``). Nothing more leaves
+    than before -- the same lines, in fewer requests.
 
     **One bad answer degrades to the raw quote**, exactly as the other
     resolvers: a failed call, a blank or multi-line answer, an invented
@@ -921,6 +1021,40 @@ class LlmResolver(GeminiClient):
             log.warning("extraction_resolver_call_failed", error=type(exc).__name__)
             return None
 
+    def _single(self, request: ResolutionRequest) -> _Prepared:
+        """One request as the body to send, the request cut to what is sent, the
+        placeholders' names and the numbered lines. ``ValueError`` when even the
+        target alone does not fit (``_fitted``)."""
+        scrubbed, surface = _scrubbed(request, self._roster)
+
+        def render(r: ResolutionRequest) -> str:
+            return _summary_prompt(_numbered(r), r.purpose) if r.target_id else _prompt(r)
+
+        sent = _fitted(scrubbed, render)
+        if sent is None:
+            raise ValueError("target too long")
+        request = _cut_like(request, sent)
+        numbered = _numbered(sent) if request.target_id else None
+        generation: dict[str, Any] = {"temperature": 0}
+        if numbered is not None:
+            generation["responseMimeType"] = "application/json"
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": render(sent)}]}],
+            "generationConfig": generation,
+        }
+        return body, request, surface, numbered
+
+    def _may_escalate(self, escalations: list[int] | None) -> bool:
+        """Whether the second model may be asked now; counts the call if so."""
+        if not self._fallback or self.last_model == self._fallback:
+            return False
+        if escalations is not None:
+            if escalations[0] >= MAX_ESCALATIONS:
+                return False
+            escalations[0] += 1
+        log.info("extraction_resolver_escalated", model=self._model, second=self._fallback)
+        return True
+
     def _resolve_one(
         self, request: ResolutionRequest, index: int, escalations: list[int] | None = None
     ) -> Resolution:
@@ -938,50 +1072,143 @@ class LlmResolver(GeminiClient):
         it used, and answers as JSON. One without is the plain rewrite it always
         was.
         """
-        scrubbed, surface = _scrubbed(request, self._roster)
-
-        def render(r: ResolutionRequest) -> str:
-            return _summary_prompt(_numbered(r), r.purpose) if r.target_id else _prompt(r)
-
-        sent = _fitted(scrubbed, render)
         raw = Resolution(request.target)
-        if sent is None:
+        try:
+            body, request, surface, numbered = self._single(request)
+        except ValueError:
             # Ids only: the line is meeting content.
             log.info("extraction_resolver_target_too_long", target_id=request.target_id)
             return raw
-        request = _cut_like(request, sent)
-        numbered = _numbered(sent) if request.target_id else None
-        prompt = render(sent)
-        generation: dict[str, Any] = {"temperature": 0}
-        if numbered is not None:
-            generation["responseMimeType"] = "application/json"
-        body = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": generation,
-        }
         first = self._ask(None, body, index)
         if first is None:
             return raw
         accepted = self._accept(first, request, surface, numbered)
         if accepted is not None:
             return accepted
-        if not self._fallback or self.last_model == self._fallback:
+        if not self._may_escalate(escalations):
             return raw
-        if escalations is not None:
-            if escalations[0] >= MAX_ESCALATIONS:
-                return raw
-            escalations[0] += 1
-        log.info("extraction_resolver_escalated", model=self._model, second=self._fallback)
         second = self._ask(self._fallback, body, index)
         accepted = self._accept(second, request, surface, numbered) if second is not None else None
         return accepted if accepted is not None else raw
 
+    def _batch(self, items: list[_Item]) -> tuple[dict[str, Any], list[_Sent]]:
+        """Several id-carrying requests of one purpose as one body, each sent
+        whole: ``_batches`` packs only what fits uncut."""
+        scrubbed, surface = _scrubbed_all([request for _, request in items], self._roster)
+        numbered = [_numbered(one) for one in scrubbed]
+        prompt = _batch_prompt(numbered, items[0][1].purpose)
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+        }
+        sent = [
+            (index, request, _own_surface(one, surface), lines)
+            for (index, request), one, lines in zip(items, scrubbed, numbered, strict=True)
+        ]
+        return body, sent
+
+    def _fits(self, items: list[_Item]) -> bool:
+        """``items`` as one prompt stays inside the outbound limit -- measured on
+        the prompt as it would be sent, names replaced, never estimated: over the
+        limit ``check_outbound`` fails the meeting."""
+        body, _ = self._batch(items)
+        return len(body["contents"][0]["parts"][0]["text"]) <= _PROMPT_BUDGET
+
+    def _batches(self, items: list[_Item]) -> list[list[_Item]]:
+        """``items`` packed in order into prompts of at most ``MAX_BATCH`` that fit.
+        An item that fits with no other is a batch of one."""
+        out: list[list[_Item]] = []
+        current: list[_Item] = []
+        for item in items:
+            trial = [*current, item]
+            if current and (len(trial) > MAX_BATCH or not self._fits(trial)):
+                out.append(current)
+                trial = [item]
+            current = trial
+        if current:
+            out.append(current)
+        return out
+
+    def _read_batch(self, answer: str, sent: list[_Sent]) -> dict[int, Resolution]:
+        """Each item's answer through ``_accept``, keyed by request index. An item
+        the model skipped, answered unsoundly, or numbered a second time (the
+        first answer counts) has no entry."""
+        match = re.search(r"\{.*\}", answer, re.S)
+        try:
+            data = json.loads(match.group(0)) if match else {}
+        except ValueError:
+            data = {}
+        entries = data.get("items") if isinstance(data, dict) else None
+        out: dict[int, Resolution] = {}
+        seen: set[int] = set()
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            k = _line_number(entry.get("item"))
+            if k is None or not 1 <= k <= len(sent) or k in seen:
+                continue
+            seen.add(k)
+            index, request, surface, numbered = sent[k - 1]
+            one = json.dumps(
+                {"summary": entry.get("summary"), "used": entry.get("used")}, ensure_ascii=False
+            )
+            accepted = self._accept(one, request, surface, numbered)
+            if accepted is not None:
+                out[index] = accepted
+        return out
+
+    def _resolve_batch(self, items: list[_Item], escalations: list[int]) -> dict[int, Resolution]:
+        """Several requests in one call; whatever it leaves unresolved goes to the
+        second model in one more call -- on the single prompt when that is one
+        request.
+
+        A call that fails costs its items their rewrite, as a failed call costs
+        one item its rewrite in ``_resolve_one``: ``_post`` has already retried and
+        fallen back by then, so asking again item by item would only spend the
+        quota on a provider that is not answering."""
+        body, sent = self._batch(items)
+        first = self._ask(None, body, items[0][0])
+        done = self._read_batch(first, sent) if first is not None else {}
+        left = [(index, request) for index, request in items if index not in done]
+        log.info("extraction_resolver_batch", items=len(items), resolved=len(done))
+        if first is not None and left and self._may_escalate(escalations):
+            if len(left) == 1:
+                index, request = left[0]
+                try:
+                    single, cut, surface, numbered = self._single(request)
+                except ValueError:  # it fitted a longer prompt; kept so it can never fail
+                    single = {}
+                second = self._ask(self._fallback, single, index) if single else None
+                accepted = self._accept(second, cut, surface, numbered) if second else None
+                if accepted is not None:
+                    done[index] = accepted
+            else:
+                body, sent = self._batch(left)
+                second = self._ask(self._fallback, body, left[0][0])
+                if second is not None:
+                    done.update(self._read_batch(second, sent))
+        return {index: done.get(index, Resolution(request.target)) for index, request in items}
+
     def resolve_with_evidence(self, requests: list[ResolutionRequest]) -> list[Resolution]:
-        """One meeting's requests. The second model is asked at most
-        ``MAX_ESCALATIONS`` times across them."""
+        """One meeting's requests, in as few calls as fit.
+
+        Requests that carry ids are packed, per purpose and in order, into prompts
+        of up to ``MAX_BATCH`` (``_batches``). A batch of one, and a request with no
+        ids, takes the single prompt (``_resolve_one``) -- the form every check
+        here was measured on. The second model is asked at most
+        ``MAX_ESCALATIONS`` times across them, a call counting once whether it
+        carries one request or several."""
         escalations = [0]
+        out: dict[int, Resolution] = {}
+        cited = [(index, request) for index, request in enumerate(requests) if request.target_id]
+        for purpose in dict.fromkeys(request.purpose for _, request in cited):
+            same = [(index, request) for index, request in cited if request.purpose == purpose]
+            for batch in self._batches(same):
+                if len(batch) > 1:
+                    out.update(self._resolve_batch(batch, escalations))
         return [
-            self._resolve_one(request, index, escalations) for index, request in enumerate(requests)
+            out[index] if index in out else self._resolve_one(request, index, escalations)
+            for index, request in enumerate(requests)
         ]
 
     def resolve(self, requests: list[ResolutionRequest]) -> list[str]:

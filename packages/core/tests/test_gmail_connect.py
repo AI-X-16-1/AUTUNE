@@ -21,7 +21,7 @@ from autune_core import auth_router as auth_router_module
 from autune_core.auth_router import router as auth_router
 from autune_core.db import Base, get_session
 from autune_core.entities import User
-from autune_core.errors import AutuneError
+from autune_core.errors import AutuneError, ConfigurationError
 from autune_core.oauth.google import (
     CALENDAR_SCOPE,
     GMAIL_SEND_SCOPE,
@@ -45,12 +45,18 @@ class FakeGoogle:
         )
         self.revoked: list[str] = []
         self.asked: dict[str, Any] = {}
+        self.challenge: str | None = None
+        self.exchanged: list[str | None] = []
 
     def authorization_url(self, *, state: str, nonce: str, **kw: Any) -> str:
+        # The challenge is fresh on every request; kept apart so ``asked``
+        # still compares to a fixed answer.
+        self.challenge = kw.pop("code_challenge", None)
         self.asked = kw
         return f"https://accounts.google.com/o/oauth2/v2/auth?state={state}&nonce={nonce}"
 
-    def exchange_grant(self, code: str) -> GoogleGrant:
+    def exchange_grant(self, code: str, *, code_verifier: str | None = None) -> GoogleGrant:
+        self.exchanged.append(code_verifier)
         return self.grant
 
     def verify_request(self, id_token: str, *, nonce: str) -> dict[str, Any]:
@@ -86,6 +92,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "disconnect_user_integration",
         lambda _s, uid, svc: rows.pop((uid, svc), None),
     )
+    # These tests store no encrypted secret; the check has its own tests below.
+    monkeypatch.setattr(auth_router_module, "ensure_configured", lambda: None)
 
     store = InMemoryStateStore()
     google = FakeGoogle()
@@ -136,6 +144,74 @@ def test_start_asks_google_to_send_only_and_offline(world: dict[str, Any]) -> No
     assert world["google"].asked == {"scope": f"openid {GMAIL_SEND_SCOPE}", "offline": True}
     ((_expiry, txn),) = world["store"]._entries.values()
     assert (txn.purpose, txn.user_id) == ("gmail_send", ME)
+    assert world["google"].challenge == s256(txn.code_verifier)
+
+
+def s256(verifier: str | None) -> str:
+    """RFC 7636's S256, written out here rather than imported, so the test
+    checks the client's arithmetic instead of repeating it."""
+    import base64
+    import hashlib
+
+    assert verifier
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+# --- what #765 gave the calendar connect, for this one too (#760 review) ---------------
+
+
+def test_the_code_is_exchanged_with_the_verifier_its_challenge_came_from(
+    world: dict[str, Any],
+) -> None:
+    """PKCE binds the code to the request that asked for it (#704)."""
+    client = signed_in(world)
+    state = start(client)
+    ((_expiry, txn),) = world["store"]._entries.values()
+
+    callback(client, state)
+
+    assert world["google"].exchanged == [txn.code_verifier]
+    assert txn.code_verifier
+
+
+def _failed_back_to_the_screen(response: httpx.Response) -> bool:
+    return response.status_code == 303 and response.headers["location"].endswith(
+        "/settings/members?gmail=failed"
+    )
+
+
+def _no_key() -> None:
+    raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+
+def test_a_deploy_that_cannot_store_the_grant_fails_before_the_code_is_spent(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty AUTUNE_ENCRYPTION_KEY must not cost a grant Google issued and
+    nothing kept (#704) -- a grant to send mail least of all."""
+    client = signed_in(world)
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", _no_key)
+
+    response = callback(client, state)
+
+    assert _failed_back_to_the_screen(response)
+    assert world["google"].exchanged == [], "Google was not asked"
+    assert world["rows"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_grant_sends_nobody_to_google(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No consent screen that cannot succeed -- and the person goes back to
+    the screen with Gmail's own answer, not the calendar's."""
+    monkeypatch.setattr(auth_router_module, "ensure_configured", _no_key)
+
+    response = signed_in(world).get("/api/auth/google/gmail/start?redirect_to=/settings/members")
+
+    assert _failed_back_to_the_screen(response)
+    assert world["store"]._entries == {}
 
 
 def test_the_callback_stores_a_gmail_grant_and_leaves_the_calendar_alone(

@@ -19,9 +19,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from autune_contracts.enums import GapSeverity
 from autune_contracts.gap import GapReport
 from autune_core import CurrentUser, User, get_session
 
@@ -30,6 +31,7 @@ from .enqueue import enqueue_publish_report
 from .schemas import (
     GapDismissal,
     GapExplanations,
+    TeamGapRead,
     TemplateComparison,
     TemplateRead,
     TemplateSelection,
@@ -86,6 +88,26 @@ def get_explanations(meeting_id: str, session: SessionDep, reader: CurrentUser) 
     """
     service.require_readable_meeting(session, meeting_id, reader)
     return service.explain(session, meeting_id)
+
+
+@router.get("/gaps", response_model=list[TeamGapRead])
+def list_team_gaps(
+    team_id: str,
+    session: SessionDep,
+    reader: CurrentUser,
+    severity: Annotated[list[GapSeverity], Query()] = [GapSeverity.HIGH],  # noqa: B006
+) -> list[TeamGapRead]:
+    """Every open gap across a team's meetings -- the sidebar's "갭 리포트" (#550).
+
+    Names a team rather than a meeting, so the check is the team's: the caller
+    must belong to it, and an unknown team is the same 404 as another team's.
+
+    ``severity`` repeats (``?severity=high&severity=medium``) and defaults to
+    ``high``, the only level S20 surfaces without being asked. See
+    ``service.team_gaps``.
+    """
+    service.require_readable_team(session, team_id, reader)
+    return service.team_gaps(session, team_id, severities=severity)
 
 
 @router.post("/gaps/{gap_id}/dismiss", response_model=GapDismissal)

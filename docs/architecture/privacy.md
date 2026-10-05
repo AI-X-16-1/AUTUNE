@@ -52,6 +52,20 @@ The uploaded recording exists only for the duration of transcription.
   may point at a directory this process does not own (#351).
 - Set `privacy.original_audio_deleted = true` in `TranscriptReady` only after
   the file is actually gone.
+- A live recording lives in the recording tab's memory until its upload
+  succeeds, then the tab drops it. **The one browser copy allowed:** when that
+  upload fails and the server does not have the recording, the person who
+  recorded may save the file to their own device by pressing "파일로 저장"
+  (`recordingFile.saveRecordingFile`); without the save, closing the tab loses
+  the meeting. "Does not have" is checked, not assumed
+  (`recordingFile.serverHasRecording`): after a 409, a gateway error or no
+  answer, the tab reads the meeting, and only a meeting already past
+  `recording` means the server took it -- then the tab drops its copy as it
+  does after a success. A 409 alone does not: the API also answers 409 while
+  the live session still holds the meeting, having received nothing. Only when the tab cannot confirm that does it keep offering
+  the save. Nothing saves on its own. Autune cannot delete a saved file, which
+  holds the other attendees' voices too, so the screen asks the person to
+  delete it once it is uploaded.
 
 **Forbidden:**
 - Persisting the recording to object storage, a mounted volume, or a database
@@ -376,8 +390,9 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune moves its page to Notion's trash, where the
-    team can restore it for 30 days. Retention and meeting deletion do not
+    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    and then moves it to Notion's trash, where the team can restore it for
+    30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
     the page is retitled first and trashed second, so what the trash holds
     for those 30 days is not the statement (#669). One exception: when the
@@ -415,14 +430,25 @@ the feature needs.
     utterance. A message already delivered stays in that person's Slack
     when the item or the meeting is deleted; Autune keeps only that a
     reminder of that kind went (`ext_due_reminders`), and that goes with
-    the item.
+    the item. A reminder the outbound check refuses is not sent, is
+    reported once, and keeps that same row so it is not tried again. Each
+    person can turn their own reminders off, and only their own
+    (`ext_due_reminder_optouts`, which goes with the account).
+  - **A copy that failed (#680):** Autune keeps, per item and system, only
+    the kind of the latest failure and its time (`ext_sync_failures`) --
+    never the outside service's message or what was being sent. It goes
+    when the next copy goes through, and with the item. A failed copy to a
+    person's own calendar is shown only to that person.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
     yet: its rows cascade in the database with no call to each person's
-    calendar (a deletion hook is the follow-up). A deleted account cannot: its
-    grant goes with it (`user_integrations`, `ON DELETE CASCADE`), so no token
-    is left to reach the calendar with. Each event is only the item's
+    calendar (a deletion hook is the follow-up). A deleted account has its
+    events removed first, by B's user hook, with the person's own grant; then
+    the grant is revoked at Google (#763), and the row goes with the account
+    (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
+    unreachable Google leaves the events on the calendar and the grant listed
+    under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's rows go, but the refresh tokens are not revoked at Google, for

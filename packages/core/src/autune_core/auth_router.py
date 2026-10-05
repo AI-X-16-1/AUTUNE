@@ -60,7 +60,13 @@ from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
 from .db import get_session
 from .entities import Meeting, Team, TeamMember, User
-from .errors import AutuneError, NotFoundError, PermissionDeniedError, ValidationError
+from .errors import (
+    AutuneError,
+    ConfigurationError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from .integrations_config import (
     IntegrationConfig,
     disconnect_integration,
@@ -77,6 +83,7 @@ from .oauth.google import (
     GoogleOAuthClient,
     get_google_client,
     get_google_integration_client,
+    pkce_pair,
 )
 from .oauth.notion import NotionOAuthClient, get_notion_oauth_client
 from .oauth.slack import (
@@ -87,6 +94,7 @@ from .oauth.slack import (
     SlackOAuthClient,
     SlackTeamNotConnectedError,
     SlackWrongWorkspaceError,
+    channel_name_for,
     get_slack_oauth_client,
 )
 from .oauth.state import STATE_TTL_SECONDS, OAuthTransaction, StateStore, get_state_store
@@ -179,8 +187,17 @@ def google_start(
 ) -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
-    store.put(state, OAuthTransaction(nonce=nonce, redirect_to=_safe_redirect_target(redirect_to)))
-    response = RedirectResponse(google.authorization_url(state=state, nonce=nonce), status_code=307)
+    verifier, challenge = pkce_pair()
+    store.put(
+        state,
+        OAuthTransaction(
+            nonce=nonce, redirect_to=_safe_redirect_target(redirect_to), code_verifier=verifier
+        ),
+    )
+    response = RedirectResponse(
+        google.authorization_url(state=state, nonce=nonce, code_challenge=challenge),
+        status_code=307,
+    )
     response.set_cookie(
         STATE_COOKIE,
         state,
@@ -263,7 +280,10 @@ def _complete_sign_in(
     if error or not code:
         raise PermissionDeniedError("Google sign-in did not complete")
 
-    identity = google.verify(google.exchange_code(code), nonce=transaction.nonce)
+    identity = google.verify(
+        google.exchange_code(code, code_verifier=transaction.code_verifier),
+        nonce=transaction.nonce,
+    )
     if not identity.email_verified:
         raise PermissionDeniedError("this Google account's email is not verified")
 
@@ -462,8 +482,11 @@ def _start_personal_connect(
     id kept in the transaction from *this* request's session. The callback
     therefore stores the grant for whoever started, never for whoever finishes.
     """
+    if (refused := _cannot_store(redirect_to, f"{kind.query}=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(24)
+    verifier, challenge = pkce_pair()
     store.put(
         state,
         OAuthTransaction(
@@ -471,10 +494,15 @@ def _start_personal_connect(
             redirect_to=_safe_redirect_target(redirect_to),
             purpose=kind.service,
             user_id=user.id,
+            code_verifier=verifier,
         ),
     )
     url = google.authorization_url(
-        state=state, nonce=nonce, scope=f"openid {kind.scope}", offline=True
+        state=state,
+        nonce=nonce,
+        scope=f"openid {kind.scope}",
+        offline=True,
+        code_challenge=challenge,
     )
     response = RedirectResponse(url, status_code=307)
     response.set_cookie(
@@ -550,6 +578,22 @@ def _with_query(path: str, pair: str) -> str:
     return path + ("&" if "?" in path else "?") + pair
 
 
+def _cannot_store(redirect_to: str, pair: str) -> RedirectResponse | None:
+    """Back to the screen with ``pair`` when this deploy could not store the
+    token a connect would bring back, else ``None`` -- checked at start, so
+    nobody goes through a consent screen that cannot succeed (mkkim68, review
+    of #765). The callback checks again before it spends the code: the key
+    can go between the two."""
+    try:
+        ensure_configured()
+    except ConfigurationError as exc:
+        log.info("auth_connect_not_started", reason=exc.code)
+        return RedirectResponse(
+            _web_url(_with_query(_safe_redirect_target(redirect_to), pair)), status_code=303
+        )
+    return None
+
+
 def _https_link(stored: object) -> str | None:
     """A stored address as something a screen may put in an ``href``: only an
     ``https://`` URL. What is stored came from the provider at connect time;
@@ -583,7 +627,11 @@ def _complete_personal_connect(
 ) -> RedirectResponse:
     if not transaction.user_id:
         raise PermissionDeniedError(f"{kind.label} connect was not started by a signed-in person")
-    grant = google.exchange_grant(code)
+    # Before the code is spent: a deploy that cannot store the refresh token
+    # fails here, not after Google has issued a grant nothing keeps (#704).
+    # The same for every personal grant -- a Gmail one too (#760 review).
+    ensure_configured()
+    grant = google.exchange_grant(code, code_verifier=transaction.code_verifier)
     # The ID token proves this code answered *our* request (nonce), not which
     # Google account it was: someone may keep their calendar on another account,
     # and the consent asks for no ``email``, so none is required (#452 review).
@@ -807,6 +855,8 @@ def jira_start(
     the connection says who made it (``connected_by``). Same browser-bound
     ``state`` as Google sign-in, cookie scoped to the Jira callback."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (refused := _cannot_store(redirect_to, "jira=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -881,6 +931,8 @@ def _finish_jira_connect(
     try:
         if error or not code:
             raise PermissionDeniedError("Jira access was not granted")
+        # Before the code is spent, as for Slack (#593, #704).
+        ensure_configured()
         tokens = atlassian.exchange_code(code)
         if not tokens.refresh_token:
             raise PermissionDeniedError("Atlassian granted no offline access")
@@ -1016,6 +1068,8 @@ def notion_start(
     screen they also pick the pages Autune may see -- one of those becomes the
     parent of Autune's databases (module B)."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (refused := _cannot_store(redirect_to, "notion=failed")) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -1092,6 +1146,8 @@ def _finish_notion_connect(
     try:
         if error or not code:
             raise PermissionDeniedError("Notion access was not granted")
+        # Before the code is spent, as for Slack (#593, #704).
+        ensure_configured()
         grant = notion.exchange_code(code)
         save_integration(
             session,
@@ -1172,6 +1228,10 @@ def slack_start(
     """Send a team member to Slack to install Autune's bot in the team's
     workspace. Same browser-bound ``state`` as the other connects."""
     team_id = _team_for(session, user.id, meeting_id=meeting_id, team_id=team_id)
+    if (
+        refused := _cannot_store(redirect_to, "slack=failed&reason=configuration_error")
+    ) is not None:
+        return refused
     state = secrets.token_urlsafe(32)
     store.put(
         state,
@@ -1275,7 +1335,8 @@ def _finish_slack_connect(
         # Decided before anything else can fail, so a failure path never has
         # to ask a session that may be broken.
         shared = _workspace_used_elsewhere(session, install.workspace_id, team_id)
-        channel = _alert_channel(slack, install, previous)
+        team = session.get(Team, team_id)
+        channel = _alert_channel(slack, install, previous, team.name if team else "")
         if previous is None or channel.id != previous.config.get("channel"):
             made = channel
         save_integration(
@@ -1328,16 +1389,25 @@ def _finish_slack_connect(
 
 
 def _alert_channel(
-    slack: SlackOAuthClient, install: SlackInstall, previous: IntegrationConfig | None
+    slack: SlackOAuthClient,
+    install: SlackInstall,
+    previous: IntegrationConfig | None,
+    team_name: str,
 ) -> SlackChannel:
     """The team's channel: kept on a re-install into the same workspace while it
-    can still take posts, made new (private, installer invited) otherwise."""
+    can still take posts, made new (private, installer invited) otherwise --
+    named after the team, ``slack_channel_name`` when the team's name will not
+    do (``channel_name_for``)."""
     if previous is not None and previous.config.get("workspace_id") == install.workspace_id:
         kept = previous.config.get("channel")
         if kept and slack.channel_usable(install.access_token, str(kept)):
             return SlackChannel(str(kept), str(previous.config.get("channel_name") or ""))
+    fallback = get_settings().slack_channel_name
     return slack.create_alert_channel(
-        install.access_token, get_settings().slack_channel_name, invite=install.installer_id
+        install.access_token,
+        channel_name_for(team_name, fallback),
+        invite=install.installer_id,
+        fallback=fallback,
     )
 
 

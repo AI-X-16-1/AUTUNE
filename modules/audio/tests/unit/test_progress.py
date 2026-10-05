@@ -179,3 +179,54 @@ def test_whisper_progress_is_how_far_into_the_audio_the_last_segment_ended() -> 
         on_progress=seen.append,
     )
     assert seen == [0.25, 0.5, 1.0]
+
+
+# --- guard (cancel/restart) ---
+
+
+class StopError(Exception):
+    pass
+
+
+def _stopping_after(calls: int):
+    seen = {"n": 0}
+
+    def check() -> None:
+        seen["n"] += 1
+        if seen["n"] > calls:
+            raise StopError
+
+    return check
+
+
+def test_every_update_asks_the_check_even_when_throttled() -> None:
+    """The flag is cheap to read; throttling is for the write, not the check."""
+    writes: list[tuple[str, float | None]] = []
+    report = ProgressReporter(
+        "job_1",
+        write=lambda s, p: writes.append((s, p)),
+        clock=lambda: 0.0,
+        check=_stopping_after(2),
+    )
+    report.stage("transcribing")
+    report.update(0.001)
+    with pytest.raises(StopError):
+        report.update(0.002)
+
+
+def test_entering_a_stage_asks_the_check() -> None:
+    report = ProgressReporter("job_1", write=lambda s, p: None, check=_stopping_after(0))
+    with pytest.raises(StopError):
+        report.stage("masking")
+
+
+def test_a_stop_is_not_swallowed_like_a_failed_write() -> None:
+    """Write failures are logged and dropped; a stop must reach the task."""
+
+    def broken_write(stage: str, progress: float | None) -> None:
+        raise RuntimeError("db down")
+
+    report = ProgressReporter("job_1", write=broken_write, check=_stopping_after(1))
+    report.stage("decoding")
+    with pytest.raises(StopError):
+        report.stage("transcribing")

@@ -114,7 +114,9 @@ class Settings(BaseSettings):
     """The /api/auth/slack/callback URL on the web origin. Slack accepts only an
     **HTTPS** redirect URL, so plain http://localhost cannot finish the flow."""
     slack_channel_name: str = "autune"
-    """The alert channel a one-click install makes, or joins when it exists."""
+    """The alert channel's name when the team's own name cannot be one: an
+    install names the channel after the team (``oauth.slack.channel_name_for``)
+    and falls back to this. It never joins an existing channel."""
 
     retention_days: int = 90
     """Analysis results are deleted after this many days.

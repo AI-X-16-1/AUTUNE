@@ -38,6 +38,17 @@ from autune_core.user_integrations import UserIntegrationConfig
 ME = "user_me"
 
 
+def s256(verifier: str | None) -> str:
+    """RFC 7636's S256, written out here rather than imported, so the test
+    checks the client's arithmetic instead of repeating it."""
+    import base64
+    import hashlib
+
+    assert verifier
+    digest = hashlib.sha256(verifier.encode()).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
+
+
 class FakeGoogle:
     def __init__(self, client_id: str = "sign-in-client") -> None:
         self.client_id = client_id
@@ -49,12 +60,17 @@ class FakeGoogle:
         self.revoked: list[str] = []
         self.revoke_answer = True
         self.asked: dict[str, Any] = {}
+        self.exchanged: list[str | None] = []
 
     def authorization_url(self, *, state: str, nonce: str, **kw: Any) -> str:
+        # The challenge is fresh on every request; kept apart so ``asked``
+        # still compares to a fixed answer.
+        self.challenge = kw.pop("code_challenge", None)
         self.asked = kw
         return f"https://accounts.google.com/o/oauth2/v2/auth?state={state}&nonce={nonce}"
 
-    def exchange_grant(self, code: str) -> GoogleGrant:
+    def exchange_grant(self, code: str, *, code_verifier: str | None = None) -> GoogleGrant:
+        self.exchanged.append(code_verifier)
         return self.grant
 
     def verify(self, id_token: str, *, nonce: str) -> GoogleIdentity:
@@ -101,6 +117,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(
         auth_router_module, "disconnect_user_integration", lambda _s, uid, _svc: grants.pop(uid)
     )
+    # This test stores no encrypted secret; the check is its own test.
+    monkeypatch.setattr(auth_router_module, "ensure_configured", lambda: None)
 
     store = InMemoryStateStore()
     google = FakeGoogle()
@@ -169,6 +187,58 @@ def test_start_asks_google_for_the_calendar_offline_and_remembers_who_asked(
     assert world["google"].asked == {"scope": f"openid {CALENDAR_SCOPE}", "offline": True}
     ((_expiry, txn),) = world["store"]._entries.values()
     assert (txn.purpose, txn.user_id) == ("calendar", ME)
+    assert world["google"].challenge == s256(txn.code_verifier)
+
+
+def test_the_code_is_exchanged_with_the_verifier_its_challenge_came_from(
+    world: dict[str, Any],
+) -> None:
+    """#704: PKCE binds the code to the request that asked for it."""
+    client = signed_in(world)
+    state = start(client)
+    ((_expiry, txn),) = world["store"]._entries.values()
+
+    callback(client, state)
+
+    assert world["google"].exchanged == [txn.code_verifier]
+
+
+def test_a_deploy_that_cannot_store_the_grant_fails_before_the_code_is_spent(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#704: an empty AUTUNE_ENCRYPTION_KEY used to fail at the save, after
+    Google had issued a grant nothing kept."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    client = signed_in(world)
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = callback(client, state)
+
+    assert _failed_back_to_the_screen(response)
+    assert world["google"].exchanged == [], "Google was not asked"
+    assert world["grants"] == {}
+
+
+def test_a_deploy_that_cannot_store_the_grant_sends_nobody_to_google(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #765: no consent screen that cannot succeed."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = signed_in(world).get(
+        "/api/auth/google/calendar/start?redirect_to=/meetings/m1/actions"
+    )
+
+    assert _failed_back_to_the_screen(response)
+    assert world["store"]._entries == {}
 
 
 # --- the callback ---------------------------------------------------------------------

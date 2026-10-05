@@ -35,6 +35,24 @@ class ActionItemCreate(BaseModel):
     what "the model missed it" means — and the drawer renders that state."""
 
 
+class BulkActionItems(BaseModel):
+    """Several items of the 확인 필요 column at once (the user, 2026-10-04)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[str] = Field(min_length=1, max_length=100)
+    action: Literal["confirm", "delete"]
+
+
+class BulkActionResult(BaseModel):
+    """Which items were confirmed or deleted, and which were left as they were:
+    unknown, another team's, or no longer waiting for confirmation."""
+
+    confirmed: list[str]
+    deleted: list[str]
+    skipped: list[str]
+
+
 class ActionItemUpdate(BaseModel):
     """A correction to one item. Every field optional; absent means unchanged.
 
@@ -87,6 +105,43 @@ class ExternalRefRead(BaseModel):
     external_id: str | None
 
 
+class SyncFailureRead(BaseModel):
+    """The last attempt to copy the item to ``system`` failed (#680).
+
+    ``kind`` is all that is known and all that is kept: ``privacy`` -- the
+    outbound check refused the text; ``reconnect`` -- the connection's grant
+    was refused and a person has to connect again; ``unreachable`` -- the
+    service timed out or answered with a server error; ``rejected`` -- it
+    said no. No message from the service, and nothing of what was sent.
+    """
+
+    system: Literal["notion", "jira", "calendar"]
+    kind: Literal["privacy", "reconnect", "unreachable", "rejected"]
+    failed_at: datetime
+
+
+class CalendarState(BaseModel):
+    """Whether the item is on its assignee's calendar, and if not, why not.
+
+    An item with no event is usually not a failure: it is not something a
+    calendar event is made for. The board could not say which, and somebody
+    who had added an item by hand was left asking why nothing appeared
+    (2026-10-02). ``reason`` names the first thing missing.
+
+    ``not_confirmed``, ``no_due_date``, ``no_account`` (the assignee is a
+    typed name or nobody) and ``not_on_team`` are about the item and are sent
+    to any reader. ``sent``, ``none`` with no reason, and ``not_connected``
+    are about the assignee's own calendar -- each says whether that person
+    has connected one -- and are sent **only when the reader is the
+    assignee**. For anybody else the detail carries no ``calendar`` at all
+    once the item itself lacks nothing."""
+
+    state: Literal["sent", "none"]
+    reason: (
+        Literal["not_confirmed", "no_due_date", "no_account", "not_on_team", "not_connected"] | None
+    ) = None
+
+
 class ActionItemRead(BaseModel):
     """One item as this module's own screens read it.
 
@@ -135,6 +190,12 @@ class ActionItemRead(BaseModel):
     status: str
     confidence: float
     origin: str
+    carried_meetings: int = 0
+    """For an open item: how many of its team's meetings have been held since
+    it was made (``service.meetings_since``). ``STALE_AFTER`` or more reads as
+    stuck on the board."""
+    project_id: str | None = None
+    """The team's project this item is about (``ext_projects``), or ``None``."""
 
     source_utterance_ids: list[str]
     """The utterances this item was drawn from. Empty for a hand-added item.
@@ -201,6 +262,12 @@ class ActionItemRead(BaseModel):
     after the one where it was already confirmed (#295).
     """
 
+    sync_failures: list[SyncFailureRead] = Field(default_factory=list)
+    """Systems whose last copy of this item failed (#680). A kind and a time;
+    on the list for the reason ``sync_refs`` is -- it is not meeting content.
+    Notion and Jira are the team's connections and their failures go to any
+    reader; a ``calendar`` failure is one person's and is sent only to the
+    item's assignee. Empty for an item nothing has failed for."""
     sync_refs: list[ExternalRefRead]
     """One entry per system this item has been claimed for -- today, at most
     ``notion`` (#30). ``jira`` was designed (ui-spec S18, S28) but dropped
@@ -247,6 +314,33 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class ProjectRead(BaseModel):
+    """One of a team's projects (``ext_projects``)."""
+
+    id: str
+    name: str
+    aliases: list[str]
+    jira_project_key: str | None = None
+
+
+class ProjectWrite(BaseModel):
+    """A project as a member types it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    aliases: list[str] = Field(default_factory=list)
+    jira_project_key: str | None = Field(default=None, max_length=32)
+
+
+class ProjectPlacement(BaseModel):
+    """A person puts a decision or an item in one of the team's projects, or none."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    project_id: str | None = None
+
+
 class SummaryDecision(BaseModel):
     """A decision as the summary tab lists it: the wording a person confirmed,
     or the model's while it is still pending."""
@@ -254,6 +348,7 @@ class SummaryDecision(BaseModel):
     id: str
     statement: str
     status: Literal["pending", "confirmed"]
+    project_id: str | None = None
 
 
 MAX_NOTE_CHARS = 2000
@@ -280,10 +375,40 @@ class ConfirmationAnswerIn(BaseModel):
     answer: ConfirmationAnswer
 
 
+class DueReminderSetting(BaseModel):
+    """The caller's own due-date reminders (review of #751).
+
+    ``on`` is their choice: on unless they turned it off. ``sent_here`` says
+    whether this deployment sends reminders at all
+    (``AUTUNE_EXTRACTION_DUE_REMINDERS``), so the screen can say so rather
+    than show a switch that does nothing."""
+
+    on: bool
+    sent_here: bool
+
+
+class DueReminderSettingIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    on: bool
+
+
 class MeetingNoteUpdate(BaseModel):
     """The memo, whole. Blank removes it."""
 
     body: str = Field(max_length=MAX_NOTE_CHARS)
+
+
+class GeneratedSummary(BaseModel):
+    """A meeting's summary written by a cloud model (#421 v2), shown on the 요약
+    tab above B's own rows and marked as a model's. Present only with
+    ``summary_impl=llm`` and only while the lines it was written from are
+    unchanged."""
+
+    overview: str
+    points: list[str]
+    model_version: str
+    created_at: datetime
 
 
 class MeetingSummary(BaseModel):
@@ -309,6 +434,12 @@ class MeetingSummary(BaseModel):
     the confirmation window."""
     note: str | None = None
     note_updated_at: datetime | None = None
+    generated: GeneratedSummary | None = None
+    """v2: a model's summary of the whole meeting, or ``None`` when none is
+    written or the meeting has changed since."""
+    projects: list[ProjectRead] = Field(default_factory=list)
+    """The team's projects, for grouping ``decisions`` and ``action_items`` by
+    their ``project_id`` -- one that is ``None`` is 미분류."""
 
 
 class ActionItemDetail(ActionItemRead):
@@ -332,6 +463,11 @@ class ActionItemDetail(ActionItemRead):
     order comes with it at no extra cost.
     """
 
+    calendar: CalendarState | None = None
+    """What this reader may be told about the item and its assignee's
+    calendar (``CalendarState``). ``None`` when the item lacks nothing and the
+    reader is not the assignee -- the rest is the assignee's to know."""
+
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence
     with nothing to point at ("다음 주까지 볼게요") can be read with the thing it
@@ -348,6 +484,9 @@ class ActionItemDetail(ActionItemRead):
     if it says more than they show. Same consent filter as ``context``."""
 
     history: list[EditHistoryEntry] = Field(default_factory=list)
+    confirmation_dm_url: str | None = None
+    """The reader's own Slack confirmation DM about one of this item's lines --
+    only for the person it went to, since nobody else can open it (#680)."""
     """What people did to the item, oldest first (S18, #109). Empty for an item
     the model extracted and nobody has touched since."""
 
@@ -419,6 +558,8 @@ class CarriedOver(BaseModel):
 
     open: int
     overdue: int
+    stale: int = 0
+    """Open items carried through ``STALE_AFTER`` or more meetings."""
     items: list[CarriedOverItem]
 
 
