@@ -155,6 +155,9 @@ def _defaults(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_settings",
         lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
     )
+    # No public holidays here: the Monday these tests use, 2026-10-05, is one
+    # (the substitute day for 개천절). Holidays are test_days_off.py's.
+    monkeypatch.setattr(service.days_off, "is_public_holiday", lambda *_, **__: False)
 
 
 @pytest.fixture
@@ -703,6 +706,7 @@ def test_a_person_sets_reads_and_clears_their_own_pause(api: TestClient, session
     assert api.get(f"{PREFIX}/me/notification-pause").json() == {
         "starts_on": None,
         "ends_on": None,
+        "calendar_leave": False,
     }
 
     answer = api.put(
@@ -711,13 +715,17 @@ def test_a_person_sets_reads_and_clears_their_own_pause(api: TestClient, session
     )
 
     assert answer.status_code == 200
-    assert answer.json() == {"starts_on": first.isoformat(), "ends_on": last.isoformat()}
+    assert answer.json() == {
+        "starts_on": first.isoformat(),
+        "ends_on": last.isoformat(),
+        "calendar_leave": False,
+    }
     assert api.get(f"{PREFIX}/me/notification-pause").json() == answer.json()
     (row,) = session.query(ExtNotificationPause).all()
     assert row.user_id == READER, "the signed-in person's, and nobody else's"
 
     cleared = api.put(f"{PREFIX}/me/notification-pause", json={"starts_on": None, "ends_on": None})
-    assert cleared.json() == {"starts_on": None, "ends_on": None}
+    assert cleared.json() == {"starts_on": None, "ends_on": None, "calendar_leave": False}
     assert session.query(ExtNotificationPause).count() == 0
 
 
@@ -736,3 +744,21 @@ def test_the_route_names_nobody_and_refuses_a_backwards_range(
         == 422
     ), "a body naming a person is refused, not ignored"
     assert session.query(ExtNotificationPause).count() == 0
+
+
+def test_the_screen_is_told_when_this_server_reads_leave_from_a_calendar(
+    api: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "autune_extraction.router.get_settings",
+        lambda: ExtractionSettings(_env_file=None, leave_from_calendar=True),  # type: ignore[call-arg]
+    )
+
+    assert api.get(f"{PREFIX}/me/notification-pause").json()["calendar_leave"] is True
+    assert (
+        api.put(
+            f"{PREFIX}/me/notification-pause",
+            json={"starts_on": None, "ends_on": None, "calendar_leave": False},
+        ).status_code
+        == 422
+    ), "it is the deployment's, not something a person sends"

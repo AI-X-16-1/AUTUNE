@@ -57,7 +57,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import reminders, sync_state
+from . import days_off, reminders, sync_state
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -3598,7 +3598,9 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
     for Autune's DMs about their items; off means this one too (follow-up to
     #771, the user's call 2026-10-05)."""
     week = reminders.digest_week(now)
-    if week is None:
+    # A Monday that is a public holiday has no digest: nobody is at work to
+    # read the week's list, and that week goes without one (``days_off``).
+    if week is None or days_off.is_public_holiday(session, week, now=now):
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id)))
     # And anyone who asked for no digest on that day -- their own leave dates
@@ -3791,9 +3793,10 @@ def daily_digests_to_send(session: Session, *, now: datetime) -> list[DailyDiges
 
     Who counts is who the weekly digest counts, less the same people: anyone
     who turned their reminders off, and anyone whose own pause covers today.
-    Monday has the weekly digest instead, and a weekend has nothing."""
+    Monday has the weekly digest instead, and a weekend has nothing -- nor has
+    a public holiday (``days_off.is_public_holiday``)."""
     day = reminders.daily_day(now)
-    if day is None:
+    if day is None or days_off.is_public_holiday(session, day, now=now):
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id))) | _paused_users(session, day)
     owners = {

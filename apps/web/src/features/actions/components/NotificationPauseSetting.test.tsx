@@ -8,11 +8,11 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationPauseSetting } from "./NotificationPauseSetting";
-import type { NotificationPause } from "../api";
+import type { NotificationPause, NotificationPauseRead } from "../api";
 
 // The person's own leave dates: no morning DM and no Monday digest between them.
 
-const get = vi.fn<() => Promise<NotificationPause>>();
+const get = vi.fn<() => Promise<NotificationPauseRead>>();
 const put = vi.fn<(pause: NotificationPause) => Promise<NotificationPause>>();
 vi.mock("../api", () => ({
   getNotificationPause: () => get(),
@@ -50,6 +50,20 @@ describe("NotificationPauseSetting", () => {
       screen.getByText(/2026-10-12부터 2026-10-16까지 보내지 않습니다/),
     ).toBeTruthy();
     expect(screen.getByText(/마감 알림은 그대로 갑니다/)).toBeTruthy();
+  });
+
+  it("says holidays are skipped, and the calendar only where this server reads it", async () => {
+    get.mockResolvedValue(NONE);
+    const { unmount } = render(<NotificationPauseSetting />);
+    await first();
+    expect(screen.getByText(/공휴일에는 보내지 않습니다/)).toBeTruthy();
+    expect(screen.queryByText(/부재중/)).toBeNull();
+    unmount();
+
+    get.mockResolvedValue({ ...NONE, calendar_leave: true });
+    render(<NotificationPauseSetting />);
+    await first();
+    expect(screen.getByText(/부재중 일정의 시간만 읽고/)).toBeTruthy();
   });
 
   it("saves both days and nothing else", async () => {

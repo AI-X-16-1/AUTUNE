@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from celery import shared_task
 from sqlalchemy import select
@@ -62,6 +62,7 @@ from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import (
     calendar_sync,
+    days_off,
     jira_sync,
     notion_backfill,
     notion_setup,
@@ -862,9 +863,16 @@ def send_weekly_digests() -> list[str]:
     sent: list[str] = []
     refused: list[str] = []
     not_linked = 0
+    away = 0
+    leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
+            continue
+        if leave and _out_of_office(digest.user_id, now):
+            # Held back, not claimed: asked again next run, and sent then if
+            # they are back inside the sending hours.
+            away += 1
             continue
         try:
             with session_scope() as session:
@@ -903,6 +911,7 @@ def send_weekly_digests() -> list[str]:
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
+            away=away,
         )
     if refused:
         raise PrivacyViolationError(
@@ -940,9 +949,16 @@ def send_daily_digests() -> list[str]:
     sent: list[str] = []
     refused: list[str] = []
     not_linked = 0
+    away = 0
+    leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
+            continue
+        if leave and _out_of_office(digest.user_id, now):
+            # Held back, not claimed: asked again next run, and sent then if
+            # they are back inside the sending hours.
+            away += 1
             continue
         try:
             with session_scope() as session:
@@ -981,6 +997,7 @@ def send_daily_digests() -> list[str]:
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
+            away=away,
         )
     if refused:
         raise PrivacyViolationError(
@@ -988,6 +1005,61 @@ def send_daily_digests() -> list[str]:
             f"{', '.join(refused)}"
         )
     return sent
+
+
+def _out_of_office(user_id: str, now: datetime) -> bool:
+    """Whether this person's own connected calendar marks them out of office
+    right now (``days_off.away_now``) -- ``False`` for someone with no calendar
+    connected, and ``False`` when it cannot be read.
+
+    **Unknown is not away.** A digest is the person's own work sent to
+    themselves; a grant that lapsed or a Google outage must not silence it.
+    The failure is logged by type with the person's id, never with anything
+    Google said. A privacy refusal is not that kind of failure and is raised.
+    """
+    try:
+        with session_scope() as session, _calendars(session) as calendar_for:
+            connection = calendar_for(user_id)
+            if connection is None:
+                return False
+            calendar, calendar_id = connection
+            return days_off.away_now(cast("days_off.LeaveCalendar", calendar), calendar_id, now=now)
+    except PrivacyViolationError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- unknown is not away; logged by type, ids only
+        log.warning("extraction_leave_not_read", user_id=user_id, reason=type(exc).__name__)
+        return False
+
+
+@shared_task(name="autune.extraction.periodic.refresh_public_holidays")
+@periodic(timedelta(hours=12))
+def refresh_public_holidays() -> int:
+    """Read Korea's public holidays from Google's public holiday calendar and
+    keep them (``days_off``), so no digest goes on one. Returns how many days
+    were kept; 0 when nothing was read.
+
+    Only where a digest is switched on and ``public_holiday_calendar`` is not
+    off: a deployment that sends none makes no call. A read that fails leaves
+    the last good one in place -- and once that is older than
+    ``days_off.FRESH_FOR`` the table in code answers -- so the failure is
+    logged by type and not raised: there is nothing for a retry queue to do
+    that the next run does not.
+    """
+    settings = get_settings()
+    if not settings.public_holiday_calendar or not (
+        settings.daily_digest or settings.weekly_digest
+    ):
+        return 0
+    now = datetime.now(tz=UTC)
+    try:
+        days = days_off.fetch_public_holidays(today=reminders.korean_day(now))
+    except IntegrationError as exc:
+        log.warning("extraction_public_holidays_not_read", reason=type(exc).__name__)
+        return 0
+    with session_scope() as session:
+        kept = days_off.store_public_holidays(session, days, now=now)
+    log.info("extraction_public_holidays_read", days=kept)
+    return kept
 
 
 @shared_task(name="autune.extraction.periodic.forget_ended_notification_pauses")

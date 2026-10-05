@@ -54,6 +54,7 @@ from .schemas import (
     MyConfirmation,
     NameSuggestion,
     NotificationPause,
+    NotificationPauseRead,
     Outbound,
     ProjectPlacement,
     ProjectRead,
@@ -632,24 +633,30 @@ def set_my_due_reminders(
     return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
 
 
-@router.get("/me/notification-pause", response_model=NotificationPause)
-def my_notification_pause(session: SessionDep, reader: CurrentUser) -> NotificationPause:
+def _pause_read(session: Session, user_id: str) -> NotificationPauseRead:
+    pause = service.notification_pause(session, user_id)
+    return NotificationPauseRead(
+        starts_on=pause.starts_on if pause is not None else None,
+        ends_on=pause.ends_on if pause is not None else None,
+        calendar_leave=get_settings().leave_from_calendar,
+    )
+
+
+@router.get("/me/notification-pause", response_model=NotificationPauseRead)
+def my_notification_pause(session: SessionDep, reader: CurrentUser) -> NotificationPauseRead:
     """The days the caller asked for no morning DM and no Monday digest.
     Their own only: there is no parameter naming anybody else, and no route
     that shows one person's dates to another."""
-    pause = service.notification_pause(session, reader.id)
-    if pause is None:
-        return NotificationPause()
-    return NotificationPause(starts_on=pause.starts_on, ends_on=pause.ends_on)
+    return _pause_read(session, reader.id)
 
 
-@router.put("/me/notification-pause", response_model=NotificationPause)
+@router.put("/me/notification-pause", response_model=NotificationPauseRead)
 def set_my_notification_pause(
     payload: NotificationPause, session: SessionDep, reader: CurrentUser
-) -> NotificationPause:
+) -> NotificationPauseRead:
     """Set, replace or -- with both days ``null`` -- clear the caller's own
     pause (the user, 2026-10-05)."""
-    pause = service.set_notification_pause(
+    service.set_notification_pause(
         session,
         reader.id,
         starts_on=payload.starts_on,
@@ -657,9 +664,7 @@ def set_my_notification_pause(
         now=datetime.now(tz=UTC),
     )
     session.commit()
-    if pause is None:
-        return NotificationPause()
-    return NotificationPause(starts_on=pause.starts_on, ends_on=pause.ends_on)
+    return _pause_read(session, reader.id)
 
 
 @router.post("/jira/backfill")

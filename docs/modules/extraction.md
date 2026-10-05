@@ -293,6 +293,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
 | `ext_daily_digests` | That a person was sent the morning DM for one day through one team's Slack. The primary key is the "once", and the latest row's time is where the next DM's "since the last one" starts; the message is not kept. Goes with the person and with the team |
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
+| `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
 | `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
@@ -436,6 +437,18 @@ other module's tables.
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:
   `AUTUNE_EXTRACTION_DAILY_DIGEST=true` turns it on
+- Neither digest goes on a public holiday (`days_off.py`): the days are read
+  twice a day from Google's public calendar of Korea's holidays, with no
+  credentials (`autune.extraction.periodic.refresh_public_holidays`;
+  `AUTUNE_EXTRACTION_PUBLIC_HOLIDAY_CALENDAR=false` stops the call), and the
+  `holidays` package answers when there is no read from the last two weeks.
+  A Monday that is a holiday has no digest that week. Due-date reminders are
+  not held back
+- With `AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR=true` (off by default), a person
+  whose own connected Google Calendar marks them out of office at that moment
+  is not sent either digest; it is asked again on the next run, so somebody
+  back within the sending hours gets theirs then. Out-of-office times only
+  are read, and nothing is stored (`docs/architecture/privacy.md`)
 - Role-specific reports (Phase 2)
 
 ## AI stack

@@ -461,6 +461,26 @@ the feature needs.
     they can read or write it, no screen or route shows it to a teammate or
     an admin, nothing is derived from it, and it is deleted once its last
     day has passed. Due-date reminders do not read it.
+  - **Out-of-office time, from a person's own calendar:** where a deployment
+    turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
+    person who connected Google Calendar is not sent the morning DM or
+    Monday's DM while that calendar marks them out of office. This is the
+    one read of a person's calendar that is not of Autune's own events, and
+    it is narrowed at Google twice: out-of-office events only
+    (`eventTypes=outOfOffice`), and their start and end only -- no title, no
+    description, no attendee, no other event is requested or returned. It
+    asks about the minute the message would go, uses the answer to hold that
+    one message back, and **stores nothing**: no table, log line or metric
+    says a person was away. A calendar that cannot be read is treated as
+    not away. Turn it on only once what the deployment tells people about
+    the calendar connection says so; the settings screen says it where it is
+    on.
+  - **Public holidays:** no morning DM or Monday DM goes on one. The days
+    come from Google's public calendar of Korea's holidays, fetched at its
+    public address with no credentials -- nobody's Google grant is used and
+    the request carries nothing -- and kept in `ext_public_holidays`, dates
+    of public record. A table in code (the `holidays` package) answers when
+    the calendar has not been read for two weeks.
   - **A copy that failed (#680):** Autune keeps, per item and system, only
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes
