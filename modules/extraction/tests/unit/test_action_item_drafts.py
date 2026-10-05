@@ -37,6 +37,7 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExtractionRun,
+    ExtMeetingSummary,
     ExtProject,
 )
 from autune_extraction.pipeline import (
@@ -72,6 +73,8 @@ TABLES = [
     ExtConfirmation.__table__,
     # The task records which speech it read (#518).
     ExtExtractionRun.__table__,
+    # The run deletes a written summary its lines no longer match (#782 review).
+    ExtMeetingSummary.__table__,
 ]
 
 LINES = [

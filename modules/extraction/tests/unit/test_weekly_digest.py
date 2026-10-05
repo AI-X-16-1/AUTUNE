@@ -75,7 +75,8 @@ def session() -> Iterator[Session]:
     tables = [
         t
         for name, t in Base.metadata.tables.items()
-        if name in shared or name in ("ext_action_items", "ext_weekly_digests")
+        if name in shared
+        or name in ("ext_action_items", "ext_weekly_digests", "ext_due_reminder_optouts")
     ]
     Base.metadata.create_all(engine, tables=tables)
     with Session(engine) as s:
@@ -147,6 +148,47 @@ def test_someone_whose_work_is_done_by_send_time_gets_nothing(session: Session) 
     assert service.send_weekly_digest(session, slack, first, now=MONDAY_10_KST) is False
     assert slack.sent == []
     assert session.query(ExtWeeklyDigest).count() == 0
+
+
+# --- "마감 알림 받기" off means this DM too (follow-up to #771) -------------------------
+
+
+def test_someone_who_turned_their_reminders_off_is_owed_no_digest(session: Session) -> None:
+    """One switch for Autune's DMs about a person's own items: someone who
+    turned the reminders off still got Monday's list of the same items."""
+    service.set_due_reminders(session, "user_kim", on=False, now=MONDAY_10_KST)
+
+    assert service.weekly_digests_to_send(session, now=MONDAY_10_KST) == []
+
+    service.set_due_reminders(session, "user_kim", on=True, now=MONDAY_10_KST)
+
+    assert [
+        (d.user_id, d.team_id) for d in service.weekly_digests_to_send(session, now=MONDAY_10_KST)
+    ] == [("user_kim", "team_1"), ("user_kim", "team_2")]
+
+
+def test_turning_them_off_does_not_cost_anyone_else_their_digest(session: Session) -> None:
+    lee = session.get(ExtActionItem, "act_3")
+    assert lee is not None
+    lee.status = "todo"
+    session.flush()
+    service.set_due_reminders(session, "user_kim", on=False, now=MONDAY_10_KST)
+
+    owed = service.weekly_digests_to_send(session, now=MONDAY_10_KST)
+
+    assert [(d.user_id, d.team_id) for d in owed] == [("user_lee", "team_1")]
+
+
+def test_someone_who_turns_them_off_before_the_send_gets_nothing(session: Session) -> None:
+    """The list was made in another transaction; the person's choice is read
+    again at send time, as their items are."""
+    slack = FakeSlack()
+    (first, _) = service.weekly_digests_to_send(session, now=MONDAY_10_KST)
+    service.set_due_reminders(session, "user_kim", on=False, now=MONDAY_10_KST)
+
+    assert service.send_weekly_digest(session, slack, first, now=MONDAY_10_KST) is False
+    assert slack.sent == []
+    assert session.query(ExtWeeklyDigest).count() == 0, "nothing claimed: on again, it is owed"
 
 
 def test_the_setting_is_off_by_default() -> None:

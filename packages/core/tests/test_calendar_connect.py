@@ -596,7 +596,7 @@ def _client(http: httpx.Client | None = None) -> GoogleOAuthClient:
     )
 
 
-def test_an_offline_url_asks_for_consent_and_keeps_earlier_scopes() -> None:
+def test_an_offline_url_asks_for_consent_and_only_for_its_own_scope() -> None:
     query = parse_qs(
         urlsplit(
             _client().authorization_url(
@@ -606,7 +606,8 @@ def test_an_offline_url_asks_for_consent_and_keeps_earlier_scopes() -> None:
     )
     assert query["access_type"] == ["offline"]
     assert query["prompt"] == ["consent"]
-    assert query["include_granted_scopes"] == ["true"]
+    # Not merged with what the account gave this client before (#760 review).
+    assert "include_granted_scopes" not in query
     assert query["scope"] == [f"openid {CALENDAR_SCOPE}"]
 
 

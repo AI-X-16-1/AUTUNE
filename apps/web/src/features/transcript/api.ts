@@ -81,17 +81,21 @@ export const listMeetings = () => api.audio<MeetingSummary[]>("/meetings");
 /** The teams this person may open a meeting for. Feeds `createMeeting`. */
 export const listTeams = () => api.audio<TeamSummary[]>("/teams");
 
-/** The token for an invitation link, shown once, and when the link lapses. */
-export type InvitationIssued = { token: string; expires_at: string };
+/**
+ * The token for an invitation link, shown once, and when the link lapses.
+ * `emailed` is whether Gmail took the mail `sendEmail` asked for.
+ */
+export type InvitationIssued = { token: string; expires_at: string; emailed?: boolean };
 
 /**
  * Invite an address to a team the caller is on (#552). Nobody is added: the
- * answer is a token for a link, the same shape whatever the address.
+ * answer is a token for a link, the same shape whatever the address. With
+ * `sendEmail` the server also mails the link from the caller's own Gmail.
  */
-export const inviteToTeam = (teamId: string, email: string) =>
+export const inviteToTeam = (teamId: string, email: string, sendEmail = false) =>
   api.audio<InvitationIssued>(`/teams/${encodeURIComponent(teamId)}/invitations`, {
     method: "POST",
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, send_email: sendEmail }),
   });
 
 /**

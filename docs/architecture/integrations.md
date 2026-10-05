@@ -50,6 +50,12 @@ checking it would refuse every invitation; and `items`, `free_busy`'s list of
 calendars to ask about. Declaring nothing checks everything,
 so forgetting to declare fails closed.
 
+`GmailClient` (#552) is the one client whose request body cannot be read: Gmail
+takes a message as base64url (`raw`). It checks the subject and body as text
+before encoding them, and declares `raw` as addressing. Values Autune made --
+an invitation link's random token -- may be named `unchecked` and are taken out
+of the text before the check; the rest of the message is still checked.
+
 **Pass the structured payload, not just the text.** A rich message carries its
 content in a nested structure and leaves a bland summary at the top: a Slack
 Block Kit `text` field is the notification preview, and the message is in
@@ -81,6 +87,11 @@ assert slack.channel_messages[0].channel == "#squad"
 ```
 
 ## Scope
+
+**What Gmail can do** (#552). `GmailClient.send` sends one plain-text message
+from the account whose `gmail.send` grant it holds, and that is all: there is no
+read, list or search, and the scope could not do them. Its one caller is module
+A's invitation mail.
 
 W1 defines the boundary, the error split and the guards. The full API surface is
 filled in during W3 by the owner who needs it — extraction for Notion, and for

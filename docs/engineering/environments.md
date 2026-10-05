@@ -114,14 +114,15 @@ prefix `AUTUNE_<MODULE>_`.
 | `API_PROXY_TARGET` | `http://localhost:8000` | Web-only (read by `apps/web/next.config.ts`), where `/api/*` is proxied. Set per environment; not an `autune_core` setting |
 
 Google *sign-in* is identity only (`openid email profile`). A person's calendar
-is a separate consent, given after signing in and described next. Nothing reads
+and sending mail as them are separate consents, given after signing in and
+described next. Nothing reads
 `AUTUNE_GOOGLE_CALENDAR_CREDENTIALS`, which this page used to name here.
 
 ### A person's own Google grant
 
 | Variable | Example | Notes |
 | --- | --- | --- |
-| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar today (#435), mail when it exists. Optional: blank, the sign-in client does both |
+| `AUTUNE_GOOGLE_INTEGRATION_CLIENT_ID` | | A second Google Cloud OAuth client, for what a person connects after signing in — their own calendar (#435) and sending an invitation from their own Gmail (#552). Optional: blank, the sign-in client does both |
 | `AUTUNE_GOOGLE_INTEGRATION_CLIENT_SECRET` | | Never commit. Set with the id or not at all — one without the other is refused at startup. With the pair set, `AUTUNE_GOOGLE_REDIRECT_URI` is required too, and its absence is refused at startup |
 
 Sign-in keeps `AUTUNE_GOOGLE_CLIENT_ID`. The two are separate so that an
@@ -152,6 +153,17 @@ it, so a grant is always refreshed with the client that issued it.
   to an integration client is still found out by a refused refresh. With no
   Google client configured at all, nothing is reported as needing a
   reconnect: there is nothing to reconnect to.
+
+**The scopes a person's grant asks for** are `calendar.events` (the calendar
+card) and `gmail.send` (an invitation mailed from the inviter's own address,
+#552), each its own consent and its own grant. Both are *sensitive* scopes: the
+OAuth consent screen of the client that asks for them -- the integration client
+when it is set, the sign-in client otherwise -- must list them, and until the
+app is verified by Google only the consent screen's test users can grant them.
+A person who is not a test user gets Google's refusal and the screen says the
+connection failed; the invitation link can still be copied. `gmail.send` reads
+nothing; reading a mailbox (`gmail.readonly`, a *restricted* scope) is #431's
+question and is not asked for.
 
 **Two cookies, two jobs.** `autune_session` is the signed session (7 days,
 `HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
