@@ -35,6 +35,24 @@ class ActionItemCreate(BaseModel):
     what "the model missed it" means — and the drawer renders that state."""
 
 
+class BulkActionItems(BaseModel):
+    """Several items of the 확인 필요 column at once (the user, 2026-10-04)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[str] = Field(min_length=1, max_length=100)
+    action: Literal["confirm", "delete"]
+
+
+class BulkActionResult(BaseModel):
+    """Which items were confirmed or deleted, and which were left as they were:
+    unknown, another team's, or no longer waiting for confirmation."""
+
+    confirmed: list[str]
+    deleted: list[str]
+    skipped: list[str]
+
+
 class ActionItemUpdate(BaseModel):
     """A correction to one item. Every field optional; absent means unchanged.
 

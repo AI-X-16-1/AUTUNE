@@ -121,6 +121,25 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
 export const deleteActionItem = (id: string) =>
   withoutBody(`/action-items/${encodeURIComponent(id)}`);
 
+/** What a bulk confirm or delete did, id by id. */
+export interface BulkActionResult {
+  confirmed: string[];
+  deleted: string[];
+  /** Unknown, another team's, or no longer in 확인 필요. */
+  skipped: string[];
+}
+
+/**
+ * Confirm or delete several 확인 필요 items at once (the user, 2026-10-04).
+ * Each goes the way a single one does: a confirmation is recorded and sends
+ * the item's copies; a deletion closes them first.
+ */
+export const bulkActionItems = (ids: string[], action: "confirm" | "delete") =>
+  api.extraction<BulkActionResult>("/action-items/bulk", {
+    method: "POST",
+    body: JSON.stringify({ ids, action }),
+  });
+
 /** A `DELETE` answered 204: an empty success is not a parse failure. */
 async function withoutBody(path: string): Promise<void> {
   try {

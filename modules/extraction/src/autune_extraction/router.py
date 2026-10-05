@@ -38,6 +38,8 @@ from .schemas import (
     ActionItemRead,
     ActionItemUpdate,
     Assignable,
+    BulkActionItems,
+    BulkActionResult,
     CarriedOver,
     ConfirmationAnswerIn,
     DecisionCreate,
@@ -226,6 +228,51 @@ def update_action_item(
     if service.copies_follow(session, item):
         background.add_task(tasks.sync_after_confirmation, item.id)
     return response
+
+
+@router.post("/action-items/bulk", response_model=BulkActionResult)
+def bulk_action_items(
+    payload: BulkActionItems,
+    session: SessionDep,
+    reader: CurrentUser,
+    background: BackgroundTasks,
+) -> BulkActionResult:
+    """Confirm or delete several items in one go (the user, 2026-10-04).
+
+    Only items still in 확인 필요 are touched: this is the triage of what the
+    model drafted, not a way to move or delete the board. Each item goes
+    through the path a single one takes -- ``service.update_action_item``
+    records a confirmation as an edit and queues the item's calendar event,
+    Notion page and Jira issue after the commit; a deletion closes its outside
+    copies first, as ``delete_action_item`` does. An id the reader cannot read,
+    or one past 확인 필요, is reported as skipped, the same for both: telling
+    them apart would say which ids exist on other teams.
+    """
+    confirmed: list[str] = []
+    deleted: list[str] = []
+    skipped: list[str] = []
+    for action_item_id in dict.fromkeys(payload.ids):
+        try:
+            item = service.readable_action_item(session, action_item_id, reader)
+        except NotFoundError:
+            skipped.append(action_item_id)
+            continue
+        if item.status != ActionStatus.NEEDS_CONFIRMATION.value:
+            skipped.append(action_item_id)
+            continue
+        if payload.action == "confirm":
+            service.update_action_item(session, item, ActionItemUpdate(status=ActionStatus.TODO))
+            confirmed.append(item.id)
+        else:
+            tasks.remove_calendar_event(item.id)
+            tasks.close_jira_issue(item.id)
+            tasks.trash_notion_page(item.id)
+            service.delete_action_item(session, item)
+            deleted.append(action_item_id)
+    session.commit()
+    for action_item_id in confirmed:
+        background.add_task(tasks.sync_after_confirmation, action_item_id)
+    return BulkActionResult(confirmed=confirmed, deleted=deleted, skipped=skipped)
 
 
 @router.delete("/action-items/{action_item_id}", status_code=status.HTTP_204_NO_CONTENT)

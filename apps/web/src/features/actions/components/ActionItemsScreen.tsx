@@ -14,6 +14,7 @@ import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { useActionItems } from "../hooks/useActionItems";
+import { bulkActionItems } from "../api";
 
 /**
  * One meeting's review: its decisions to confirm (S15, #246) above the action
@@ -132,6 +133,11 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
                 onSelect={setSelectedId}
                 add={{ meetingId, onAdd: add }}
                 onMove={(id, status) => edit(id, { status })}
+                onBulk={async (ids, action) => {
+                  const done = await bulkActionItems(ids, action);
+                  await reload();
+                  return done;
+                }}
               />
             </>
           )}
