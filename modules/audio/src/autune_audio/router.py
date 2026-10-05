@@ -333,10 +333,14 @@ def cancel_transcription(meeting_id: str, user: CurrentUser, session: SessionDep
     """Stop the meeting's transcription (S12 "처리 중단"). The meeting is
     ``failed`` on return and accepts a new upload; the worker stops within one
     heartbeat. 409 ``nothing_to_cancel`` when nothing is running."""
-    meeting = service.cancel_transcription(
+    cancelled = service.cancel_transcription(
         session, meeting_id=meeting_id, user=user, settings=get_audio_settings()
     )
     session.commit()
+    # A stalled job's upload, deleted only now that the cancel is committed.
+    if cancelled.orphan is not None:
+        storage.delete_orphan(cancelled.orphan)
+    meeting = cancelled.meeting
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
 
 
