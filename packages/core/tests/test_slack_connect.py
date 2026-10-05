@@ -39,6 +39,7 @@ class FakeSlack:
         )
         self.channel: SlackChannel | Exception = SlackChannel("C1", "autune")
         self.made: list[tuple[str, str]] = []
+        self.names: list[tuple[str, str]] = []
         self.revoked: list[str] = []
         self.calls: list[str] = []
         self.discarded: list[tuple[str, str]] = []
@@ -54,8 +55,11 @@ class FakeSlack:
             raise self.install
         return self.install
 
-    def create_alert_channel(self, token: str, name: str, *, invite: str) -> SlackChannel:
+    def create_alert_channel(
+        self, token: str, name: str, *, invite: str, fallback: str = ""
+    ) -> SlackChannel:
         self.made.append((token, invite))
+        self.names.append((name, fallback))
         if isinstance(self.channel, Exception):
             raise self.channel
         return self.channel
@@ -205,13 +209,31 @@ def test_a_deploy_that_cannot_store_the_token_fails_before_slack_is_touched(
     def unset() -> None:
         raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
 
-    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
     client = signed_in(world)
-    response = client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+    state = start(client)  # the key went between start and callback
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = client.get(f"/api/auth/slack/callback?state={state}&code=c")
 
     assert response.headers["location"].endswith("?slack=failed&reason=configuration_error")
     assert world["slack"].exchanged == 0, "no token was issued"
     assert (world["slack"].made, world["slack"].revoked) == ([], [])
+
+
+def test_a_deploy_that_cannot_store_the_token_sends_nobody_to_slack(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mkkim68, review of #765: no install screen that cannot succeed."""
+    from autune_core.errors import ConfigurationError
+
+    def unset() -> None:
+        raise ConfigurationError("AUTUNE_ENCRYPTION_KEY is not set")
+
+    monkeypatch.setattr(auth_router_module, "ensure_configured", unset)
+    response = signed_in(world).get(f"/api/auth/slack/start?meeting_id={MEETING}")
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?slack=failed&reason=configuration_error")
+    assert world["store"]._entries == {}
 
 
 def test_a_channel_made_by_an_install_that_then_fails_is_put_away_first(
@@ -302,7 +324,9 @@ def test_a_failed_install_leaves_the_token_another_team_uses(world: dict[str, An
 
 def test_a_failure_that_is_not_ours_still_revokes_then_raises(world: dict[str, Any]) -> None:
     class Broken(FakeSlack):
-        def create_alert_channel(self, token: str, name: str, *, invite: str) -> SlackChannel:
+        def create_alert_channel(
+            self, token: str, name: str, *, invite: str, fallback: str = ""
+        ) -> SlackChannel:
             raise RuntimeError("database went away")
 
     broken = Broken()
@@ -910,3 +934,65 @@ def test_two_confirmations_racing_for_one_account_leave_one_link(
 
     assert back.headers["location"].endswith("slack_me=failed&reason=slack_account_taken")
     assert people[ME] == before
+
+
+# --- the channel is named after the team (the user, 2026-10-04) -------------------
+
+
+def test_the_install_names_the_channel_after_the_team(world: dict[str, Any]) -> None:
+    client = signed_in(world)
+    client.get(f"/api/auth/slack/callback?state={start(client)}&code=c")
+
+    # The fixture's team is called "t"; the setting is the fallback.
+    assert world["slack"].names == [("t", "autune")]
+
+
+@pytest.mark.parametrize(
+    ("team", "channel"),
+    [
+        ("제품팀", "제품팀"),
+        ("Growth Squad", "growth-squad"),
+        ("  AI-X 16기 / 1조! ", "ai-x-16기-1조"),
+        ("Data_Team", "data_team"),
+        ("!!!", "autune"),
+        ("", "autune"),
+    ],
+)
+def test_a_team_name_becomes_a_channel_name(team: str, channel: str) -> None:
+    from autune_core.oauth.slack import channel_name_for
+
+    assert channel_name_for(team, "autune") == channel
+
+
+def test_a_long_team_name_leaves_room_for_a_number() -> None:
+    from autune_core.oauth.slack import MAX_CHANNEL_NAME, channel_name_for
+
+    name = channel_name_for("가" * 200, "autune")
+
+    assert len(name) == MAX_CHANNEL_NAME and len(f"{name}-10") <= 80
+
+
+def test_a_name_slack_will_not_take_falls_back() -> None:
+    sent: list[tuple[str, dict[str, str]]] = []
+    client = _scripted(
+        [{"ok": False, "error": "invalid_name_specials"}, _created("autune", "C9"), {"ok": True}],
+        sent,
+    )
+
+    channel = client.create_alert_channel("xoxb", "제품팀", invite="U_ME", fallback="autune")
+
+    assert channel == SlackChannel("C9", "autune")
+    assert [form.get("name") for m, form in sent if m == "conversations.create"] == [
+        "제품팀",
+        "autune",
+    ]
+
+
+def test_without_a_fallback_a_refused_name_is_still_a_refusal() -> None:
+    from autune_core.errors import PermissionDeniedError
+
+    sent: list[tuple[str, dict[str, str]]] = []
+    client = _scripted([{"ok": False, "error": "invalid_name"}], sent)
+
+    with pytest.raises(PermissionDeniedError):
+        client.create_alert_channel("xoxb", "autune", invite="U_ME")

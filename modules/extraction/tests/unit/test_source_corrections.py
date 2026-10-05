@@ -365,9 +365,7 @@ def test_through_the_task_on_a_meeting_a_person_edited(
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
     for task in (
-        "sync_action_item",
-        "sync_action_item_jira",
-        "sync_action_item_calendar",
+        "sync_item_copies",
         "sync_decision",
     ):
         monkeypatch.setattr(
@@ -412,7 +410,7 @@ def test_through_the_task_on_a_meeting_a_person_edited(
     (kept,) = session.scalars(select(ExtActionItem)).all()
     assert kept.id == drafted.id, "the edit kept the item"
     assert "010-1234-5678" not in kept.description
-    assert ("sync_action_item", kept.id) in queued
+    assert ("sync_item_copies", kept.id) in queued
 
 
 def test_a_decision_put_back_with_its_page_still_there_resyncs(session: Session) -> None:
@@ -461,9 +459,7 @@ def test_through_the_task_a_rerun_that_drops_a_decision_queues_its_page_to_retir
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
     for task in (
-        "sync_action_item",
-        "sync_action_item_jira",
-        "sync_action_item_calendar",
+        "sync_item_copies",
         "sync_decision",
     ):
         monkeypatch.setattr(
