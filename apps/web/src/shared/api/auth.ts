@@ -208,6 +208,41 @@ export async function disconnectGmail(): Promise<{ revoked: boolean }> {
   return (await response.json()) as { revoked: boolean };
 }
 
+/**
+ * Where the browser goes to let Autune read the Drive files the signed-in
+ * person picks for it (#817). `drive.file` only: nothing else in their Drive
+ * can be listed or read. Back to `redirectTo` with `?drive=connected`.
+ */
+export function googleDriveConnectUrl(redirectTo = "/"): string {
+  return authUrl(`/google/drive/start?redirect_to=${encodeURIComponent(redirectTo)}`);
+}
+
+/** Whether the signed-in person has let Autune read the files they pick. */
+export async function getDriveConnection(): Promise<{
+  connected: boolean;
+  needs_reconnect?: boolean;
+} | null> {
+  try {
+    const response = await fetch(authUrl("/google/drive"), { credentials: "include" });
+    if (!response.ok) return null;
+    return (await response.json()) as { connected: boolean; needs_reconnect?: boolean };
+  } catch {
+    return null;
+  }
+}
+
+/** Revoke the Drive grant at Google and forget it, as for the calendar. */
+export async function disconnectDrive(): Promise<{ revoked: boolean }> {
+  const response = await fetch(authUrl("/google/drive/disconnect"), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "drive_disconnect_failed", "disconnect failed");
+  }
+  return (await response.json()) as { revoked: boolean };
+}
+
 /** A team's Jira connection, as a member of the meeting's team sees it. */
 export interface JiraConnection {
   connected: boolean;

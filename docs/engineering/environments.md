@@ -155,8 +155,12 @@ it, so a grant is always refreshed with the client that issued it.
   reconnect: there is nothing to reconnect to.
 
 **The scopes a person's grant asks for** are `calendar.events` (the calendar
-card) and `gmail.send` (an invitation mailed from the inviter's own address,
-#552), each its own consent and its own grant. Both are *sensitive* scopes: the
+card), `gmail.send` (an invitation mailed from the inviter's own address,
+#552) and `drive.file` (the Drive files a person picks to be shown, #817), each
+its own consent and its own grant. `drive.file` needs the Drive API enabled in
+the client's Google Cloud project as well as the scope on its consent screen;
+it reaches only files picked in Google's file picker, and Google lists it as
+non-sensitive -- check the console, which is what decides. The first two are *sensitive* scopes: the
 OAuth consent screen of the client that asks for them -- the integration client
 when it is set, the sign-in client otherwise -- must list them, and until the
 app is verified by Google only the consent screen's test users can grant them.

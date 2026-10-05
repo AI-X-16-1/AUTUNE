@@ -24,6 +24,10 @@ Flow:
 - ``GET /google/gmail/start``, ``GET /google/gmail``,
   ``POST /google/gmail/disconnect``    -> the same three for sending mail as
                                          the person (``gmail.send``, #552)
+- ``GET /google/drive/start``, ``GET /google/drive``,
+  ``POST /google/drive/disconnect``    -> the same three for reading the Drive
+                                         files the person picks (``drive.file``,
+                                         #817)
 """
 
 from __future__ import annotations
@@ -79,6 +83,7 @@ from .logging import get_logger
 from .oauth.atlassian import AtlassianOAuthClient, get_atlassian_client
 from .oauth.google import (
     CALENDAR_SCOPE,
+    DRIVE_FILE_SCOPE,
     GMAIL_SEND_SCOPE,
     GoogleOAuthClient,
     get_google_client,
@@ -439,7 +444,8 @@ CALENDAR = _PersonalGoogle(
     "calendar", CALENDAR_SCOPE, "calendar", "calendar", (("calendar_id", "primary"),)
 )
 GMAIL_SEND = _PersonalGoogle("gmail_send", GMAIL_SEND_SCOPE, "Gmail", "gmail")
-_PERSONAL = {kind.service: kind for kind in (CALENDAR, GMAIL_SEND)}
+DRIVE = _PersonalGoogle("drive", DRIVE_FILE_SCOPE, "Drive", "drive")
+_PERSONAL = {kind.service: kind for kind in (CALENDAR, GMAIL_SEND, DRIVE)}
 
 
 def _mark_shared_grants(
@@ -790,6 +796,38 @@ def google_gmail_disconnect(
 ) -> dict[str, bool]:
     """Revoke the Gmail send grant at Google, then forget it here."""
     return _personal_disconnect(GMAIL_SEND, session, user, google)
+
+
+@router.get("/google/drive/start")
+def google_drive_start(
+    request: Request,
+    user: CurrentUser,
+    store: Annotated[StateStore, Depends(get_state_store)],
+    google: IntegrationGoogle,
+    redirect_to: Annotated[str, Query()] = "/",
+) -> RedirectResponse:
+    """Send a signed-in person to Google to let Autune read the Drive files
+    they pick for it (#817). ``drive.file`` only: nothing else in their Drive
+    can be listed or read with it, and a link alone opens nothing."""
+    return _start_personal_connect(DRIVE, request, user, store, google, redirect_to)
+
+
+@router.get("/google/drive")
+def google_drive_status(
+    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> dict[str, bool]:
+    """Whether the signed-in person has let Autune read files they pick."""
+    return _personal_status(DRIVE, session, user)
+
+
+@router.post("/google/drive/disconnect")
+def google_drive_disconnect(
+    user: CurrentUser,
+    session: Annotated[Session, Depends(get_session)],
+    google: IntegrationGoogle,
+) -> dict[str, bool]:
+    """Revoke the Drive grant at Google, then forget it here."""
+    return _personal_disconnect(DRIVE, session, user, google)
 
 
 # --------------------------------------------------------------------------- #

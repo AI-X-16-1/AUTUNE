@@ -26,13 +26,15 @@ from .logging import get_logger
 
 log = get_logger(__name__)
 
-USER_SERVICES: Final = ("calendar", "slack", "gmail_send")
+USER_SERVICES: Final = ("calendar", "slack", "gmail_send", "drive")
 """Kept in step with the check constraint on ``user_integrations.service``.
 ``slack`` is a person's own Slack identity for direct messages (#255);
-``gmail_send`` is a grant to send mail as the person and nothing else (#552).
+``gmail_send`` is a grant to send mail as the person and nothing else (#552);
+``drive`` is a grant to read the Drive files the person picks, and no others
+(``drive.file``, #817).
 ``gmail`` -- reading a mailbox -- is added with #431's decision, not before it."""
 
-GOOGLE_SERVICES: Final = ("calendar", "gmail_send")
+GOOGLE_SERVICES: Final = ("calendar", "gmail_send", "drive")
 """The personal grants that are Google refresh tokens, revoked at Google when
 the account is deleted (``revoke_google_grants``): the calendar and, since
 #760, the grant to send mail."""

@@ -70,6 +70,13 @@ GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 Sends only: nothing in a mailbox can be read with it. A sensitive scope, not
 a restricted one, unlike reading a mailbox (#431)."""
 
+DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+"""Read the Drive files the person picks for Autune in Google's own file
+picker, and nothing else in their Drive -- a file shown where it is talked
+about (#817; the user, 2026-10-05). Not ``drive.readonly``: that reads every
+file the person can open, and is a restricted scope. With ``drive.file`` a
+link alone opens nothing; the person has to pick the file."""
+
 REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
 
 

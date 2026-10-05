@@ -113,7 +113,9 @@ class UserIntegration(Base, TimestampMixin):
     Calendar is here because each person's own tasks go on their own calendar
     and a date they move there comes back to Autune (#435). ``gmail_send`` is
     a person's grant to send mail as them -- an invitation link from their own
-    address (#552) -- and reads nothing. Reading a mailbox (#431) has the same
+    address (#552) -- and reads nothing. ``drive`` is a person's grant to read
+    the Drive files they pick for Autune and no others (``drive.file``, #817).
+    Reading a mailbox (#431) has the same
     shape, but ``gmail`` joins the check constraint only once #431 is decided
     -- a schema is not written ahead of the decision it serves. Nothing reads
     a row but code acting for that user: not a teammate, not an admin.
@@ -126,7 +128,7 @@ class UserIntegration(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "service", name="uq_user_integrations_user_service"),
         CheckConstraint(
-            "service IN ('calendar','slack','gmail_send')",
+            "service IN ('calendar','slack','gmail_send','drive')",
             name="ck_user_integrations_service",
         ),
         # One Slack member is one Autune person: a second confirmed link to the

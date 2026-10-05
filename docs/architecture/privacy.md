@@ -499,7 +499,7 @@ the feature needs.
     description and date, with no attendees and nothing from the transcript.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
-    calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
+    calendar's, `gmail_send`'s and `drive`'s alike (`GOOGLE_SERVICES`,
     `revoke_google_grants`, #763) -- best effort, as above: when Google does
     not answer, Autune still holds no copy afterwards, so nothing can use the
     token, and the person sees Autune under their Google account's
@@ -515,6 +515,15 @@ the feature needs.
     before #760 asked for `gmail.send`, so no stored grant carries both
     personal scopes. Reconnecting the calendar gives it a token with its own
     scope only.
+  - **A person's Drive (#817):** a person may let Autune read the Drive files
+    they pick for it -- `drive.file`, a grant of its own (`drive`). It can
+    open only a file that person chose in Google's own file picker: not the
+    rest of their Drive, not a file somebody only sent a link to, and nothing
+    of anybody else's. Connecting stores the grant and reads nothing. What a
+    read then does with a file -- shown to the person who asked, held in
+    memory for that answer, never stored and never logged -- is the reading
+    code's to keep and is written here with it; until that code exists the
+    grant is used by nothing.
 
 ## 7. Review checklist
 
