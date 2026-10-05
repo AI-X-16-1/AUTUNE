@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from .calendar import CalendarClient, CalendarEvent
+from .drive import DriveFileInfo, FileTooLargeError
 from .errors import PermanentIntegrationError
 from .privacy import assert_personal_delivery, check_outbound
 from .slack import PostedMessage, SlackClient, slack_body
@@ -334,3 +335,48 @@ class FakeCalendar:
     def delete_event(self, calendar_id: str, event_id: str) -> None:
         if self.events.pop(event_id, None) is not None:
             self.deleted.append(event_id)
+
+
+@dataclass
+class FakeDrive:
+    """Answers from the files a test put in, the way Drive answers a
+    ``drive.file`` grant: a file that was not picked is a 404, and a read past
+    the caller's ceiling is given up on."""
+
+    files: dict[str, tuple[str, bytes]] = field(default_factory=dict)
+    """Picked files: id -> (mime type, bytes). For a Google document the bytes
+    are what its PDF export would be."""
+    read: list[tuple[str, str]] = field(default_factory=list)
+    """Every read made: (what, file id)."""
+
+    def _file(self, what: str, file_id: str) -> tuple[str, bytes]:
+        self.read.append((what, file_id))
+        if file_id not in self.files:
+            raise PermanentIntegrationError(
+                "google_drive rejected the request with 404", upstream_status=404
+            )
+        return self.files[file_id]
+
+    def info(self, file_id: str) -> DriveFileInfo:
+        mime_type, body = self._file("info", file_id)
+        stored = None if mime_type.startswith("application/vnd.google-apps.") else len(body)
+        return DriveFileInfo(id=file_id, mime_type=mime_type, size=stored)
+
+    def download(self, file_id: str, *, max_bytes: int) -> bytes:
+        mime_type, body = self._file("download", file_id)
+        if mime_type.startswith("application/vnd.google-apps."):
+            # Drive refuses ``alt=media`` for its own document types.
+            raise PermanentIntegrationError(
+                "google_drive rejected the request with 403", upstream_status=403
+            )
+        return self._capped(body, max_bytes)
+
+    def export_pdf(self, file_id: str, *, max_bytes: int) -> bytes:
+        _mime_type, body = self._file("export_pdf", file_id)
+        return self._capped(body, max_bytes)
+
+    @staticmethod
+    def _capped(body: bytes, max_bytes: int) -> bytes:
+        if len(body) > max_bytes:
+            raise FileTooLargeError("google_drive: the file is larger than can be shown")
+        return body

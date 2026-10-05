@@ -437,6 +437,26 @@ class NotificationPause(BaseModel):
     ends_on: date | None = None
 
 
+class DrivePicker(BaseModel):
+    """What the caller's own browser needs to open Google's file picker for
+    their own Drive (``drive_preview.py``, #817).
+
+    ``available`` is whether this deployment offers it (the key and the
+    project number are set); ``connected`` whether the caller has a Drive
+    grant that works. ``access_token`` is the CALLER'S OWN short-lived token
+    for that grant and is in the answer only for them: Google's picker runs
+    in the browser and has to be handed one, and with ``drive.file`` it opens
+    nothing but the files this person picks. ``api_key`` and ``app_id`` are
+    the deployment's browser key and project number, which the picker is
+    opened with."""
+
+    available: bool
+    connected: bool
+    access_token: str | None = None
+    api_key: str | None = None
+    app_id: str | None = None
+
+
 class NotificationPauseRead(NotificationPause):
     """The caller's pause as it stands, and what else holds their digests back
     here. ``calendar_leave`` says whether this deployment also reads

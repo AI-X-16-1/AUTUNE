@@ -225,6 +225,28 @@ class ExtractionSettings(BaseSettings):
     people about the calendar connection says so (docs/architecture/privacy.md).
     """
 
+    drive_preview: bool = False
+    """``AUTUNE_EXTRACTION_DRIVE_PREVIEW``: whether a person can have a Drive
+    file they picked read with their own grant and shown to them
+    (``drive_preview.py``, #817; the user, 2026-10-05). Provisional and off by
+    default: the routes are here only until #817 decides which module holds
+    material, and they read a person's document, so a deployment says yes
+    deliberately. Off, both routes answer 404.
+    """
+
+    drive_picker_api_key: str = ""
+    """``AUTUNE_EXTRACTION_DRIVE_PICKER_API_KEY``: the browser API key Google's
+    file picker is opened with. Not a secret in the way a client secret is --
+    it is sent to the browser, and is meant to be restricted to this site's
+    address in the Google Cloud console -- but it is the deployment's, so it
+    is configuration and not source. Empty: no picker is offered."""
+
+    drive_app_id: str = ""
+    """``AUTUNE_EXTRACTION_DRIVE_APP_ID``: the Google Cloud project NUMBER of
+    the client the Drive grant was issued to. The picker is told it, and that
+    is what makes a picked file readable by this app's ``drive.file`` grant.
+    Empty: no picker is offered."""
+
     candidate_confidence: float | None = Field(default=None, ge=0, le=1)
     """Below this confidence an item is shown as a candidate rather than asserted.
 

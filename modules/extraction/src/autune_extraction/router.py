@@ -19,7 +19,16 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,8 +37,9 @@ from autune_contracts.extraction import ExtractionResult
 from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import NotFoundError
 from autune_core.settings import get_settings as get_core_settings
+from autune_integrations.errors import PermanentIntegrationError
 
-from . import jira_issues, notion_connect, projects, service, sync_state, tasks
+from . import drive_preview, jira_issues, notion_connect, projects, service, sync_state, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -45,6 +55,7 @@ from .schemas import (
     DecisionCreate,
     DecisionDetail,
     DecisionReviewUpdate,
+    DrivePicker,
     DueReminderSetting,
     DueReminderSettingIn,
     JiraProjectIssues,
@@ -665,6 +676,70 @@ def set_my_notification_pause(
     )
     session.commit()
     return _pause_read(session, reader.id)
+
+
+# --- a Drive file the caller picked, shown to the caller (provisional, #817) ----------
+
+_NO_STORE = {"Cache-Control": "no-store"}
+
+
+def _drive_preview_on() -> None:
+    """404 where the deployment did not turn the preview on: the routes are
+    provisional (``drive_preview.py``) and read a person's own document."""
+    if not get_settings().drive_preview:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+@router.get("/me/drive/picker", response_model=DrivePicker)
+def my_drive_picker(session: SessionDep, reader: CurrentUser, response: Response) -> DrivePicker:
+    """What the caller's browser needs to open Google's file picker on their
+    own Drive. Their own only: the token in the answer is the caller's, for a
+    grant that opens nothing but the files they pick, and the answer is never
+    cached. Not connected, or not offered here, is said in the answer -- the
+    screen shows a "connect" button, not an error."""
+    _drive_preview_on()
+    response.headers.update(_NO_STORE)
+    settings = get_settings()
+    if not settings.drive_picker_api_key or not settings.drive_app_id:
+        return DrivePicker(available=False, connected=False)
+    offer = {"api_key": settings.drive_picker_api_key, "app_id": settings.drive_app_id}
+    try:
+        token = drive_preview.access_token(session, reader.id)
+    except drive_preview.DriveNotConnectedError:
+        return DrivePicker(available=True, connected=False, **offer)
+    return DrivePicker(available=True, connected=True, access_token=token, **offer)
+
+
+@router.get("/me/drive/files/{file_id}")
+def my_drive_file(
+    file_id: Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{10,200}$")],
+    session: SessionDep,
+    reader: CurrentUser,
+) -> Response:
+    """A file the caller picked, as a PDF, read with the caller's own Drive
+    grant for this one answer and kept nowhere (``drive_preview.py``).
+
+    A file their grant cannot reach -- with ``drive.file``, any file they did
+    not pick, whoever owns it -- is 404, as is a file that does not exist: the
+    route does not say which ids are files. Not a PDF, a Google document or a
+    presentation is 422, and so is one too large to show."""
+    _drive_preview_on()
+    with drive_preview.drive_for(session, reader.id) as drive:
+        try:
+            preview = drive_preview.read(drive, file_id)
+        except PermanentIntegrationError as exc:
+            if exc.details.get("upstream_status") in (403, 404):
+                raise NotFoundError("drive file", file_id) from exc
+            raise
+    return Response(
+        content=preview.pdf,
+        media_type="application/pdf",
+        headers={
+            **_NO_STORE,
+            "Content-Disposition": "inline",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/jira/backfill")
