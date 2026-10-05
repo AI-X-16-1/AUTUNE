@@ -193,12 +193,12 @@ foreign keys to another module's tables.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/dashboard/{team_id}` | Dashboard data; action-item completion from B's current counts (below) |
+| GET | `/dashboard/{team_id}` | Dashboard data; action-item completion from B's current counts (below). **Team members only** |
 | GET | `/scores/{meeting_id}` | One meeting's quality score |
 | GET | `/heatmap/{team_id}` | Cross-role alignment heatmap; pairs with fewer than three meetings left out |
 | GET | `/predictions/{team_id}` | Latest misalignment prediction, or `null` with a reason before #27's gate clears |
 | GET | `/gap-titles/{team_id}` | High-severity gap titles behind each pattern count |
-| GET | `/reports/{team_id}` | Weekly reports |
+| GET | `/reports/{team_id}` | Weekly reports. **Team members only** |
 | GET | `/meeting-reports/{team_id}` | The team's meeting reports for the dashboard card: header line, body, draft/posted, editor. **Team members only** |
 | PUT | `/meeting-reports/{meeting_id}` | A team member edits a draft's body before it is posted (send back `base_updated_at`; a newer save makes it 409). Editor and time recorded, E's footer says a person edited it (the name is added from `edited_by` when read or posted, never stored), and the draft takes a **new `draft_id`**, so the approval given for the model's text lapses. Committed, then announced on `autune.intelligence.meeting_report_changed`; the Report subagent proposes the edited draft's post for approval. Nothing is posted from the card. 409 once posted, 422 with categories for personal data or over 3,000 characters as Slack receives it, 404 for anyone outside the team |
 | POST | `/meeting-reports/{meeting_id}/corrections` | A member corrects a **posted** report whose post reached Slack (202). It waits for approval like an edit: committed, then announced, and the Report subagent proposes `publish_meeting_report_correction` with its `correction_id`; once approved it goes out as a reply under the post. A newer correction replaces one still waiting. 409 for a draft, for a report that never reached Slack, or while an approved correction is being posted (at most five minutes); 422 for an unchanged, empty, too long or personal-data correction |
@@ -209,8 +209,14 @@ is done over confirmed, summed over the team's meetings held in the last four
 weeks (`ACTION_COMPLETION_WINDOW`) in B's latest `TeamActionProgress`. The
 window is fixed rather than the team's retention, so teams compare and the rate
 reads as "now"; the card says "최근 4주 회의". `overdue_action_items` is the
-overdue total over the same meetings, and
-`action_progress_as_of` when B counted. All three are `null` when no snapshot
+overdue total over **every** meeting the snapshot listed that has not expired:
+an item past its due date matters however old its meeting is (#800 review).
+`action_completion_meeting_count` is the number of meetings in the four-week
+window, and `action_progress_as_of` when B counted. **A total from fewer than
+three meetings is not shown** (`ACTION_PROGRESS_MIN_MEETINGS`): with one or
+two, the team total is those meetings' counts, and when every item is one
+person's it is that person's record -- the heatmap's floor, for the same
+reason. The card then says the window holds fewer than three meetings. All three are `null` when no snapshot
 has arrived or the latest is older than `ACTION_PROGRESS_STALE_AFTER` -- the
 card says the counts did not arrive, never 0%. A fresh snapshot with nothing
 confirmed has no rate and 0 overdue. Team totals only, never one meeting's
