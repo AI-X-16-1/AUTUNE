@@ -2,6 +2,7 @@
 import { api } from "@/shared/api/client";
 
 import type {
+  GapCarry,
   GapDismissal,
   GapExplanations,
   GapReport,
@@ -86,6 +87,18 @@ export const dismissGap = (gapId: string) =>
 /** Take a dismissal back; the gap returns to the report as it was raised. */
 export const undoDismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });
+
+/**
+ * "다음 회의 어젠다로": mark this gap as sent on to the next meeting (#824). A
+ * mark only — no meeting is created and nobody is invited; whoever composes
+ * the next meeting's picture reads the marks. The gap stays on the report.
+ */
+export const carryGap = (gapId: string) =>
+  api.gap<GapCarry>(`/gaps/${gapId}/carry`, { method: "POST" });
+
+/** Take it back. */
+export const undoCarryGap = (gapId: string) =>
+  api.gap<GapCarry>(`/gaps/${gapId}/carry`, { method: "DELETE" });
 
 /**
  * Every open gap across a team's meetings, newest meeting first — the sidebar's

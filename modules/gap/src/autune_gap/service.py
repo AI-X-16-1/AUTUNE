@@ -56,6 +56,7 @@ from autune_gap.pipeline import (
 from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
+    GapCarry,
     GapDismissal,
     GapExplanationRead,
     GapExplanations,
@@ -733,6 +734,39 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
     return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
 
 
+def set_carried(session: Session, gap_id: str, reader: User, *, carried: bool) -> GapCarry:
+    """Send one gap on to the next meeting, or take that back -- "다음 회의
+    어젠다로" on S20 (#824).
+
+    ``carried_at`` is the whole write, and its rules are ``set_dismissed``'s: a
+    second press keeps the first moment, taking back a mark that is not there
+    does nothing, nobody's id is stored or logged, and an unknown gap and
+    another team's gap are the same 404.
+
+    It does not republish. ``GapReport`` carries no such mark, so E's copy does
+    not change; the next meeting's picture reads it through
+    ``tools.carried_gaps``.
+    """
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info("gap_carry_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+
+    if carried and row.carried_at is None:
+        row.carried_at = datetime.now(tz=UTC)
+    elif not carried:
+        row.carried_at = None
+    session.flush()
+
+    log.info("gap_carry_set", gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
+    return GapCarry(gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
+
+
 @dataclass(frozen=True)
 class SpeechForgotten:
     """What ``forget_speech`` changed: ids and counts, never a label."""
@@ -1137,7 +1171,11 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
         coverage = gap.coverage
 
         explanation = GapExplanationRead(
-            gap_id=gap.id, coverage=coverage, basis="none", keywords=keywords
+            gap_id=gap.id,
+            coverage=coverage,
+            basis="none",
+            keywords=keywords,
+            carried=gap.carried_at is not None,
         )
         if matched:
             explanation.basis = "topic"
