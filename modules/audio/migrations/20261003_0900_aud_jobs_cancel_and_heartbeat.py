@@ -8,8 +8,8 @@ here is meeting content: a status and a timestamp.
 Owner: 김민경.
 
 Revision ID: 5c1e9a7d3b20
-Revises: d2e8b04f6a17
-Create Date: 2026-10-02 12:00:00.000000
+Revises: e3f9c15a7b28
+Create Date: 2026-10-03 09:00:00.000000
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "5c1e9a7d3b20"
-down_revision: str | None = "d2e8b04f6a17"
+down_revision: str | None = "e3f9c15a7b28"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
