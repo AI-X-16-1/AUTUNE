@@ -82,8 +82,13 @@ x-python: &python
     # A REAL MEETING NEEDS A PAID KEY, and #392 answered. Nothing in the code
     # can tell a real meeting from a dummy one, or a paid key from a free one.
     # The fourth line is the switch #392 asks for: B refuses to load an `llm`
-    # implementation without it. Putting `fake` back and removing the three
-    # lines under it turns the model off again.
+    # implementation without it.
+    #
+    # TURNING IT OFF takes two places, in one change: here, put `fake` back and
+    # remove the three lines under it; and in .github/workflows/dev.yml, make
+    # AUTUNE_LLM_API_KEY optional again (the comment above it and its line in
+    # "Check configuration"). Left required, a deploy without the key is
+    # refused although nothing needs it.
     AUTUNE_EXTRACTION_CLASSIFIER_IMPL: llm
     AUTUNE_EXTRACTION_LLM_MODEL: gemini-3.5-flash-lite
     AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL: ""
