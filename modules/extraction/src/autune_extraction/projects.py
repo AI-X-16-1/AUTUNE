@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting, get_logger
+from autune_core import Meeting, TeamMember, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from . import project_send, service
@@ -124,6 +124,18 @@ def team_projects(session: Session, team_id: str) -> list[ExtProject]:
             select(ExtProject)
             .where(ExtProject.team_id == team_id)
             .order_by(ExtProject.created_at, ExtProject.id)
+        )
+    )
+
+
+def reader_projects(session: Session, user_id: str) -> list[ExtProject]:
+    """The projects of every team ``user_id`` is on, team by team."""
+    return list(
+        session.scalars(
+            select(ExtProject)
+            .join(TeamMember, TeamMember.team_id == ExtProject.team_id)
+            .where(TeamMember.user_id == user_id)
+            .order_by(ExtProject.team_id, ExtProject.created_at, ExtProject.id)
         )
     )
 

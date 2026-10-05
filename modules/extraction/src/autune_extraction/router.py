@@ -424,6 +424,13 @@ def send_summary_projects(
     )
 
 
+@router.get("/projects/mine", response_model=list[ProjectRead])
+def my_projects(session: SessionDep, reader: CurrentUser) -> list[ProjectRead]:
+    """Every project of every team the reader is on -- for the board across
+    meetings, which filters by project without a meeting to name the team."""
+    return [service.project_read(row) for row in projects.reader_projects(session, reader.id)]
+
+
 @router.get("/projects", response_model=list[ProjectRead])
 def list_projects(
     session: SessionDep,
