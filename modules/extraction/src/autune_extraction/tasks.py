@@ -880,6 +880,18 @@ def send_weekly_digests() -> list[str]:
                 # nothing is claimed for it, and it is raised as what it was.
                 unasked.append(digest.user_id)
                 continue
+            except Exception as exc:  # noqa: BLE001 -- one digest's; logged by type, ids only
+                # Asking is part of this digest's send and fails as its send
+                # does: this person's only. The others still get theirs, and
+                # the refusals already collected are still raised at the end
+                # (PARKJAEKYUNG0525, review of #841).
+                log.warning(
+                    "extraction_weekly_digest_failed",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
         try:
             with session_scope() as session:
                 went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
@@ -966,6 +978,18 @@ def send_daily_digests() -> list[str]:
                 # The question to the calendar was refused, not the message:
                 # nothing is claimed for it, and it is raised as what it was.
                 unasked.append(digest.user_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+                # Asking is part of this DM's send and fails as its send
+                # does: this person's only. The others still get theirs, and
+                # the refusals already collected are still raised at the end
+                # (PARKJAEKYUNG0525, review of #841).
+                log.warning(
+                    "extraction_daily_digest_failed",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
                 continue
         try:
             with session_scope() as session:
@@ -1062,7 +1086,6 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
     person who has not linked a Slack account gets no DM whatever their
     calendar says, so theirs is not asked about -- every ten minutes of a
     morning, it would be (mkkim68, review of #838).
-
 
     **Unknown is not away.** A digest is the person's own work sent to
     themselves; a grant that lapsed or a Google outage must not silence it.

@@ -731,6 +731,81 @@ def test_where_no_calendar_is_read_the_summary_is_logged_as_before(
     ]
 
 
+@pytest.mark.parametrize(
+    ("task", "moment", "event", "would_go"),
+    [
+        pytest.param(
+            "send_daily_digests",
+            TUESDAY_10_KST,
+            "extraction_daily_digest_failed",
+            "daily_digest_would_go",
+            id="morning",
+        ),
+        pytest.param(
+            "send_weekly_digests",
+            PLAIN_MONDAY_10_KST,
+            "extraction_weekly_digest_failed",
+            "weekly_digest_would_go",
+            id="monday",
+        ),
+    ],
+)
+def test_a_failure_while_asking_about_one_person_is_that_persons_only(
+    session: Session,
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+    moment: datetime,
+    event: str,
+    would_go: str,
+) -> None:
+    """Review of #841. The question was moved out of the send's ``try``, and
+    with it out of "an unexpected error is that one digest's": a database
+    error while asking ended the whole run, so the people after it got
+    nothing. It fails as the send fails -- logged by type, and on to the next."""
+    _Clock.moment = moment
+    real = getattr(service, would_go)
+
+    def flaky(session_: Session, *args: object, **kwargs: object) -> bool:
+        owed = kwargs.get("owed") or kwargs.get("digest") or args[0]
+        if owed.user_id == "user_kim":  # type: ignore[union-attr]
+            raise RuntimeError("could not connect to server: password=hunter2")
+        return bool(real(session_, *args, **kwargs))
+
+    monkeypatch.setattr(service, would_go, flaky)
+
+    went, logs = run_logged(task)
+
+    assert went == ["user_lee"], "the person after the failure still gets theirs"
+    (failure,) = [e for e in logs if e["event"] == event]
+    assert (failure["user_id"], failure["reason"]) == ("user_kim", "RuntimeError")
+    assert "hunter2" not in repr(logs), "the type, never what the error said"
+
+
+def test_a_refusal_collected_before_a_failure_is_still_raised(
+    session: Session, world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run must reach its end whatever one person's question runs into:
+    that is where a privacy refusal collected earlier is raised."""
+    world.calendars["user_kim"] = PrivacyViolationError("refused")
+    real = service.daily_digest_would_go
+
+    def flaky(session_: Session, *, owed: service.DailyDigestOwed, now: datetime) -> bool:
+        if owed.user_id == "user_lee":
+            raise RuntimeError("database gone")
+        return real(session_, owed, now=now)
+
+    monkeypatch.setattr(service, "daily_digest_would_go", flaky)
+
+    with capture_logs() as logs, pytest.raises(PrivacyViolationError, match="user_kim"):
+        tasks.send_daily_digests()
+
+    assert [e["user_id"] for e in logs if e["event"] == "extraction_daily_digest_failed"] == [
+        "user_lee"
+    ]
+    assert session.query(ExtDailyDigest).count() == 0
+
+
 # --- the holiday read --------------------------------------------------------------------
 
 
