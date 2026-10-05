@@ -114,6 +114,11 @@ the link.
   an embedding.
 - Deleting a meeting deletes its embeddings. An embedding that outlives its
   meeting is a retention violation.
+- A person deleting their own speech clears what D copied from it
+  (`service.forget_deleted_speech`, `@on_speech_deleted("context")`): topics and
+  statements drawn only from those lines. A new table or column that keeps text
+  from an utterance must be reachable from that hook. `/docs/modules/context.md`,
+  "Deletion".
 
 ## Do not do here
 

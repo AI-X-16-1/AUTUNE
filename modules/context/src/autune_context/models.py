@@ -168,6 +168,11 @@ class CtxDecisionVersion(Base, TimestampMixin):
         String(64), ForeignKey("ctx_decisions.id", ondelete="CASCADE"), nullable=False
     )
     source_decision_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_utterance_ids: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    """The ``utterances.id`` values B drew the decision from. Ids only, so a
+    person deleting their own speech (#587) finds the statements that came from
+    it. ``None`` on rows written before this column existed, and those are treated
+    as possibly theirs; ``[]`` is a decision B cited no line for."""
     meeting_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False
     )
