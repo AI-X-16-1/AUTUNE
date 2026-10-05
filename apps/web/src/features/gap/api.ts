@@ -78,7 +78,7 @@ export const chooseTemplate = (meetingId: string, templateKey: string) =>
 
 /**
  * "해당 없음": this gap is a false positive. It leaves the report and stays in
- * the table, marked — threshold tuning reads the mark (ADR 0006).
+ * the table, marked — threshold tuning reads the mark (docs/modules/gap.md, Storage).
  */
 export const dismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "POST" });

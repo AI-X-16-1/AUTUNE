@@ -183,7 +183,7 @@ function ListSummary({
  * positive, it leaves the report, and the rail keeps the item marked — which is
  * where it can be taken back. The other two stay drawn and disabled: carrying a
  * question to the next agenda or to one person needs surfaces this module has
- * not built (#36), and the list says so once under the cards.
+ * not built (#824), and the list says so once under the cards.
  */
 function GapCard({
   gap,
