@@ -26,10 +26,10 @@ from sqlalchemy.orm import Session
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
 from autune_core import CurrentUser, Meeting, User, get_session
-from autune_core.errors import NotFoundError
+from autune_core.errors import ConflictError, NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import jira_issues, notion_connect, projects, service, sync_state, tasks
+from . import attempts, jira_issues, notion_connect, projects, service, sync_state, tasks
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -47,6 +47,7 @@ from .schemas import (
     DecisionReviewUpdate,
     DueReminderSetting,
     DueReminderSettingIn,
+    ExtractionState,
     JiraProjectIssues,
     MeetingNoteUpdate,
     MeetingReview,
@@ -103,6 +104,47 @@ def get_results(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Ex
     """
     service.require_readable_meeting(session, meeting_id, reader)
     return service.result_for_meeting(session, meeting_id)
+
+
+@router.get("/meetings/{meeting_id}/extraction", response_model=ExtractionState)
+def get_extraction_state(
+    meeting_id: str, session: SessionDep, reader: CurrentUser
+) -> ExtractionState:
+    """Whether this meeting's extraction went through, failed, or is waiting to
+    run again -- what the 액션 tab says above its board. Members of the
+    meeting's team only; anyone else gets the 404 an unknown meeting gets."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    return attempts.state(session, meeting_id)
+
+
+@router.post(
+    "/meetings/{meeting_id}/extraction",
+    response_model=ExtractionState,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def request_extraction(
+    meeting_id: str, session: SessionDep, reader: CurrentUser
+) -> ExtractionState:
+    """Extract this meeting's action items and decisions again -- the 액션
+    tab's "다시 추출" (the user, 2026-10-06).
+
+    Accepted, not done: the request is recorded and the worker runs it within
+    a minute (``tasks.run_requested_extractions``). It is the same run as the
+    automatic one, so an item list a person has edited is kept and only the
+    model's own rows are replaced. Any member of the meeting's team may ask. A
+    meeting with no transcript yet has nothing to extract (409), and a second
+    request within ``attempts.REQUEST_COOLDOWN`` is refused (429) rather than
+    started beside the first."""
+    service.require_readable_meeting(session, meeting_id, reader)
+    if not attempts.transcribed(session, meeting_id):
+        raise ConflictError("this meeting has no transcript to extract from yet")
+    if not attempts.claim_request(session, meeting_id):
+        raise sync_state.RetryTooSoonError(
+            "this meeting's extraction was asked for a moment ago",
+            retry_after_seconds=int(attempts.REQUEST_COOLDOWN.total_seconds()),
+        )
+    session.commit()
+    return attempts.state(session, meeting_id)
 
 
 @router.get("/action-items", response_model=list[ActionItemRead])

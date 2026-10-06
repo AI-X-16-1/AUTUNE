@@ -11,7 +11,7 @@ for a payload that crosses a boundary and not for one that does not.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -61,6 +61,98 @@ class GapDismissal(BaseModel):
     dismissed: bool
 
 
+class GapCarry(BaseModel):
+    """Whether somebody sent one gap on to the next meeting (#824).
+
+    What ``POST`` and ``DELETE /gaps/{gap_id}/carry`` both return, the same
+    shape as ``GapDismissal`` and for the same reasons: the flag the server
+    settled on, no timestamp and nobody's id.
+
+    ``calendar`` is what happened to the next meeting's event on the caller's
+    own Google Calendar (``calendar_writes.AgendaOutcome``), or ``not_tried``.
+    The mark is set whatever it says.
+    """
+
+    gap_id: str
+    meeting_id: str
+    carried: bool
+    calendar: str = "not_tried"
+
+
+class GapMeetingCarry(BaseModel):
+    """What "다음 회의 잡기" did (``POST /agenda/{meeting_id}``, #824): how many
+    of the meeting's open gaps are now sent on, and what happened to the next
+    meeting's event on the caller's own calendar (``not_tried`` when there was
+    no gap to send)."""
+
+    meeting_id: str
+    carried: int
+    calendar: str
+
+
+class GapAgendaRequest(BaseModel):
+    """``POST /agenda/{meeting_id}``: the event on the caller's own calendar the
+    gaps go onto. No event means the team's next scheduled meeting's."""
+
+    event_id: str | None = None
+
+
+class GapCalendarEvent(BaseModel):
+    """One event on the caller's own calendar, to pick the next meeting from.
+    Read from Google for that person and shown to them; never stored."""
+
+    id: str
+    summary: str
+    start: datetime
+    end: datetime | None
+
+
+class GapAgendaEvents(BaseModel):
+    """``GET /agenda/{meeting_id}/events``: the caller's own timed events over
+    the next two weeks. ``calendar`` is ``ok``, ``not_connected``,
+    ``reconnect_required`` or ``failed``; the list is empty unless ``ok``."""
+
+    calendar: str
+    events: list[GapCalendarEvent]
+
+
+class GapAskRequest(BaseModel):
+    """``POST /gaps/{gap_id}/ask``: who to ask, chosen by hand, and on which
+    day. No day means the next working day."""
+
+    user_id: str
+    day: date | None = None
+
+
+class GapAsk(BaseModel):
+    """What asking did (``calendar_writes.AskOutcome``). ``already_asked``
+    makes no second event."""
+
+    gap_id: str
+    user_id: str
+    outcome: str
+
+
+class GapAskTarget(BaseModel):
+    """One teammate the question can go to. ``calendar_connected`` is whether
+    they have connected a Google Calendar at all, so the picker can say so
+    before anyone presses; ``asked`` is whether this gap was already put on
+    their calendar."""
+
+    user_id: str
+    name: str
+    calendar_connected: bool
+    asked: bool
+
+
+class GapAskTargets(BaseModel):
+    """``GET /gaps/{gap_id}/ask``: the gap's team, by name. Nothing about how
+    anyone took part in the meeting -- the picker is a list of the team."""
+
+    gap_id: str
+    members: list[GapAskTarget]
+
+
 class TemplateItemRead(BaseModel):
     """One checklist item beside what the meeting did with it.
 
@@ -81,7 +173,7 @@ class TemplateItemRead(BaseModel):
     gap_id: str | None = None
     dismissed: bool = False
     """Somebody called this gap a false positive. The item is still not covered
-    — the row stays and threshold tuning reads it (ADR 0006) — so the rail says
+    — the row stays and threshold tuning reads it (docs/modules/gap.md, Storage) — so the rail says
     both rather than quietly promoting the item to covered."""
 
 
@@ -220,6 +312,27 @@ class GapExplanationRead(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRead] = Field(default_factory=list)
     breakdown: ScoreBreakdownRead | None = None
+    carried: bool = False
+    """Whether somebody sent this gap on to the next meeting (#824). Here rather
+    than on ``GapReport``: the contract is E's business, and E has no use for it."""
+
+
+class CoveredExplanationRead(BaseModel):
+    """Why one checklist item was read as covered: the topic that settled it.
+
+    A covered item has no ``gap_gaps`` row, so nothing was stored about it. The
+    topic is found again over the stored graph with the rule the pipeline used
+    (``detect.match``): the item's most central matching topic, at or above
+    ``partial_centrality``. When today's rule no longer reaches that -- the
+    template or the threshold moved since the meeting was analysed --
+    ``topic_label`` is null and the screen says it cannot show the reason,
+    rather than offering one the verdict was not reached on.
+    """
+
+    item_key: str
+    topic_label: str | None = None
+    topic_centrality: float | None = None
+    evidence: list[EvidenceRead] = Field(default_factory=list)
 
 
 class GapExplanations(BaseModel):
@@ -242,6 +355,9 @@ class GapExplanations(BaseModel):
     high_threshold: float
     medium_threshold: float
     gaps: list[GapExplanationRead] = Field(default_factory=list)
+    covered: list[CoveredExplanationRead] = Field(default_factory=list)
+    """One per item the rail reads as covered, in template order. Empty for a
+    meeting not analysed, where nothing is covered."""
 
 
 class TeamGapRead(BaseModel):

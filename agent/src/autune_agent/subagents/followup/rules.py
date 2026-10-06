@@ -10,6 +10,8 @@ Both thresholds are first guesses, to be checked on W5's real meetings (#22).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
+from statistics import median_low
 
 from autune_agent.results import Finding, ToolResult
 
@@ -18,6 +20,13 @@ MIN_HIGH_GAPS = 2
 
 MAX_EVIDENCE = 5
 """Gap ids a proposal carries: the ones the lead's preview shows (#562)."""
+
+DEFAULT_BUSINESS_DAYS = 3
+"""How far ahead a follow-up is suggested when the team's rhythm is unknown."""
+
+MAX_CADENCE_DAYS = 14
+"""The longest gap between meetings a suggestion follows: a follow-up is about
+what was left open, so it should not wait for a team that meets monthly."""
 
 
 @dataclass(frozen=True)
@@ -66,3 +75,36 @@ def cited(open_gaps: ToolResult, verdict: Verdict) -> list[Finding]:
     """The gaps a proposal rests on, in its evidence's order, for the chat answer."""
     by_id = {i: item for item in open_gaps.items if (i := _id(item))}
     return [by_id[i] for i in verdict.evidence if i in by_id]
+
+
+def _business_days_after(day: date, n: int) -> date:
+    while n > 0:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            n -= 1
+    return day
+
+
+def suggest_date(held: list[date], today: date) -> date:
+    """When the follow-up meeting could be: the team's usual gap after its
+    latest meeting, never before the next business day.
+
+    ``held`` is the days the team's past meetings started on, in any order.
+    The usual gap is the median of the gaps between them, kept to one to
+    ``MAX_CADENCE_DAYS`` days; with fewer than two days it is unknown and the
+    suggestion is ``DEFAULT_BUSINESS_DAYS`` business days from today. A
+    weekend moves to the Monday after. Holidays are not known here -- the
+    lead moves the date on the board.
+
+    Meeting days only: no calendar and nobody's availability (spec section 6).
+    """
+    days = sorted(set(held), reverse=True)
+    earliest = _business_days_after(today, 1)
+    if len(days) < 2:
+        return _business_days_after(today, DEFAULT_BUSINESS_DAYS)
+    gaps = [(a - b).days for a, b in zip(days, days[1:], strict=False)]
+    cadence = min(max(median_low(gaps), 1), MAX_CADENCE_DAYS)
+    day = max(days[0] + timedelta(days=cadence), earliest)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day

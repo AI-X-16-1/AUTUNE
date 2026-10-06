@@ -325,6 +325,33 @@ export const retrySync = (id: string) =>
     method: "POST",
   });
 
+/**
+ * What became of a meeting's extraction: when it last went through, how many
+ * runs in a row failed since, whether the server is still trying by itself,
+ * and whether a "다시 추출" is waiting for the worker. Counts and times only.
+ */
+export interface ExtractionState {
+  extracted_at: string | null;
+  failures: number;
+  failed_at: string | null;
+  will_retry: boolean;
+  requested: boolean;
+  requested_at: string | null;
+}
+
+export const getExtractionState = (meetingId: string) =>
+  api.extraction<ExtractionState>(`/meetings/${encodeURIComponent(meetingId)}/extraction`);
+
+/**
+ * Extract this meeting's action items and decisions again. Accepted, not
+ * done: the worker runs it within a minute. 409 for a meeting with no
+ * transcript yet, 429 for a second request right after the first.
+ */
+export const requestExtraction = (meetingId: string) =>
+  api.extraction<ExtractionState>(`/meetings/${encodeURIComponent(meetingId)}/extraction`, {
+    method: "POST",
+  });
+
 /** Re-push this meeting's items to Notion. */
 export const syncResults = (meetingId: string) =>
   api.extraction<void>(`/results/${meetingId}/sync`, { method: "POST" });

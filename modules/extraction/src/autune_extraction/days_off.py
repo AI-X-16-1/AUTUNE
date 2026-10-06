@@ -67,6 +67,10 @@ OBSERVANCE = "기념일"
 """How Google describes a day that is marked and worked. The ``.official``
 calendar should hold none; one that appears is skipped, not taken as a day off."""
 
+MAX_ICS_BYTES = 2_000_000
+"""The most that is read of the answer. The calendar is about thirty
+kilobytes; two megabytes is decades of holidays and not a download."""
+
 _TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 
@@ -86,12 +90,20 @@ def _unfolded(text: str) -> list[str]:
 
 
 def _ics_date(line: str) -> date | None:
-    """The date of a ``DTSTART``/``DTEND`` line, whether it is ``VALUE=DATE``
-    (``20261009``) or a date-time (``20261009T000000Z``)."""
-    value = line.partition(":")[2].strip()[:8]
+    """The day, in Korea, of a ``DTSTART``/``DTEND`` line.
+
+    ``VALUE=DATE`` (``20261009``) is that day. A date-time in UTC
+    (``20261008T150000Z``) is the day it falls on in Korea -- read as a UTC
+    date, midnight in Seoul would land on the day before (PARKJAEKYUNG0525,
+    review of #838). One with no zone is taken as written.
+    """
+    value = line.partition(":")[2].strip()
     try:
-        return datetime.strptime(value, "%Y%m%d").replace(tzinfo=UTC).date()
-    except ValueError:
+        if "T" not in value:
+            return datetime.strptime(value[:8], "%Y%m%d").replace(tzinfo=UTC).date()
+        moment = datetime.strptime(value[:15], "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+        return moment.astimezone(KST).date() if value.endswith("Z") else moment.date()
+    except (ValueError, OverflowError):
         return None
 
 
@@ -110,9 +122,11 @@ def parse_holiday_ics(text: str) -> set[date]:
             inside, start, end, observance = True, None, None, False
         elif line.strip().upper() == "END:VEVENT":
             if inside and start is not None and not observance:
-                last = end if end is not None and end > start else start + timedelta(days=1)
                 # A holiday is a day or a few; a span of months is not one.
-                span = min((last - start).days, 14)
+                # Counted from the two dates as they are -- never "the day
+                # after the start", which does not exist for an event on
+                # 9999-12-31 and used to raise (review of #838).
+                span = min((end - start).days, 14) if end is not None and end > start else 1
                 days.update(start + timedelta(days=n) for n in range(span))
             inside = False
         elif not inside:
@@ -126,6 +140,21 @@ def parse_holiday_ics(text: str) -> set[date]:
     return days
 
 
+def _get_capped(client: httpx.Client) -> tuple[int, str]:
+    """The answer's status and text, read as it arrives and given up on past
+    ``MAX_ICS_BYTES``: the body is somebody else's, and nothing says how long
+    it is until it has been read (PARKJAEKYUNG0525, review of #838)."""
+    with client.stream("GET", KOREA_HOLIDAYS_ICS) as response:
+        if response.status_code != 200:
+            return response.status_code, ""
+        body = bytearray()
+        for chunk in response.iter_bytes():
+            body += chunk
+            if len(body) > MAX_ICS_BYTES:
+                raise PermanentIntegrationError(f"{SOURCE} answered with more than a calendar")
+        return 200, bytes(body).decode("utf-8", errors="replace")
+
+
 def fetch_public_holidays(*, today: date, http: httpx.Client | None = None) -> set[date]:
     """Korea's public holidays as Google's public calendar lists them.
 
@@ -137,7 +166,7 @@ def fetch_public_holidays(*, today: date, http: httpx.Client | None = None) -> s
     """
     client = http or httpx.Client(timeout=_TIMEOUT, follow_redirects=False)
     try:
-        response = client.get(KOREA_HOLIDAYS_ICS)
+        status, text = _get_capped(client)
     except httpx.TimeoutException as exc:
         raise TransientIntegrationError(f"{SOURCE} timed out") from exc
     except httpx.TransportError as exc:
@@ -145,13 +174,11 @@ def fetch_public_holidays(*, today: date, http: httpx.Client | None = None) -> s
     finally:
         if http is None:
             client.close()
-    if response.status_code == 429 or response.status_code >= 500:
-        raise TransientIntegrationError(f"{SOURCE} returned {response.status_code}")
-    if response.status_code != 200:
-        raise PermanentIntegrationError(
-            f"{SOURCE} answered {response.status_code}", upstream_status=response.status_code
-        )
-    days = parse_holiday_ics(response.text)
+    if status == 429 or status >= 500:
+        raise TransientIntegrationError(f"{SOURCE} returned {status}")
+    if status != 200:
+        raise PermanentIntegrationError(f"{SOURCE} answered {status}", upstream_status=status)
+    days = parse_holiday_ics(text)
     if not any(today <= day <= today + LOOK_AHEAD for day in days):
         raise PermanentIntegrationError(f"{SOURCE} listed no holiday in the coming year")
     return days

@@ -36,7 +36,8 @@ to its owner.
 6. **No LangGraph checkpointer, no LangChain tool that reaches outside, no
    LangSmith tracing.** Every outbound call goes through `packages/integrations`
    and its privacy guard. The graph refuses to build with
-   `LANGSMITH_TRACING` or `LANGCHAIN_TRACING_V2` on.
+   any LangSmith tracing variable on -- `LANGSMITH_`/`LANGCHAIN_` ×
+   `TRACING_V2`/`TRACING`, the list in `main/registry.TRACING_VARIABLES`.
 7. **Return at most five items, evidence as ids.** `ToolResult` cuts and
    refuses the rest.
 8. **A stored row keeps no meeting text at all.** `agent_runs` stores tool

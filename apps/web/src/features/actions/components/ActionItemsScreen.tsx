@@ -14,6 +14,7 @@ import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { ProjectFilter } from "./ProjectFilter";
+import { ReExtract } from "./ReExtract";
 import { listProjects } from "../api";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import type { Project } from "../types";
@@ -66,6 +67,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
     };
   }, [meetingId]);
   const selected = items.find((item) => item.id === selectedId);
+  // Bumped when a "다시 추출" has run: the decisions below read themselves, so
+  // they are mounted again rather than told.
+  const [extraction, setExtraction] = useState(0);
 
   return (
     // The tab row's gutter (see the review layout, #534): starting at the same
@@ -110,6 +114,16 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           <NotionConnect meetingId={meetingId} />
         </div>
 
+        <div className="mt-4">
+          <ReExtract
+            meetingId={meetingId}
+            onExtracted={() => {
+              setExtraction((n) => n + 1);
+              void reload();
+            }}
+          />
+        </div>
+
         <div className="mt-6">
           <MyConfirmations meetingId={meetingId} onAnswered={() => void reload()} />
         </div>
@@ -119,7 +133,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </div>
 
         <div className="mt-6">
-          <DecisionReview meetingId={meetingId} />
+          <DecisionReview key={extraction} meetingId={meetingId} />
         </div>
 
         <div className="mt-8">

@@ -255,7 +255,9 @@ completion rate and overdue count, plus **carried over**: confirmed items not
 done from every kept meeting held before `period_start`. Each follows the
 three-meeting floor, so a line built from one or two meetings is left out. It
 also says when B counted ("… 기준"). These are B's counts as of generation, so a report for a
-week that ended more than a day before it is generated does not read them
+week that ended more than two days before it is generated
+(`_PROGRESS_REPORTED_WITHIN`: a 23:00 slot caught up the next evening is ~47
+hours late) does not read them
 again: written again later, it keeps the counts it first stated, and a week
 never stated stays without them, rather than print today's numbers as that
 week's. Weeks run from midnight KST. "Before `period_start`" goes by when a

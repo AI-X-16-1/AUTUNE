@@ -7,6 +7,7 @@ when the source is deleted the preview goes with it.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -55,7 +56,10 @@ def preview(
                 to = who.display_name
         return {"title": "액션아이템 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
     if row.tool == "extraction.add_followup_item":
-        return {"title": "후속 회의 잡기", "body": _followup_gaps(session, row, tools)}
+        gaps = _followup_gaps(session, row, tools)
+        when = _suggested_date(row.arguments.get("due_date"))
+        body = f"추천 날짜: {when}\n{gaps}" if when and gaps != GONE else gaps
+        return {"title": "후속 회의 잡기", "body": body}
     if row.tool == "intelligence.publish_meeting_report":
         return {"title": "리포트 게시", "body": _report_draft(session, row, tools)}
     ids = ", ".join(f"{k}={v}" for k, v in args.items())
@@ -84,6 +88,22 @@ def _followup_gaps(session: Session, row: AgentPendingAction, tools: Mapping[str
         return GONE
     titles = [item.title for item in result.items]
     return "\n".join(f"· {t}" for t in titles) if titles else FOLLOWUP_GAPS_CLOSED
+
+
+def _suggested_date(value: object) -> str | None:
+    """The date Follow-up suggests (#852), as "10월 8일(목)" (#854).
+
+    On approval it becomes the item's due date, so the approver sees it first.
+    A proposal from before #852 has none, and a value that is not an ISO date
+    is left off rather than shown as it came.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        return None
+    return f"{day.month}월 {day.day}일({'월화수목금토일'[day.weekday()]})"
 
 
 def _report_draft(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:

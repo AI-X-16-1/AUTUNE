@@ -440,6 +440,14 @@ the feature needs.
     (`ext_due_reminder_optouts`, which goes with the account); the same
     switch stops Monday's DM of that person's own open items (#792), which
     carries the same things about each item and goes to nobody else either.
+  - **Slack, an extraction that failed:** one message to the channel of
+    the team that held the meeting, once, when B's extraction of a meeting
+    has failed three times in a row (`ext_extraction_attempts`). It carries
+    the meeting's title, the number of attempts and a link to the meeting's
+    액션 tab; no utterance, no name, and not the error -- only the error's
+    class is kept, in B's own table and log. A team with no channel
+    connected gets no message. A message already posted stays in the
+    channel when the meeting is deleted.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
@@ -471,7 +479,15 @@ the feature needs.
     description, no attendee, no other event is requested or returned. It
     asks about the minute the message would go, uses the answer to hold that
     one message back, and **stores nothing**: no table, log line or metric
-    says a person was away. A calendar that cannot be read is treated as
+    says a person was away. What is kept is what any digest that goes
+    leaves -- that it went and when (`sent_at` on `ext_daily_digests` and
+    `ext_weekly_digests`, and the sending task's result, which names who it
+    went to). A digest that went later than usual went late for one of
+    several reasons -- a worker that was down, a Slack account linked that
+    morning, an item assigned at eleven, a send that failed and was tried
+    again, or the person being back -- so a late time leaves room to guess
+    at the reason; the reason itself is recorded nowhere (mkkim68, review of
+    #841). A calendar that cannot be read is treated as
     not away. Turn it on only once what the deployment tells people about
     the calendar connection says so; the settings screen says it where it is
     on.

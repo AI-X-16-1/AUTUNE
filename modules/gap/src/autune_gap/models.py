@@ -14,10 +14,11 @@ See docs/architecture/data-model.md and docs/modules/gap.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -221,7 +222,7 @@ class GapGap(Base, TimestampMixin):
 
     ``dismissed_at`` records that somebody called this a false positive. It is
     a real timestamp rather than a soft-delete flag — the row is not hidden,
-    it is marked, and ADR 0006's threshold tuning reads the mark. Nobody's id
+    it is marked, and threshold tuning reads the mark (docs/modules/gap.md, Storage). Nobody's id
     is stored with it: which member of a team pressed dismiss is not something
     the feature needs, and storing it would be a per-person record of conduct
     that ADR 0003 refuses.
@@ -295,6 +296,16 @@ class GapGap(Base, TimestampMixin):
     an item."""
 
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    carried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When somebody sent this gap on to the next meeting -- "다음 회의 어젠다로"
+    on S20 (#824). Null while nobody has.
+
+    A mark and nothing more: no meeting is named, because a team's next meeting
+    has no agenda to hold it yet (#756), so whoever composes the next meeting's
+    picture reads the marks (``tools.carried_gaps``). Nobody's id is stored,
+    for the reason ``dismissed_at`` gives. A re-run keeps it, as it keeps
+    ``dismissed_at``; a gap the re-run no longer raises goes, mark and all."""
 
 
 class GapMeetingTemplate(Base, TimestampMixin):
@@ -386,3 +397,34 @@ class GapScoring(Base, TimestampMixin):
     ``AUTUNE_GAP_RESCORE_MAX_ATTEMPTS`` the sweep stops trying that grouping, so
     one broken meeting cannot spend a hosted verifier's quota every ten minutes."""
     last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GapQuestion(Base, TimestampMixin):
+    """One gap's question put on one teammate's calendar -- "담당자 지정해
+    질문" on S20 (#824).
+
+    The row is what makes a second press for the same person a no-op rather
+    than a second event, and what lets S20 say who was already asked. It holds
+    who was asked, chosen by a teammate by hand -- an assignment, as an action
+    item's assignee is -- and never who pressed the button, for the reason
+    ``GapGap.dismissed_at`` gives. Nothing here is drawn from the participation
+    matrix (privacy.md section 3).
+
+    Goes with its gap (and so with its meeting) and with the person asked.
+    Deleting the row does not delete the event: the calendar is the person's
+    own and the event is theirs to keep or remove.
+    """
+
+    __tablename__ = "gap_questions"
+    __table_args__ = (UniqueConstraint("gap_id", "user_id", name="uq_gap_questions_gap_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    gap_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("gap_gaps.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    calendar_id: Mapped[str] = mapped_column(String(320), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(1024), nullable=False)

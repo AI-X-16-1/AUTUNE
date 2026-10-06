@@ -213,6 +213,23 @@ def _variants(name: str) -> list[str]:
     return [form for form in dict.fromkeys(forms) if len(form) >= 2]
 
 
+def _forms(roster: Sequence[str]) -> dict[str, set[str]]:
+    """Every form a roster member is called by, and whose it is."""
+    owners: dict[str, set[str]] = {}
+    for name in {" ".join(n.split()) for n in roster if n and n.strip()}:
+        for form in _variants(name):
+            owners.setdefault(form, set()).add(name)
+    return owners
+
+
+def _names(owners: dict[str, set[str]]) -> re.Pattern[str] | None:
+    """What matches a roster name in a text, longest form first; ``None`` with
+    no roster."""
+    if not owners:
+        return None
+    return re.compile("|".join(re.escape(f) for f in sorted(owners, key=len, reverse=True)))
+
+
 def substitute_names(texts: list[str], roster: Sequence[str]) -> list[str]:
     """``texts`` with every roster name replaced by ``[사람N]`` (#411).
 
@@ -239,16 +256,13 @@ def substitute_names_mapped(
     placeholder in it would be nonsense. The classifier never reads it: a label
     has no name in it to restore.
     """
-    owners: dict[str, set[str]] = {}
-    for name in {" ".join(n.split()) for n in roster if n and n.strip()}:
-        for form in _variants(name):
-            owners.setdefault(form, set()).add(name)
-    if not owners:
+    owners = _forms(roster)
+    pattern = _names(owners)
+    if pattern is None:
         return list(texts), {}
     person = {
         form: next(iter(p)) if len(p) == 1 else f"shared:{form}" for form, p in owners.items()
     }
-    pattern = re.compile("|".join(re.escape(f) for f in sorted(owners, key=len, reverse=True)))
     numbers: dict[str, int] = {}
     surface: dict[str, str] = {}
 
@@ -261,32 +275,186 @@ def substitute_names_mapped(
     return [pattern.sub(placeholder, text) for text in texts], surface
 
 
-def windows(texts: list[str], budget: int) -> list[tuple[int, int]]:
-    """``[start, end)`` ranges of ``texts`` whose own text plus up to
-    ``CONTEXT_LINES`` of context fits ``budget`` characters.
+_LINE_OVERHEAD = 12
+"""A line's number, its ``[대상]`` or ``[문맥]`` marker and the newline."""
 
-    A single utterance longer than the budget still gets a window of its own;
-    ``check_outbound`` then refuses it by name rather than this silently
-    truncating what the classifier sees.
+
+def _cost(text: str) -> int:
+    """What one line takes of the budget."""
+    return len(text) + _LINE_OVERHEAD
+
+
+_SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
+_SPACE = re.compile(r"\s+")
+
+
+def pieces(text: str, limit: int) -> list[str]:
+    """``text`` in spoken order as pieces of at most ``limit`` characters.
+
+    What ``sentences`` falls back on for speech with no sentence end in reach.
+    A piece ends after a sentence when one ends in its second half, else at a
+    space, else at the limit; no character is dropped but the whitespace at a
+    cut.
     """
-    out: list[tuple[int, int]] = []
+    out: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        cut = limit
+        for boundary in (_SENTENCE_END, _SPACE):
+            ends = [m.start() for m in boundary.finditer(rest, limit // 2, limit + 1)]
+            if ends:
+                cut = ends[-1]
+                break
+        out.append(rest[:cut])
+        rest = rest[cut:].lstrip()
+    if rest or not out:
+        out.append(rest)
+    return out
+
+
+LONG_TURN_CHARS = 300
+"""A turn longer than this is read sentence by sentence (the user, 2026-10-06).
+
+One person talking for a minute is one utterance, and the instructions above
+were written and measured on lines the length of a sentence. Asked about whole,
+a long turn got one label for all of it, and whatever was made from it -- an
+item's description, a decision's statement -- was the whole turn: the resolver
+rewrites one sentence, it does not summarise, and hands back unchanged a
+target that is several. A first version cut only a turn too long for one
+request, into halves of a request; in a live run on an invented meeting
+(2026-10-06) the item made from such a half was 1,512 characters, and a
+907-character turn that fitted a request was an item as it stood. Read by
+sentence, the same meeting gave each promise and decision as its own line.
+
+Three hundred because a turn of two or three sentences is what the pipeline
+was built on and is left alone. Not measured on real speech."""
+
+SENTENCE_CHARS = 200
+"""The longest line a long turn is read in. A sentence within it is one line;
+speech with no sentence end in reach -- a transcript without punctuation -- is
+cut at a space (``pieces``)."""
+
+SHORT_SENTENCE_CHARS = 20
+"""A sentence shorter than this ("네.", "그렇죠.") is not asked about alone: it
+goes with the sentence after it, which is usually what it was said to."""
+
+
+def sentences(text: str) -> list[str]:
+    """A long turn as the lines it is asked about, in spoken order: its
+    sentences, a short one joined to the next (the last to the one before), one
+    longer than ``SENTENCE_CHARS`` cut by ``pieces``. No character is dropped
+    but the whitespace at a cut."""
+    out: list[str] = []
+    carried = ""
+    for part in _SENTENCE_END.split(text.strip()):
+        line = f"{carried} {part}".strip() if carried else part
+        if len(line) < SHORT_SENTENCE_CHARS:
+            carried = line
+            continue
+        carried = ""
+        out.extend(pieces(line, SENTENCE_CHARS))
+    if carried:
+        if out:
+            out[-1] = f"{out[-1]} {carried}"
+        else:
+            out.append(carried)
+    return out or [text]
+
+
+_HELD_OPEN, _HELD_CLOSE = "\ue000", "\ue001"
+_HELD = re.compile(f"{_HELD_OPEN}(\\d+){_HELD_CLOSE}")
+
+
+def said_lines(text: str, names: re.Pattern[str] | None) -> list[str]:
+    """``sentences(text)``, with no cut inside a roster name.
+
+    A long turn is cut as it was said and each line has its names replaced
+    afterwards, so a name that a cut fell inside would be on two lines, matched
+    on neither, and leave as it was said: a display name with a space in it
+    ("Min Kim", "박 재경") at a cut made at a space, any name at a cut made in
+    the middle of unbroken text. So each name is held as one token with no
+    space in it while the turn is cut, and put back; a cut that still landed
+    inside a token -- only the cut at the limit can -- is undone by joining the
+    two lines. Every name is then whole on one line, where
+    ``substitute_names`` replaces it (mkkim68, review of #864: substituting
+    before cutting was what kept a name off a boundary).
+    """
+    if names is None:
+        return sentences(text)
+    held: list[str] = []
+
+    def hold(match: re.Match[str]) -> str:
+        held.append(match.group(0))
+        return f"{_HELD_OPEN}{len(held) - 1}{_HELD_CLOSE}"
+
+    out: list[str] = []
+    open_line = ""
+    for line in sentences(names.sub(hold, text)):
+        open_line += line
+        if open_line.count(_HELD_OPEN) == open_line.count(_HELD_CLOSE):
+            out.append(open_line)
+            open_line = ""
+    if open_line:
+        out.append(open_line)
+    return [_HELD.sub(lambda match: held[int(match.group(1))], line) for line in out]
+
+
+def strongest(kinds: Sequence[UtteranceKind | None]) -> UtteranceKind | None:
+    """The one kind of an utterance whose pieces were labelled apart: the first
+    of ``UtteranceKind``'s own order that any piece got -- a commitment before a
+    decision, either before a question, a concern or an ambiguous agreement.
+    An utterance has one kind here as everywhere, and of a long turn the
+    promise or the decision is what the meeting's record is made from.
+
+    This is the kind the utterance is stored and published with -- the
+    contract has one per utterance. The pieces keep their own kinds beside it
+    (``Prediction.pieces``), and each commitment or decision among them
+    becomes an item or a decision of its own (``decisions.in_pieces``)."""
+    got = {kind for kind in kinds if kind is not None}
+    return next((kind for kind in UtteranceKind if kind in got), None)
+
+
+def windows(texts: list[str], budget: int) -> list[tuple[int, int, int]]:
+    """``(context, start, end)``: the targets ``[start, end)`` and the context
+    lines ``[context, start)`` sent before them, together within ``budget``.
+
+    Context gives way first, the line farthest from the target first: up to
+    ``CONTEXT_LINES`` are sent, fewer when the turns are long, none when the
+    first target leaves no room. Admitting the first target whatever its
+    context had already cost put every request of a long-turned meeting over
+    the outbound limit, and ``check_outbound`` then failed the meeting.
+
+    A line longer than the budget on its own is in no window, so that no
+    request can be over it. ``classify`` reads a turn over ``LONG_TURN_CHARS``
+    by sentence and never passes one.
+    """
+    out: list[tuple[int, int, int]] = []
     start = 0
     while start < len(texts):
-        context = sum(len(t) + 12 for t in texts[max(0, start - CONTEXT_LINES) : start])
-        size, end = context, start
-        while end < len(texts) and (end == start or size + len(texts[end]) + 12 <= budget):
-            size += len(texts[end]) + 12
+        size = _cost(texts[start])
+        if size > budget:
+            start += 1
+            continue
+        context = start
+        while (
+            context > max(0, start - CONTEXT_LINES) and size + _cost(texts[context - 1]) <= budget
+        ):
+            context -= 1
+            size += _cost(texts[context])
+        end = start + 1
+        while end < len(texts) and size + _cost(texts[end]) <= budget:
+            size += _cost(texts[end])
             end += 1
-        out.append((start, end))
+        out.append((context, start, end))
         start = end
     return out
 
 
-def render(texts: list[str], start: int, end: int) -> tuple[str, dict[int, int]]:
+def render(texts: list[str], context: int, start: int, end: int) -> tuple[str, dict[int, int]]:
     """The request's lines, numbered 1..n, and line number -> index into ``texts``."""
     lines: list[str] = []
     targets: dict[int, int] = {}
-    for n, i in enumerate(range(max(0, start - CONTEXT_LINES), end), start=1):
+    for n, i in enumerate(range(context, end), start=1):
         tag = "대상" if i >= start else "문맥"
         lines.append(f"{n} [{tag}] {texts[i]}")
         if i >= start:
@@ -315,18 +483,25 @@ def parse(answer: str) -> dict[int, UtteranceKind]:
     return out
 
 
-def _prediction(kind: UtteranceKind | None) -> Prediction:
+def _prediction(
+    kind: UtteranceKind | None, pieces: tuple[tuple[str, UtteranceKind | None], ...] = ()
+) -> Prediction:
     if kind is None:
         return Prediction(
             kind=None,
             confidence=LLM_CONFIDENCE,
             scores=dict.fromkeys(UtteranceKind, 0.0),
             none_score=LLM_CONFIDENCE,
+            pieces=pieces,
         )
     scores = dict.fromkeys(UtteranceKind, 0.0)
     scores[kind] = LLM_CONFIDENCE
     return Prediction(
-        kind=kind, confidence=LLM_CONFIDENCE, scores=scores, none_score=1.0 - LLM_CONFIDENCE
+        kind=kind,
+        confidence=LLM_CONFIDENCE,
+        scores=scores,
+        none_score=1.0 - LLM_CONFIDENCE,
+        pieces=pieces,
     )
 
 
@@ -415,11 +590,17 @@ class LlmClassifier(GeminiClient):
     def classify(self, texts: list[str]) -> list[Prediction]:
         if not texts:
             return []
-        # Before windowing: the budget is counted on what is actually sent.
-        texts = substitute_names(texts, self._roster)
-        kinds: list[UtteranceKind | None] = [None] * len(texts)
-        for index, (start, end) in enumerate(windows(texts, MAX_OUTBOUND_CHARS - _BODY_OVERHEAD)):
-            text, targets = render(texts, start, end)
+        # A long turn is cut as it was said, and each piece keeps those words:
+        # an item or a decision is written from the piece, in the database's
+        # text. Only the request carries the placeholders, and the budget is
+        # counted on it. No cut falls inside a name (``said_lines``), so every
+        # name is whole on the line it is replaced in.
+        budget = MAX_OUTBOUND_CHARS - _BODY_OVERHEAD
+        owners, said = _in_pieces(texts, _names(_forms(self._roster)))
+        lines = substitute_names(said, self._roster)
+        labels: list[UtteranceKind | None] = [None] * len(lines)
+        for index, (context, start, end) in enumerate(windows(lines, budget)):
+            text, targets = render(lines, context, start, end)
             body = {
                 "systemInstruction": {"parts": [{"text": INSTRUCTIONS}]},
                 "contents": [{"role": "user", "parts": [{"text": text}]}],
@@ -428,13 +609,39 @@ class LlmClassifier(GeminiClient):
             answer = _answer_text(self._post(body, index=index))
             for line, kind in parse(answer).items():
                 if line in targets:
-                    kinds[targets[line]] = kind
+                    labels[targets[line]] = kind
+        parts: list[list[int]] = [[] for _ in texts]
+        for line, owner in enumerate(owners):
+            parts[owner].append(line)
+        predictions = [
+            _prediction(
+                strongest([labels[line] for line in own]),
+                tuple((said[line], labels[line]) for line in own) if len(own) > 1 else (),
+            )
+            for own in parts
+        ]
+        # Counts only: the lines are utterances.
         log.info(
             "extraction_llm_classified",
             utterances=len(texts),
-            labelled=sum(k is not None for k in kinds),
+            labelled=sum(p.kind is not None for p in predictions),
+            in_pieces=sum(len(own) > 1 for own in parts),
         )
-        return [_prediction(kind) for kind in kinds]
+        return predictions
+
+
+def _in_pieces(texts: list[str], names: re.Pattern[str] | None) -> tuple[list[int], list[str]]:
+    """The lines to ask about, as they were said, and for each the index of
+    the utterance it is (a piece of). An utterance of up to ``LONG_TURN_CHARS``
+    is one line, unchanged; a longer one is its sentences, cut around the
+    roster's ``names`` (``said_lines``)."""
+    owners: list[int] = []
+    lines: list[str] = []
+    for index, text in enumerate(texts):
+        for piece in said_lines(text, names) if len(text) > LONG_TURN_CHARS else [text]:
+            owners.append(index)
+            lines.append(piece)
+    return owners, lines
 
 
 def _answer_text(body: Any) -> str:

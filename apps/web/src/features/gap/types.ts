@@ -141,6 +141,89 @@ export interface GapDismissal {
 }
 
 /**
+ * Whether a gap was sent on to the next meeting — what `POST` and `DELETE
+ * /api/gap/gaps/{id}/carry` return (`GapCarry`, #824). The flag the server
+ * settled on, no timestamp and nobody's id, like `GapDismissal`.
+ *
+ * `calendar` is what happened to the next meeting's event on the caller's own
+ * Google Calendar. The mark is set whatever it says.
+ */
+export interface GapCarry {
+  gap_id: string;
+  meeting_id: string;
+  carried: boolean;
+  calendar: AgendaOutcome;
+}
+
+/**
+ * What "다음 회의 잡기" did — `POST /api/gap/agenda/{meeting_id}`
+ * (`GapMeetingCarry`, #824): how many open gaps were sent on, and what
+ * happened to the next meeting's event on the caller's own calendar.
+ */
+export interface GapMeetingCarry {
+  meeting_id: string;
+  carried: number;
+  calendar: AgendaOutcome;
+}
+
+/** One event on the caller's own calendar (`GapCalendarEvent`). */
+export interface GapCalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string | null;
+}
+
+/**
+ * `GET /api/gap/agenda/{meeting_id}/events` — the caller's own timed events
+ * over the next two weeks (`GapAgendaEvents`). Empty unless `calendar` is `ok`.
+ */
+export interface GapAgendaEvents {
+  calendar: "ok" | "not_connected" | "reconnect_required" | "failed";
+  events: GapCalendarEvent[];
+}
+
+/** `calendar_writes.AgendaOutcome`, plus `not_tried`. */
+export type AgendaOutcome =
+  | "added"
+  | "removed"
+  | "no_next_meeting"
+  | "no_event"
+  | "not_connected"
+  | "reconnect_required"
+  | "failed"
+  | "not_tried";
+
+/** `calendar_writes.AskOutcome`. */
+export type AskOutcome =
+  | "added"
+  | "already_asked"
+  | "not_connected"
+  | "reconnect_required"
+  | "failed";
+
+/** What `POST /api/gap/gaps/{id}/ask` returns (`GapAsk`, #824). */
+export interface GapAsk {
+  gap_id: string;
+  user_id: string;
+  outcome: AskOutcome;
+}
+
+/** One teammate "담당자 지정해 질문" can go to (`GapAskTarget`). */
+export interface GapAskTarget {
+  user_id: string;
+  name: string;
+  calendar_connected: boolean;
+  asked: boolean;
+}
+
+/** `GET /api/gap/gaps/{id}/ask` — the gap's team, by name (`GapAskTargets`). */
+export interface GapAskTargets {
+  gap_id: string;
+  members: GapAskTarget[];
+}
+
+/**
  * One utterance a verdict rests on — `EvidenceRead` in
  * `modules/gap/src/autune_gap/schemas.py`. Masked text, no speaker.
  */
@@ -187,6 +270,8 @@ export interface GapExplanation {
   matched_keywords: string[];
   evidence: GapEvidence[];
   breakdown: ScoreBreakdown | null;
+  /** Somebody sent this gap on to the next meeting — "다음 회의 어젠다로" (#824). */
+  carried: boolean;
 }
 
 /** `GET /api/gap/explanations/{meeting_id}` — `GapExplanations`. */
@@ -199,6 +284,20 @@ export interface GapExplanations {
   high_threshold: number;
   medium_threshold: number;
   gaps: GapExplanation[];
+  /** One per item the rail reads as covered, in template order. */
+  covered: CoveredExplanation[];
+}
+
+/**
+ * Why one checklist item was read as covered — `CoveredExplanationRead`. The
+ * topic is found again with the pipeline's rule; null when today's template or
+ * threshold no longer reaches it, and the screen then says it cannot show why.
+ */
+export interface CoveredExplanation {
+  item_key: string;
+  topic_label: string | null;
+  topic_centrality: number | null;
+  evidence: GapEvidence[];
 }
 
 /** How far the meeting got with one checklist item. */

@@ -68,8 +68,8 @@ from .confirmations import (
 from .decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
-    decision_id,
     group_decisions,
+    identified,
     needs_write_up,
 )
 from .edit_cost import EditCost
@@ -2110,12 +2110,18 @@ def build_decisions(
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
 
-    fresh = {
-        decision_id(meeting_id, group.source_utterance_ids): group
-        for group in group_decisions(utterances, max_gap=max_gap, day=day)
-    }
+    fresh = dict(
+        identified(meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances)
+    )
     summaries = summaries or {}
-    heard = {u.id for u in utterances}
+    # ``utterances`` may be the sequence read in pieces (``in_pieces``).
+    # Two decisions of one long turn are two rows (``identified``); what is
+    # stored as a source or a related line is always the utterance itself.
+    real = {u.id: u.source_id for u in utterances}
+    sources = {
+        id_: list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
+        for id_, group in fresh.items()
+    }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
     for id_, group in fresh.items():
@@ -2124,9 +2130,11 @@ def build_decisions(
         if summary is not None and summary.text.strip() and summary.text != group.core_text:
             head = tidy(summary.text.strip())
             line = f"{head} ({group.suffix})" if group.suffix else head
-            cited[id_] = [
-                u for u in summary.used if u in heard and u not in group.source_utterance_ids
-            ]
+            cited[id_] = list(
+                dict.fromkeys(
+                    real[u] for u in summary.used if u in real and real[u] not in sources[id_]
+                )
+            )
         shown[id_] = line
 
     # Only the model's decisions are rebuilt. One a person added is not derived
@@ -2185,7 +2193,7 @@ def build_decisions(
                     [
                         {"decision_id": id_, "utterance_id": utterance_id, "position": position}
                         for id_ in new_ids
-                        for position, utterance_id in enumerate(fresh[id_].source_utterance_ids)
+                        for position, utterance_id in enumerate(sources[id_])
                     ]
                 )
                 .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
@@ -2639,6 +2647,7 @@ def classify_utterances(
             confidence=prediction.confidence,
             text=utterance.text,
             speaker=utterance.speaker,
+            pieces=prediction.pieces,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -2962,7 +2971,13 @@ def resolve_decision_summaries(
     """
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
         return {}
-    groups = [g for g in group_decisions(classified, max_gap=max_gap, day=day) if needs_write_up(g)]
+    groups = [
+        (id_, group)
+        for id_, group in identified(
+            meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
+        )
+        if needs_write_up(group)
+    ]
     if not groups:
         return {}
 
@@ -2971,7 +2986,7 @@ def resolve_decision_summaries(
     position = {u.id: index for index, u in enumerate(classified)}
     requests = []
     keys = []
-    for group in groups:
+    for id_, group in groups:
         here = position[group.substance_id]
         first = min(group.first_position, here)
         last = max(group.last_position, here)
@@ -2990,7 +3005,7 @@ def resolve_decision_summaries(
                 related=tuple((line_id, said[line_id]) for line_id in offered),
             )
         )
-        keys.append(decision_id(meeting_id, group.source_utterance_ids))
+        keys.append(id_)
     resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
     return dict(zip(keys, resolved, strict=True))
 
@@ -3217,29 +3232,42 @@ def build_action_items(
     ):
         session.delete(stale)
 
+    # ``classified`` may be the sequence read in pieces (``in_pieces``): a
+    # commitment among a long turn's pieces is an item of its own, written from
+    # the piece and citing the turn.
+    real = {u.id: u.source_id for u in classified}
     items = []
     for utterance in classified:
         if utterance.kind is not UtteranceKind.COMMITMENT:
             continue
-        answer = answers.get(utterance.id)
+        answer = answers.get(utterance.source_id)
         if answer is not None and answer != UtteranceKind.COMMITMENT.value:
             # Its speaker said it was not a promise. ``withdraw_confirmed_draft``
             # took the item back; a rerun that still reads a commitment must not
             # bring it back (#529 review).
             continue
-        said = spoken[utterance.id]
+        said = spoken[utterance.source_id]
+        # A piece is read by its own words: the date in another part of the
+        # turn belongs to whatever was promised there.
+        own = utterance.text if utterance.part_of else said.text
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
-        due = parse_due(said.text, day)
+        due = parse_due(own, day)
         # ``description_resolved`` is about the resolver's rewrite alone; tidying
         # is a fixed rule, not a model's paraphrase, and the original is beside it.
-        rewritten = resolved.get(utterance.id, said.text)
+        rewritten = resolved.get(utterance.id, own)
         description = tidy(rewritten)
-        cited = [u for u in related.get(utterance.id, ()) if u in spoken and u != utterance.id]
+        cited = list(
+            dict.fromkeys(
+                line
+                for u in related.get(utterance.id, ())
+                if (line := real.get(u, u)) in spoken and line != utterance.source_id
+            )
+        )
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
                 description=description,
-                description_resolved=rewritten != said.text,
+                description_resolved=rewritten != own,
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,
@@ -3247,7 +3275,7 @@ def build_action_items(
                 status=ActionStatus.NEEDS_CONFIRMATION.value,
                 confidence=utterance.confidence,
                 origin="model",
-                sources=[ExtActionItemSource(utterance_id=utterance.id)],
+                sources=[ExtActionItemSource(utterance_id=utterance.source_id)],
                 related=[ExtActionItemRelated(utterance_id=u) for u in cited],
             )
         )
@@ -3588,24 +3616,32 @@ def _open_items_of(
     return [(item, team, title) for item, team, title in session.execute(query).tuples()]
 
 
+def _weekly_digest_week(session: Session, *, now: datetime) -> date | None:
+    """The Monday whose weekly digest goes at ``now``, or ``None``: the pure
+    rule (``reminders.digest_week``) with Korea's public holidays as this
+    deployment knows them (``days_off.is_public_holiday``)."""
+    return reminders.digest_week(now, lambda day: days_off.is_public_holiday(session, day, now=now))
+
+
 def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDigest]:
     """The digests owed at ``now`` and not yet sent (the user, 2026-10-04):
     one per person and team that has an open item assigned to that person on
-    that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
+    that team, in the sending hours of the week's first working day in Korea
+    -- Monday, or the next day that is not a public holiday when Monday is one
+    (``reminders.digest_week``; the user, 2026-10-05).
     Who counts is who ``due_reminders_to_send`` would remind: an account on the
     meeting's team -- a typed name has nobody to tell -- that has not turned
     its own reminders off. "마감 알림 받기" is the one switch a person has
     for Autune's DMs about their items; off means this one too (follow-up to
     #771, the user's call 2026-10-05)."""
-    week = reminders.digest_week(now)
-    # A Monday that is a public holiday has no digest: nobody is at work to
-    # read the week's list, and that week goes without one (``days_off``).
-    if week is None or days_off.is_public_holiday(session, week, now=now):
+    week = _weekly_digest_week(session, now=now)
+    if week is None:
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id)))
-    # And anyone who asked for no digest on that day -- their own leave dates
-    # (``ExtNotificationPause``, the user 2026-10-05).
-    off |= _paused_users(session, week)
+    # And anyone who asked for no digest on the day it goes -- their own leave
+    # dates (``ExtNotificationPause``, the user 2026-10-05). The day it goes,
+    # not the week's Monday: after a holiday Monday those are different days.
+    off |= _paused_users(session, reminders.korean_day(now))
     owners = {
         (item.assignee_id, team)
         for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
@@ -3625,6 +3661,31 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
     ]
 
 
+def _weekly_rows_to_send(
+    session: Session, digest: WeeklyDigest, *, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]] | None:
+    """The person's open items for this digest -- or ``None`` when no digest is
+    to go: they turned their reminders off, paused the day, or have none left.
+    Read as things are now, by the send and by ``weekly_digest_would_go``, so
+    the two cannot come to mean different things."""
+    if not due_reminders_on(session, digest.user_id) or notifications_paused(
+        session, digest.user_id, reminders.korean_day(now)
+    ):
+        return None
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    return list(rows) or None
+
+
+def weekly_digest_would_go(session: Session, digest: WeeklyDigest, *, now: datetime) -> bool:
+    """Whether this digest would be sent if it were tried now -- every reason
+    not to that Autune can see in its own tables. The task asks this BEFORE it
+    reads the person's calendar (``tasks._out_of_office``), in a transaction
+    of its own, so the calendar is read only for a message that would
+    otherwise go and never while a transaction of the send's is open (review
+    of #838 and of #841)."""
+    return _weekly_rows_to_send(session, digest, now=now) is not None
+
+
 def send_weekly_digest(
     session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
 ) -> bool:
@@ -3641,12 +3702,8 @@ def send_weekly_digest(
     their reminders off after the list was made is sent nothing and claims
     nothing, as ``send_due_reminder`` treats them.
     """
-    if not due_reminders_on(session, digest.user_id) or notifications_paused(
-        session, digest.user_id, digest.week_start
-    ):
-        return False
-    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
-    if not rows:
+    rows = _weekly_rows_to_send(session, digest, now=now)
+    if rows is None:
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtWeeklyDigest)
@@ -3668,7 +3725,7 @@ def send_weekly_digest(
                 reminders.DigestLine(item.description, item.due_date, title)
                 for item, _, title in rows
             ],
-            today=digest.week_start,
+            today=reminders.korean_day(now),
             board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
         ),
     )
@@ -3797,6 +3854,12 @@ def daily_digests_to_send(session: Session, *, now: datetime) -> list[DailyDiges
     a public holiday (``days_off.is_public_holiday``)."""
     day = reminders.daily_day(now)
     if day is None or days_off.is_public_holiday(session, day, now=now):
+        return []
+    # The day the week's digest goes has that digest and no morning DM, as a
+    # Monday has: after a holiday Monday that is the Tuesday. Only where the
+    # weekly digest is sent at all -- a deployment without it would otherwise
+    # send nothing that morning.
+    if get_settings().weekly_digest and _weekly_digest_week(session, now=now) is not None:
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id))) | _paused_users(session, day)
     owners = {
@@ -3947,6 +4010,30 @@ def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: dateti
     return set(item_ids) - earlier
 
 
+def _daily_content_to_send(
+    session: Session, owed: DailyDigestOwed, *, now: datetime
+) -> reminders.DailyDigest | None:
+    """What this person's morning DM would say -- or ``None`` when none is to
+    go: they turned their reminders off, paused the day, or nothing changed
+    and nothing is open. Read as things are now, by the send and by
+    ``daily_digest_would_go``."""
+    if not due_reminders_on(session, owed.user_id) or notifications_paused(
+        session, owed.user_id, owed.day
+    ):
+        return None
+    content = daily_digest_content(
+        session, owed, since=_daily_since(session, owed, now=now), now=now
+    )
+    return None if content.empty else content
+
+
+def daily_digest_would_go(session: Session, owed: DailyDigestOwed, *, now: datetime) -> bool:
+    """Whether this morning DM would be sent if it were tried now
+    (``weekly_digest_would_go``'s reason): asked before the person's calendar
+    is read, in a transaction of its own."""
+    return _daily_content_to_send(session, owed, now=now) is not None
+
+
 def send_daily_digest(
     session: Session, slack: SlackApi, owed: DailyDigestOwed, *, now: datetime
 ) -> bool:
@@ -3960,14 +4047,8 @@ def send_daily_digest(
     with the send, so two runs cannot both send and a failed send takes the
     claim back. It goes to ``owed.user_id`` and nobody else.
     """
-    if not due_reminders_on(session, owed.user_id) or notifications_paused(
-        session, owed.user_id, owed.day
-    ):
-        return False
-    content = daily_digest_content(
-        session, owed, since=_daily_since(session, owed, now=now), now=now
-    )
-    if content.empty:
+    content = _daily_content_to_send(session, owed, now=now)
+    if content is None:
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtDailyDigest)

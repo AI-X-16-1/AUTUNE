@@ -1,13 +1,19 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
 import { Button, StatusDot } from "@/shared/ui";
 import type { StatusVariant } from "@/shared/ui";
 
 import { COVERAGE_LABELS } from "../types";
 import type {
   Coverage,
+  GapAgendaEvents,
   TemplateChecklistItem,
   TemplateComparison,
   TemplateOption,
 } from "../types";
+import { SchedulePanel } from "./SchedulePanel";
 
 /**
  * The right rail of S20: the checklist the meeting was held to, and how far it
@@ -33,12 +39,18 @@ import type {
  * back: the gap has left the list by then, so the rail is the only place it is
  * still visible. Both are optional props, so a rail with no writes wired
  * renders as a plain read.
+ *
+ * "다음 회의 잡기" sits beside the heading: it is about the whole meeting, not
+ * one gap. It opens the caller's own Google Calendar (`SchedulePanel`) — or the
+ * way to connect it — and the event they pick takes every open gap (#824).
  */
 export function TemplateRail({
   comparison,
   templates = [],
   onChoose,
   onUndoDismiss,
+  loadAgendaEvents,
+  onScheduleNext,
   pending = null,
 }: {
   comparison: TemplateComparison;
@@ -46,10 +58,33 @@ export function TemplateRail({
   templates?: readonly TemplateOption[];
   onChoose?: (templateKey: string) => void;
   onUndoDismiss?: (gapId: string) => void;
-  /** What is in flight: a gap id, or `"template"`. */
+  /** "다음 회의 잡기": the events to pick from, and the pick. Without both no button is drawn. */
+  loadAgendaEvents?: () => Promise<GapAgendaEvents>;
+  onScheduleNext?: (eventId: string) => void;
+  /** What is in flight: a gap id, `"template"` or `"agenda"`. */
   pending?: string | null;
 }) {
   const picking = onChoose !== undefined && templates.length > 1;
+  const scheduling = Boolean(loadAgendaEvents && onScheduleNext);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [connectFailed, setConnectFailed] = useState(false);
+
+  // Back from connecting Google Calendar, either way: open the panel again,
+  // and drop the flag so a reload does not.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const result = url.searchParams.get("calendar");
+    if (result === null) return;
+    setPanelOpen(true);
+    setConnectFailed(result === "failed");
+    url.searchParams.delete("calendar");
+    window.history.replaceState(null, "", url.toString());
+  }, []);
+
+  const load = useCallback(
+    () => (loadAgendaEvents ? loadAgendaEvents() : Promise.reject(new Error("no loader"))),
+    [loadAgendaEvents],
+  );
 
   return (
     <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
@@ -57,16 +92,44 @@ export function TemplateRail({
         {/* The version names every file that contributed, which is how two
             meetings are known to be held to the same checklist. A reader has
             no use for the identifier, so it is a tooltip rather than text. */}
-        <h2
-          className="text-[var(--color-ink-strong)]"
-          title={`템플릿 버전 ${comparison.version}`}
-          style={{
-            fontSize: "var(--text-heading)",
-            fontWeight: "var(--text-heading-weight)",
-          }}
+        <div
+          className="flex flex-wrap items-center justify-between"
+          style={{ gap: "var(--space-8)" }}
         >
-          템플릿 대조 · {comparison.name}
-        </h2>
+          <h2
+            className="text-[var(--color-ink-strong)]"
+            title={`템플릿 버전 ${comparison.version}`}
+            style={{
+              fontSize: "var(--text-heading)",
+              fontWeight: "var(--text-heading-weight)",
+            }}
+          >
+            템플릿 대조 · {comparison.name}
+          </h2>
+          {scheduling ? (
+            <Button
+              tone="secondary"
+              size="compact"
+              disabled={!comparison.analysed}
+              aria-expanded={panelOpen}
+              title="내 Google 캘린더에서 다음 회의 일정을 골라 이 회의의 열린 갭을 일정 설명에 넣습니다."
+              onClick={() => setPanelOpen((open) => !open)}
+            >
+              다음 회의 잡기
+            </Button>
+          ) : null}
+        </div>
+        {scheduling && panelOpen && onScheduleNext ? (
+          <SchedulePanel
+            load={load}
+            pending={pending === "agenda"}
+            connectFailed={connectFailed}
+            onPick={(eventId) => {
+              onScheduleNext(eventId);
+              setPanelOpen(false);
+            }}
+          />
+        ) : null}
         {picking ? (
           <label className="mt-2 block">
             <span className="sr-only">대조할 템플릿</span>
@@ -205,7 +268,7 @@ function tally(items: readonly TemplateChecklistItem[]): string {
  * A dismissed gap keeps its verdict and says so.
  *
  * Somebody pressing "해당 없음" is a judgement about the gap, not evidence that
- * the meeting covered the item — the row stays for threshold tuning (ADR 0006)
+ * the meeting covered the item — the row stays for threshold tuning (docs/modules/gap.md, Storage)
  * and promoting the item to 충족 here would hide the input that tuning reads.
  */
 function verdict(item: TemplateChecklistItem): string {

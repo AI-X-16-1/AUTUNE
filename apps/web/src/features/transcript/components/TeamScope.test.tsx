@@ -32,6 +32,7 @@ function open(teams: TeamSummary[]) {
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
   list.mockReset();
   pin.mockReset();
   unpin.mockReset();
@@ -97,6 +98,59 @@ describe("TeamScope", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(
       "고정을 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
     );
+  });
+
+  // The user, 2026-10-06: a team once chosen stays chosen on the next menu,
+  // until the person picks another. Each screen mounts its own row, so the
+  // second `open` below is "another menu".
+  it("opens on the team the person chose on another screen, not on the first", async () => {
+    open([{ ...A, pinned: true }, B]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    fireEvent.click(screen.getByRole("button", { name: "나 팀" }));
+    cleanup();
+
+    open([{ ...A, pinned: true }, B]);
+
+    await waitFor(() => expect(shown()).toBe("team_b"));
+  });
+
+  it("follows the next choice, and only a choice", async () => {
+    open([A, B]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    // Opening on the default is not a choice: a pin can still move the default.
+    expect(window.localStorage.getItem("autune.team")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "나 팀" }));
+    fireEvent.click(screen.getByRole("button", { name: "가 팀" }));
+    cleanup();
+
+    open([B, A]);
+
+    await waitFor(() => expect(shown()).toBe("team_a"));
+  });
+
+  it("opens on the first team when the chosen one is a team they are no longer on", async () => {
+    window.localStorage.setItem("autune.team", "team_left");
+
+    open([A, B]);
+
+    await waitFor(() => expect(shown()).toBe("team_a"));
+  });
+
+  it("forgets, and still works, in a browser that refuses storage", async () => {
+    const refuse = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    const refuseWrite = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+
+    open([A, B]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    fireEvent.click(screen.getByRole("button", { name: "나 팀" }));
+
+    expect(shown()).toBe("team_b");
+    refuse.mockRestore();
+    refuseWrite.mockRestore();
   });
 
   it("offers no pin to somebody on one team", async () => {

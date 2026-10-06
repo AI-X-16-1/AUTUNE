@@ -6,6 +6,7 @@ import { ApiError } from "@/shared/api/client";
 import { Button, ChipToggle } from "@/shared/ui";
 
 import { listTeams, pinTeam, unpinTeam } from "../api";
+import { rememberTeam, teamToOpen } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
 /**
@@ -20,12 +21,17 @@ import type { TeamSummary } from "../types";
  * below never imports this feature; the route composes the two.
  *
  * One team: rendered straight through. Several: a row of chips above the
- * screen, first team selected. None: said in words, because a screen asked for
- * a team that does not exist would only show an error of its own.
+ * screen. None: said in words, because a screen asked for a team that does
+ * not exist would only show an error of its own.
+ *
+ * **A team once chosen stays chosen** (the user, 2026-10-06): on this screen
+ * and on every other one that mounts this row, until the person picks another
+ * (`selectedTeam`). Until they have picked one, the first of the list is shown.
  *
  * **The row is also where a team is pinned** (the user, 2026-10-02). The
  * list comes pinned teams first, then in the order joined, and the first is
- * the default here and on every other screen. Somebody on several teams can
+ * the default here and on every other screen for somebody who has not chosen
+ * a team in this browser. Somebody on several teams can
  * pin up to three, so the default is theirs to choose and not an accident of
  * which team they joined first. The pin is stored on the account, so it is
  * the same on every device, and it is one person's: nobody else sees it.
@@ -61,7 +67,7 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
       .then((list) => {
         if (!current) return;
         setTeams(list);
-        setTeamId(list[0]?.team_id ?? null);
+        setTeamId(teamToOpen(list));
       })
       .catch((caught: unknown) => {
         if (current) setError(caught instanceof Error ? caught.message : "팀 목록을 불러오지 못했습니다.");
@@ -93,7 +99,10 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
               <ChipToggle
                 key={team.team_id}
                 selected={team.team_id === teamId}
-                onClick={() => setTeamId(team.team_id)}
+                onClick={() => {
+                  setTeamId(team.team_id);
+                  rememberTeam(team.team_id);
+                }}
               >
                 {team.pinned ? `${team.name} · 고정` : team.name}
               </ChipToggle>

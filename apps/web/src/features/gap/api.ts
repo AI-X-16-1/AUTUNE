@@ -2,6 +2,10 @@
 import { api } from "@/shared/api/client";
 
 import type {
+  GapAgendaEvents,
+  GapAsk,
+  GapAskTargets,
+  GapMeetingCarry,
   GapDismissal,
   GapExplanations,
   GapReport,
@@ -78,7 +82,7 @@ export const chooseTemplate = (meetingId: string, templateKey: string) =>
 
 /**
  * "해당 없음": this gap is a false positive. It leaves the report and stays in
- * the table, marked — threshold tuning reads the mark (ADR 0006).
+ * the table, marked — threshold tuning reads the mark (docs/modules/gap.md, Storage).
  */
 export const dismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "POST" });
@@ -86,6 +90,42 @@ export const dismissGap = (gapId: string) =>
 /** Take a dismissal back; the gap returns to the report as it was raised. */
 export const undoDismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });
+
+/**
+ * The caller's own Google Calendar events over the next two weeks, for "다음
+ * 회의 잡기" to pick the next meeting from. `calendar` says when there is no
+ * calendar to read.
+ */
+export const getAgendaEvents = (meetingId: string) =>
+  api.gap<GapAgendaEvents>(`/agenda/${meetingId}/events`);
+
+/**
+ * "다음 회의 잡기": send every open gap of this meeting on to the next meeting
+ * (#824), and add them to the picked event on the caller's own Google Calendar
+ * (`calendar` says what happened). No meeting is created and nobody is
+ * invited. The gaps stay on the report.
+ */
+export const carryMeeting = (meetingId: string, eventId: string) =>
+  api.gap<GapMeetingCarry>(`/agenda/${meetingId}`, {
+    method: "POST",
+    body: JSON.stringify({ event_id: eventId }),
+  });
+
+/**
+ * Who "담당자 지정해 질문" can go to: the gap's team by name, whether each has a
+ * Google Calendar connected, and whether they were already asked.
+ */
+export const getAskTargets = (gapId: string) => api.gap<GapAskTargets>(`/gaps/${gapId}/ask`);
+
+/**
+ * "담당자 지정해 질문": put the gap's question on one teammate's Google Calendar
+ * as an all-day event with no attendees (#824). No day means the next working day.
+ */
+export const askGap = (gapId: string, userId: string) =>
+  api.gap<GapAsk>(`/gaps/${gapId}/ask`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
 
 /**
  * Every open gap across a team's meetings, newest meeting first — the sidebar's
