@@ -112,10 +112,21 @@ export const inviteToTeam = (teamId: string, email: string, sendEmail = false) =
     body: JSON.stringify({ email, send_email: sendEmail }),
   });
 
+/**
+ * A link for no address (#552): it works once, for an hour, for whoever opens
+ * it signed in. The inviter's earlier one for this team stops working.
+ */
+export const makeOpenInvitationLink = (teamId: string) =>
+  api.audio<InvitationIssued>(`/teams/${encodeURIComponent(teamId)}/invitations`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
 /** An invitation to the team that nobody has accepted yet, as its members see it. */
 export type PendingInvitation = {
   id: number;
-  email: string;
+  /** `null` for a link made for no address. */
+  email: string | null;
   expires_at: string;
   invited_by_name: string | null;
 };

@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { disconnectGmail, getGmailConnection, googleGmailConnectUrl } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
-import { inviteToTeam } from "../api";
+import { inviteToTeam, makeOpenInvitationLink } from "../api";
 import { invitationLink } from "../invitationLink";
 
 /**
@@ -31,6 +31,15 @@ import { invitationLink } from "../invitationLink";
  * go. The link itself is put on the screen only when the browser would not
  * copy it.
  *
+ * **A link for no address is the smaller, second way** (#552, the module
+ * owner's conditions and the product owner's hour, 2026-10-06). Under the
+ * address field: "주소 없이 링크 만들기". It names nobody, so whoever opens
+ * it signed in joins -- which the line beside the button says before it is
+ * pressed -- and it is kept small to match: it works once and for an hour,
+ * and making another ends the one this person made before. It is never
+ * mailed; it is copied and handed over. An invitation for an address stays
+ * the default above it and is unchanged.
+ *
  * **The link can be had on this visit only.** Only a hash of its token is
  * stored, so it cannot be given again; inviting the same address again --
  * "다시 보내기" does exactly that -- makes a new link and the earlier one
@@ -50,9 +59,16 @@ const INPUT_STYLE = {
 const META = { fontSize: "var(--text-meta)" } as const;
 
 type How = "mail" | "copy";
+type Busy = How | "open";
+
+/** What the list calls a link made for no address, and keys it by. */
+const NO_ADDRESS = "주소 없음";
 
 type Made = {
+  /** The invited address, or `NO_ADDRESS`. */
   email: string;
+  /** Made for no address: it lapses in an hour and cannot be mailed. */
+  open?: boolean;
   link: string;
   expiresAt: string;
   mail: "sent" | "failed" | null;
@@ -61,6 +77,14 @@ type Made = {
 };
 
 type Gmail = { connected: boolean; needs_reconnect?: boolean };
+
+/** `14:05`: when a link that lasts an hour stops working, in the reader's time. */
+function clock(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
 
 async function toClipboard(text: string): Promise<boolean> {
   try {
@@ -85,7 +109,7 @@ export function TeamInvite({
   const [mailNote, setMailNote] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
   const [email, setEmail] = useState("");
-  const [pending, setPending] = useState<How | null>(null);
+  const [pending, setPending] = useState<Busy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<Made[]>([]);
   const [copied, setCopied] = useState<{ email: string; ok: boolean } | null>(null);
@@ -173,6 +197,34 @@ export function TeamInvite({
     }
   };
 
+  /** A link for no address: made, and copied if the browser allows. */
+  const makeOpen = async () => {
+    setPending("open");
+    setError(null);
+    try {
+      const issued = await makeOpenInvitationLink(teamId);
+      const link = invitationLink(window.location.origin, issued.token);
+      const wrote = await toClipboard(link);
+      const entry: Made = {
+        email: NO_ADDRESS,
+        open: true,
+        link,
+        expiresAt: issued.expires_at,
+        mail: null,
+        showLink: !wrote,
+      };
+      // One open for this person and team: the new one replaces the old,
+      // here as on the server.
+      setMade((before) => [entry, ...before.filter((m) => !m.open)]);
+      setCopied({ email: NO_ADDRESS, ok: wrote });
+      onInvited?.();
+    } catch {
+      setError("링크를 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setPending(null);
+    }
+  };
+
   const start = async (how: How) => {
     if (!canSubmit) return;
     if (await invite(address, how)) setEmail("");
@@ -250,6 +302,23 @@ export function TeamInvite({
         )}
       </form>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          tone="text"
+          size="compact"
+          type="button"
+          disabled={pending !== null}
+          loading={pending === "open"}
+          onClick={() => void makeOpen()}
+        >
+          주소 없이 링크 만들기
+        </Button>
+        <span className="text-[var(--color-ink-muted)]" style={META}>
+          1시간 동안 한 번만 쓸 수 있습니다. 주소가 없어서 링크를 가진 사람은 로그인만 하면
+          팀에 들어옵니다.
+        </span>
+      </div>
+
       {canOfferMail ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button tone="text" size="compact" type="button" onClick={connectGmail}>
@@ -286,7 +355,9 @@ export function TeamInvite({
           {made.map((entry) => (
             <li key={entry.email} className="flex flex-col gap-1">
               <span className="text-[var(--color-ink-body)]" style={META}>
-                {entry.email} · {entry.expiresAt.slice(0, 10)}까지
+                {entry.open
+                  ? `${entry.email} · ${clock(entry.expiresAt)}까지, 한 번만`
+                  : `${entry.email} · ${entry.expiresAt.slice(0, 10)}까지`}
               </span>
               {entry.mail !== null ? (
                 <span role="status" className="text-[var(--color-ink-muted)]" style={META}>
@@ -315,7 +386,7 @@ export function TeamInvite({
                 >
                   링크 복사
                 </Button>
-                {canMail ? (
+                {canMail && !entry.open ? (
                   <Button
                     tone="text"
                     size="compact"

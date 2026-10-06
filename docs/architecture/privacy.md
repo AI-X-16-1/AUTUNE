@@ -325,6 +325,20 @@ to nobody else, with when the link lapses and who invited
 it reads the same for an address with an account and one without, and it
 never carries the token or its hash. Any member of the team may cancel one.
 
+**An invitation may also be made for no address** (#552, 2026-10-06). It
+holds nobody's address -- there is none to hold -- and for the same reason
+nothing but the link says who may use it: **whoever has the link joins the
+team by signing in.** That is the one place the read boundary of a team
+rests on a link alone, so it is kept small: the link admits one person and
+is then gone; it **lapses one hour** after it is made (seven days is for an
+invitation with an address); a person has one open for a team at a time,
+and making another ends the earlier one; it is never mailed by Autune; and
+it is in the same pending list, as a link with no address, where any member
+of the team can cancel it. Its token is stored as a hash like any other,
+and log lines carry ids. Nobody is told when somebody joins by it -- the
+member list shows them. An invitation for an address is unchanged and is
+still only for that address.
+
 The inviter may have the link **mailed from their own Gmail** (#552), when
 they ask and only through their own `gmail.send` grant -- Autune runs no mail
 server and holds no shared sender. That hands the address and the link to

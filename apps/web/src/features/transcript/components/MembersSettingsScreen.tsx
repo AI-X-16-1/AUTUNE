@@ -156,7 +156,7 @@ function Members({ teamId }: { teamId: string }) {
                   className="text-[var(--color-ink-strong)]"
                   style={{ fontSize: "var(--text-rowBody)" }}
                 >
-                  {invitation.email}
+                  {invitation.email ?? "주소 없는 링크"}
                 </span>
                 <span style={META}>
                   {invitation.invited_by_name ? `${invitation.invited_by_name} 님이 초대 · ` : ""}
@@ -168,7 +168,7 @@ function Members({ teamId }: { teamId: string }) {
                     size="compact"
                     loading={cancelling === invitation.id}
                     onClick={() => cancel(invitation.id)}
-                    aria-label={`${invitation.email} 초대 취소`}
+                    aria-label={`${invitation.email ?? "주소 없는 링크"} 초대 취소`}
                   >
                     초대 취소
                   </Button>

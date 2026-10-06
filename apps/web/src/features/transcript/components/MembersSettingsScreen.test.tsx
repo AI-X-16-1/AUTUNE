@@ -61,6 +61,20 @@ describe("MembersSettingsScreen", () => {
     expect(within(section).getByText(/서연 님이 초대 · 10월 13일까지/)).toBeTruthy();
   });
 
+  it("lists a link made for no address as that, with its own cancel", async () => {
+    // #552: such a link admits whoever opens it, so the team sees it here
+    // and any member can take it back.
+    pendingList.mockResolvedValue([{ ...OUT, id: 9, email: null }]);
+    cancel.mockResolvedValue([]);
+    render(<MembersSettingsScreen />);
+
+    const section = await pendingSection();
+    expect(within(section).getByText("주소 없는 링크")).toBeTruthy();
+    fireEvent.click(within(section).getByRole("button", { name: "주소 없는 링크 초대 취소" }));
+
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("team_1", 9));
+  });
+
   it("shows no such section when nothing is out, and none when it cannot ask", async () => {
     const { unmount } = render(<MembersSettingsScreen />);
     await ready();

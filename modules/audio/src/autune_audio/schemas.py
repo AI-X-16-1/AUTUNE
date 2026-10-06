@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Literal
 
 import numpy as np
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 SAMPLE_RATE = 16_000
 """What both Whisper and pyannote want. Decoding to it once means neither
@@ -226,12 +226,22 @@ class TeamCreate(BaseModel):
 
 class InvitationCreate(BaseModel):
     """An address to invite to the team (#552). Its shape is all that is
-    checked: whether anybody holds an account under it is never looked up."""
+    checked: whether anybody holds an account under it is never looked up.
 
-    email: str = Field(min_length=3, max_length=320)
+    With no ``email`` the link is made for no address: it works once, for an
+    hour, for whoever opens it signed in (``invitations``)."""
+
+    email: str | None = Field(default=None, min_length=3, max_length=320)
     send_email: bool = False
     """Also mail the link from the inviter's own Gmail (``invitation_mail``).
-    Off by default: the link is handed over by the inviter unless they ask."""
+    Off by default: the link is handed over by the inviter unless they ask.
+    Refused without an address: there is nobody to mail."""
+
+    @model_validator(mode="after")
+    def _mail_needs_an_address(self) -> InvitationCreate:
+        if self.send_email and self.email is None:
+            raise ValueError("an invitation with no address cannot be mailed")
+        return self
 
     @field_validator("email", mode="before")
     @classmethod
@@ -267,7 +277,8 @@ class PendingInvitation(BaseModel):
     address has an account."""
 
     id: int
-    email: str
+    email: str | None = None
+    """``None`` for a link made for no address."""
     expires_at: datetime
     invited_by_name: str | None = None
 
