@@ -15,9 +15,12 @@ masked text only, and only what the feature needs):
 - Utterance text only, already PII-masked at write time by module A. No
   speaker, no name, no timestamp, no meeting id, no utterance id -- the prompt
   numbers the lines 1..n within one request, and the answer is mapped back by
-  position. The feature needs every utterance (it classifies every one), so the
-  meeting goes out, but in requests of at most ``MAX_OUTBOUND_CHARS`` like
-  ``HostedDeberta``'s, never as one body.
+  position. Since 2026-10-06 the answer also carries, for a line it labels a
+  commitment or a decision, one line saying what it is (``usable_summary``):
+  that changes what comes back, not what goes out. The feature needs every
+  utterance (it classifies every one), so the meeting goes out, but in
+  requests of at most ``MAX_OUTBOUND_CHARS`` like ``HostedDeberta``'s, never
+  as one body.
 - Only utterances whose speaker consented: ``service.classify_utterances``
   filters before calling ``classify``, the same as for every implementation.
 - Every request goes through ``autune_integrations.HttpClient``, so
@@ -28,8 +31,9 @@ Names are not masked by module A (there is no pattern for them), so **names
 from the meeting team's roster are replaced before any request** (#411): each
 member's full name, and the given name of a three-syllable Korean name, becomes
 ``[사람N]`` -- numbered by first appearance within one ``classify`` call, the
-same person the same number, never stored and never mapped back (the answer
-is a label per line and carries no text). Only the request changes; the
+same person the same number, never stored. A label carries no text; a
+summary does, and each ``[사람N]`` in one is put back as the name it stood
+for before it is kept, as the resolver does (``usable_summary``). Only the request changes; the
 database, the resolver and every other output keep the text as it was. What
 still leaves: names not on the roster -- people outside the team, nicknames,
 English or misheard names. And a roster name that is also a word ("하늘") is
@@ -79,7 +83,12 @@ INSTRUCTIONS = (
     "ambiguous: '검토해 볼게요'처럼 구체적 약속 없는 약한 동의, 다른 팀이 할 일 전달. "
     "그 외(설명·잡담·맞장구·투표·예상 수치)는 적지 마세요.\n"
     "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람N]은 가린 사람 이름입니다. "
-    'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}}. 해당 없으면 {"labels": {}}.'
+    'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}, '
+    '"summaries": {"줄번호": "요약", ...}}. 해당 없으면 {"labels": {}}. '
+    "summaries에는 commitment와 decision 줄만, 그 줄의 내용을 한 문장으로 적으세요"
+    "(약속: 무엇을 언제까지 하는지, 결정: 무엇을 하기로 했는지). "
+    "'그거' 같은 말은 문맥이 가리키는 것으로 바꾸되, 줄과 문맥에 없는 날짜·숫자·이름은 "
+    "쓰지 말고 [사람N]은 그대로 두세요."
     "\n예시(다른 회의):\n"
     "1 [문맥] 이 설문 결과는 누가 정리해 주실래요?\n"
     "2 [대상] 제가 할게요, 목요일까지요. → commitment\n"
@@ -106,7 +115,15 @@ analogues rather than copies; EVAL_02 was not looked at before it was scored.
 Raising ``thinkingLevel`` was tried and is not set: low and medium spent no
 thinking tokens, medium scored 0.607 on EVAL_02, and high cost more per meeting
 than 3.8 Flash. Only commitment was scored -- the gold on both meetings marks
-commitments only -- so the effect on the other four kinds is unmeasured."""
+commitments only -- so the effect on the other four kinds is unmeasured.
+
+The last sentences, asking for ``summaries`` (2026-10-06), were NOT measured
+on those two meetings: what they do to the labels is known only from one
+invented twelve-utterance meeting run before and after, where the stored
+kinds came out the same but for lines of filler. They are here because the
+summary used to cost a request a commitment to a resolver that rewrites one
+sentence and cannot shorten a longer one; on that meeting the resolver's six
+to nine requests became none."""
 
 _KINDS = {kind.value: kind for kind in UtteranceKind}
 _RETRY_BACKOFF_SEC = (2.0, 5.0, 10.0)
@@ -483,8 +500,68 @@ def parse(answer: str) -> dict[int, UtteranceKind]:
     return out
 
 
+SUMMARISED = (UtteranceKind.COMMITMENT, UtteranceKind.DECISION)
+"""The kinds the request asks a one-line summary of: what an action item and
+a decision are made from."""
+
+SUMMARY_MAX_CHARS = 120
+"""A summary longer than this is not a line; it is dropped for the sentence
+as said."""
+
+_PLACEHOLDER = re.compile(r"\[사람\d+\]")
+
+
+def parse_summaries(answer: str) -> dict[int, str]:
+    """``{"summaries": {"3": "..."}}`` -> ``{3: "..."}``, each on one line.
+    Anything else is dropped rather than guessed at, as in ``parse``."""
+    match = re.search(r"\{.*\}", answer, re.S)
+    if not match:
+        return {}
+    try:
+        written = json.loads(match.group(0)).get("summaries", {})
+    except (json.JSONDecodeError, AttributeError):
+        return {}
+    if not isinstance(written, dict):
+        return {}
+    out: dict[int, str] = {}
+    for key, value in written.items():
+        if isinstance(value, str) and str(key).strip().isdigit():
+            out[int(str(key).strip())] = " ".join(value.split())
+    return out
+
+
+def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
+    """What the model wrote about a line, as the sentence to show for it -- or
+    "" when it should not be shown, and the line as said is used instead.
+
+    The model writes this in the same answer as the label, with nothing
+    checking it but this. So: one line of at most ``SUMMARY_MAX_CHARS``; every
+    placeholder put back as the name it stood for, and a placeholder that was
+    never sent means an invented person; and every number and named person in
+    it also in ``window`` -- the line and the few said just before it, as they
+    were said -- which is the resolver's own groundedness check
+    (``resolver._grounded``),
+    for the same reason: a date or a name the meeting never said is worse on a
+    card than a long sentence.
+    """
+    # Here and not at the top: ``resolver`` imports this module.
+    from .resolver import _grounded  # noqa: PLC0415
+
+    text = written.strip().strip("\"'“”‘’").strip()
+    if not text or len(text) > SUMMARY_MAX_CHARS:
+        return ""
+    if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
+        return ""
+    restored = _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
+    return restored if _grounded(restored, window) else ""
+
+
 def _prediction(
-    kind: UtteranceKind | None, pieces: tuple[tuple[str, UtteranceKind | None], ...] = ()
+    kind: UtteranceKind | None,
+    pieces: tuple[tuple[str, UtteranceKind | None], ...] = (),
+    *,
+    summary: str = "",
+    piece_summaries: tuple[str, ...] = (),
 ) -> Prediction:
     if kind is None:
         return Prediction(
@@ -493,6 +570,7 @@ def _prediction(
             scores=dict.fromkeys(UtteranceKind, 0.0),
             none_score=LLM_CONFIDENCE,
             pieces=pieces,
+            piece_summaries=piece_summaries,
         )
     scores = dict.fromkeys(UtteranceKind, 0.0)
     scores[kind] = LLM_CONFIDENCE
@@ -502,6 +580,8 @@ def _prediction(
         scores=scores,
         none_score=1.0 - LLM_CONFIDENCE,
         pieces=pieces,
+        summary=summary,
+        piece_summaries=piece_summaries,
     )
 
 
@@ -597,8 +677,9 @@ class LlmClassifier(GeminiClient):
         # name is whole on the line it is replaced in.
         budget = MAX_OUTBOUND_CHARS - _BODY_OVERHEAD
         owners, said = _in_pieces(texts, _names(_forms(self._roster)))
-        lines = substitute_names(said, self._roster)
+        lines, surface = substitute_names_mapped(said, self._roster)
         labels: list[UtteranceKind | None] = [None] * len(lines)
+        summaries = [""] * len(lines)
         for index, (context, start, end) in enumerate(windows(lines, budget)):
             text, targets = render(lines, context, start, end)
             body = {
@@ -610,6 +691,17 @@ class LlmClassifier(GeminiClient):
             for line, kind in parse(answer).items():
                 if line in targets:
                     labels[targets[line]] = kind
+            # The summary of a line is kept only with a label that takes one,
+            # and only if nothing in it is new to that line and the
+            # ``CONTEXT_LINES`` said just before it -- what the instructions
+            # call its context. Not the whole request: that would let another
+            # item's date or name, from a target line further up or down the
+            # same request, pass as this one's (PARK, review of #880).
+            for line, written in parse_summaries(answer).items():
+                at = targets.get(line)
+                if at is not None and labels[at] in SUMMARISED:
+                    window = " ".join(said[max(context, at - CONTEXT_LINES) : at + 1])
+                    summaries[at] = usable_summary(written, surface, window)
         parts: list[list[int]] = [[] for _ in texts]
         for line, owner in enumerate(owners):
             parts[owner].append(line)
@@ -617,6 +709,8 @@ class LlmClassifier(GeminiClient):
             _prediction(
                 strongest([labels[line] for line in own]),
                 tuple((said[line], labels[line]) for line in own) if len(own) > 1 else (),
+                summary=summaries[own[0]] if len(own) == 1 else "",
+                piece_summaries=tuple(summaries[line] for line in own) if len(own) > 1 else (),
             )
             for own in parts
         ]
@@ -626,6 +720,7 @@ class LlmClassifier(GeminiClient):
             utterances=len(texts),
             labelled=sum(p.kind is not None for p in predictions),
             in_pieces=sum(len(own) > 1 for own in parts),
+            summarised=sum(bool(written) for written in summaries),
         )
         return predictions
 

@@ -77,12 +77,27 @@ agreement, and sync the result to Notion and Jira.
    description is editable like any other. The candidates are only offered: a
    line nobody cites is neither stored nor shown, and a citation the model
    invents (a number that is no line, the commitment itself) is dropped.
+   With `classifier_impl=llm` the sentence comes earlier and from the classifier
+   (2026-10-06): its answer carries, beside the label, one line for each
+   commitment and decision, in the request that read the line. A line that
+   passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
+   as the name it stood for; no number or name that is not in the line or the
+   three said before it) is the description, and the resolver is asked only
+   about a commitment that has none. **Such a line cites nothing**: the
+   classifier does not say what it drew on, so no row is written to
+   `ext_action_item_related` and the drawer shows the quotation alone.
    A decision is written up the same way (`ext_decision_related`, "요약에 쓴
    발화" on S15) -- but only when its settling turn does not say what was decided:
    short, or pointing at something said before ("그렇게 하죠"). Asked about every
    decision, the model rewrote all of them and cited a line for about a quarter;
    the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
-   a model.
+   a model. That limit is the resolver's. With `classifier_impl=llm` **every
+   decision the classifier wrote a line for shows that line**, whether or not
+   its settling turn already said what was decided, and cites no lines
+   (`ext_decision_related` stays empty for it): the owner asked for each
+   action item and decision as one line (2026-10-06), and the line came with
+   the label at no further request. A decision with no such line goes the
+   resolver's way as before.
 
    **What module D is sent is not what the screen shows.** `ext_decisions.statement`
    is the line a person sees and that leaves for Notion -- noun-ended, or the
@@ -95,8 +110,9 @@ agreement, and sync the result to Notion and Jira.
    `source_utterance_ids` as before. The contract is unchanged. A sentence that names nothing ("다음 주
    화요일까지 볼 예정") is read with up to three lines said just before it, shown
    apart from the sources as "앞선 발화 (맥락)"; nothing fills the missing object
-   into the line itself unless the reference resolver is switched on
-   (`resolver_impl`, off by default). The due date is still read from the original
+   into the line itself unless a model writes the line -- the reference resolver
+   (`resolver_impl`, off by default) or, with `classifier_impl=llm`, the
+   classifier's own one-line summary. The due date is still read from the original
    words, which carry the verb ending it depends on.
 4. **NLI verification** — check whether an apparent agreement entails an actual
    commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
@@ -286,7 +302,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
-| `ext_extraction_attempts` | One row per meeting whose extraction failed or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
+| `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
 | `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
@@ -341,7 +357,11 @@ three attempts in all, the event's being the first. A run that goes through
 ends the count. After the third failure the sweep stops and the team's Slack
 channel gets one message -- the meeting's title, the count and a link to its
 액션 tab -- when the team has a channel connected; the 액션 tab says it either
-way, and offers "다시 추출" there, on any meeting. That request is a
+way, and offers "다시 추출" there, on any meeting. A run whose rows were
+committed and whose `EXTRACTION_COMPLETED` could not be published is counted
+too, as its own kind (`ResultNotPublishedError`, #887): the sweep publishes
+the stored result again and asks no model, and the tab and the channel's
+message say the items were extracted and not passed on. That request is a
 row the worker takes within a minute (`run_requested_extractions`), because
 the API process has no broker to queue on; it is the same run, so an item list
 a person has edited is kept. A meeting with a transcript and no extraction on

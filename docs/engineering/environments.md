@@ -431,12 +431,13 @@ often spaced ("박 재경", "재경 박"), so a Hangul name of two words is also
 joined and swapped ("박재경", "재경박") and by its given name ("재경") — the word
 of two syllables or more beside a one-syllable surname; with two longer words
 only the joined forms. Whichever form matched, the same person gets the same number
-within one meeting's requests. The classifier's placeholders are never stored and
-never mapped back: it answers with labels only, and the database and Notion keep
-the text as it was. The `llm` reference resolver is the one that maps back -- its
-answer is a sentence stored as a description, so each `[사람N]` is restored to the
-name it stood for, and an answer holding a placeholder that was never sent is
-dropped for the raw quote.
+within one meeting's requests. The classifier's placeholders are never stored. Its
+answer is a label for each line and, for a line it labels a commitment or a
+decision, one line saying what it is; a label carries no text, and a summary has
+each `[사람N]` restored to the name it stood for before it is kept, the way the
+`llm` reference resolver's sentence is. From either, an answer holding a
+placeholder that was never sent is dropped for the text as it was said -- as is
+a summary with a number or a name that the lines of its request did not hold.
 
 What still goes out, and is the exposure #392 and #92 ask about:
 

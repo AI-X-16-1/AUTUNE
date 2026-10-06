@@ -50,7 +50,7 @@ from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 
 from . import service, tasks
-from .models import ExtActionItem, ExtDecision
+from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
 from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, DecisionReviewUpdate
@@ -498,6 +498,114 @@ def _load_finding(
     }
 
 
+def open_item_owners(
+    session: Session,
+    team_id: str,
+    *,
+    project_id: str | None = None,
+    meeting_id: str | None = None,
+) -> dict[str, Any]:
+    """Use this when deciding whom a piece of work concerns -- for one of the
+    team's projects (``project_id``) or for what one earlier meeting left open
+    (``meeting_id``), who holds its open action items. Give exactly one of the
+    two ids. Do not use it for how much each person holds across the team --
+    that is ``workload_by_owner`` -- or for the items themselves -- that is
+    ``open_action_items``.
+
+    Returns one row per person who is the assignee of a confirmed, open item
+    of that work: how many they hold, how many are overdue, and the nearest
+    due date. Most items first; then one "담당 없음" row for open items nobody
+    on the team holds. ``summary`` gives the number of people.
+
+    **Work on the board and nothing else** (#756): a person is here because an
+    open item is theirs, a fact the team already sees on the board. Nothing
+    says who spoke, how much, or who was at a meeting, and nobody is inferred
+    for an item with no assignee -- the row says there are such items, not
+    whose they might be. Unconfirmed items are not counted: nobody has agreed
+    yet that they are anyone's work.
+    """
+    if (project_id is None) == (meeting_id is None):
+        return _result(
+            ok=False,
+            reason="give exactly one of project_id and meeting_id",
+            summary="프로젝트와 회의 가운데 하나만 지정해 주세요.",
+            items=[],
+            evidence=[],
+            confidence=0.0,
+        )
+    if meeting_id is not None and _team_of(session, meeting_id) != team_id:
+        return _not_found("meeting", meeting_id)
+    if project_id is not None and (
+        session.scalar(
+            select(ExtProject.id).where(ExtProject.id == project_id, ExtProject.team_id == team_id)
+        )
+        is None
+    ):
+        return _not_found("project", project_id)
+
+    today = date.today()
+    live = set(
+        session.scalars(
+            select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
+        )
+    )
+    members = {
+        user_id: name
+        for user_id, name in session.execute(
+            select(User.id, User.display_name)
+            .join(TeamMember, TeamMember.user_id == User.id)
+            .where(TeamMember.team_id == team_id)
+        )
+    }
+    held: dict[str | None, list[ActionItemRead]] = {}
+    for status in _OPEN:
+        for i in service.list_action_items(session, status=status, meeting_id=meeting_id):
+            if i.meeting_id not in live:
+                continue
+            if project_id is not None and i.project_id != project_id:
+                continue
+            # A non-member's id is cleared at read time, so ``None`` is exactly
+            # "nobody on the team holds it".
+            held.setdefault(i.assignee_id if i.assignee_id in members else None, []).append(i)
+
+    people = sorted(
+        (user_id for user_id in held if user_id is not None),
+        key=lambda user_id: (-len(held[user_id]), members[user_id], user_id),
+    )
+    rows = [_owner_finding(user_id, members[user_id], held[user_id], today) for user_id in people]
+    if None in held:
+        rows.append(_owner_finding(None, "담당 없음", held[None], today))
+    return _result(
+        summary=(
+            f"진행 중인 확정 액션아이템의 담당자 {len(people)}명, "
+            f"담당 없는 항목 {len(held.get(None, []))}건."
+        ),
+        items=rows,
+        # Who holds what cites no utterance: evidence is for what was said.
+        evidence=[],
+    )
+
+
+def _owner_finding(
+    user_id: str | None, name: str, items: Sequence[ActionItemRead], today: date
+) -> dict[str, Any]:
+    overdue = sum(_overdue(i, today) for i in items)
+    nearest = min((i.due_date for i in items if i.due_date is not None), default=None)
+    body = f"진행 중 {len(items)} · 기한 지남 {overdue}"
+    if nearest is not None:
+        body += f" · 가장 가까운 기한 {nearest.isoformat()}"
+    return {
+        "title": name,
+        "body": body,
+        "score": float(len(items)),
+        "id": user_id or "unowned",
+        # The same as fields, so a subagent reads numbers, not Korean.
+        "open": len(items),
+        "overdue": overdue,
+        "nearest_due": nearest.isoformat() if nearest is not None else None,
+    }
+
+
 def unresolved_questions(session: Session, meeting_id: str) -> dict[str, Any]:
     """Use this after a meeting to list what was asked or objected to and may
     need a follow-up -- "what should someone check or look into". Do not use it
@@ -763,6 +871,7 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
 TOOLS = [
     meeting_action_items,
     open_action_items,
+    open_item_owners,
     stalled_action_items,
     workload_by_owner,
     unresolved_questions,
