@@ -87,8 +87,9 @@ x-python: &python
     # or time. Because of the resolver, some of those lines go a second time:
     # for each commitment and decision the classifier finds, that utterance and
     # its neighbours, masked and with the roster's names replaced (#530). A
-    # name that is not on the roster goes as it was said. Nothing else of B
-    # calls a provider: both NLI lines stay `fake`.
+    # name that is not on the roster goes as it was said. Because of step 4
+    # (below), the lines the classifier called `ambiguous` go once more, alone.
+    # Nothing else of B calls a provider.
     #
     # A REAL MEETING NEEDS A PAID KEY, and #392 answered. Nothing in the code
     # can tell a real meeting from a dummy one, or a paid key from a free one.
@@ -102,7 +103,9 @@ x-python: &python
     # comment above it and its line in "Check configuration"). Left required, a
     # deploy without the key is refused although nothing needs it. Turning off
     # only the resolver is its one line: the key and the acknowledgement stay,
-    # because the classifier still needs both.
+    # because the classifier still needs both. Step 4 is its own line too,
+    # further down; while it is `llm` the key and the acknowledgement stay
+    # whatever the classifier is.
     AUTUNE_EXTRACTION_CLASSIFIER_IMPL: llm
     AUTUNE_EXTRACTION_LLM_MODEL: gemini-3.5-flash-lite
     AUTUNE_EXTRACTION_LLM_FALLBACK_MODEL: ""
@@ -133,9 +136,30 @@ x-python: &python
     # TURNING THEM OFF is removing the two lines; nothing else depends on them.
     AUTUNE_EXTRACTION_DAILY_DIGEST: "true"
     AUTUNE_EXTRACTION_WEEKLY_DIGEST: "true"
-    # The NLI implementations scripts/up.sh runs without --real-models, for
-    # the reason it gives: both NLI checkpoints are a private repo (#172).
-    AUTUNE_EXTRACTION_NLI_IMPL: fake
+    # Module B's step 4 is the cloud model on this site (decided by the user,
+    # 2026-10-06: "nli 3.8로 변경"): Gemini 3.8 Flash, named here although it
+    # is the code's default, so this file says what this site asks. No
+    # fallback model: NLI_FALLBACK_MODEL is blank by default.
+    #
+    # Step 4 asks, of each utterance the classifier called `ambiguous`, whether
+    # the speaker promised to do it. An answer can only promote: `entailment`
+    # makes the line a commitment and an action-item card; anything else, an
+    # unreadable answer included, leaves it for the confirmation question.
+    # With `fake` the answer was a keyword rule: a line with "겠습니다" or "할게요"
+    # in it was a promise.
+    #
+    # WHAT LEAVES THIS SERVER because of it: the masked text of those lines --
+    # a handful a meeting, usually one request -- numbered, with the roster's
+    # names replaced, and one fixed sentence of ours. No speaker, id, meeting
+    # or surrounding line. They are lines the classifier above already sent.
+    # Same key (AUTUNE_LLM_API_KEY) and same acknowledgement as the classifier;
+    # the paid-key and real-meeting rule above binds this the same way.
+    #
+    # TURNING IT OFF is putting `fake` back and removing the model line.
+    AUTUNE_EXTRACTION_NLI_IMPL: llm
+    AUTUNE_EXTRACTION_NLI_MODEL: gemini-3.8-flash
+    # Module D's NLI is the one scripts/up.sh runs without --real-models, for
+    # the reason it gives: the checkpoint is a private repo (#172).
     AUTUNE_CONTEXT_NLI_IMPL: fake
     AUTUNE_CONTEXT_EMBEDDER_IMPL: kure_v1_local
     AUTUNE_CONTEXT_RERANKER_IMPL: bge_reranker_v2_m3_ko_local
