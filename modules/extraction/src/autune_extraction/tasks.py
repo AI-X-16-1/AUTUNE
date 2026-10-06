@@ -1063,7 +1063,8 @@ def ask_confirmations() -> list[str]:
     ids asked about.
 
     What is asked is ``service.confirmations_to_ask``: not yet asked, recorded
-    inside ``CONFIRMATION_TIMEOUT``, by an identified, consenting speaker. The
+    inside ``CONFIRMATION_TIMEOUT``, by an identified, consenting speaker who
+    is on the meeting's team now. The
     DM goes to that speaker only, through the team's Slack bot, to the Slack
     account they linked (#255, #478); ``send_confirmation_dm`` refuses any
     other recipient. The answer comes back through ``slack.handle_block_action``.

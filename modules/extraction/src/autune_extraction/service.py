@@ -411,6 +411,13 @@ def answer_from_slack(response: ConfirmationResponse) -> None:
     the workspace the meeting's team installed Autune into -- the same "only
     the speaker" the web path checks in ``answer_confirmation`` (#610 review).
     Anything else is logged by id and dropped, like an orphaned click.
+
+    **And when the speaker is still on the meeting's team** (the user,
+    2026-10-07). A DM sent while they were a member stays in their Slack after
+    they leave, buttons and all; "약속입니다" on it would draft an item on a
+    board they can no longer open. The web refuses the same act with its 404
+    (``require_readable_meeting``); here the click is dropped, which is all a
+    click that does not count ever gets -- the message does not change.
     """
     with session_scope() as session:
         allowed = _clicked_by_the_speaker(session, response)
@@ -435,7 +442,9 @@ def _clicked_by_the_speaker(session: Session, response: ConfirmationResponse) ->
     ):
         return False
     team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == row.meeting_id))
-    slack = load_integration(session, team_id, "slack") if team_id else None
+    if not team_id or not _is_team_member(session, user_id=speaker, team_id=team_id):
+        return False
+    slack = load_integration(session, team_id, "slack")
     return (
         slack is not None
         and bool(response.workspace_id)
@@ -4320,6 +4329,16 @@ def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> li
     speaker and nobody else (``send_confirmation_dm``), so a line with no
     account behind it has nobody to go to: it waits, and is asked if the
     speaker is identified inside the window (#360).
+
+    **And the speaker is on the meeting's team now** (the user, 2026-10-07).
+    The question goes out through that team's Slack bot and links to a meeting
+    only its members can open, and its answer writes to that team's board.
+    Somebody who has left keeps their participant row and their ``user_id`` on
+    it (#552), so the speaker link alone would still find them -- for a
+    question recorded just before they left, or one a later run of the meeting
+    records. Their row is left as it is, not asked: the team sees it
+    unanswered, the same as for a speaker who never linked Slack. Reminders
+    and digests make the same test of an assignee (``_open_items_of``).
     """
     moment = now or datetime.now(UTC)
     rows = session.execute(
@@ -4333,6 +4352,13 @@ def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> li
         .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
         .join(Participant, Participant.id == Utterance.participant_id)
         .join(User, User.id == Participant.user_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == Participant.user_id,
+            ),
+        )
         .where(
             ExtConfirmation.sent_at.is_(None),
             ExtConfirmation.created_at >= moment - CONFIRMATION_TIMEOUT,
