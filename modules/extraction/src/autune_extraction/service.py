@@ -107,7 +107,8 @@ from .pipeline.base import (
     Resolution,
     ResolutionRequest,
 )
-from .pipeline.related import related_ids
+from .pipeline.llm import CONTEXT_LINES
+from .pipeline.related import drawn_on, related_ids
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
@@ -2876,6 +2877,16 @@ def resolve_commitment_references(
     }
 
 
+def _written(classified: Sequence[ClassifiedUtterance], index: int) -> Resolution:
+    """The line the classifier wrote for ``classified[index]``, with the lines
+    it took a word from: those among the ``CONTEXT_LINES`` said just before --
+    the lines its summary was checked against -- that hold a word the summary
+    has and the line itself does not (``related.drawn_on``)."""
+    entry = classified[index]
+    before = [(u.id, u.text) for u in classified[max(0, index - CONTEXT_LINES) : index] if u.text]
+    return Resolution(entry.summary, tuple(drawn_on(entry.summary, entry.text, before)))
+
+
 def resolve_commitment_summaries(
     resolver: ReferenceResolver,
     classified: Sequence[ClassifiedUtterance],
@@ -2902,9 +2913,14 @@ def resolve_commitment_summaries(
     """
     # A commitment the classifier already wrote a line for is not asked about
     # again: the line came with the label, in the request that read the turn
-    # (``Prediction.summary``, the user, 2026-10-06). It cites nothing -- the
-    # classifier does not say which lines it drew on.
-    written = {u.id: Resolution(u.summary) for u in classified if u.kind is kind and u.summary}
+    # (``Prediction.summary``, the user, 2026-10-06). The classifier does not
+    # say which lines it drew on, so that is read off the line itself
+    # (``_written``).
+    written = {
+        u.id: _written(classified, index)
+        for index, u in enumerate(classified)
+        if u.kind is kind and u.summary
+    }
     commitments = [u for u in classified if u.kind is kind and u.id not in written]
     if not commitments:
         return written
@@ -2965,7 +2981,8 @@ def resolve_decision_summaries(
     (``Prediction.summary``, 2026-10-06) is the write-up of every decision whose
     substance has one -- whether or not its settling turn already said what was
     decided, and whatever the resolver is: the owner asked for each decision as
-    one line. It cites no lines. **Otherwise a resolver that can cite**
+    one line. The lines it took a word from are its citations
+    (``related.drawn_on``). **Otherwise a resolver that can cite**
     (``resolve_with_evidence``) writes one, and only for a decision whose
     settling turn does not say what was decided (``decisions.needs_write_up``);
     for any other this has no entry and the decision keeps the assembled,
@@ -2989,9 +3006,9 @@ def resolve_decision_summaries(
     )
     # A decision whose substance the classifier already wrote a line for has
     # its write-up: no request, whatever the resolver is (``Prediction.summary``).
-    line_of = {u.id: u.summary for u in classified if u.summary}
+    line_of = {u.id: index for index, u in enumerate(classified) if u.summary}
     written = {
-        id_: Resolution(line_of[group.substance_id])
+        id_: _written(classified, line_of[group.substance_id])
         for id_, group in found
         if group.substance_id in line_of
     }
