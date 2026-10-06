@@ -1,10 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { listTeams } from "../api";
-import { onTeamChosen, rememberTeam, teamToOpen } from "../selectedTeam";
+import {
+  onTeamChosen,
+  onTeamsChanged,
+  rememberTeam,
+  teamToOpen,
+  teamsToList,
+} from "../selectedTeam";
 import type { TeamSummary } from "../types";
+
+import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
 
 /**
  * The team a person is looking at, chosen from the sidebar (the user,
@@ -17,18 +26,54 @@ import type { TeamSummary } from "../types";
  * `rememberTeam`, which every mounted `TeamScope` follows at once; picking one
  * in a row moves the mark here.
  *
- * The rows stay where they are, and pinning stays in them: this lists and
- * chooses, in the order `GET /teams` gives (pinned first). A row that pins or
- * unpins reorders itself; this keeps the order it loaded with until the next
- * load.
- *
  * One team: its name, with nothing to choose. None, or a list that could not
  * be read: nothing -- the screens say so themselves, and a sidebar that
  * showed an error on every page would say it louder than it deserves.
+ *
+ * **At most three teams are listed** (the user: "팀 고정한거 포함해서 3개만").
+ * They are the first three of the order `GET /teams` gives, so pinned teams
+ * -- of which a person may have three -- come before any other and fill the
+ * list when there are three of them. A sidebar is on every screen and a long
+ * list there pushes the menu below it out of reach. The team being looked at
+ * is always one of the three (`teamsToList`); that part is ours to decide.
+ *
+ * **"더보기" under them opens every team in a small window** (the user:
+ * "누르면 남은 팀들 보이게", "사이드바에 직접 늘리지 말고 작은 화면 띄워서",
+ * and, with the home screen's row, "맨위 고정도 거기로 이동"). The sidebar
+ * does not grow, so nothing under the team section moves. The window lists
+ * all of a person's teams -- the three here among them -- because it is also
+ * where a team is pinned, and a pinned team is one of these three
+ * (`TeamsWindow`). It is offered to anybody on more than one team.
+ *
+ * **Inside a meeting, another team pressed here goes to that team's
+ * meetings** (the user: "회의 상태에서 사이드바에 다른 팀 누르면 해당 팀의
+ * 회의로 이동"). A meeting's own screens show one team's meeting and have no
+ * row that could follow the choice, so the page used to stay on a meeting of
+ * the team just left. Now the choice is kept and the app goes to the home
+ * screen showing that team (`/?team=`). The team already marked does nothing
+ * new, as before.
+ *
+ * Not on "회의 시작" (`/meetings/new`): a recording or an upload may be in
+ * progress there, and a press in the sidebar must not drop it. There the
+ * choice changes and the page stays, as it did. Whether to ask first and go
+ * is the module owner's to settle. On a meeting's review screens the move is
+ * what any other sidebar entry already does.
  */
+
+/** A meeting's own screens: `/meetings/<id>` and its tabs, never "회의 시작". */
+function insideAMeeting(pathname: string | null): boolean {
+  return (
+    pathname !== null && pathname.startsWith("/meetings/") && !pathname.startsWith("/meetings/new")
+  );
+}
+
 export function TeamMenu() {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
+  const [at, setAt] = useState<Place | null>(null);
+  const pathname = usePathname();
+  const router = useRouter();
+  const control = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let current = true;
@@ -45,6 +90,10 @@ export function TeamMenu() {
   }, []);
 
   useEffect(() => onTeamChosen(setTeamId), []);
+  // A pin made anywhere on the page reorders this list too.
+  useEffect(() => onTeamsChanged<TeamSummary>(setTeams), []);
+
+  const close = useCallback(() => setAt(null), []);
 
   if (teams.length === 0) return null;
 
@@ -68,17 +117,23 @@ export function TeamMenu() {
       </div>
     );
 
+  const choose = (chosenId: string) => {
+    const another = chosenId !== teamId;
+    rememberTeam(chosenId);
+    if (another && insideAMeeting(pathname)) router.push(`/?team=${encodeURIComponent(chosenId)}`);
+  };
+
   return (
     <nav aria-label="팀" className="flex flex-col">
       {heading}
-      {teams.map((team) => {
+      {teamsToList(teams, teamId).map((team) => {
         const chosen = team.team_id === teamId;
         return (
           <button
             key={team.team_id}
             type="button"
             aria-pressed={chosen}
-            onClick={() => rememberTeam(team.team_id)}
+            onClick={() => choose(team.team_id)}
             className={
               chosen
                 ? "truncate rounded-[var(--radius)] bg-[var(--color-accent-selection)] text-left text-[var(--color-accent-hover)]"
@@ -94,6 +149,36 @@ export function TeamMenu() {
           </button>
         );
       })}
+      <button
+        ref={control}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={at !== null}
+        aria-controls="teams-window"
+        aria-label="팀 더보기"
+        onClick={() =>
+          setAt((open) =>
+            open === null && control.current ? besideSidebar(control.current, teams.length) : null,
+          )
+        }
+        className="text-left text-[var(--color-ink-muted)] hover:text-[var(--color-ink-strong)]"
+        style={{ fontSize: "var(--text-metaSmall)", fontWeight: 500, padding: "6px 0" }}
+      >
+        더보기
+      </button>
+      {at !== null ? (
+        <TeamsWindow
+          teams={teams}
+          teamId={teamId}
+          at={at}
+          opener={control}
+          onChoose={(chosenId) => {
+            choose(chosenId);
+            close();
+          }}
+          onClose={close}
+        />
+      ) : null}
     </nav>
   );
 }

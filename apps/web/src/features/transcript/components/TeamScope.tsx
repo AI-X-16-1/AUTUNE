@@ -6,7 +6,13 @@ import { ApiError } from "@/shared/api/client";
 import { Button, ChipToggle } from "@/shared/ui";
 
 import { listTeams, pinTeam, unpinTeam } from "../api";
-import { onTeamChosen, rememberTeam, teamToOpen } from "../selectedTeam";
+import {
+  announceTeams,
+  onTeamChosen,
+  onTeamsChanged,
+  rememberTeam,
+  teamToOpen,
+} from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
 /**
@@ -49,7 +55,8 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
     setPinProblem(null);
     try {
       // The answer is the list in its new order; the team on screen stays.
-      setTeams(await (team.pinned ? unpinTeam(team.team_id) : pinTeam(team.team_id)));
+      // Told to every list of teams on the page, this one among them.
+      announceTeams(await (team.pinned ? unpinTeam(team.team_id) : pinTeam(team.team_id)));
     } catch (caught) {
       setPinProblem(
         caught instanceof ApiError && caught.code === "too_many_pinned_teams"
@@ -80,6 +87,9 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
   // A team chosen elsewhere on the page -- the sidebar's menu -- is this
   // screen's team at once. The row's own click goes the same way round.
   useEffect(() => onTeamChosen(setTeamId), []);
+  // A pin made here, in the sidebar's window or in another row reorders this
+  // list; the team on screen stays.
+  useEffect(() => onTeamsChanged<TeamSummary>(setTeams), []);
 
   const muted = { fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" } as const;
 
