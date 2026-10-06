@@ -31,6 +31,7 @@ authenticated route and is not offered to any agent.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -334,6 +335,98 @@ def meeting_report_correction(
         summary="게시될 리포트 수정본입니다.",
         items=[{"title": header, "body": body, "score": 1.0, "id": meeting_id}],
     )
+
+
+_LIST_BODY_CHARS = 120
+_REPORT_BODY_CHARS = 1500
+"""Per-tool budgets (spec section 4, "Tool contracts"): the ask loop's 80-character
+cut would halve a report, so E's tools cut their own."""
+
+
+def _report_item(read: Any, draft_id: str | None, held: Any, body: str) -> dict[str, Any]:
+    status = "posted" if read.status == "posted" else "draft"
+    return {
+        "title": read.title,
+        "body": body,
+        "score": 1.0,
+        "id": read.meeting_id,
+        "meeting_id": read.meeting_id,
+        "status": status,
+        "draft_id": draft_id,
+        "editor": read.edited_by_name,
+        "date": held.astimezone(service._KST).date().isoformat(),
+        "correction": read.correction_status,
+    }
+
+
+def meeting_reports(
+    session: Session,
+    team_id: str,
+    since: str | None = None,
+    until: str | None = None,
+    title_contains: str | None = None,
+    limit: int = MAX_ITEMS,
+) -> dict[str, Any]:
+    """Use this to find a team's meeting reports by date or title, or to say
+    whether one is posted. Do not use it for a report's text -- that is
+    ``meeting_report_body``.
+
+    ``since`` and ``until`` are Korean dates (YYYY-MM-DD), both inclusive.
+    Returns up to five, newest first, each with its meeting id, date, status
+    (draft or posted), the member who edited it and the correction state.
+    """
+    try:
+        start = date.fromisoformat(since) if since else None
+        end = date.fromisoformat(until) if until else None
+    except ValueError:
+        return _refused("bad date", "날짜는 YYYY-MM-DD로 주세요.")
+    rows = service.team_meeting_reports(
+        session,
+        team_id,
+        since=start,
+        until=end,
+        title_contains=title_contains,
+        limit=max(1, min(limit, MAX_ITEMS)) + 1,
+    )
+    items = [
+        _report_item(
+            read,
+            draft_id,
+            held,
+            f"{held.astimezone(service._KST):%m/%d} · "
+            + ("게시됨" if read.status == "posted" else "초안")
+            + (f" · {read.edited_by_name} 수정" if read.edited_by_name else ""),
+        )
+        for read, draft_id, held in rows
+    ]
+    for item in items:
+        item["body"] = item["body"][:_LIST_BODY_CHARS]
+    if not items:
+        return _result(summary="조건에 맞는 회의 리포트가 없습니다.", items=[])
+    shown = max(1, min(limit, MAX_ITEMS))
+    result = _result(summary=f"회의 리포트 {min(len(items), shown)}건입니다.", items=items[:shown])
+    result["truncated"] = len(items) > shown
+    return result
+
+
+def meeting_report_body(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Use this to show one meeting's report text. Do not use it to find a
+    meeting -- that is ``meeting_reports``.
+
+    Returns the report as one item: its header, its body cut to 1,500
+    characters, its status, its ``draft_id`` and the member who edited it.
+    No item when the meeting has no report yet.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+    for read, draft_id, held in service.team_meeting_reports(session, team_id, limit=200):
+        if read.meeting_id == meeting_id:
+            body = f"{read.body}\n{read.footer}".strip()[:_REPORT_BODY_CHARS]
+            return _result(
+                summary="회의 리포트입니다.", items=[_report_item(read, draft_id, held, body)]
+            )
+    return _result(summary="이 회의에는 아직 리포트가 없습니다.", items=[])
 
 
 TOOLS = [

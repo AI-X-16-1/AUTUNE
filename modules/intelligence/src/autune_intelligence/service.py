@@ -1934,24 +1934,54 @@ def _report_read(
     )
 
 
+def team_meeting_reports(
+    session: Session,
+    team_id: str,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+    title_contains: str | None = None,
+    limit: int = MEETING_REPORTS_SHOWN,
+) -> list[tuple[MeetingReportRead, str | None, datetime]]:
+    """The team's reports, newest meeting first, each with its ``draft_id`` and
+    when its meeting was held. No membership check: the dashboard route checks
+    the person, the agent's Toolbox binds the team (``RUN_SCOPE``).
+
+    ``since`` and ``until`` are Korean dates, both inclusive, as a person says
+    "yesterday" (``_KST``). ``title_contains`` matches the meeting's title.
+    """
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    editor_user = aliased(User)
+    corrector_user = aliased(User)
+    query = (
+        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name, held)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
+        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
+        .where(IntelMeetingReport.team_id == team_id)
+    )
+    if since is not None:
+        query = query.where(held >= datetime.combine(since, datetime.min.time(), tzinfo=_KST))
+    if until is not None:
+        end = datetime.combine(until + timedelta(days=1), datetime.min.time(), tzinfo=_KST)
+        query = query.where(held < end)
+    if title_contains:
+        query = query.where(Meeting.title.contains(title_contains, autoescape=True))
+    rows = session.execute(
+        query.order_by(held.desc(), IntelMeetingReport.meeting_id.desc()).limit(limit)
+    ).all()
+    return [
+        (_report_read(row, editor, corrector), row.draft_id, at)
+        for row, editor, corrector, at in rows
+    ]
+
+
 def list_meeting_reports(
     session: Session, team_id: str, *, user_id: str
 ) -> list[MeetingReportRead]:
     """The team's latest reports, newest meeting first, for one of its members."""
     require_team_member(session, user_id=user_id, team_id=team_id)
-    held = func.coalesce(Meeting.started_at, Meeting.created_at)
-    editor_user = aliased(User)
-    corrector_user = aliased(User)
-    rows = session.execute(
-        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name)
-        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
-        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
-        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
-        .where(IntelMeetingReport.team_id == team_id)
-        .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
-        .limit(MEETING_REPORTS_SHOWN)
-    ).all()
-    return [_report_read(row, editor, corrector) for row, editor, corrector in rows]
+    return [read for read, _, _ in team_meeting_reports(session, team_id)]
 
 
 def edit_meeting_report(
