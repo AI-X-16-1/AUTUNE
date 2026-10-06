@@ -695,20 +695,30 @@ def reextract_consent_changes() -> list[str]:
     Every ten minutes because a consent attestation is a person on a screen,
     and a run that finds nothing changed is two queries. Safe to overlap: two
     runs that see the same change both extract, and the second writes what the
-    first did. One meeting failing does not stop the rest -- its row still
-    disagrees, so the next run tries it again -- **except a privacy violation**,
-    which is raised once the others are done, ids only, as C's sweep does.
+    first did. One meeting failing does not stop the rest. Its failure is
+    counted, and from then on the meeting is ``retry_failed_extractions``'s:
+    two more attempts, and after the third no sweep tries it again until a
+    person asks ("다시 추출") and that run goes through. **A privacy violation
+    is counted too, and raised** once the others are done, ids only, as C's
+    sweep does.
     """
     with session_scope() as session:
         changed = service.meetings_with_changed_consent(session)
+        # A meeting with a failure on record is ``retry_failed_extractions``'s
+        # while it has tries left and nobody's after the third (the user,
+        # 2026-10-06: the automatic attempts stop at three). Its row here goes
+        # on disagreeing, so this would otherwise try it every ten minutes for
+        # good, beside the sweep that counts.
+        failing = attempts.failing(session, changed)
 
     done: list[str] = []
     violations: list[str] = []
     for meeting_id in changed:
+        if meeting_id in failing:
+            continue
         try:
-            with session_scope() as session:
-                utterances = service.stored_transcript(session, meeting_id)
-            _extract(meeting_id, utterances)
+            # Counted when it raises, like the event's own run.
+            reextract_meeting(meeting_id)
         except PrivacyViolationError:
             violations.append(meeting_id)
             continue
@@ -849,9 +859,11 @@ def retry_failed_extractions() -> list[str]:
     through.
 
     A provider that was down for a minute costs a meeting ten minutes, not its
-    result. The first failure is the event's; this makes the second and third
-    attempts, ten minutes apart, and stops (the user, 2026-10-06: three in
-    all). A failure that repeats every time -- a refusal by the outbound
+    result. The first failure is the event's -- or the consent sweep's, or a
+    person's request; this makes the second and third attempts, ten minutes
+    apart or a little more (``attempts.RETRY_HOLD``), five meetings a sweep at
+    most, and stops (the user, 2026-10-06: three in all, and after them no
+    automatic attempt of any kind). A failure that repeats every time -- a refusal by the outbound
     check, a bug -- is spent in twenty minutes and then said, in the team's
     channel and on the meeting's 액션 tab, instead of being retried for good.
 
@@ -872,6 +884,12 @@ def retry_failed_extractions() -> list[str]:
     done: list[str] = []
     violations: list[str] = []
     for meeting_id in due:
+        # Held just before its run: a sweep that started while this one was
+        # still working passes over what this one has taken, and this one over
+        # what that one has.
+        with session_scope() as session:
+            if not attempts.claim_retry(session, meeting_id):
+                continue
         try:
             reextract_meeting(meeting_id)
         except PrivacyViolationError:
