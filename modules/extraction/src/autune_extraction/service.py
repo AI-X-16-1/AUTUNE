@@ -2648,6 +2648,8 @@ def classify_utterances(
             text=utterance.text,
             speaker=utterance.speaker,
             pieces=prediction.pieces,
+            summary=prediction.summary,
+            piece_summaries=prediction.piece_summaries,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -2898,9 +2900,14 @@ def resolve_commitment_summaries(
     ``kind`` names which utterances are summarised; ``confirmed_summaries`` marks
     the agreements their speakers confirmed and passes that mark.
     """
-    commitments = [u for u in classified if u.kind is kind]
+    # A commitment the classifier already wrote a line for is not asked about
+    # again: the line came with the label, in the request that read the turn
+    # (``Prediction.summary``, the user, 2026-10-06). It cites nothing -- the
+    # classifier does not say which lines it drew on.
+    written = {u.id: Resolution(u.summary) for u in classified if u.kind is kind and u.summary}
+    commitments = [u for u in classified if u.kind is kind and u.id not in written]
     if not commitments:
-        return {}
+        return written
 
     cites = callable(getattr(resolver, "resolve_with_evidence", None))
     lines = [(u.id, u.text) for u in classified if u.text]
@@ -2934,7 +2941,7 @@ def resolve_commitment_summaries(
         resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
     else:
         resolved = [Resolution(text) for text in resolver.resolve(requests)]
-    return dict(zip((u.id for u in commitments), resolved, strict=True))
+    return written | dict(zip((u.id for u in commitments), resolved, strict=True))
 
 
 def decision_day(session: Session, meeting_id: str) -> date | None:
@@ -2969,17 +2976,22 @@ def resolve_decision_summaries(
     to ``related.MAX_RELATED`` more from elsewhere in the meeting. It writes what
     was decided and says which numbered lines it used.
     """
+    found = identified(
+        meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
+    )
+    # A decision whose substance the classifier already wrote a line for has
+    # its write-up: no request, whatever the resolver is (``Prediction.summary``).
+    line_of = {u.id: u.summary for u in classified if u.summary}
+    written = {
+        id_: Resolution(line_of[group.substance_id])
+        for id_, group in found
+        if group.substance_id in line_of
+    }
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
-        return {}
-    groups = [
-        (id_, group)
-        for id_, group in identified(
-            meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
-        )
-        if needs_write_up(group)
-    ]
+        return written
+    groups = [(id_, group) for id_, group in found if id_ not in written and needs_write_up(group)]
     if not groups:
-        return {}
+        return written
 
     lines = [(u.id, u.text) for u in classified if u.text]
     said = dict(lines)
@@ -3007,7 +3019,7 @@ def resolve_decision_summaries(
         )
         keys.append(id_)
     resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
-    return dict(zip(keys, resolved, strict=True))
+    return written | dict(zip(keys, resolved, strict=True))
 
 
 def source_digest(texts: Sequence[str]) -> str:
