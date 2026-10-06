@@ -2,19 +2,21 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui/Button";
+import { ChipToggle } from "@/shared/ui/ChipToggle";
 import { Row } from "@/shared/ui/Row";
 import { StatusDot } from "@/shared/ui/StatusDot";
 
 import { listTeams } from "../api";
 import { meetingDate } from "../format";
 import { useMeetings, type MeetingsState } from "../hooks/useMeetings";
+import { onTeamChosen, onTeamsChanged, rememberTeam, teamsToList } from "../selectedTeam";
 import { STATUS_DOT, STATUS_LABEL, isBeingRecorded } from "../status";
-import type { MeetingSummary } from "../types";
+import type { MeetingSummary, TeamSummary } from "../types";
 
-import { TeamScope } from "./TeamScope";
+import { below, TeamsWindow, type Place } from "./TeamsWindow";
 
 /**
  * S05, the front door — every meeting this person can see, newest first.
@@ -39,14 +41,36 @@ import { TeamScope } from "./TeamScope";
  * slot: one link per row, nothing nested inside it, and the target is the
  * screen that decides what to draw.
  *
- * **One team at a time** (the user, 2026-10-05). Somebody on several teams
- * saw every team's meetings in one list, with nothing on a row to say whose
- * it was. `TeamScope` -- the row of team chips the dashboard, decisions and
- * gaps screens already sit under -- now sits above this list too: the first
- * team (a pinned one, if they pinned any) is shown, and the list is that
- * team's (`GET /meetings?team_id=`). Somebody on one team sees no row and the
- * same list as before. There is no "all teams" view: a team is always chosen,
- * as on those screens.
+ * **Every team's latest, then a team's own** (the user, 2026-10-06: "홈에는
+ * 모든 팀의 최근 회의 5개가 보이고", "팀을 누르면 팀의 최근 회의가 보이게").
+ * Home opens on the five most recent meetings across all of a person's teams
+ * (`GET /meetings` with no team -- module A's own read, whose membership join
+ * is the authorisation, so a team they are not on cannot be in it). Pressing
+ * a team shows that team's meetings, all of them, as before
+ * (`GET /meetings?team_id=`); "전체" goes back. This replaces the 2026-10-05
+ * rule of one team at a time: what was wrong then was one long list of every
+ * team's meetings with no way to narrow it.
+ *
+ * A row in the all-teams list does not say which team a meeting is of: a
+ * meeting's summary has four fields and a team is not one of them. Adding it
+ * is module A's to decide.
+ *
+ * **The row shows three teams and "더보기"** (the user, the same day: "팀목록
+ * 3개만 나오게 하고 옆에 더보기를 배치 사이드바 팀의 더보기 화면으로 이동 맨위
+ * 고정도 거기로 이동"). The three are the sidebar's three (`teamsToList`);
+ * "더보기" opens the same small window the sidebar opens (`TeamsWindow`),
+ * which lists every team and is where a team is pinned -- so this row has no
+ * pin button. The other team-level screens keep their own rows as they were.
+ *
+ * **Which team is shown is in the address** (`/?team=`), not only in this
+ * component: a reload shows the same team, and the sidebar's move out of a
+ * meeting's screen arrives here already naming the team it pressed. With no
+ * team named, every team. A team pressed here is also the kept choice
+ * (`rememberTeam`), so the sidebar marks it and the next team-level screen
+ * opens on it; "전체" changes what this screen shows and leaves that choice
+ * alone, since the other screens always need one team.
+ *
+ * Somebody on one team sees no row and that team's list, as before.
  *
  * S05 in the spec is more than this: a next-meeting block, "things for me",
  * unresolved gaps, retention countdowns. Three of those four are other
@@ -62,14 +86,146 @@ export function HomeScreen() {
     // one primary action ("회의 시작"), so the screen opens straight on its
     // first section, as S05 does.
     <main style={{ padding: "var(--space-24) var(--space-page)" }}>
-      <TeamScope>{(teamId) => <TeamMeetings teamId={teamId} />}</TeamScope>
+      <HomeTeams />
     </main>
   );
 }
 
-/** One team's meetings: the list, or the first-meeting screen when it has none. */
-function TeamMeetings({ teamId }: { teamId: string }) {
-  const state = useMeetings(teamId);
+/** How many meetings the all-teams view lists (the user, 2026-10-06). */
+const RECENT = 5;
+
+const MUTED = { fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" } as const;
+
+/** The row of teams, and under it the meetings of the one shown -- or of all. */
+function HomeTeams() {
+  const [teams, setTeams] = useState<TeamSummary[] | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  // `null` is every team.
+  const [teamId, setTeamId] = useState<string | null>(null);
+  const [at, setAt] = useState<Place | null>(null);
+  const more = useRef<HTMLSpanElement>(null);
+
+  const show = useCallback((id: string | null) => {
+    setTeamId(id);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      id === null ? "/" : `/?team=${encodeURIComponent(id)}`,
+    );
+  }, []);
+
+  useEffect(() => {
+    let current = true;
+    listTeams()
+      .then((list) => {
+        if (!current) return;
+        setTeams(list);
+        // Named in the address: by a reload, or by the sidebar's move out of
+        // a meeting's screen. Whether it is one of their teams is asked once,
+        // where the team is used (`shown` below).
+        const asked = new URLSearchParams(window.location.search).get("team");
+        if (asked !== null) setTeamId(asked);
+      })
+      .catch((caught: unknown) => {
+        if (current)
+          setFailed(caught instanceof Error ? caught.message : "팀 목록을 불러오지 못했습니다.");
+      });
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  // A team chosen anywhere on the page -- this row, the window, the sidebar --
+  // is the team shown here.
+  useEffect(() => onTeamChosen(show), [show]);
+  useEffect(() => onTeamsChanged<TeamSummary>(setTeams), []);
+
+  const close = useCallback(() => setAt(null), []);
+
+  if (failed !== null)
+    return (
+      <p role="alert" style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-critical)" }}>
+        {failed}
+      </p>
+    );
+  if (teams === null) return <p style={MUTED}>팀을 불러오는 중입니다…</p>;
+  if (teams.length === 0) return <p style={MUTED}>속한 팀이 없습니다.</p>;
+  const only = teams.length === 1 ? teams[0] : undefined;
+  if (only !== undefined) return <Meetings teamId={only.team_id} />;
+
+  // A team that is not in the list -- never theirs, or left since the
+  // address was made or the choice was kept -- shows every team: it is not
+  // asked for, so there is no answer about a team they may not read.
+  const shown = teamId !== null && teams.some((team) => team.team_id === teamId) ? teamId : null;
+
+  return (
+    <>
+      <div
+        role="group"
+        aria-label="팀"
+        className="flex flex-wrap items-center gap-1.5"
+        style={{ marginBottom: "var(--space-16)" }}
+      >
+        <ChipToggle selected={shown === null} onClick={() => show(null)}>
+          전체
+        </ChipToggle>
+        {teamsToList(teams, shown).map((team) => (
+          <ChipToggle
+            key={team.team_id}
+            selected={team.team_id === shown}
+            onClick={() => rememberTeam(team.team_id)}
+          >
+            {team.pinned ? `${team.name} · 고정` : team.name}
+          </ChipToggle>
+        ))}
+        <span ref={more}>
+          <Button
+            tone="text"
+            size="compact"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded={at !== null}
+            aria-controls="teams-window"
+            aria-label="팀 더보기"
+            onClick={() =>
+              setAt((open) =>
+                open === null && more.current ? below(more.current, teams.length) : null,
+              )
+            }
+          >
+            더보기
+          </Button>
+        </span>
+        {at !== null ? (
+          <TeamsWindow
+            teams={teams}
+            teamId={shown}
+            at={at}
+            opener={more}
+            onChoose={(chosenId) => {
+              rememberTeam(chosenId);
+              close();
+            }}
+            onClose={close}
+          />
+        ) : null}
+      </div>
+      <Meetings teamId={shown ?? undefined} />
+    </>
+  );
+}
+
+/**
+ * The meetings under the row: one team's, or with no team the latest `RECENT`
+ * of every team the person is on. The first-meeting screen when there are none.
+ */
+function Meetings({ teamId }: { teamId?: string }) {
+  const answer = useMeetings(teamId);
+  const every = teamId === undefined;
+  const state: MeetingsState =
+    every && answer.status === "ready"
+      ? { status: "ready", meetings: answer.meetings.slice(0, RECENT) }
+      : answer;
 
   // S03 replaces the list, not the team row above it: with no meetings there
   // is no "최근 회의" to title and the first upload is the subject -- but
@@ -91,9 +247,10 @@ function TeamMeetings({ teamId }: { teamId: string }) {
             fontWeight: "var(--text-heading-weight)",
           }}
         >
-          최근 회의
+          {every ? "모든 팀의 최근 회의" : "최근 회의"}
         </h1>
-        {state.status === "ready" && state.meetings.length > 0 && (
+        {/* A count of one team's meetings; of "the latest five" it would only say five. */}
+        {!every && state.status === "ready" && state.meetings.length > 0 && (
           <span
             className="text-[var(--color-ink-muted)]"
             style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-label)", fontWeight: 500 }}
