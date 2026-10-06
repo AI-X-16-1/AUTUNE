@@ -62,6 +62,7 @@ from autune_integrations import (
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import (
+    attempts,
     calendar_sync,
     days_off,
     jira_sync,
@@ -142,6 +143,12 @@ def on_transcript_ready(payload: dict) -> None:
     (``decisions.decision_id``), and module A mints new ``utt_`` ids whenever it
     reprocesses a recording (#194), so D has to hear the ids that are now in the
     table.
+
+    **A run that raises is counted before the error goes on**
+    (``_extract_counted``): ``retry_failed_extractions`` tries the meeting
+    again from the stored transcript, and after ``attempts.MAX_ATTEMPTS``
+    failures in a row the team is told. Celery does not redeliver a task that
+    raised, so without the count the meeting had no second chance.
     """
     transcript = TranscriptReady.model_validate(payload)
     validate_major_version(transcript)
@@ -153,7 +160,7 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
-    _extract(transcript.meeting_id, transcript.utterances)
+    _extract_counted(transcript.meeting_id, transcript.utterances)
 
 
 def _follow_corrections(corrections: service.SourceCorrections) -> None:
@@ -257,6 +264,8 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
+        # With the rows too: only a run that stored its result ends the count.
+        attempts.note_success(session, meeting_id)
         result = service.result_for_meeting(session, meeting_id)
 
     _follow_corrections(corrections)
@@ -714,6 +723,206 @@ def reextract_consent_changes() -> list[str]:
     if violations:
         raise PrivacyViolationError(
             f"unmasked value on re-extraction in {len(violations)} meeting(s): "
+            f"{', '.join(violations)}"
+        )
+    return done
+
+
+def _extract_counted(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None:
+    """``_extract``, with a failure counted before it is raised (``attempts``).
+
+    In a transaction of its own: the run's was rolled back. A count that
+    cannot be written -- the meeting was deleted meanwhile, the database is
+    what failed -- is logged, and the extraction's own error is still the one
+    raised."""
+    try:
+        _extract(meeting_id, utterances)
+    except Exception as exc:
+        try:
+            with session_scope() as session:
+                failures = attempts.note_failure(session, meeting_id, exc)
+        except Exception as unrecorded:  # noqa: BLE001 -- ``exc`` is raised below
+            log.warning(
+                "extraction_failure_not_counted",
+                meeting_id=meeting_id,
+                error=type(unrecorded).__name__,
+            )
+        else:
+            # The class only: the message can carry what was said.
+            log.warning(
+                "extraction_failed",
+                meeting_id=meeting_id,
+                failures=failures,
+                reason=type(exc).__name__,
+            )
+        raise
+
+
+@shared_task(name="autune.extraction.reextract_meeting", acks_late=True)
+def reextract_meeting(meeting_id: str) -> None:
+    """Extract one meeting again from its stored transcript -- a failed run's
+    next try, or the 액션 tab's "다시 추출".
+
+    The event's own run (``_extract``): model rows are replaced, an item list
+    a person has edited is kept (``service.build_action_items``), and
+    ``ExtractionResult`` is published again. A meeting whose lines are all gone
+    by now is extracted to nothing, which is what it holds."""
+    with session_scope() as session:
+        utterances = service.stored_transcript(session, meeting_id)
+    _extract_counted(meeting_id, utterances)
+
+
+def _failure_notice(title: str, board_url: str) -> str:
+    return (
+        f"「{title}」 회의에서 액션 아이템과 결정을 추출하지 못했습니다. "
+        f"{attempts.MAX_ATTEMPTS}번 시도했고, 자동으로는 더 시도하지 않습니다. "
+        f"회의의 액션 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
+    )
+
+
+def _tell_teams() -> list[str]:
+    """One message to the team's Slack channel for each meeting out of tries:
+    its title, the count and a link to its 액션 tab, nothing that was said in
+    it. A team with no channel
+    connected is not told here; the meeting's own screen says it either way.
+
+    Marked told before it is sent and unmarked when the send fails, so two
+    sweeps at once post once. A refusal by the outbound check stays marked --
+    the title would be refused again -- and is raised by the caller."""
+    with session_scope() as session:
+        owed = attempts.owed_notices(session)
+
+    told: list[str] = []
+    refused: list[str] = []
+    for meeting_id in owed:
+        with session_scope() as session:
+            meeting = session.get(Meeting, meeting_id)
+            slack = (
+                load_integration(session, meeting.team_id, "slack") if meeting is not None else None
+            )
+            channel = slack.config.get("channel") if slack is not None else None
+            if meeting is None or slack is None or not slack.secret or not channel:
+                continue
+            if not attempts.claim_notice(session, meeting_id):
+                continue
+            title, secret = meeting.title, slack.secret
+        client = SlackClient(secret)
+        try:
+            client.post_message(
+                str(channel), _failure_notice(title, service.answer_url(meeting_id))
+            )
+        except PrivacyViolationError:
+            refused.append(meeting_id)
+            continue
+        except Exception as exc:  # noqa: BLE001 -- owed again; the next sweep asks
+            log.warning(
+                "extraction_failure_notice_not_sent",
+                meeting_id=meeting_id,
+                reason=type(exc).__name__,
+            )
+            with session_scope() as session:
+                attempts.release_notice(session, meeting_id)
+            continue
+        finally:
+            client.close()
+        told.append(meeting_id)
+    if refused:
+        raise PrivacyViolationError(
+            f"unmasked value in the failure notice of {len(refused)} meeting(s): "
+            f"{', '.join(refused)}"
+        )
+    return told
+
+
+@shared_task(name="autune.extraction.periodic.retry_failed_extractions")
+@periodic(timedelta(minutes=10))
+def retry_failed_extractions() -> list[str]:
+    """Try again every meeting whose extraction failed and has tries left, then
+    tell the teams of those that have none. Returns the meetings that went
+    through.
+
+    A provider that was down for a minute costs a meeting ten minutes, not its
+    result. The first failure is the event's; this makes the second and third
+    attempts, ten minutes apart, and stops (the user, 2026-10-06: three in
+    all). A failure that repeats every time -- a refusal by the outbound
+    check, a bug -- is spent in twenty minutes and then said, in the team's
+    channel and on the meeting's 액션 tab, instead of being retried for good.
+
+    **A meeting with a transcript and no extraction on record is taken for a
+    failed one** (``attempts.adopt_unextracted``): a run that raised before
+    failures were counted, or one lost with a worker a deploy recreated,
+    leaves no row to retry from. Half an hour after its last line was stored,
+    and for a week, the sweep counts it as failed once and tries it.
+
+    One meeting failing does not stop the rest, and its failure is already
+    counted and logged where it happened. **A privacy violation is raised**
+    once the others and the notices are done, ids only, as
+    ``reextract_consent_changes`` does."""
+    with session_scope() as session:
+        adopted = attempts.adopt_unextracted(session)
+        due = attempts.due_for_retry(session)
+
+    done: list[str] = []
+    violations: list[str] = []
+    for meeting_id in due:
+        try:
+            reextract_meeting(meeting_id)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
+        except Exception:  # noqa: BLE001, S112 -- counted and logged by ``_extract_counted``
+            continue
+        done.append(meeting_id)
+
+    told = _tell_teams()
+    log.info(
+        "extraction_failures_swept",
+        adopted=len(adopted),
+        due=len(due),
+        recovered=len(done),
+        told=len(told),
+        violations=len(violations),
+    )
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value on a retried extraction in {len(violations)} meeting(s): "
+            f"{', '.join(violations)}"
+        )
+    return done
+
+
+@shared_task(name="autune.extraction.periodic.run_requested_extractions")
+@periodic(timedelta(minutes=1))
+def run_requested_extractions() -> list[str]:
+    """Run the extractions people asked for with "다시 추출". Returns the
+    meetings that went through.
+
+    The request is a row because the API process cannot queue a task
+    (``sync_after_confirmation``), and an extraction is model inference that
+    belongs in the worker whichever classifier is configured. Every minute: a
+    person is waiting at the screen, and a run with nothing asked is one
+    statement. Each request is taken once -- the flag is cleared as it is
+    read -- so a run that fails is not started again by this task; it is
+    counted like any other failure, and the screen shows it."""
+    with session_scope() as session:
+        asked = attempts.take_requests(session)
+
+    done: list[str] = []
+    violations: list[str] = []
+    for meeting_id in asked:
+        try:
+            reextract_meeting(meeting_id)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
+        except Exception:  # noqa: BLE001, S112 -- counted and logged by ``_extract_counted``
+            continue
+        done.append(meeting_id)
+    if asked:
+        log.info("extraction_requests_run", asked=len(asked), done=len(done))
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value on a requested extraction in {len(violations)} meeting(s): "
             f"{', '.join(violations)}"
         )
     return done

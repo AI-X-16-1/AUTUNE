@@ -407,6 +407,23 @@ class ConfirmationAnswerIn(BaseModel):
     answer: ConfirmationAnswer
 
 
+class ExtractionState(BaseModel):
+    """What a meeting's 액션 tab says about its extraction.
+
+    ``failures`` is how many runs in a row raised; zero is "nothing wrong".
+    ``will_retry`` says the worker tries again by itself, so the screen does
+    not ask a person to. ``requested`` is a "다시 추출" the worker has not
+    started yet. Counts and times only: why a run failed is in the server's
+    log, by the error's class."""
+
+    extracted_at: datetime | None
+    failures: int
+    failed_at: datetime | None
+    will_retry: bool
+    requested: bool
+    requested_at: datetime | None
+
+
 class DueReminderSetting(BaseModel):
     """The caller's own due-date reminders (review of #751).
 

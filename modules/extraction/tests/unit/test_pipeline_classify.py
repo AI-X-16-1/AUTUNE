@@ -44,6 +44,7 @@ from autune_extraction.models import (
     ExtDecisionReview,
     ExtDecisionSource,
     ExtEditEvent,
+    ExtExtractionAttempt,
     ExtExtractionRun,
     ExtMeetingSummary,
     ExtProject,
@@ -74,6 +75,8 @@ TABLES = [
     ExtConfirmation.__table__,
     # Which speech the run read, for the consent sweep (#518).
     ExtExtractionRun.__table__,
+    # The run ends its count of failures, and a failed one is counted.
+    ExtExtractionAttempt.__table__,
     # The run deletes a written summary its lines no longer match (#782 review).
     ExtMeetingSummary.__table__,
 ]

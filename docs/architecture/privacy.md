@@ -440,6 +440,14 @@ the feature needs.
     (`ext_due_reminder_optouts`, which goes with the account); the same
     switch stops Monday's DM of that person's own open items (#792), which
     carries the same things about each item and goes to nobody else either.
+  - **Slack, an extraction that failed:** one message to the channel of
+    the team that held the meeting, once, when B's extraction of a meeting
+    has failed three times in a row (`ext_extraction_attempts`). It carries
+    the meeting's title, the number of attempts and a link to the meeting's
+    액션 tab; no utterance, no name, and not the error -- only the error's
+    class is kept, in B's own table and log. A team with no channel
+    connected gets no message. A message already posted stays in the
+    channel when the meeting is deleted.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
