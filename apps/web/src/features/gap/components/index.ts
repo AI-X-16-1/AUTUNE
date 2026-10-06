@@ -5,4 +5,3 @@ export { GapReportScreen } from "./GapReportScreen";
 export { TeamGapList } from "./TeamGapList";
 export { TemplateRail } from "./TemplateRail";
 export { TopicRanking } from "./TopicRanking";
-export { TopicRelations } from "./TopicRelations";

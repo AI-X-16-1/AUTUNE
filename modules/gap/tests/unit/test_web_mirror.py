@@ -1,11 +1,14 @@
 """The web feature's hand-written mirror of this module's read model.
 
 ``apps/web/src/features/gap/types.ts`` types what ``/api/gap`` returns. The
-contract part (``GapReport`` and what it holds) is generated; the topic graph is
-not, because no generator reads a module's own response bodies — E receives
-``GapReport`` and never draws a graph, which is why that shape is not in
-``packages/contracts``. This file is the tripwire: a field added to or removed
-from the Python side fails here, naming the TypeScript file that has to follow.
+contract part (``GapReport`` and what it holds) is generated; the rail, the
+explanations and the other screen-only bodies are not, because no generator
+reads a module's own response bodies. This file is the tripwire: a field added
+to or removed from the Python side fails here, naming the TypeScript file that
+has to follow.
+
+The topic graph (``TopicGraphRead``) has no mirror: the web no longer draws it,
+and ``GET /api/gap/topics/{meeting_id}`` is there for debugging the pipeline.
 
 The same shape module B uses for ``ActionItemRead``
 (``modules/extraction/tests/unit/test_web_mirror.py``).
@@ -29,9 +32,6 @@ from autune_gap.schemas import (
     TemplateItemRead,
     TemplateRead,
     TemplateSelection,
-    TopicEdgeRead,
-    TopicGraphRead,
-    TopicNodeRead,
 )
 
 TYPES_TS = Path(__file__).resolve().parents[4] / "apps/web/src/features/gap/types.ts"
@@ -44,21 +44,6 @@ def ts_fields(interface: str) -> set[str]:
     assert match, f"{interface} is not declared in {TYPES_TS}"
     body = re.sub(r"/\*.*?\*/", "", match["body"], flags=re.S)
     return set(re.findall(r"^\s*(\w+)\??:", body, flags=re.M))
-
-
-def test_the_web_topic_graph_mirror_is_current() -> None:
-    assert ts_fields("TopicGraph") == set(TopicGraphRead.model_fields), f"update {TYPES_TS}"
-
-
-def test_the_web_topic_node_mirror_is_current() -> None:
-    """``betweenness`` is the field that makes this shape not a contract: the
-    graph carries it and ``autune_contracts.Topic`` does not."""
-    assert ts_fields("TopicNode") == set(TopicNodeRead.model_fields), f"update {TYPES_TS}"
-    assert "betweenness" in ts_fields("TopicNode")
-
-
-def test_the_web_topic_edge_mirror_is_current() -> None:
-    assert ts_fields("TopicEdge") == set(TopicEdgeRead.model_fields), f"update {TYPES_TS}"
 
 
 def test_the_web_template_comparison_mirror_is_current() -> None:

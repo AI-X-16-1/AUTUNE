@@ -11,14 +11,12 @@ import { useGapReport } from "../hooks/useGapReport";
 import { usePollUntilAnalysed } from "../hooks/usePollUntilAnalysed";
 import { useTemplateComparison } from "../hooks/useTemplateComparison";
 import { useTemplates } from "../hooks/useTemplates";
-import { useTopicGraph } from "../hooks/useTopicGraph";
 import { COVERAGE_LABELS } from "../types";
 import type { Coverage, Gap, GapExplanations, TemplateComparison } from "../types";
 import { CoveredList } from "./CoveredList";
 import { GapList } from "./GapList";
 import { TemplateRail } from "./TemplateRail";
 import { TopicRanking } from "./TopicRanking";
-import { TopicRelations } from "./TopicRelations";
 
 type Tab = "gaps" | "topics";
 
@@ -71,22 +69,24 @@ function coverageByGap(
  * order would be module C's screen kept in the team's shared tree. The route
  * mounts this and passes a meeting id.
  *
- * **Three independent reads, three independent states.** The report, the topic
- * graph and the template rail are separate endpoints and separate hooks, so a
- * graph that 404s leaves the gap list on screen and vice versa. The first
- * version gated on both reads at once and then handed each section only its
- * data, which made a graph that was still arriving — the common case, since the
- * requests do not land together — render as "토픽 간 관계가 확인되지
- * 않았습니다". A section that has not loaded and a section that is genuinely
- * empty are different sentences, and only the screen holds what tells them
- * apart. Raised in review of #264.
+ * **Independent reads, independent states.** The report, the template rail and
+ * the explanations are separate endpoints and separate hooks, so a rail that
+ * 404s leaves the gap list on screen and vice versa. A section that has not
+ * loaded and a section that is genuinely empty are different sentences, and
+ * only the screen holds what tells them apart. Raised in review of #264.
  *
  * **The mockup's meeting tab strip (요약 · 액션 · 갭 · 맥락 · 전사) is not
  * here.** That strip belongs to S15, which is assembled from five features;
  * four of its tabs are other modules' screens and this feature may not reach
  * them. What it does carry is the two views module C owns — the findings and
- * the graph behind them — so the tab band sits where the design puts it
+ * the topics behind them — so the tab band sits where the design puts it
  * without any tab on it being a control that cannot work.
+ *
+ * **The 토픽 tab ranks topics and draws no relations.** The list of topic
+ * pairs and how they relate was a developer's view of the graph, not
+ * something a team acts on, so it was taken off the screen. The graph is
+ * still built and stored, and `GET /api/gap/topics/{meeting_id}` still serves
+ * it for anyone debugging the pipeline.
  *
  * **The 갭 tab is split by verdict: 누락, 미흡, 충족.** 누락 and 미흡 are the
  * report's gaps, sorted by the verdict the rail or `/explanations` carries;
@@ -94,14 +94,14 @@ function coverageByGap(
  * While a verdict is still unknown the tab shows the one undivided list, as
  * it did before the split.
  *
- * **A meeting still being analysed is read again until it is not.** The three
+ * **A meeting still being analysed is read again until it is not.** The
  * endpoints answer 200 with nothing for a meeting the pipeline has not reached,
  * so a screen opened straight after an upload would otherwise stay empty until
  * somebody reloaded it. The rail's `analysed` flag decides — see
  * `usePollUntilAnalysed`.
  *
  * **The writes re-read, they do not patch.** Dismissing a gap, taking it back
- * and choosing a template each end in a fresh read of all three sections,
+ * and choosing a template each end in a fresh read of every section,
  * because the server is what decides how a dismissal moves between the list
  * and the rail and what a new checklist raises — see `useGapActions`.
  */
@@ -112,8 +112,6 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
     error: reportError,
     reload: reloadReport,
   } = useGapReport(meetingId);
-  const { graph, loading: graphLoading, error: graphError, reload: reloadGraph } =
-    useTopicGraph(meetingId);
   const {
     comparison,
     loading: railLoading,
@@ -125,10 +123,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
 
   const reloadAll = useCallback(() => {
     void reloadReport();
-    void reloadGraph();
     void reloadRail();
     void reloadExplanations();
-  }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
+  }, [reloadReport, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
   const { pending, failure, dismiss, undoDismiss, carry, undoCarry, choose } =
@@ -301,20 +298,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
               </ReadSection>
             )
           ) : (
-            <div className="flex flex-col" style={{ gap: "var(--space-32)" }}>
-              <ReadSection heading="토픽" data={report} loading={reportLoading} error={reportError}>
-                {(loaded) => <TopicRanking topics={loaded.topics ?? []} />}
-              </ReadSection>
-
-              <ReadSection
-                heading="토픽 관계"
-                data={graph}
-                loading={graphLoading}
-                error={graphError}
-              >
-                {(loaded) => <TopicRelations graph={loaded} />}
-              </ReadSection>
-            </div>
+            <ReadSection heading="토픽" data={report} loading={reportLoading} error={reportError}>
+              {(loaded) => <TopicRanking topics={loaded.topics ?? []} />}
+            </ReadSection>
           )}
         </div>
 
