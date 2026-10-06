@@ -55,6 +55,7 @@ MAX_CALLS_PER_ROUND = 3
 _KST = timezone(timedelta(hours=9))
 
 BODY = "intelligence.meeting_report_body"
+EXPLAIN = "intelligence.explain_metric"
 CHAT_READS = (
     "intelligence.meeting_quality",
     "intelligence.team_trend",
@@ -65,7 +66,7 @@ CHAT_READS = (
     BODY,
     "intelligence.weekly_reports",
     "intelligence.weekly_report_schedule",
-    "intelligence.explain_metric",
+    EXPLAIN,
 )
 CHAT_ACTIONS = ("redraft", "request_post")
 HELD_FOR_862 = ("set_weekly_report_schedule",)
@@ -124,18 +125,19 @@ _SPECS: dict[str, tuple[str, dict[str, Any]]] = {
 }
 
 
+_REQUIRED = {EXPLAIN: ["question"]}
+"""Only what the run cannot fill: ``meeting_id`` comes from a meeting-scoped run."""
+
+
 def declarations(available: set[str] | None = None) -> list[Declaration]:
     out = []
     for name, (description, props) in _SPECS.items():
         if available is not None and name not in CHAT_ACTIONS and name not in available:
             continue
-        out.append(
-            Declaration(
-                name=to_wire(name),
-                description=description,
-                parameters={"type": "OBJECT", "properties": props},
-            )
-        )
+        parameters: dict[str, Any] = {"type": "OBJECT", "properties": props}
+        if name in _REQUIRED:
+            parameters["required"] = _REQUIRED[name]
+        out.append(Declaration(to_wire(name), description, parameters))
     return out
 
 
@@ -224,6 +226,8 @@ class _Turn:
         self.lines: list[str] = []
         self.missing: list[str] = []
         self.done: set[str] = set()
+        self.glossary: set[int] = set()
+        """``id`` of each ``explain_metric`` result in ``results``."""
         self.post_from: str | None = None
         """Who proposed the run's one post: ``"request_post"`` or ``"redraft"``."""
 
@@ -258,7 +262,8 @@ class _Turn:
     def redraft(self, meeting_id: str | None = None) -> ToolResult:
         if "redraft" in self.done:
             return ToolResult(ok=True, summary=ALREADY)
-        self.done.add("redraft")
+        # Marked done only on a terminal outcome: a failed read or compose leaves
+        # a retry (the model may pass the id the first answer asked for).
         own, scoped = self._scope_probe()
         own_id = getattr(own.items[0], "id", None) if own.ok and own.items else None
         body = (
@@ -270,10 +275,12 @@ class _Turn:
             return body
         item = body.items[0] if body.items else None
         if item is not None and getattr(item, "status", None) == "posted":
+            self.done.add("redraft")
             self.lines.append(POSTED)
             return ToolResult(ok=True, summary=POSTED)
         editor = getattr(item, "editor", None) if item is not None else None
         if editor:
+            self.done.add("redraft")
             line = (
                 f"{editor}님이 고친 초안이 있습니다. 대시보드의 회의 리포트 카드에서 고쳐 주세요."
             )
@@ -289,6 +296,7 @@ class _Turn:
         # (#862): propose it only for the run's own meeting.
         own_meeting = scoped and (not meeting_id or meeting_id == own_id)
         draft_id = getattr(item, "draft_id", None) if item is not None else None
+        self.done.add("redraft")
         for proposal in composed.proposed:
             if proposal.tool == DRAFT_ACTION and draft_id:
                 proposal = proposal.model_copy(
@@ -308,6 +316,7 @@ class _Turn:
     def request_post(self, meeting_id: str | None = None) -> ToolResult:
         if "request_post" in self.done:
             return ToolResult(ok=True, summary=ALREADY)
+        # Every outcome below is terminal: a refusal or a redirect is an answer.
         self.done.add("request_post")
         own, scoped = self._scope_probe()
         own_id = getattr(own.items[0], "id", None) if own.ok and own.items else None
@@ -394,6 +403,8 @@ def chat_run(toolbox: Toolbox, request: str, model: ToolModel) -> SubagentState:
             elif c.name in declared:
                 result = turn.read(name, **args)
                 turn.results.append(result)
+                if name == EXPLAIN:
+                    turn.glossary.add(id(result))
             else:
                 # Not a tool this run has: the model is told, the reply is not.
                 result = ToolResult.failure(f"{name} is not available here")
@@ -411,9 +422,12 @@ def chat_run(toolbox: Toolbox, request: str, model: ToolModel) -> SubagentState:
         turns.append({"role": "model", "parts": _echo(getattr(model, "last_parts", None), calls)})
         turns.append({"role": "user", "parts": responses})
     usable = [r for r in turn.results if r.ok]
-    items: list[Finding] = [
-        i for row in zip_longest(*(r.items for r in usable)) for i in row if i is not None
-    ]
+    # The glossary's passages first: the reply keeps five items and a
+    # passage cut off would leave a number unexplained.
+    explained = [r for r in usable if id(r) in turn.glossary]
+    others = [r for r in usable if id(r) not in turn.glossary]
+    items: list[Finding] = [i for r in explained for i in r.items]
+    items += [i for row in zip_longest(*(r.items for r in others)) for i in row if i is not None]
     tail = [f"가져오지 못한 정보가 있습니다: {', '.join(turn.missing)}."] if turn.missing else []
     # Action lines first: the main agent's composer cuts from the end.
     summary = " ".join([*turn.lines, *(r.summary for r in usable), *tail]).strip()

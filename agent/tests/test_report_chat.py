@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -41,6 +42,8 @@ class Script:
 
 class _Session:
     def get(self, _model: object, ident: str) -> Any:
+        if ident == "mtg_missing":
+            return None
         if ident.startswith("mtg_other"):
             return SimpleNamespace(team_id="team_b")
         return SimpleNamespace(team_id=TEAM) if ident.startswith("mtg_") else None
@@ -384,3 +387,112 @@ def test_a_failed_read_is_named_without_its_reason(monkeypatch) -> None:
     )
     assert out.result.summary.endswith("가져오지 못한 정보가 있습니다: team_trend.")
     assert "SECRET-REASON" not in out.result.summary
+
+
+def test_a_failed_redraft_leaves_the_retry_open_in_the_team_view(monkeypatch) -> None:
+    """The refusal asks for ``meeting_id``; the model's retry with it must go through."""
+    model = Script([call("redraft")], [call("redraft", meeting_id=MEETING)])
+    out = _run("다시 써줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
+    assert "이미 요청했습니다" not in out.result.summary
+
+
+def test_a_redraft_of_a_missing_meeting_leaves_the_retry_open(monkeypatch) -> None:
+    model = Script(
+        [call("redraft", meeting_id="mtg_missing")], [call("redraft", meeting_id=MEETING)]
+    )
+    out = _run("다시 써줘", model, _tools(), monkeypatch=monkeypatch)
+    assert [p.tool for p in out.proposed].count(DRAFT_ACTION) == 1
+
+
+def test_a_failed_compose_leaves_the_retry_open(monkeypatch) -> None:
+    real = chat.compose_report
+    calls: list[int] = []
+
+    def flaky(*args: Any, **kwargs: Any) -> Any:
+        calls.append(1)
+        if len(calls) == 1:
+            raise ValueError("boom")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(chat, "compose_report", flaky)
+    model = Script([call("redraft")], [call("redraft")])
+    out = _run("다시 써줘", model, _tools(), monkeypatch=monkeypatch)
+    assert len(calls) == 2
+    assert [p.tool for p in out.proposed].count(DRAFT_ACTION) == 1
+
+
+def test_the_glossary_passages_survive_the_five_item_cap(monkeypatch) -> None:
+    trend = {
+        "ok": True,
+        "summary": "추세.",
+        "items": [{"title": f"추세{n}", "body": ""} for n in range(5)],
+    }
+    explain = {
+        "ok": True,
+        "summary": "설명.",
+        "items": [{"title": f"기준{n}", "body": "나"} for n in range(3)],
+    }
+    tools = _tools()
+    tools["intelligence.team_trend"] = mock_tool("intelligence.team_trend", trend)
+    tools["intelligence.explain_metric"] = mock_tool("intelligence.explain_metric", explain)
+    model = Script(
+        [call("intelligence.team_trend"), call("intelligence.explain_metric", question="a")]
+    )
+    out = _run("왜?", model, tools, monkeypatch=monkeypatch)
+    assert len(out.result.items) == 5
+    assert [i.title for i in out.result.items if i.title.startswith("기준")] == [
+        "기준0",
+        "기준1",
+        "기준2",
+    ]
+
+
+def test_explain_metric_requires_its_question() -> None:
+    by_name = {d.name: d for d in chat.declarations()}
+    assert by_name["intelligence__explain_metric"].parameters["required"] == ["question"]
+    assert all(
+        "required" not in d.parameters for n, d in by_name.items() if "explain_metric" not in n
+    )
+
+
+def test_the_instructions_carry_todays_korean_date(monkeypatch) -> None:
+    """00:30 KST on 10/6 is still 10/5 in UTC."""
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> Any:
+            return datetime(2026, 10, 5, 15, 30, tzinfo=UTC).astimezone(tz)
+
+    monkeypatch.setattr(chat, "datetime", Frozen)
+    told: list[str] = []
+
+    class Recording(Script):
+        def step(self, instructions: str, turns: list[dict[str, Any]], declarations: list[Any]):
+            told.append(instructions)
+            return super().step(instructions, turns, declarations)
+
+    _run("어제 회의 어땠어?", Recording(), _tools(), monkeypatch=monkeypatch)
+    assert told and "2026-10-06" in told[0] and "2026-10-05" not in told[0]
+
+
+def test_a_model_that_raises_still_returns_and_proposes_nothing(monkeypatch) -> None:
+    class Broken:
+        last_parts: list[dict[str, Any]] = []
+
+        def step(self, *_args: Any) -> Any:
+            raise RuntimeError("model down")
+
+    out = _run("다시 써줘", Broken(), _tools(), monkeypatch=monkeypatch)
+    assert out.proposed == []
+    assert out.result.summary == "답할 내용을 찾지 못했습니다. 대시보드에서 확인해 주세요."
+
+
+def test_a_request_that_cannot_be_fitted_ends_the_loop_without_calling_the_model(
+    monkeypatch,
+) -> None:
+    model = Script([call("intelligence.team_trend")])
+    out = _run("가" * 4000, model, _tools(), monkeypatch=monkeypatch)
+    assert model.seen == []
+    assert out.proposed == []
+    assert out.result.summary == "답할 내용을 찾지 못했습니다. 대시보드에서 확인해 주세요."

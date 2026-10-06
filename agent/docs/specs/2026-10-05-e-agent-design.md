@@ -164,7 +164,8 @@ name (`subagents.py`); anything else is chat.
     slot to fill.
   - **Until that lands,** the schedule change is not offered in chat. The
     agent shows the current schedule and links the dashboard card.
-- **Posting from the team view:**
+- **Posting from the team view** (and, per "Changes during implementation", 10,
+  not only there):
   - `queue_l2` supersedes a subagent's earlier proposals by the **run's**
     `meeting_id` (`main/pending.py`). A run scoped to the team has none, so
     each "리포트 올려줘" from the team view would add one more approval card.
@@ -413,10 +414,12 @@ The sections above are left as designed; each affected one points here.
    "이미 요청했습니다." The run keeps at most one post proposal, and
    `redraft`'s post replaces an earlier one. Two approval cards for one post
    are noise, and one of them would point at a replaced draft.
-6. **Chat: fitting the request (section 4, "Budget").** Not a deviation:
-   `_fit` in `chat.py` implements the spec's rule. It drops bodies from older
-   turns first, then halves the longest body in the latest turn. The loop ends
-   only if the request still does not fit `SIZE_LIMIT`.
+6. **Chat: fitting the request (section 4, "Budget").** A deviation from
+   section 4's "never by cutting a formula passage mid-sentence". `_fit` in
+   `chat.py` drops bodies from older turns first, then halves the longest body
+   in the latest turn, mid-sentence, glossary passages included. It cuts only
+   the loop model's view of the turns; the reply is built from the untrimmed
+   results. The loop ends only if the request still does not fit `SIZE_LIMIT`.
 7. **Evaluation results (section 5).** Only BM25 was measured, on 2026-10-06.
    Dense and hybrid were not, because the shared environment lacks the
    `local-models` extra. `retriever_impl` stays `bm25` until they are
@@ -428,8 +431,35 @@ The sections above are left as designed; each affected one points here.
 9. **Delivery (section 7).** Steps 1 to 3 map to the plan's Tasks 1 to 7
    (module E: the tools, the glossary, the retrieval evaluation) and Tasks 8
    and 9 (the chat path).
-10. **Known v1 limit.** `redraft` of meeting X from the team view, or from
-    another meeting's view, proposes X's new draft but no post. A post card
-    the pipeline already queued for X then points at a replaced draft, and is
-    refused as "draft not current" if approved. This follows the rule that a
-    post is proposed only from a meeting-scoped run; #862 lifts it.
+10. **Known v1 limit: a stale or doubled card (section 4, "Posting from the
+    team view").** The premise that only the team view is affected is too
+    narrow. `queue_l2` (#651) lets a meeting-scoped chat supersede only
+    earlier *chat* rows, never the pipeline's pending post card. So even in
+    the meeting's own view:
+    - after `redraft`, the pipeline's card points at the replaced draft, and
+      approving it is refused as "draft not current";
+    - "리포트 올려줘" while the pipeline's card waits makes a second live card
+      for the same draft.
+
+    Also, `redraft` of meeting X from the team view, or from another
+    meeting's view, proposes X's new draft but no post, for the reason in
+    section 4. #862's item 2 covers only team-scoped runs. This needs a
+    further `main/` change: a chat redraft or post supersedes the pipeline's
+    post row for the same meeting.
+11. **Links (section 4).** The answers name the meeting screen and the
+    dashboard card in words. They do not link them, unlike section 4's
+    "links".
+12. **Router dependency (section 1).** `main/gemini.py`'s `ROUTE_INSTRUCTIONS`
+    sends a request that "only asks to look something up" to the ask loop
+    (null route). That loop holds only three of E's reads. So lookups such as
+    "결정 밀도가 뭐야?" or "주간 리포트 언제 나가?" may never reach the E agent
+    until the router's rule changes. That rule is `main/`, 김민경's. Section
+    1's goal depends on it.
+13. **`send_empty` (section 4).** `set_weekly_report_schedule`'s `send_empty`
+    is optional; `None` keeps the team's current value, so a schedule change
+    no longer turns it off.
+14. **Once per run, retried after a failure (item 5).** An action counts as
+    done only on a terminal outcome: a proposal, `POSTED`, the editor refusal,
+    the "회의 화면에서" redirect, or "아직 이 회의의 리포트가 없습니다". A
+    failed read (`NO_MEETING`, meeting not found) or a failed compose leaves
+    the retry open.
