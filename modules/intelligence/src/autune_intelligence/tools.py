@@ -31,7 +31,7 @@ authenticated route and is not offered to any agent.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -46,6 +46,7 @@ from autune_core.errors import (
 
 from . import service, tasks
 from .models import IntelMeetingReport
+from .schemas import MeetingReportRead
 from .service import _gap_burden
 
 log = get_logger(__name__)
@@ -343,7 +344,9 @@ _REPORT_BODY_CHARS = 1500
 cut would halve a report, so E's tools cut their own."""
 
 
-def _report_item(read: Any, draft_id: str | None, held: Any, body: str) -> dict[str, Any]:
+def _report_item(
+    read: MeetingReportRead, draft_id: str | None, held: datetime, body: str
+) -> dict[str, Any]:
     status = "posted" if read.status == "posted" else "draft"
     return {
         "title": read.title,
@@ -420,12 +423,13 @@ def meeting_report_body(session: Session, team_id: str, meeting_id: str) -> dict
     meeting = session.get(Meeting, meeting_id)
     if meeting is None or meeting.team_id != team_id:
         return _refused("meeting not found", "회의를 찾을 수 없습니다.")
-    for read, draft_id, held in service.team_meeting_reports(session, team_id, limit=200):
-        if read.meeting_id == meeting_id:
-            body = f"{read.body}\n{read.footer}".strip()[:_REPORT_BODY_CHARS]
-            return _result(
-                summary="회의 리포트입니다.", items=[_report_item(read, draft_id, held, body)]
-            )
+    found = service.team_meeting_report(session, team_id, meeting_id)
+    if found is not None:
+        read, draft_id, held = found
+        body = f"{read.body}\n{read.footer}".strip()[:_REPORT_BODY_CHARS]
+        return _result(
+            summary="회의 리포트입니다.", items=[_report_item(read, draft_id, held, body)]
+        )
     return _result(summary="이 회의에는 아직 리포트가 없습니다.", items=[])
 
 

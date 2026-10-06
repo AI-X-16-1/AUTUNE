@@ -1934,6 +1934,23 @@ def _report_read(
     )
 
 
+def _team_reports_query(team_id: str) -> tuple[Any, Any]:
+    """The select behind the team's report reads, and the expression for when each
+    meeting was held. Both ``team_meeting_reports`` and ``team_meeting_report``
+    start from it, so a row reads the same either way."""
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    editor_user = aliased(User)
+    corrector_user = aliased(User)
+    query = (
+        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name, held)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
+        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
+        .where(IntelMeetingReport.team_id == team_id)
+    )
+    return query, held
+
+
 def team_meeting_reports(
     session: Session,
     team_id: str,
@@ -1950,16 +1967,7 @@ def team_meeting_reports(
     ``since`` and ``until`` are Korean dates, both inclusive, as a person says
     "yesterday" (``_KST``). ``title_contains`` matches the meeting's title.
     """
-    held = func.coalesce(Meeting.started_at, Meeting.created_at)
-    editor_user = aliased(User)
-    corrector_user = aliased(User)
-    query = (
-        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name, held)
-        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
-        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
-        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
-        .where(IntelMeetingReport.team_id == team_id)
-    )
+    query, held = _team_reports_query(team_id)
     if since is not None:
         query = query.where(held >= datetime.combine(since, datetime.min.time(), tzinfo=_KST))
     if until is not None:
@@ -1974,6 +1982,19 @@ def team_meeting_reports(
         (_report_read(row, editor, corrector), row.draft_id, at)
         for row, editor, corrector, at in rows
     ]
+
+
+def team_meeting_report(
+    session: Session, team_id: str, meeting_id: str
+) -> tuple[MeetingReportRead, str | None, datetime] | None:
+    """One meeting's report with its ``draft_id`` and when the meeting was held,
+    or ``None`` when the team has none for it. No membership check, as above."""
+    query, _ = _team_reports_query(team_id)
+    found = session.execute(query.where(IntelMeetingReport.meeting_id == meeting_id)).first()
+    if found is None:
+        return None
+    row, editor, corrector, at = found
+    return _report_read(row, editor, corrector), row.draft_id, at
 
 
 def list_meeting_reports(
