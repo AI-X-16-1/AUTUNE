@@ -48,6 +48,7 @@ from autune_extraction.models import (
     ExtDecision,
     ExtEditEvent,
     ExtExtractionAttempt,
+    ExtExtractionRun,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli
 from autune_extraction.router import router
@@ -134,6 +135,9 @@ def wired(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
 
     Classifier.broken = []
     Classifier.calls = 0
+    # A sweep in these tests is "the next sweep": whatever failed before it is
+    # past the hold. The tests of the hold itself put the real one back.
+    monkeypatch.setattr(attempts, "RETRY_HOLD", timedelta(0))
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", Classifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
@@ -376,6 +380,178 @@ def test_a_meeting_already_extracted_or_too_old_is_not_adopted(
 
     assert row(wired, MEETING) is None and row(wired, OTHER) is None
     assert Classifier.calls == 1
+
+
+# --- no sweep runs a meeting twice at once, and none holds the worker ------------------
+
+HOLD = attempts.RETRY_HOLD
+
+
+def aged(session: Session, meeting_id: str, age: timedelta) -> None:
+    """The meeting's last failure, or hold, as if it were ``age`` old."""
+    kept = session.get(ExtExtractionAttempt, meeting_id)
+    assert kept is not None
+    kept.failed_at = datetime.now(tz=UTC) - age
+    session.commit()
+
+
+def test_a_failure_is_left_alone_until_the_hold_has_passed(
+    wired: Session, channel: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(attempts, "RETRY_HOLD", HOLD)
+    fails()
+    mends()
+
+    assert tasks.retry_failed_extractions() == []  # a moment after the failure
+    assert Classifier.calls == 1
+
+    aged(wired, MEETING, HOLD + timedelta(seconds=1))
+    assert tasks.retry_failed_extractions() == [MEETING]
+
+
+def test_a_meeting_one_sweep_has_taken_is_passed_over_by_the_next(
+    wired: Session, channel: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """mminjae97 and lsh2217, review of #868: after a deploy one sweep can still
+    be working through its meetings when the next starts."""
+    monkeypatch.setattr(attempts, "RETRY_HOLD", HOLD)
+    fails()
+    aged(wired, MEETING, HOLD + timedelta(minutes=1))
+
+    assert attempts.claim_retry(wired, MEETING) is True
+    wired.commit()
+
+    # The first sweep is running it now. The second finds it held: not due,
+    # and not claimable had it read the list a moment earlier.
+    assert attempts.due_for_retry(wired) == []
+    assert attempts.claim_retry(wired, MEETING) is False
+    assert row(wired).failures == 1  # type: ignore[union-attr]  (a hold counts nothing)
+
+
+def test_two_sweeps_at_once_run_a_meeting_once(
+    wired: Session, channel: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second sweep starts while the first is in the middle of the meeting,
+    having read it as due a moment before the first took it."""
+    monkeypatch.setattr(attempts, "RETRY_HOLD", HOLD)
+    fails()
+    mends()
+    aged(wired, MEETING, HOLD + timedelta(minutes=1))
+    monkeypatch.setattr(attempts, "due_for_retry", lambda session, **_: [MEETING])
+    run = tasks.reextract_meeting
+    runs: list[str] = []
+
+    def running(meeting_id: str) -> None:
+        runs.append(meeting_id)
+        if len(runs) == 1:
+            assert tasks.retry_failed_extractions() == []  # the other sweep
+        run(meeting_id)
+
+    monkeypatch.setattr(tasks, "reextract_meeting", running)
+
+    assert tasks.retry_failed_extractions() == [MEETING]
+    assert runs == [MEETING] and Classifier.calls == 2
+
+
+def test_a_sweep_retries_five_meetings_at_most_and_the_next_takes_the_rest(
+    wired: Session, channel: dict
+) -> None:
+    extra = [f"mtg_x{n}" for n in range(6)]
+    for meeting_id in extra:
+        wired.add(Meeting(id=meeting_id, team_id="team_1", title="밀린 회의"))
+        wired.add(
+            Participant(
+                id=f"par_{meeting_id}", meeting_id=meeting_id, speaker_label="A", consented=True
+            )
+        )
+    wired.commit()
+    for meeting_id in [MEETING, *extra]:  # seven failed meetings
+        wired.add(
+            ExtExtractionAttempt(
+                meeting_id=meeting_id,
+                failures=1,
+                reason="RuntimeError",
+                failed_at=datetime.now(tz=UTC) - timedelta(hours=1),
+            )
+        )
+    wired.commit()
+
+    first = tasks.retry_failed_extractions()
+    second = tasks.retry_failed_extractions()
+
+    assert len(first) == attempts.RETRY_CAP == 5
+    assert len(second) == 2 and not set(first) & set(second)
+
+
+# --- the consent sweep stops with the others ------------------------------------------
+
+
+def consent_changed(session: Session, meeting_id: str = MEETING) -> None:
+    """What the consent sweep reads as "this meeting's consenting speech is not
+    what its last extraction read"."""
+    run = session.get(ExtExtractionRun, meeting_id)
+    assert run is not None
+    run.consent_key = "stale"
+    session.commit()
+
+
+def test_a_failure_in_the_consent_sweep_is_counted_and_then_left_to_the_retry_sweep(
+    wired: Session, channel: dict
+) -> None:
+    """The user, 2026-10-06: after three failures no automatic attempt of any
+    kind. Before, this sweep tried a failing meeting every ten minutes for good
+    and counted nothing."""
+    tasks.on_transcript_ready(event())
+    consent_changed(wired)
+    breaks()
+
+    assert tasks.reextract_consent_changes() == []
+    assert row(wired).failures == 1 and Classifier.calls == 2  # type: ignore[union-attr]
+
+    # Its row still disagrees; it is the retry sweep's meeting now.
+    assert tasks.reextract_consent_changes() == []
+    assert Classifier.calls == 2
+
+    tasks.retry_failed_extractions()
+    tasks.retry_failed_extractions()
+    assert row(wired).failures == 3 and Classifier.calls == 4  # type: ignore[union-attr]
+    assert len(Slack.posts) == 1
+
+    for _ in range(3):
+        tasks.reextract_consent_changes()
+        tasks.retry_failed_extractions()
+    assert Classifier.calls == 4  # nothing automatic after the third
+
+
+def test_a_persons_request_runs_whatever_the_count_and_the_sweeps_come_back_after_it(
+    client: TestClient, wired: Session, channel: dict
+) -> None:
+    """The user, 2026-10-06: the cap is on the automatic attempts; "다시 추출"
+    is never blocked by it."""
+    tasks.on_transcript_ready(event())
+    consent_changed(wired)
+    breaks()
+    tasks.reextract_consent_changes()
+    tasks.retry_failed_extractions()
+    tasks.retry_failed_extractions()
+    assert row(wired).failures == 3  # type: ignore[union-attr]
+
+    assert client.post(url()).status_code == 202
+    assert tasks.run_requested_extractions() == []  # asked for, run, failed again
+    assert row(wired).failures == 4  # type: ignore[union-attr]
+
+    mends()
+    aged_request = row(wired)
+    assert aged_request is not None
+    aged_request.requested_at = datetime.now(tz=UTC) - attempts.REQUEST_COOLDOWN * 2
+    wired.commit()
+    assert client.post(url()).status_code == 202
+    assert tasks.run_requested_extractions() == [MEETING]
+    assert row(wired).failures == 0  # type: ignore[union-attr]
+
+    # Extracted again, so a later consent change is the consent sweep's as before.
+    consent_changed(wired)
+    assert tasks.reextract_consent_changes() == [MEETING]
 
 
 # --- the team is told ---------------------------------------------------------------
