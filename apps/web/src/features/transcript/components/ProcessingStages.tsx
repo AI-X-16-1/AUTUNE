@@ -37,9 +37,12 @@ type Stage = { label: string; detail: string; state: StageState; progress?: numb
  *   The per-step bar is gone — the overall bar above is the one line S12
  *   draws, and a second bar under the step said what its number says.
  *
- * `failed` turns the step that was running red, unless the person cancelled
- * it (`meeting.cancelled`); either way the retry is a new upload for the same
- * meeting — the pipeline accepts a recording for a `failed` meeting.
+ * `failed` shows the message below, red unless the person cancelled
+ * (`meeting.cancelled`). It does not mark the step that was running: only a
+ * `running` job reports a stage, and a failed meeting has none, so every step
+ * the run had not finished reads "대기". Either way the retry is a new upload
+ * for the same meeting — the pipeline accepts a recording for a `failed`
+ * meeting.
  */
 export function ProcessingStages({ meeting }: { meeting: MeetingDetail }) {
   const stages = stagesFor(meeting);
@@ -236,16 +239,18 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     return (at - from + fraction) / span;
   };
 
-  // The meeting row keeps `original_audio_deleted` and `pii_masked` from the
-  // last transcription that finished, and a new upload for the same meeting
-  // does not clear them: they describe the transcript already stored, not the
-  // run in progress. While a run is analyzing, only its own stage counts.
-  const deleted =
-    finished ||
-    failed ||
-    at >= ORDER.indexOf("masking") ||
-    (!analyzing && meeting.original_audio_deleted);
-  const masked = !analyzing && meeting.pii_masked;
+  // The rows do not read `original_audio_deleted` or `pii_masked`. The meeting
+  // row keeps both from the last transcription that finished, and neither a
+  // new upload nor its failure clears them: they describe the transcript
+  // already stored, not the run this screen shows. So a re-upload still at
+  // recognition, or one that failed there, would read "완료" for steps it
+  // never reached. The rows follow the run instead: the original is gone from
+  // masking on, and the failure path deletes it too; masking is done only
+  // when the run got past it. A run whose transcript was saved but whose
+  // event never went out is `failed` as well and reads masking "대기" — the
+  // screen cannot tell it apart, and under-claiming a privacy step is the
+  // safer error.
+  const deleted = finished || failed || at >= ORDER.indexOf("masking");
 
   return [
     {
@@ -281,7 +286,7 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     {
       label: "개인정보 마스킹 · 저장",
       detail: "전화 · 이메일 · 주민번호 · 계좌 · 카드 — 저장 전에 마스킹",
-      state: masked ? "done" : state(3, 4),
+      state: state(3, 4),
       progress: progress(3, 4),
     },
     {

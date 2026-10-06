@@ -59,11 +59,14 @@ describe("ProcessingStages", () => {
     expect(stateOf("원본 음성 삭제")).toBe("완료");
   });
 
-  it("reads the stored flags once nothing is running", () => {
+  // A re-upload that fails or is cancelled leaves the meeting `failed` with
+  // no running job, so `stage` is null. The masking flag is still the
+  // previous run's; this run's original is deleted by the failure path.
+  it("does not show a previous run's masking for a run that failed", () => {
     render(
       <ProcessingStages
         meeting={meeting({
-          status: "complete",
+          status: "failed",
           stage: null,
           stage_progress: null,
           original_audio_deleted: true,
@@ -73,6 +76,6 @@ describe("ProcessingStages", () => {
     );
 
     expect(stateOf("원본 음성 삭제")).toBe("완료");
-    expect(stateOf("개인정보 마스킹 · 저장")).toBe("완료");
+    expect(stateOf("개인정보 마스킹 · 저장")).toBe("대기");
   });
 });
