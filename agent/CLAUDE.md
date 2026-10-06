@@ -63,3 +63,8 @@ subagent for each team with members: the run's `request` is
 `PERIODIC_REQUEST`, its scope carries the team and no meeting. If its
 proposals judge the whole team, also set `proposals_per="team"`, so each run
 replaces the last run's pending proposal rather than adding another.
+
+A question that only looks something up goes to the ask loop, not to you,
+unless you set `answers_lookups=True` and your description covers it (#879).
+Set it only if your subagent reads and answers; one that writes or proposes
+should not be woken by a question.

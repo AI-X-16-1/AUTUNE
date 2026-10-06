@@ -46,6 +46,18 @@ def test_the_route_instructions_send_a_plain_lookup_to_no_subagent() -> None:
     assert '{"subagent": null}' in instruction
 
 
+def test_the_route_instructions_send_a_lookup_to_an_assistant_that_answers_them() -> None:
+    """#879: the mark ``graph.LOOKUP_MARK`` adds is the one the instructions name."""
+    from autune_agent.main.graph import LOOKUP_MARK
+
+    sent: list[dict[str, Any]] = []
+
+    _router('{"subagent": null}', sent).route("결정 밀도가 뭐야?", SUBAGENTS)
+
+    instruction = sent[0]["body"]["systemInstruction"]["parts"][0]["text"]
+    assert LOOKUP_MARK.strip() in instruction
+
+
 @pytest.mark.parametrize("answer", ['{"subagent": "payroll"}', '{"subagent": null}', "음..."])
 def test_an_unknown_null_or_unparsed_answer_is_no_route(answer: str) -> None:
     assert _router(answer, []).route("점심 메뉴", SUBAGENTS) is None
