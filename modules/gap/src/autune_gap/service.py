@@ -880,11 +880,14 @@ def carry_meeting_on_calendar(
         return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
     meeting = session.get(Meeting, meeting_id)
     assert meeting is not None  # carry_meeting checked it
-    written = calendar_writes.written_gap_ids(session, user_id=reader.id, event_id=event_id)
-    fresh = [gap for gap in gaps if gap.id not in written]
+    gap_ids = [gap.id for gap in gaps]
+    before = calendar_writes.written_lines(session, user_id=reader.id, gap_ids=gap_ids)
     outcome = calendar_writes.update_agenda(
         session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True, event_id=event_id
     )
+    session.flush()
+    added = calendar_writes.written_lines(session, user_id=reader.id, gap_ids=gap_ids) - before
+    fresh = [gap for gap in gaps if gap.id in {gap_id for gap_id, _ in added}]
     slack: team_notice.SlackOutcome = "not_tried"
     if outcome == "added" and fresh:
         slack = team_notice.post_agenda(session, meeting, fresh, presser=reader)

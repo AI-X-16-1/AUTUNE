@@ -169,7 +169,7 @@ export interface GapMeetingCarry {
 }
 
 /** `team_notice.SlackOutcome`: what the team's Slack channel did. */
-export type SlackOutcome = "posted" | "no_slack" | "failed" | "not_tried";
+export type SlackOutcome = "posted" | "no_slack" | "failed" | "refused" | "not_tried";
 
 /** A member "담당자 지정해 질문" can ask (`GapAskTarget`). */
 export interface GapAskTarget {
@@ -217,6 +217,7 @@ export type AgendaOutcome =
   | "no_next_meeting"
   | "no_event"
   | "external_attendees"
+  | "hidden_attendees"
   | "not_connected"
   | "reconnect_required"
   | "failed"

@@ -13,6 +13,8 @@ export const AGENDA_NOTICE: Record<AgendaOutcome, string | null> = {
   no_event: "내 Google 캘린더에서 다음 회의 일정을 찾지 못했습니다.",
   external_attendees:
     "팀 밖 참석자가 있는 일정이라 캘린더에는 넣지 않았습니다. 일정 설명은 모든 참석자에게 보입니다.",
+  hidden_attendees:
+    "참석자 목록을 다 확인할 수 없는 일정이라 캘린더에는 넣지 않았습니다. 일정 설명은 모든 참석자에게 보입니다.",
   not_connected: "Google 캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다.",
   reconnect_required: "Google 캘린더를 다시 연결해야 합니다.",
   failed: "캘린더에 쓰지 못했습니다.",
@@ -24,6 +26,7 @@ export const AGENDA_SLACK_NOTICE: Record<SlackOutcome, string | null> = {
   posted: "팀 Slack 채널에 공지했습니다.",
   no_slack: "팀 Slack 채널이 연결되어 있지 않아 공지하지 못했습니다.",
   failed: "팀 Slack 채널에 공지하지 못했습니다.",
+  refused: "개인정보로 보이는 내용이 있어 팀 Slack 채널에 공지하지 않았습니다.",
   not_tried: null,
 };
 
@@ -41,6 +44,7 @@ export const ASK_NOTICE: Record<SlackOutcome, string> = {
   posted: "팀 Slack 채널에 담당자를 멘션해 질문을 올렸습니다.",
   no_slack: "팀 Slack 채널이 연결되어 있지 않아 질문을 보내지 못했습니다.",
   failed: "팀 Slack 채널에 질문을 올리지 못했습니다. 잠시 후 다시 시도해 주세요.",
+  refused: "개인정보로 보이는 내용이 있어 팀 Slack 채널에 질문을 올리지 않았습니다.",
   not_tried: "질문을 보내지 않았습니다.",
 };
 

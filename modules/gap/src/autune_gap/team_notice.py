@@ -23,6 +23,15 @@ What leaves for Slack is the meeting's title, the gaps' titles and questions
 ``SlackClient`` runs the outbound check over all of it. Interpolated values
 are escaped so a title cannot become a mention or a link. Logs hold ids and
 outcomes, never text.
+
+**A refusal by the outbound check is not a Slack failure.** Every value here
+is one Autune stored, so a refusal means a stored title, question or name
+holds something unmasked -- a finding about C's store, not about the network.
+It is told apart (``refused``, an error log with the ids) and nothing is
+posted (#872 review). It is not raised: "다음 회의 잡기" posts after the
+calendar took the lines, and raising there would roll back the records that
+let those lines be taken out again (``gap_agenda_events``), leaving them on
+the calendar with no way back.
 """
 
 from __future__ import annotations
@@ -40,9 +49,11 @@ from .models import GapGap
 
 log = get_logger(__name__)
 
-SlackOutcome = Literal["posted", "no_slack", "failed", "not_tried"]
+SlackOutcome = Literal["posted", "no_slack", "failed", "refused", "not_tried"]
 """What the team channel did. ``no_slack``: the team has not connected Slack,
-or chose no channel. ``not_tried``: there was nothing to post."""
+or chose no channel. ``failed``: Slack did not take it. ``refused``: the
+outbound check found personal data in it and nothing was sent.
+``not_tried``: there was nothing to post."""
 
 LISTED = 10
 """Gaps listed in one "다음 회의 잡기" notice; the rest are counted."""
@@ -116,7 +127,16 @@ def build_agenda(
     return text, blocks
 
 
-def _post(session: Session, team_id: str, text: str, blocks: list[dict[str, Any]]) -> SlackOutcome:
+def _post(
+    session: Session,
+    team_id: str,
+    text: str,
+    blocks: list[dict[str, Any]],
+    *,
+    ids: dict[str, str],
+) -> SlackOutcome:
+    """Post on the team's channel. ``ids`` name what the message is about, for
+    the log of a refusal: never the text, which is what was refused."""
     config = load_integration(session, team_id, "slack")
     channel = config.config.get("channel") if config is not None else None
     if config is None or not channel or not config.secret:
@@ -124,7 +144,10 @@ def _post(session: Session, team_id: str, text: str, blocks: list[dict[str, Any]
     client = SlackClient(config.require_secret())
     try:
         client.post_message(str(channel), text, blocks)
-    except (IntegrationError, PrivacyViolationError) as exc:
+    except PrivacyViolationError:
+        log.error("gap_slack_refused", team_id=team_id, **ids)
+        return "refused"
+    except IntegrationError as exc:
         log.warning("gap_slack_failed", team_id=team_id, error=type(exc).__name__)
         return "failed"
     finally:
@@ -137,7 +160,9 @@ def post_ask(
 ) -> SlackOutcome:
     """Ask ``member`` the gap's question on the team channel."""
     text, blocks = build_ask(meeting, gap, mention=_mention(session, member), asker=_name(asker))
-    outcome = _post(session, meeting.team_id, text, blocks)
+    outcome = _post(
+        session, meeting.team_id, text, blocks, ids={"meeting_id": meeting.id, "gap_id": gap.id}
+    )
     log.info("gap_ask_posted", gap_id=gap.id, outcome=outcome)
     return outcome
 
@@ -149,6 +174,12 @@ def post_agenda(
     if not gaps:
         return "not_tried"
     text, blocks = build_agenda(meeting, gaps, presser=_name(presser))
-    outcome = _post(session, meeting.team_id, text, blocks)
+    outcome = _post(
+        session,
+        meeting.team_id,
+        text,
+        blocks,
+        ids={"meeting_id": meeting.id, "gap_ids": ",".join(gap.id for gap in gaps)},
+    )
     log.info("gap_agenda_posted", meeting_id=meeting.id, gaps=len(gaps), outcome=outcome)
     return outcome

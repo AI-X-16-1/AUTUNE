@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from autune_core import Meeting, TeamMember, User
 from autune_core.errors import PrivacyViolationError
@@ -58,6 +59,8 @@ class FakeCalendar:
         self.events = events or []
         self.descriptions: dict[str, str] = {}
         self.attendees: dict[str, list[dict[str, Any]]] = {}
+        self.extra: dict[str, dict[str, Any]] = {}
+        """Other fields of an event, as Google returns them (left out at their default)."""
         self.fields: list[str] = []
         self.patched: list[str] = []
         self.send_updates: list[str] = []
@@ -88,6 +91,7 @@ class FakeCalendar:
         found: dict[str, Any] = {"description": self.descriptions.get(event_id, "")}
         if event_id in self.attendees:
             found["attendees"] = self.attendees[event_id]
+        found.update(self.extra.get(event_id, {}))
         return found
 
 
@@ -493,6 +497,60 @@ def test_teammates_rooms_and_the_owner_do_not_count_as_outside(
     assert google.descriptions["evt_picked"].endswith("(gap_1)")
 
 
+@pytest.mark.parametrize(
+    "hidden",
+    [
+        {"attendeesOmitted": True},
+        {"guestsCanSeeOtherGuests": False},
+        {"guestsCanSeeOtherGuests": False, "organizer": {}},
+    ],
+    ids=["omitted", "hidden-by-the-organizer", "organizer-is-someone-else"],
+)
+def test_an_event_whose_guest_list_is_not_whole_is_not_written(
+    client: TestClient, session: Session, calendars: dict[str, Any], hidden: dict[str, Any]
+) -> None:
+    """A list Google cut short would pass the outside check with outsiders on
+    it, who would get the line and the change notice (mminjae97 on #872)."""
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.attendees["evt_picked"] = [{"email": f"{MEMBER}@example.com", "self": True}]
+    google.extra["evt_picked"] = hidden
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["calendar"] == "hidden_attendees"
+    assert response.json()["slack"] == "not_tried"
+    assert google.patched == []
+    assert recorded(session) == set()
+
+
+def test_the_organizer_sees_the_whole_list_even_when_guests_do_not(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.extra["evt_picked"] = {"guestsCanSeeOtherGuests": False, "organizer": {"self": True}}
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["calendar"] == "added"
+
+
+def test_a_hidden_list_does_not_stop_a_line_coming_out(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    next_meeting(session)
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+    client.post(f"{PREFIX}/gaps/gap_1/carry")
+    google.extra["evt_meeting"] = {"attendeesOmitted": True}
+
+    response = client.delete(f"{PREFIX}/gaps/gap_1/carry")
+
+    assert response.json()["calendar"] == "removed"
+    assert google.send_updates[-1] == "none"
+
+
 def test_a_line_comes_out_even_after_an_outsider_was_invited(
     client: TestClient, session: Session, calendars: dict[str, Any]
 ) -> None:
@@ -543,6 +601,7 @@ def test_a_deleted_meetings_lines_are_queued_and_then_taken_out(
 
     assert calendar_writes.drain_agenda_cleanup() == 1
     assert google.descriptions["evt_picked"] == "1. 지난주 회고"
+    assert google.send_updates[-1] == "none"  # taking lines out tells nobody
     assert list(session.scalars(select(GapAgendaCleanup))) == []
 
 
@@ -719,6 +778,31 @@ def test_a_slack_that_fails_leaves_the_calendar_written(
     assert google.descriptions["evt_picked"].endswith("(gap_1)")
 
 
+def test_a_notice_the_outbound_check_refuses_is_told_apart_and_logged_by_id(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """Everything in the notice is stored by Autune, so a refusal is a finding
+    about the store, not Slack being down (#872 review): not ``failed``, an
+    error with ids only, and the calendar keeps the line it took."""
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    slack.connect(fail_with=PrivacyViolationError("unmasked 010-1234-5678"))
+
+    with capture_logs() as logs:
+        response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["calendar"] == "added"
+    assert response.json()["slack"] == "refused"
+    assert google.descriptions["evt_picked"].endswith("(gap_1)")
+    assert recorded(session) == {("gap_1", MEMBER, "evt_picked")}
+    (refused,) = [e for e in logs if e["event"] == "gap_slack_refused"]
+    assert refused["log_level"] == "error"
+    assert refused["meeting_id"] == MEETING
+    assert refused["gap_ids"] == "gap_1"
+    assert "010-1234-5678" not in json.dumps(logs, ensure_ascii=False, default=str)
+    assert not [e for e in logs if e["event"] == "gap_slack_failed"]
+
+
 # --- "담당자 지정해 질문" (mkkim68 on #824) ---------------------------------------
 
 
@@ -786,6 +870,23 @@ def test_a_title_cannot_mention_the_whole_channel(
     assert "&lt;!channel&gt;" in card
 
 
+def test_an_ask_the_outbound_check_refuses_is_not_a_failure(
+    client: TestClient, session: Session, slack: TeamSlack, teammate: str
+) -> None:
+    gap(session, "gap_1")
+    channel = slack.connect(fail_with=PrivacyViolationError("unmasked 010-1234-5678"))
+
+    with capture_logs() as logs:
+        response = client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    assert response.json()["slack"] == "refused"
+    assert channel.posted == []
+    (refused,) = [e for e in logs if e["event"] == "gap_slack_refused"]
+    assert refused["log_level"] == "error"
+    assert (refused["meeting_id"], refused["gap_id"]) == (MEETING, "gap_1")
+    assert "010-1234-5678" not in json.dumps(logs, ensure_ascii=False, default=str)
+
+
 def test_asking_without_team_slack_says_so(
     client: TestClient, session: Session, teammate: str
 ) -> None:
@@ -807,3 +908,24 @@ def test_only_a_member_of_the_team_can_be_asked(
 
     assert response.status_code == 404
     assert channel.posted == []
+
+
+def test_the_notice_names_lines_new_on_the_next_meetings_event(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """Without a pick the event is the next meeting's; a line the presser put
+    on another event earlier is not one already announced there (mminjae97 on
+    #910)."""
+    questioned(session, gap(session, "gap_old"))
+    next_meeting(session)
+    calendars[MEMBER] = FakeCalendar(
+        [event("evt_meeting", STARTS), event("evt_elsewhere", STARTS + timedelta(days=3))]
+    )
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_elsewhere"})
+    channel = slack.connect()
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert response.json()["slack"] == "posted"
+    assert len(channel.posted) == 1
+    assert ("gap_old", MEMBER, "evt_meeting") in recorded(session)

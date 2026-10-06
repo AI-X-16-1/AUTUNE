@@ -559,8 +559,11 @@ the feature needs.
     - *Not onto an event shared outside the team.* Google shows a description
       to everyone on the event, so an event with an attendee who is not on the
       meeting's team is refused (`external_attendees`) and the screen says
-      why. Meeting rooms and the presser do not count. A guest list Google
-      hides from the presser cannot be checked, and a guest invited after the
+      why. Meeting rooms and the presser do not count. An event whose guest
+      list Google does not return whole -- the organizer hid it from guests
+      and the presser is not the organizer, or Google says attendees were
+      omitted -- cannot be checked, so it is refused too
+      (`hidden_attendees`; mminjae97 on #872). A guest invited after the
       line was written sees it until it is taken out.
     - *Every line is recorded, and comes out again.* `gap_agenda_events` keeps
       the meeting, the gap, whose calendar and which event -- the calendar's
@@ -587,9 +590,18 @@ the feature needs.
     title and the presser's display name; pressing again posts nothing.
     Titles and questions are stored masked, every value is escaped so it
     cannot become a mention or a link, and no utterance, score or
-    participation figure is sent. Nothing about either message is stored;
-    the picker returns names and ids only, never whether a member linked
-    Slack or a calendar. A team with no channel connected gets no message
+    participation figure is sent. Every value is one Autune stored, so a
+    message the outbound check refuses is not sent and is logged as an
+    error with the meeting's and gaps' ids (`gap_slack_refused`), apart
+    from Slack not answering, and the screen says it was not sent; it is
+    not raised, because "다음 회의 잡기" has already written the calendar
+    by then. Mentioning a member reads the Slack account they linked
+    (`user_integrations`), which counts as acting for that member under
+    `data-model.md`'s rule: it is read only to tell them. The card does
+    show the channel whether the member linked one -- a mention or a plain
+    name -- which mkkim68 accepted on #824; the screen is not told. Nothing
+    about either message is stored; the picker returns names and ids only,
+    never whether a member linked Slack or a calendar. A team with no channel connected gets no message
     and the screen says so. A message already posted stays in the channel
     when the meeting is deleted.
   - **A person's Google grants themselves (#760 review):** a deleted
