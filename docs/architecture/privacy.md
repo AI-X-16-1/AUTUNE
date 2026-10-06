@@ -500,15 +500,19 @@ the feature needs.
     more than "theirs alone", and it is why it happens only on the person's
     own press and is said before they press -- under the box, and beside the
     calendar's connect button, to somebody already connected as well.
-    Autune keeps the event's id on the pause row and nothing else
-    (`ext_notification_pauses.calendar_event_id`): a changed range moves the
+    Autune keeps the event's id on the pause row
+    (`ext_notification_pauses.calendar_event_id`) and, only while a save is at
+    the calendar, the time that save began (`calendar_claimed_at`, cleared
+    when it returns; it keeps a second save out and is shown nowhere) -- and
+    nothing else: a changed range moves the
     same event, and a save without the tick, or clearing the dates, removes
     it (a removal Google does not answer is queued and tried again with the
     person's grant, as a due-date event's is). Once the last day has passed
     the row is deleted as before, the id with it, and **the event stays** on
     the calendar as the person's own record; Autune can no longer reach it.
     A calendar disconnected while the event stands cannot be reached either:
-    the event stays there, where the person can delete it.
+    the event stays there, where the person can delete it, and the save that
+    would have removed it tells them so.
     A deleted account has an event that still stands removed first, by B's
     user hook. Autune never reads the calendar for any of this: a leave the
     person wrote there themselves is not looked for, and the out-of-office

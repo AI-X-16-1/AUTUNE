@@ -6,6 +6,10 @@ is kept by id on the pause itself, so a changed range moves the same event and
 a cleared one removes it. The id only -- no text, no dates beyond the two the
 row already has.
 
+``calendar_claimed_at`` beside it is when a save went to the calendar and has
+not come back. Google is asked with no transaction open, so a second save is
+kept out by this mark rather than by the row's lock. ``NULL`` at rest.
+
 Existing rows have no event: nobody was offered the box before this.
 
 Owner: 강민구. Apply with `alembic upgrade heads` (plural).
@@ -34,7 +38,12 @@ def upgrade() -> None:
         "ext_notification_pauses",
         sa.Column("calendar_event_id", sa.String(length=1024), nullable=True),
     )
+    op.add_column(
+        "ext_notification_pauses",
+        sa.Column("calendar_claimed_at", sa.DateTime(timezone=True), nullable=True),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("ext_notification_pauses", "calendar_claimed_at")
     op.drop_column("ext_notification_pauses", "calendar_event_id")

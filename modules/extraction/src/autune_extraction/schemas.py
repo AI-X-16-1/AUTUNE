@@ -499,7 +499,10 @@ class NotificationPauseRead(NotificationPause):
     calendar_leave: bool = False
     calendar_connected: bool = False
     calendar: (
-        Literal["off", "added", "removed", "removal_queued", "not_connected", "failed"] | None
+        Literal[
+            "off", "added", "removed", "removal_queued", "not_connected", "not_removed", "failed"
+        ]
+        | None
     ) = None
 
 

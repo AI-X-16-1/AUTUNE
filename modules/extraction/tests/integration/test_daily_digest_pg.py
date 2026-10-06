@@ -8,6 +8,8 @@ the account -- a person who deletes their data leaves no dates behind.
 
 from __future__ import annotations
 
+import threading
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -18,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, Team, TeamMember, User
+from autune_core.errors import ConflictError
 from autune_extraction import leave_calendar, service
 from autune_extraction.models import (
     ExtActionItem,
@@ -283,3 +286,94 @@ def test_a_leave_on_the_persons_calendar_is_one_row_and_one_event_on_postgres(
     assert save(None, None, on_calendar=False) == "off", "nothing left to remove"
     (queued,) = db_session.scalars(sa.select(ExtCalendarCleanup)).all()
     assert (queued.user_id, queued.event_id) == (person["user"], "evt_1")
+
+
+def test_a_save_at_google_holds_no_lock_and_keeps_a_second_save_out(
+    db_engine: sa.Engine,
+) -> None:
+    """Two requests at once, each on its own connection, for real: committed
+    rows, not this file's rolled-back session. While the first is waiting on
+    Google its dates are already committed and its row is not locked -- a
+    ``FOR UPDATE NOWAIT`` from the other connection gets it -- and the second
+    save is refused by the claim instead of making a second event
+    (mminjae97's review of #922)."""
+    with Session(db_engine) as setup:
+        user = User(email=f"leave-{uuid.uuid4().hex}@example.com", display_name="휴가")
+        setup.add(user)
+        setup.commit()
+        user_id = user.id
+
+    at_google, answered = threading.Event(), threading.Event()
+
+    class Slow:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
+            self.calls.append(method)
+            at_google.set()
+            assert answered.wait(timeout=30), "nobody let Google answer"
+            return {"id": "evt_1"}
+
+        def delete_event(self, calendar_id: str, event_id: str) -> None:
+            self.calls.append("DELETE")
+
+    slow, other = Slow(), Slow()
+    first: dict[str, Any] = {}
+
+    def press() -> None:
+        try:
+            with Session(db_engine) as session:
+                first["outcome"] = leave_calendar.set_leave(
+                    session,
+                    lambda _user: (slow, "primary"),
+                    user_id,
+                    starts_on=TUESDAY,
+                    ends_on=TUESDAY + timedelta(days=2),
+                    on_calendar=True,
+                    now=TUESDAY_10_KST,
+                )
+                session.commit()
+        except BaseException as exc:  # noqa: BLE001 -- shown by the assert below
+            first["error"] = exc
+
+    thread = threading.Thread(target=press)
+    thread.start()
+    try:
+        assert at_google.wait(timeout=30), first.get("error")
+        with Session(db_engine) as second:
+            row = second.execute(
+                sa.select(ExtNotificationPause)
+                .where(ExtNotificationPause.user_id == user_id)
+                .with_for_update(nowait=True)
+            ).scalar_one()
+            assert (row.starts_on, row.calendar_event_id) == (TUESDAY, None)
+            assert row.calendar_claimed_at == TUESDAY_10_KST
+            second.rollback()
+
+            with pytest.raises(ConflictError):
+                leave_calendar.set_leave(
+                    second,
+                    lambda _user: (other, "primary"),
+                    user_id,
+                    starts_on=TUESDAY + timedelta(days=1),
+                    ends_on=TUESDAY + timedelta(days=3),
+                    on_calendar=True,
+                    now=TUESDAY_10_KST + timedelta(seconds=1),
+                )
+    finally:
+        answered.set()
+        thread.join(timeout=30)
+        with Session(db_engine) as after:
+            kept = after.get(ExtNotificationPause, user_id)
+            state = (
+                None
+                if kept is None
+                else (kept.starts_on, kept.calendar_event_id, kept.calendar_claimed_at)
+            )
+            after.execute(sa.delete(User).where(User.id == user_id))
+            after.commit()
+
+    assert first == {"outcome": "added"}
+    assert (slow.calls, other.calls) == (["POST"], [])
+    assert state == (TUESDAY, "evt_1", None)

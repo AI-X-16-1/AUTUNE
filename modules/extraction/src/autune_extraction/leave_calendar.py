@@ -22,7 +22,16 @@ Rules, each tested:
   removes it. An event the person deleted in Calendar is made again only by
   another tick.
 - A removal Google did not answer is queued (``ext_calendar_cleanup``) and
-  tried again with the person's own grant, like a due-date event's.
+  tried again with the person's own grant, like a due-date event's. A removal
+  from a calendar that is no longer connected cannot be tried at all, and the
+  person is told to delete the event themselves (``not_removed``).
+- **Google is asked with no transaction open** (mminjae97's review of #922).
+  The dates are committed first, the calendar is asked holding neither the
+  row's lock nor a connection, and what it answered is written in a second
+  transaction. One save at a time is at the calendar for a person: the first
+  leaves a claim on the row (``calendar_claimed_at``), and a save that finds a
+  claim younger than ``CLAIM_FOR`` is refused whole -- so a double press still
+  makes one event, never two.
 - After the last day the pause goes (``service.forget_ended_pauses``) and its
   event **stays** on the calendar: it is the person's own record of a leave
   they took, and Autune no longer knows its id.
@@ -40,7 +49,8 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from autune_core import get_logger, load_user_integration
+from autune_core import User, get_logger, load_user_integration
+from autune_core.errors import ConflictError
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     IntegrationError,
@@ -60,11 +70,24 @@ due-date read-back asks Google for that one, and must not see these."""
 EVENT_TITLE = "휴가"
 EVENT_DESCRIPTION = "Autune의 휴가 기간 설정에서 추가한 일정입니다."
 
-Outcome = Literal["off", "added", "removed", "removal_queued", "not_connected", "failed"]
+CLAIM_FOR = timedelta(minutes=2)
+"""How long one save's claim on a person's calendar keeps another save out.
+Past what a save can take -- a token refresh and two calls to Google, each cut
+off by its client's ten-second timeouts and none retried, about half a minute
+together -- so a live claim is a save still out there; and short,
+because a claim left by a process that died is in the person's way until it
+is this old."""
+
+Outcome = Literal[
+    "off", "added", "removed", "removal_queued", "not_connected", "not_removed", "failed"
+]
 """What happened on the calendar for one save. ``off``: not asked for and
 nothing was there. ``failed``: asked for and not written -- the dates are saved
-all the same. ``removal_queued``: the event could not be removed now and will
-be tried again."""
+all the same. ``not_connected``: asked for, and there is no calendar to write
+to. ``removal_queued``: the event could not be removed now and will be tried
+again. ``not_removed``: the event could not be removed and will not be tried
+again -- the calendar is no longer connected, and the event stays until the
+person deletes it."""
 
 
 def connected(session: Session, user_id: str) -> bool:
@@ -95,11 +118,11 @@ def _event_body(starts_on: date, ends_on: date) -> dict[str, Any]:
     }
 
 
-def _write_event(calendar: Any, calendar_id: str, pause: ExtNotificationPause, old: str) -> str:
+def _write_event(calendar: Any, calendar_id: str, starts_on: date, ends_on: date, old: str) -> str:
     """The event written over ``old`` when it is still there; otherwise a new
     one, tagged. One deleted by hand -- 404, 410, or kept by Google as
     ``cancelled`` -- is replaced, never revived (as ``update_all_day_event``)."""
-    body = _event_body(pause.starts_on, pause.ends_on)
+    body = _event_body(starts_on, ends_on)
     if old:
         try:
             answer: dict[str, Any] | None = calendar.request(
@@ -132,16 +155,29 @@ def _connection(
         return "failed"
 
 
+def _queue_removal(session: Session, user_id: str, event_id: str) -> None:
+    session.execute(
+        service._insert_if_absent_into(session, ExtCalendarCleanup)
+        .values(user_id=user_id, event_id=event_id)
+        .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
+    )
+
+
 def _remove(
     session: Session, calendar_for: calendar_sync.CalendarFor, user_id: str, event_id: str
 ) -> Outcome:
     """Take ``event_id`` off the person's calendar, or queue it when Google
     does not answer. A calendar no longer connected cannot be reached: the
-    event stays where the person can delete it, and nothing is queued."""
+    event stays where the person can delete it, and nothing is queued.
+
+    Called with nothing open: the id was taken off the pause, under its lock,
+    in a transaction already committed, so this event is nobody else's to
+    touch and Google is asked holding nothing. Only a queued removal writes,
+    and the caller commits it."""
     connection = _connection(calendar_for, user_id)
     if connection is None:
         log.info("extraction_leave_event_left", user_id=user_id, reason="not_connected")
-        return "not_connected"
+        return "not_removed"
     if connection != "failed":
         client, calendar_id = connection
         try:
@@ -149,12 +185,74 @@ def _remove(
             return "removed"
         except IntegrationError as exc:
             log.warning("extraction_leave_event_not_removed", error=type(exc).__name__)
-    session.execute(
-        service._insert_if_absent_into(session, ExtCalendarCleanup)
-        .values(user_id=user_id, event_id=event_id)
-        .on_conflict_do_nothing(index_elements=["user_id", "event_id"])
-    )
+    _queue_removal(session, user_id, event_id)
     return "removal_queued"
+
+
+def _refuse_while_claimed(
+    session: Session, pause: ExtNotificationPause | None, now: datetime
+) -> None:
+    """Another save of this person's is at the calendar: this one changes
+    nothing -- not the dates either, or the event being written would be for a
+    range the row no longer has."""
+    if pause is None or pause.calendar_claimed_at is None:
+        return
+    if now - service._aware(pause.calendar_claimed_at) < CLAIM_FOR:
+        session.rollback()
+        raise ConflictError("an earlier save of these dates is still being written; try again")
+
+
+def _at_google(
+    calendar_for: calendar_sync.CalendarFor,
+    user_id: str,
+    starts_on: date,
+    ends_on: date,
+    old: str,
+) -> tuple[Outcome, str]:
+    """Ask the calendar for the event; what happened, and the id the pause
+    should hold afterwards. Touches no row."""
+    connection = _connection(calendar_for, user_id)
+    if connection is None:
+        # An event written before the grant went keeps its id: connecting again
+        # and saving moves it rather than leaving the old range beside a new one.
+        return "not_connected", old
+    if connection == "failed":
+        return "failed", old
+    client, calendar_id = connection
+    try:
+        written = _write_event(client, calendar_id, starts_on, ends_on, old)
+    except IntegrationError as exc:
+        log.warning("extraction_leave_event_not_written", error=type(exc).__name__)
+        return "failed", old
+    return ("added" if written else "failed"), written
+
+
+def _settle(
+    session: Session, user_id: str, *, claim: datetime, old: str, outcome: Outcome, event_id: str
+) -> Outcome:
+    """The second transaction: what Google answered goes on the row, and the
+    claim comes off it.
+
+    Only while the claim is still this save's. One that outlived
+    ``CLAIM_FOR`` may have been taken over by a later save, and the row may be
+    gone with the pause's last day or the account: then the row is somebody
+    else's to write, and an event this save made new is queued for removal
+    rather than left on the calendar with nothing pointing at it."""
+    pause = session.get(ExtNotificationPause, user_id, with_for_update=True, populate_existing=True)
+    mine = (
+        pause is not None
+        and pause.calendar_claimed_at is not None
+        and service._aware(pause.calendar_claimed_at) == claim
+    )
+    if pause is None or not mine:
+        log.warning("extraction_leave_claim_lost", user_id=user_id)
+        if event_id and event_id != old and session.get(User, user_id) is not None:
+            _queue_removal(session, user_id, event_id)
+        return "failed"
+    pause.calendar_event_id = event_id or None
+    pause.calendar_claimed_at = None
+    session.flush()
+    return outcome
 
 
 def set_leave(
@@ -171,39 +269,45 @@ def set_leave(
     calendar follow when they asked for that. Returns what happened there.
 
     The dates are saved whatever the calendar does: a leave that could not be
-    written to Google still stops the morning DM. The row is locked before the
-    calendar is asked (``service.set_notification_pause``), so a double press
-    moves one event rather than making two.
+    written to Google still stops the morning DM.
+
+    **This commits, and more than once.** Three steps: the dates, under the
+    row's lock (``service.set_notification_pause``), committed; then Google,
+    with no transaction open, so a slow calendar holds neither the row nor a
+    connection; then what Google answered, in a transaction the caller
+    commits. A double press moves one event rather than making two because the
+    first save's claim refuses the second (``_refuse_while_claimed``,
+    ``ConflictError``) -- it does not wait.
     """
     if starts_on is None and ends_on is None:
         standing = session.get(ExtNotificationPause, user_id, with_for_update=True)
+        _refuse_while_claimed(session, standing, now)
         old = (standing.calendar_event_id or "") if standing is not None else ""
         service.set_notification_pause(session, user_id, starts_on=None, ends_on=None, now=now)
+        session.commit()
         return _remove(session, calendar_for, user_id, old) if old else "off"
 
     pause = service.set_notification_pause(
         session, user_id, starts_on=starts_on, ends_on=ends_on, now=now
     )
-    if pause is None:
+    if pause is None or starts_on is None or ends_on is None:
         return "off"
+    _refuse_while_claimed(session, pause, now)
     old = pause.calendar_event_id or ""
     if not on_calendar:
+        # Taken off the row here, under its lock: the removal below is then of
+        # an event no other save knows.
         pause.calendar_event_id = None
-        session.flush()
+        session.commit()
         return _remove(session, calendar_for, user_id, old) if old else "off"
 
-    connection = _connection(calendar_for, user_id)
-    if connection is None:
-        # An event written before the grant went keeps its id: connecting again
-        # and saving moves it rather than leaving the old range beside a new one.
-        return "not_connected"
-    if connection == "failed":
-        return "failed"
-    client, calendar_id = connection
+    pause.calendar_claimed_at = now
+    session.commit()
     try:
-        pause.calendar_event_id = _write_event(client, calendar_id, pause, old) or None
-    except IntegrationError as exc:
-        log.warning("extraction_leave_event_not_written", error=type(exc).__name__)
-        return "failed"
-    session.flush()
-    return "added" if pause.calendar_event_id else "failed"
+        outcome, event_id = _at_google(calendar_for, user_id, starts_on, ends_on, old)
+    except BaseException:
+        # Nothing was learned about the event: the id stays, the claim goes.
+        _settle(session, user_id, claim=now, old=old, outcome="failed", event_id=old)
+        session.commit()
+        raise
+    return _settle(session, user_id, claim=now, old=old, outcome=outcome, event_id=event_id)

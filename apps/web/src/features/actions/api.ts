@@ -292,6 +292,7 @@ export type LeaveCalendarOutcome =
   | "removed"
   | "removal_queued"
   | "not_connected"
+  | "not_removed"
   | "failed";
 
 /**

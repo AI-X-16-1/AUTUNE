@@ -28,6 +28,7 @@ from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
 from autune_core import AutuneError, Base, Team, TeamMember, User, get_session
+from autune_core.errors import ConflictError
 from autune_core.user_integrations import UserIntegrationConfig
 from autune_extraction import leave_calendar, reminders, service, tasks
 from autune_extraction.models import ExtCalendarCleanup, ExtNotificationPause
@@ -385,6 +386,271 @@ def test_no_log_line_says_when_the_person_is_away(
     assert logs, "the failures are logged -- by kind"
 
 
+def test_an_event_on_a_calendar_no_longer_connected_is_said_to_be_left_there(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    """Not ``not_connected``, which is about an event that was not put there:
+    this one is there, and Autune can no longer take it off (mminjae97's
+    review of #922)."""
+
+    def refused(_user_id: str) -> Any:
+        raise ReconnectRequiredError("connect again")
+
+    assert save(session, mine) == "added"
+
+    assert save(session, refused, on_calendar=False) == "not_removed"
+
+    row = pause(session)
+    assert row is not None and row.calendar_event_id is None
+    assert calendar.deleted == []
+    assert session.scalars(select(ExtCalendarCleanup)).all() == [], "nothing to try again with"
+
+
+def test_clearing_the_dates_with_the_calendar_gone_says_the_event_is_left_too(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    assert save(session, mine) == "added"
+
+    assert save(session, lambda _user: None, None, None, on_calendar=False) == "not_removed"
+
+    assert pause(session) is None
+    assert calendar.deleted == []
+
+
+# --- Google is asked with nothing open, one save at a time -------------------------
+
+
+class Watched(FakeCalendar):
+    """A calendar that looks at the session while it is being asked, and lets
+    something else happen in that moment."""
+
+    def __init__(self, session: Session) -> None:
+        super().__init__()
+        self.session = session
+        self.open: list[bool] = []
+        self.meanwhile: Any = None
+
+    def _asked(self) -> None:
+        self.open.append(self.session.in_transaction())
+        if self.meanwhile is not None:
+            happens, self.meanwhile = self.meanwhile, None
+            happens()
+
+    def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
+        self._asked()
+        return super().request(method, path, json=json)
+
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        self._asked()
+        super().delete_event(calendar_id, event_id)
+
+
+@pytest.fixture
+def watched(session: Session) -> Watched:
+    return Watched(session)
+
+
+@pytest.fixture
+def theirs(watched: Watched) -> Any:
+    return lambda user_id: (watched, "primary") if user_id == READER else None
+
+
+def claim(session: Session, user_id: str = READER) -> datetime | None:
+    row = pause(session, user_id)
+    assert row is not None
+    return row.calendar_claimed_at
+
+
+def test_google_is_asked_with_no_transaction_open(
+    session: Session, watched: Watched, theirs: Any
+) -> None:
+    """Writing, moving and removing: the dates are committed before each call,
+    so a slow calendar holds neither the row nor a connection."""
+    assert save(session, theirs) == "added"
+    assert save(session, theirs, LATER_FIRST, LATER_LAST) == "added"
+    assert save(session, theirs, LATER_FIRST, LATER_LAST, on_calendar=False) == "removed"
+    assert save(session, theirs) == "added"
+    assert save(session, theirs, None, None, on_calendar=False) == "removed"
+
+    assert watched.open == [False] * 5
+    assert watched.patched == ["evt_1"]
+    assert watched.deleted == [("primary", "evt_1"), ("primary", "evt_2")]
+
+
+def test_the_dates_stand_before_google_has_answered(
+    session: Session, watched: Watched, theirs: Any
+) -> None:
+    seen: list[Any] = []
+
+    def look() -> None:
+        row = session.get(ExtNotificationPause, READER)
+        assert row is not None
+        seen.append((row.starts_on, row.ends_on, row.calendar_event_id))
+        assert row.calendar_claimed_at is not None
+        session.rollback()
+
+    watched.meanwhile = look
+
+    assert save(session, theirs) == "added"
+
+    assert seen == [(FIRST, LAST, None)]
+    assert claim(session) is None, "and the claim comes off with the answer"
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        {"first": LATER_FIRST, "last": LATER_LAST, "on_calendar": True},
+        {"first": LATER_FIRST, "last": LATER_LAST, "on_calendar": False},
+        {"first": None, "last": None, "on_calendar": False},
+    ],
+    ids=["another range", "unticked", "cleared"],
+)
+def test_a_save_while_an_earlier_one_is_at_the_calendar_is_refused_whole(
+    session: Session, watched: Watched, theirs: Any, second: dict[str, Any]
+) -> None:
+    """The double press: one event, and the dates the first save set -- the
+    second changes nothing, not the dates either."""
+
+    def press_again() -> None:
+        with pytest.raises(ConflictError):
+            save(
+                session, theirs, second["first"], second["last"], on_calendar=second["on_calendar"]
+            )
+
+    watched.meanwhile = press_again
+
+    assert save(session, theirs) == "added"
+
+    assert len(watched.posted) == 1 and watched.patched == [] and watched.deleted == []
+    row = pause(session)
+    assert row is not None
+    assert (row.starts_on, row.ends_on, row.calendar_event_id) == (FIRST, LAST, "evt_1")
+    assert row.calendar_claimed_at is None
+
+    # Once the first is back, the same save goes through.
+    save(session, theirs, second["first"], second["last"], on_calendar=second["on_calendar"])
+    assert len(watched.posted) == 1, "and still moves or removes that one event"
+
+
+def test_a_claim_nobody_came_back_for_stops_holding_after_a_while(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    """A process that died at the calendar leaves its claim behind."""
+    save(session, mine, on_calendar=False)
+    row = pause(session)
+    assert row is not None
+    row.calendar_claimed_at = NOW - leave_calendar.CLAIM_FOR + timedelta(seconds=1)
+    session.commit()
+
+    with pytest.raises(ConflictError):
+        save(session, mine, LATER_FIRST, LATER_LAST)
+    held = pause(session)
+    assert held is not None and (held.starts_on, held.ends_on) == (FIRST, LAST)
+    assert calendar.posted == []
+
+    held.calendar_claimed_at = NOW - leave_calendar.CLAIM_FOR
+    session.commit()
+
+    assert save(session, mine, LATER_FIRST, LATER_LAST) == "added"
+    row = pause(session)
+    assert row is not None
+    assert (row.starts_on, row.calendar_event_id, row.calendar_claimed_at) == (
+        LATER_FIRST,
+        "evt_1",
+        None,
+    )
+
+
+@pytest.mark.parametrize("row_is", ["taken over", "gone", "gone with the account"])
+def test_a_save_that_lost_its_claim_writes_nothing_and_its_new_event_is_taken_off(
+    session: Session, watched: Watched, theirs: Any, row_is: str
+) -> None:
+    """It was out longer than ``CLAIM_FOR`` and a later save took the row, or
+    the pause ended meanwhile: the row is no longer this save's to write, and
+    the event it made must not stay with nothing pointing at it."""
+
+    def lose_it() -> None:
+        row = session.get(ExtNotificationPause, READER)
+        assert row is not None
+        if row_is == "gone with the account":
+            session.delete(session.get(User, READER))
+        if row_is != "taken over":
+            session.delete(row)
+        else:
+            row.calendar_claimed_at = NOW + timedelta(minutes=5)
+            row.calendar_event_id = "evt_theirs"
+        session.commit()
+
+    watched.meanwhile = lose_it
+
+    assert save(session, theirs) == "failed"
+
+    row = pause(session)
+    queued = [(q.user_id, q.event_id) for q in session.scalars(select(ExtCalendarCleanup))]
+    if row_is == "taken over":
+        assert row is not None and row.calendar_event_id == "evt_theirs"
+        assert row.calendar_claimed_at is not None, "the later save's claim is not this one's"
+    else:
+        assert row is None
+    if row_is == "gone with the account":
+        # Nobody to remove it for, and no grant left to remove it with.
+        assert queued == []
+    else:
+        assert queued == [(READER, "evt_1")]
+
+
+def test_trouble_nobody_expected_at_google_lets_go_of_the_claim(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    """Not an ``IntegrationError``: it is raised, as before -- and the next
+    save is not kept out for two minutes by it."""
+    calendar.fail = RuntimeError("anything at all")
+
+    with pytest.raises(RuntimeError):
+        save(session, mine)
+
+    row = pause(session)
+    assert row is not None
+    assert (row.starts_on, row.calendar_event_id, row.calendar_claimed_at) == (FIRST, None, None)
+    calendar.fail = None
+    assert save(session, mine) == "added"
+
+
+def test_the_grant_is_read_and_the_session_let_go_before_google_is_asked(
+    session: Session, monkeypatch: pytest.MonkeyPatch, calendar: FakeCalendar
+) -> None:
+    """``tasks.set_leave``'s own client builder: reading the grant must not
+    reopen a transaction for the token refresh and the calls to sit in."""
+    open_at: dict[str, bool] = {}
+
+    def load(_s: Session, user_id: str, _service: str) -> UserIntegrationConfig:
+        session.execute(select(User.id)).all()  # the read the real one makes
+        return UserIntegrationConfig("calendar", user_id, "refresh-me")
+
+    def refresh(**_: Any) -> str:
+        open_at["refresh"] = session.in_transaction()
+        return "token"
+
+    monkeypatch.setattr(tasks, "load_user_integration", load)
+    monkeypatch.setattr(tasks, "refresh_access_token", refresh)
+    monkeypatch.setattr(tasks, "CalendarClient", lambda _token: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(
+        tasks,
+        "get_core_settings",
+        lambda: SimpleNamespace(google_integration_credentials=("client-1", "secret")),
+    )
+
+    with tasks._calendars(session, release_after_read=True) as calendar_for:
+        assert calendar_for(READER) is not None
+    assert open_at == {"refresh": False}
+
+    with tasks._calendars(session) as calendar_for:
+        assert calendar_for(READER) is not None
+    assert open_at == {"refresh": True}, "every other caller keeps its transaction"
+    session.rollback()
+
+
 # --- the routes ----------------------------------------------------------------
 
 
@@ -401,7 +667,7 @@ def connected(monkeypatch: pytest.MonkeyPatch, calendar: FakeCalendar) -> dict[s
         return state["grant"] if user_id == READER else None
 
     @contextmanager
-    def calendars(_session: Session) -> Iterator[Any]:
+    def calendars(_session: Session, **_: Any) -> Iterator[Any]:
         yield (
             lambda user_id: (
                 (calendar, "primary") if user_id == READER and state["grant"] is not None else None
@@ -545,3 +811,39 @@ def test_the_routes_name_nobody(api: TestClient) -> None:
         "user_id": "user_lee",
     }
     assert api.put(f"{PREFIX}/me/notification-pause", json=body).status_code == 422
+
+
+def test_an_unticked_save_with_the_calendar_gone_says_the_event_is_left(
+    api: TestClient, connected: dict[str, Any], calendar: FakeCalendar
+) -> None:
+    put(api, starts_on=FIRST.isoformat(), ends_on=LAST.isoformat(), on_calendar=True)
+    connected["grant"] = None
+
+    answer = put(api, starts_on=FIRST.isoformat(), ends_on=LAST.isoformat(), on_calendar=False)
+
+    assert (answer["on_calendar"], answer["calendar"]) == (False, "not_removed")
+    assert calendar.deleted == []
+
+
+def test_a_save_while_an_earlier_one_is_out_answers_409_and_changes_nothing(
+    api: TestClient, session: Session, calendar: FakeCalendar
+) -> None:
+    put(api, starts_on=FIRST.isoformat(), ends_on=LAST.isoformat(), on_calendar=True)
+    row = session.get(ExtNotificationPause, READER)
+    assert row is not None
+    row.calendar_claimed_at = datetime.now(tz=UTC)
+    session.commit()
+
+    answer = api.put(
+        f"{PREFIX}/me/notification-pause",
+        json={
+            "starts_on": LATER_FIRST.isoformat(),
+            "ends_on": LATER_LAST.isoformat(),
+            "on_calendar": True,
+        },
+    )
+
+    assert answer.status_code == 409, answer.text
+    read = api.get(f"{PREFIX}/me/notification-pause").json()
+    assert (read["starts_on"], read["ends_on"]) == (FIRST.isoformat(), LAST.isoformat())
+    assert calendar.patched == [] and len(calendar.posted) == 1

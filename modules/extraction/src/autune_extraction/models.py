@@ -879,6 +879,12 @@ class ExtNotificationPause(Base):
     range moves it and a cleared one removes it; ``None`` for a pause nobody
     asked to have on a calendar. The id goes with the row, and the event then
     stays on the calendar as the person's own.
+
+    ``calendar_claimed_at`` is when a save of this person's went to the
+    calendar and has not come back: Google is asked with no transaction open,
+    so this, not the row's lock, is what keeps a second save out meanwhile
+    (``leave_calendar.CLAIM_FOR``). ``None`` at rest. It says nothing a
+    reader could use -- no screen, route or log carries it.
     """
 
     __tablename__ = "ext_notification_pauses"
@@ -893,6 +899,9 @@ class ExtNotificationPause(Base):
     ends_on: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     calendar_event_id: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    calendar_claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ExtPublicHoliday(Base):

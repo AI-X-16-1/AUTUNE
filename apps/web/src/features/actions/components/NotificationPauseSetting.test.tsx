@@ -196,6 +196,7 @@ describe("NotificationPauseSetting", () => {
     ["failed", "캘린더에는 넣지 못했으니"],
     ["not_connected", "캘린더가 연결되어 있지 않아"],
     ["removal_queued", "지금은 지우지 못했습니다"],
+    ["not_removed", "이전 휴가 일정을 지우지 못했습니다. 캘린더에서 직접 지워 주세요."],
   ] as const)(
     "says the dates are kept when the calendar answered %s",
     async (calendar, words) => {

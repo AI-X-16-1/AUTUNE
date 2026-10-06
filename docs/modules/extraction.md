@@ -487,8 +487,21 @@ other module's tables.
   `PUT /me/notification-pause` takes `on_calendar` (false when left out) and
   writes, moves or removes one private all-day event titled "휴가" in the
   request, through the person's own grant; the answer's `calendar` says what
-  happened (`added`, `removed`, `removal_queued`, `not_connected`, `failed`,
-  `off`) and the dates are saved whichever it is. The read says
+  happened (`added`, `removed`, `removal_queued`, `not_connected`,
+  `not_removed`, `failed`, `off`) and the dates are saved whichever it is.
+  `not_connected` is an event that was not put there; `not_removed` is one
+  that is there and cannot be taken off, because the calendar is no longer
+  connected -- the person is told to delete it themselves. **Google is asked
+  with no transaction open** (mminjae97's review of #922): the dates are
+  committed first, then the calendar is asked, holding neither the row's lock
+  nor a connection, then the answer is written in a second transaction. One
+  save at a time is at the calendar for a person -- the first leaves
+  `calendar_claimed_at` on the row, and a save that finds a claim younger
+  than two minutes (`leave_calendar.CLAIM_FOR`) is refused with 409 and
+  changes nothing, the dates included -- so a double press still makes one
+  event. A claim left by a process that died stops holding after those two
+  minutes. A save that comes back to find its claim taken over, or the row
+  gone, writes nothing and queues the event it made for removal. The read says
   `calendar_connected` so the screen draws the box only then. The event's id
   is kept on the pause (`calendar_event_id`) and goes with it after the last
   day; the event itself then stays on the calendar. Rules and what is said

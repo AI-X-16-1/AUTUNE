@@ -3894,7 +3894,9 @@ def set_notification_pause(
     The row is replaced in place and comes back locked. The one thing it
     carries over is ``calendar_event_id`` -- the event the person asked for on
     their own calendar -- which ``leave_calendar.set_leave`` moves or removes
-    next; the lock is what makes a double press move one event.
+    next. The lock covers the dates and that id; the calendar itself is asked
+    after the commit, and a double press is kept to one event there by
+    ``calendar_claimed_at``.
     """
     if (starts_on is None) != (ends_on is None):
         raise ValidationError("a pause needs both its first and its last day, or neither")

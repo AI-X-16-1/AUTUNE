@@ -732,7 +732,10 @@ def set_my_notification_pause(
     pause (the user, 2026-10-05). With ``on_calendar`` the range also goes onto
     the caller's own calendar (2026-10-06), in the request: they pressed 저장
     and wait to see whether it went. The dates are saved whatever the calendar
-    answers, and ``calendar`` in the answer says which it was."""
+    answers, and ``calendar`` in the answer says which it was. The dates are
+    committed before Google is asked (``leave_calendar.set_leave``); a save
+    that arrives while an earlier one is still at the calendar is refused
+    with 409 and changes nothing."""
     outcome = tasks.set_leave(
         session,
         reader.id,

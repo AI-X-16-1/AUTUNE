@@ -36,6 +36,11 @@ const CALENDAR_NOTE: Partial<Record<LeaveCalendarOutcome, { text: string; critic
     text: "기간은 저장했습니다. 캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다.",
     critical: true,
   },
+  // An event that is there and can no longer be reached: not "넣지 못했습니다".
+  not_removed: {
+    text: "캘린더가 연결되어 있지 않아 이전 휴가 일정을 지우지 못했습니다. 캘린더에서 직접 지워 주세요.",
+    critical: true,
+  },
   failed: {
     text: "기간은 저장했습니다. 캘린더에는 넣지 못했으니 잠시 후 다시 저장해 주세요.",
     critical: true,
