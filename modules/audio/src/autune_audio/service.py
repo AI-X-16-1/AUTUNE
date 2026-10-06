@@ -272,6 +272,57 @@ def pin_team(session: Session, *, team_id: str, member: User, now: datetime | No
     log.info("team_pinned", team_id=team_id, user_id=member.id)
 
 
+class LastTeamMemberError(ConflictError):
+    """The only member of a team asked to leave it. Its own code, so the
+    screen can say why instead of "try again"."""
+
+    code = "last_team_member"
+
+
+def leave_team(session: Session, *, team_id: str, member: User) -> None:
+    """Take ``member`` off ``team_id``, by their own act (#552).
+
+    Only a person's own membership: there is no argument for anybody else's,
+    so nobody is removed from a team by somebody else here. The row is what
+    every module checks before it lets a person read the team's data, so that
+    stops with this commit; their pin goes with the row.
+
+    **What they said and what they hold stays, and stays theirs to delete**
+    (decided with the user, 2026-10-06; privacy.md section 4). Their
+    utterances, the items assigned to them and the decisions they took part
+    in are the team's record, as ADR 0007 argues. **Their participant rows
+    keep their ``user_id``**, which is not what that ADR's mechanism says: it
+    clears the link on departure. The link is how
+    ``account.delete_my_speech`` finds a person's lines, so clearing it here
+    would end, at the moment they leave, their way to take their own words
+    out. The ADR is Proposed and its legal review (#92) has not happened; if
+    it comes back wanting the link cleared, this is the place, and deletion
+    has to be offered before the link goes.
+
+    **The last member cannot leave.** A team with nobody on it has meetings
+    nobody can read or delete and nothing that would ever remove them.
+    Deleting a team is a decision of its own and is not made by this button.
+    Every membership of the team is locked first, so the last two members
+    leaving at once are counted one after the other and cannot both go.
+    """
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.team_id == team_id).with_for_update()
+        )
+    )
+    own = next((row for row in rows if row.user_id == member.id), None)
+    if own is None:
+        # Gone while this request waited for the lock: the same person's
+        # other request left first. Refused as for anybody not on the team.
+        raise NotATeamMemberError("you are not a member of this team")
+    if len(rows) <= 1:
+        raise LastTeamMemberError("the last member of a team cannot leave it")
+    session.delete(own)
+    session.flush()
+    log.info("team_left", team_id=team_id, user_id=member.id)
+
+
 def unpin_team(session: Session, *, team_id: str, member: User) -> None:
     """Take the pin off. The team goes back to where the order of joining puts
     it. Unpinning a team that is not pinned is not an error."""

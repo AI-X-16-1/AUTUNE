@@ -293,11 +293,28 @@ person's, those counts are that person's completion record. So:
   assignment; a voice that diarization split into two labels should have both
   assigned to the same person, which the speaker picker allows behind a
   confirmation (#912).
-- When a user leaves a team, their utterances and everything derived from them
-  are deleted. **This rule is under review — see ADR 0007**, which argues the
-  record belongs to the meeting rather than to its participants, and that
-  leaving is an access change rather than a data change. Until that ADR is
-  accepted or rejected, this line is what the code follows.
+- When a user leaves a team, **their membership goes and nothing else does**
+  (decided with the user, 2026-10-06, #552). They can no longer read the
+  team's meetings or anything derived from them. Their utterances, the items
+  assigned to them and the decisions they took part in stay with the team, and
+  their name stays on what they said. **Their participant rows keep their
+  `user_id`**, so deleting their own speech (`DELETE /api/audio/me/speech`,
+  above) still reaches every line of theirs after they have left: leaving
+  does not delete a person's words, and it does not take away their way to
+  delete them. That deletion is not per team -- it removes their speech
+  everywhere at once -- and somebody who has left can no longer open the
+  meetings to look first; the screen says both before they leave.
+  A member leaves only by their own act
+  (`DELETE /api/audio/teams/{team_id}/members/me`), and the last member of a
+  team cannot leave it.
+  This is ADR 0007's ownership rule -- the record belongs to the meeting, and
+  leaving is an access change rather than a data change -- **without that
+  ADR's mechanism**, which clears `participants.user_id` on departure and
+  would end the departed person's deletion with it. The ADR is still Proposed
+  and its legal review has not happened (#92); what a "no" there would change
+  is written in the ADR, under *Not taken yet*. Until 2026-10-06 this line
+  read "their utterances and everything derived from them are deleted", and
+  nothing did that: there was no way to leave a team.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.

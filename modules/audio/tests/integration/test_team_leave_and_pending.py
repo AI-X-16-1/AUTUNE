@@ -1,10 +1,11 @@
-"""A team's pending invitations listed and cancelled (#552), against a real
-database.
+"""Leaving a team, and a team's pending invitations listed and cancelled (#552),
+against a real database.
 
-A follow-up the module owner left on #552. What is pinned: the list of pending
-invitations is for the team's members, shows nothing a link could be rebuilt
-from and nothing about whether an address has an account; and a cancelled link
-stops working.
+The follow-ups the module owner left on #552. What is pinned: a person leaves
+only by their own act and only their own membership goes; the last member
+cannot; what the team holds of them stays; the list of pending invitations is
+for the team's members, shows nothing a link could be rebuilt from and nothing
+about whether an address has an account; and a cancelled link stops working.
 
 Read ``conftest.py`` for ``db_session``: migrations once per session, each test
 in a transaction that is rolled back.
@@ -22,9 +23,20 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
 
+from autune_audio import invitations
 from autune_audio.models import AudTeamInvitation
 from autune_audio.router import router
-from autune_core import AutuneError, Team, TeamMember, User, get_session
+from autune_core import (
+    AutuneError,
+    Meeting,
+    Participant,
+    Team,
+    TeamMember,
+    User,
+    Utterance,
+    deletion,
+    get_session,
+)
 from autune_core.auth import current_user
 
 INVITED = "Newcomer@Example.com"
@@ -88,12 +100,153 @@ def invite(client_for, by: User, team: str, email: str = INVITED):
     return client_for(by).post(f"/api/audio/teams/{team}/invitations", json={"email": email})
 
 
+def leave(client_for, by: User, team: str):
+    return client_for(by).delete(f"/api/audio/teams/{team}/members/me")
+
+
 def listed(client_for, by: User, team: str):
     return client_for(by).get(f"/api/audio/teams/{team}/invitations")
 
 
 def cancel(client_for, by: User, team: str, invitation_id: int):
     return client_for(by).delete(f"/api/audio/teams/{team}/invitations/{invitation_id}")
+
+
+# --- leaving a team -----------------------------------------------------------
+
+
+def test_a_member_leaves_and_only_their_own_membership_goes(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    own = Team(name="Own Team")
+    db_session.add(own)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=own.id, user_id=mate.id))
+    db_session.flush()
+
+    response = leave(client_for, mate, team)
+
+    assert response.status_code == 200
+    # The answer is the teams they are still on.
+    assert [t["team_id"] for t in response.json()] == [own.id]
+    assert members(db_session, team) == {host.id}
+    assert members(db_session, own.id) == {mate.id}
+
+
+def test_someone_who_left_can_no_longer_read_the_team_or_invite_to_it(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    assert client_for(mate).get(f"/api/audio/teams/{team}/members").status_code == 200
+    leave(client_for, mate, team)
+
+    assert client_for(mate).get(f"/api/audio/teams/{team}/members").status_code == 403
+    assert invite(client_for, mate, team).status_code == 403
+    assert listed(client_for, mate, team).status_code == 403
+    assert rows(db_session, team) == []
+
+
+def test_the_last_member_cannot_leave(
+    db_session: Session, client_for, host: User, team: str
+) -> None:
+    response = leave(client_for, host, team)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "last_team_member"
+    assert members(db_session, team) == {host.id}
+
+
+def test_someone_who_is_not_on_the_team_cannot_leave_it(
+    db_session: Session, client_for, host: User, mate: User, stranger: User, team: str
+) -> None:
+    assert leave(client_for, stranger, team).status_code == 403
+    assert members(db_session, team) == {host.id, mate.id}
+
+
+def test_what_the_team_holds_stays_when_somebody_leaves(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    """Their meetings and their account are the team's record and their own:
+    leaving deletes neither."""
+    meeting = Meeting(team_id=team, title="Before leaving")
+    db_session.add(meeting)
+    db_session.flush()
+
+    leave(client_for, mate, team)
+
+    db_session.expire_all()
+    assert db_session.get(Meeting, meeting.id) is not None
+    assert db_session.get(User, mate.id) is not None
+
+
+def test_somebody_who_left_can_still_take_their_own_words_out(
+    db_session: Session,
+    client_for,
+    host: User,
+    mate: User,
+    meeting: str,
+    team: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invariant 11: a person can delete their own data at any time. Leaving
+    takes away reading the team's meetings; it must not take away this. The
+    words they spoke there stay with the team only until they say otherwise,
+    and the other modules still hear of it first, while the lines exist."""
+    lines: dict[str, str] = {}
+    for who in (host, mate):
+        participant = Participant(meeting_id=meeting, user_id=who.id, speaker_label=who.id)
+        db_session.add(participant)
+        db_session.flush()
+        utterance = Utterance(
+            meeting_id=meeting,
+            participant_id=participant.id,
+            speaker_label=who.id,
+            start_sec=0,
+            end_sec=1,
+            text="회의에서 한 말",
+        )
+        db_session.add(utterance)
+        db_session.flush()
+        lines[who.id] = utterance.id
+    told: list[tuple[str, list[str], bool]] = []
+
+    def hook(user_id: str, utterance_ids: list[str]) -> None:
+        there = all(db_session.get(Utterance, u) is not None for u in utterance_ids)
+        told.append((user_id, sorted(utterance_ids), there))
+
+    monkeypatch.setattr(deletion, "_speech_hooks", {"recorder": hook})
+    assert leave(client_for, mate, team).status_code == 200
+
+    # They can no longer read the meeting they spoke in ...
+    assert client_for(mate).get(f"/api/audio/transcripts/{meeting}").status_code == 403
+    # ... and can still delete what they said in it.
+    response = client_for(mate).delete("/api/audio/me/speech")
+
+    assert response.status_code == 200
+    assert response.json()["utterances"] == 1
+    db_session.expire_all()
+    assert db_session.get(Utterance, lines[mate.id]) is None
+    assert db_session.get(Utterance, lines[host.id]) is not None
+    assert told == [(mate.id, [lines[mate.id]], True)]
+    # Their own data is still theirs to see and to take away.
+    assert client_for(mate).get("/api/audio/me/data").status_code == 200
+
+
+def test_leaving_twice_is_refused_the_second_time_as_for_anybody_not_on_the_team(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    assert leave(client_for, mate, team).status_code == 200
+    assert leave(client_for, mate, team).status_code == 403
+
+
+def test_the_log_of_a_departure_carries_ids_only(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    with capture_logs() as logs:
+        leave(client_for, mate, team)
+
+    (entry,) = [e for e in logs if e["event"] == "team_left"]
+    assert (entry["team_id"], entry["user_id"]) == (team, mate.id)
+    assert "example.com" not in repr(logs) and mate.display_name not in repr(logs)
 
 
 # --- what is pending ----------------------------------------------------------
@@ -224,3 +377,23 @@ def test_the_log_of_a_cancellation_carries_ids_and_never_the_address(
         host.id,
     )
     assert "newcomer" not in repr(logs).lower()
+
+
+# --- the two together ---------------------------------------------------------
+
+
+def test_an_invitation_sent_by_somebody_who_then_left_is_still_listed_and_still_works(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    """As built, and for the module owner to settle on #552: the invitation was
+    the team's when it was made, and the members who remain can see it and
+    take it back."""
+    token = invite(client_for, mate, team).json()["token"]
+    invitee = person(db_session, "newcomer@example.com", "받은 사람")
+    leave(client_for, mate, team)
+
+    (entry,) = listed(client_for, host, team).json()
+    assert entry["invited_by_name"] == "같은 팀"
+
+    assert invitations.accept(db_session, token=token, user=invitee).id == team
+    assert members(db_session, team) == {host.id, invitee.id}

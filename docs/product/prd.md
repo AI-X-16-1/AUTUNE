@@ -210,7 +210,9 @@ applied at design time, not bolted on:
 3. **Speaking ratio is private to the speaker** — see 5.6.
 4. **Retention and deletion** — results are kept 90 days by default (adjustable
    per team) and deleted automatically afterwards. Users can delete their data
-   at any time. Leaving a team deletes that user's utterance data.
+   at any time. Leaving a team ends that user's access and deletes nothing;
+   what they said stays theirs to delete (`../architecture/privacy.md`
+   section 4).
 5. **Participant consent** — everyone is notified when recording starts, and
    there is an option to exclude a non-consenting participant's speech from
    analysis.
