@@ -94,7 +94,23 @@
  *   are B's own DMs -- the confirmation request, the due reminder, the Monday
  *   digest and the morning DM; a confirmation DM's quotation is rewritten when
  *   the line it quotes is corrected (#586). Privacy 제4조 ⑤, terms 제13조 ③.
- *   D's Slack messages are not worded there: their owner has to say.
+ *   D's Slack messages -- the topic-link notice, the decision-change notice
+ *   and its DM, the pre-meeting brief -- are in that item too since the owner
+ *   asked for them (2026-10-06): nothing under modules/context calls
+ *   `update_message` or `chat.delete`, and the only callers of either are
+ *   B's `project_send` and B's confirmation DM. Their owner was asked on the
+ *   PR and had not answered when this was written.
+ * - B's notice that a meeting's extraction failed three times (#868) is in the
+ *   Slack row and among the copies that stay: the meeting's title, the number
+ *   of attempts and a link; no utterance and not the error. The page does not
+ *   say "no name" of it -- a title is typed by a person (mminjae97, #868).
+ * - besides the session cookie the browser holds three values of ours
+ *   (제12조 ④): the last team a person chose (`localStorage`, #867), a
+ *   per-meeting mark that the carried-over notice was seen (`localStorage`),
+ *   and an invitation token for the length of a sign-in (`sessionStorage`,
+ *   #552). Not on the page: `localStorage["autune.token"]`, which a developer
+ *   sets by hand from a route that exists only with `AUTUNE_ENV=local`
+ *   (`shared/api/client.ts`); nothing in the product writes it.
  * - D keeps, with each version of a decision, the team members who spoke in
  *   the decision's earlier meetings and did not speak in the one where it
  *   changed (`ctx_decision_versions`, deleted with that meeting), sends each
@@ -397,6 +413,7 @@ const PRIVACY: LegalDocument = {
           "Slack, Notion 및 Jira에 보낸 프로젝트별 회의록은 해당 회의가 삭제되거나 보유 기간이 만료된 경우 회수(내용을 비우고 삭제 또는 종료)를 요청하고, 그 회의록에 포함된 내용이 삭제·정정·확정 취소된 경우 사본을 다시 작성합니다. 외부 서비스의 응답이 없으면 일정 기간 다시 시도하며, 그래도 처리하지 못한 사본은 해당 서비스에 남을 수 있습니다.",
           "팀의 Slack 채널에 보낸 회의 리포트 및 주간 팀 리포트는 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 해당 채널에 남습니다.",
           "본인에게 Slack으로 보낸 확인 요청 메시지, 마감 알림, 월요일 요약 및 아침 요약도 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 본인의 Slack에 남습니다. 다만, 확인 요청 메시지가 인용한 발화가 정정된 경우에는 그 메시지의 인용문을 정정된 내용으로 바꿉니다.",
+          "팀의 Slack 채널에 보낸 이전 회의와의 연결 알림, 결정 사항의 변경 공지, 회의 전 브리핑 및 추출 실패 알림과, 결정이 바뀐 회의에서 발언하지 않은 본인에게 Slack으로 보낸 알림도 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하거나 고쳐 쓰지 않으며, 해당 채널 또는 본인의 Slack에 남습니다.",
           "담당자 본인의 Google Calendar에 등록된 일정은 삭제를 요청하며, Google의 응답이 없는 경우 일정이 남을 수 있습니다.",
           "회원이 탈퇴하는 경우 해당 회원이 Google Calendar 연결 및 Gmail을 통한 초대 메일 발송을 위하여 부여한 권한의 해지를 Google에 요청합니다. Google의 응답이 없는 경우 그 권한은 이용자가 Google 계정에서 직접 해제할 때까지 남을 수 있으며, 회사는 탈퇴 후 해당 권한의 사본을 보관하지 않습니다.",
         ),
@@ -421,7 +438,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 회의의 액션 아이템 및 결정 사항의 추출이 연속하여 3회 실패한 때 팀 채널에 1회 보내는 알림(회의 제목, 시도 횟수 및 서비스 화면 링크. 발화 내용과 오류의 내용은 싣지 않습니다), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",
@@ -666,7 +683,18 @@ const PRIVACY: LegalDocument = {
           "③ 이용자는 웹브라우저의 설정을 통하여 쿠키의 저장을 거부할 수 있습니다. 쿠키의 저장을 거부하는 경우 로그인이 필요한 서비스를 이용할 수 없습니다.",
         ),
         p(
-          "④ 회사는 온라인 맞춤형 광고 등을 위한 행태정보를 수집·이용·제공하지 않으며, 이용 행태를 분석하는 외부 도구를 사용하지 않습니다.",
+          "④ 회사는 쿠키 외에 화면의 편의를 위하여 이용자의 웹브라우저 저장 공간에 다음의 값을 둡니다. 이 값은 해당 웹브라우저에만 저장되며, 회사는 이를 이용 행태의 분석에 사용하지 않습니다.",
+        ),
+        ol(
+          "이용자가 마지막으로 선택한 팀의 식별자: 다른 화면으로 이동하여도 같은 팀을 보여 주기 위한 것으로, 이용자가 팀을 선택한 때에만 기록합니다.",
+          "회의별로, 이전 회의에서 넘어온 액션 아이템 안내를 확인하였다는 표시",
+          "팀 초대 링크의 초대 토큰: 초대 링크를 연 뒤 로그인을 거치는 동안 해당 탭에만 임시로 보관하며, 초대를 수락하거나 거절하면 삭제하고 탭을 닫으면 사라집니다.",
+        ),
+        p(
+          "⑤ 이용자는 웹브라우저의 설정을 통하여 제4항의 저장을 거부하거나 저장된 값을 삭제할 수 있습니다. 이 경우 선택한 팀이 유지되지 않는 등 해당 편의 기능만 동작하지 않으며, 서비스는 그대로 이용할 수 있습니다.",
+        ),
+        p(
+          "⑥ 회사는 온라인 맞춤형 광고 등을 위한 행태정보를 수집·이용·제공하지 않으며, 이용 행태를 분석하는 외부 도구를 사용하지 않습니다.",
         ),
       ],
     },
@@ -887,7 +915,7 @@ const TERMS: LegalDocument = {
           "② 외부 서비스에 전달된 사본에는 해당 외부 서비스의 약관 및 정책이 적용됩니다.",
         ),
         p(
-          "③ Notion 및 Jira에 전달된 액션 아이템 및 결정 사항의 사본은 해당 팀의 기록으로서, 서비스에서 회의가 삭제되거나 이용자가 탈퇴한 후에도 남습니다. 프로젝트별 회의록의 사본은 회의가 삭제되거나 보유 기간이 만료되면 회사가 해당 외부 서비스에 회수를 요청하며, 외부 서비스의 응답이 없는 경우 남을 수 있습니다. 팀의 Slack 채널에 보낸 회의 리포트 및 주간 팀 리포트는 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 해당 채널에 남습니다. 본인에게 Slack으로 보낸 확인 요청 및 알림 메시지도 회수하지 않습니다.",
+          "③ Notion 및 Jira에 전달된 액션 아이템 및 결정 사항의 사본은 해당 팀의 기록으로서, 서비스에서 회의가 삭제되거나 이용자가 탈퇴한 후에도 남습니다. 프로젝트별 회의록의 사본은 회의가 삭제되거나 보유 기간이 만료되면 회사가 해당 외부 서비스에 회수를 요청하며, 외부 서비스의 응답이 없는 경우 남을 수 있습니다. 팀의 Slack 채널에 보낸 회의 리포트 및 주간 팀 리포트는 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 해당 채널에 남습니다. 본인에게 Slack으로 보낸 확인 요청 및 알림 메시지와, 팀의 Slack 채널에 보낸 그 밖의 알림(이전 회의와의 연결, 결정 사항의 변경, 회의 전 브리핑, 추출 실패)도 회수하지 않습니다.",
         ),
         p(
           "④ 회사는 외부 서비스의 장애 또는 정책 변경으로 연동이 중단된 경우 이에 대한 책임을 지지 않습니다. 다만, 회사의 고의 또는 중대한 과실이 있는 경우에는 그러하지 아니합니다.",
