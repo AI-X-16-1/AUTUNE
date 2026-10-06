@@ -408,3 +408,20 @@ def test_user_id_is_optional_when_the_run_knows_who_asked() -> None:
     assert "required" not in asked.parameters
     assert "asking" in asked.parameters["properties"]["user_id"]["description"]
     assert unasked.parameters["required"] == ["user_id"]
+
+
+def test_an_item_whose_id_is_not_text_does_not_end_the_run() -> None:
+    # #901: context.decision_thread handed back the integer primary key as
+    # `id`, and the utterance check called .startswith on it, so the whole chat
+    # failed. Whatever shape a module's id has, the item passes through as it is.
+    thread = {
+        "ok": True,
+        "summary": "결정 이력 1건.",
+        "items": [{"title": "예산 상한 확정", "body": "1억", "id": 42}],
+    }
+    box = _box({"audio.find_utterances": mock_tool("audio.find_utterances", thread)})
+    model = ScriptedToolModel([[FunctionCall("audio__find_utterances", {"query": "예산"})], "DONE"])
+
+    result = ask("예산 결정 이력", model=model, toolbox=box, declarations=FIND)
+
+    assert [i.title for i in result.items] == ["예산 상한 확정"]
