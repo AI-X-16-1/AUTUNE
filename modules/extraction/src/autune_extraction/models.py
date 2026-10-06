@@ -582,6 +582,21 @@ class ExtDecision(Base, TimestampMixin):
     typed and for rows from before this column: read it as
     ``original_statement or statement``."""
 
+    statement_resolved: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """True when ``statement`` is a model's sentence about the decision -- the
+    classifier's one line or the resolver's write-up -- rather than the settling
+    line tidied. ``ExtActionItem.description_resolved`` for a decision.
+
+    Set in ``build_decisions``, where the sentence is chosen, by whether a
+    summary replaced the line. It is what ``forget_speech`` reads when the
+    speaker deletes the speech: a model's sentence is the team's record and
+    stays, the line itself goes (the user, 2026-10-06, on #894). Before this
+    column that was read off ``ext_decision_related`` -- whether the sentence
+    cited a line -- which was the same thing only while every write-up cited
+    one."""
+
     source_digest: Mapped[str | None] = mapped_column(String(64))
     """sha256 of the masked text of the utterances this was drawn from, in source
     order (``service.source_digest``) -- how a corrected transcript is noticed

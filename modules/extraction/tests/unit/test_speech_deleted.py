@@ -125,6 +125,7 @@ def session() -> Iterator[Session]:
                     meeting_id="mtg_1",
                     statement=f"{dec_id} 원문",
                     original_statement=f"{dec_id} 원래 문장" if origin == "model" else None,
+                    statement_resolved=written_up,
                     confidence=0.9,
                     origin=origin,
                     sources=[ExtDecisionSource(utterance_id="utt_gone2", position=0)],
