@@ -135,15 +135,6 @@ export const cancelInvitation = (teamId: string, invitationId: number) =>
   );
 
 /**
- * Leave a team, by the caller's own act. Answers with the teams they are
- * still on. The last member is refused: 409 `last_team_member`.
- */
-export const leaveTeam = (teamId: string) =>
-  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}/members/me`, {
-    method: "DELETE",
-  });
-
-/**
  * Join the team an invitation link names, as the signed-in owner of the
  * invited address. Every refusal is the same 404; show one sentence for it.
  */

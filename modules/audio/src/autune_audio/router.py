@@ -234,15 +234,6 @@ def cancel_invitation(
     return _pending(session, team_id, user)
 
 
-@router.delete("/teams/{team_id}/members/me", response_model=list[TeamSummary])
-def leave_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
-    """Leave a team, by the caller's own act, and answer with the teams they
-    are still on. The last member is refused with 409 ``last_team_member``.
-    See ``service.leave_team`` for what stays."""
-    service.leave_team(session, team_id=team_id, member=user)
-    return _my_teams(session, user)
-
-
 @router.post("/invitations/accept", response_model=TeamSummary)
 def accept_invitation(
     body: InvitationAccept, user: CurrentUser, session: SessionDep

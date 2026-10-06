@@ -3,17 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { ApiError } from "@/shared/api/client";
 import { Button } from "@/shared/ui";
 
 import {
   cancelInvitation,
-  leaveTeam,
   listPendingInvitations,
   listTeamMembers,
   type PendingInvitation,
 } from "../api";
-import { rememberTeam } from "../selectedTeam";
 import type { TeamMember } from "../types";
 import { TeamInvite } from "./TeamInvite";
 import { TeamScope } from "./TeamScope";
@@ -35,13 +32,6 @@ import { TeamScope } from "./TeamScope";
  * and never the link. The section is absent when nothing is pending, and when
  * the list cannot be read: an invitation that looked cancellable and was not
  * would be worse than none shown.
- *
- * **Leaving is the person's own act, said before it is done.** One press
- * opens what leaving means -- the team's meetings can no longer be read; what
- * they said and the items they hold stay with the team, and their own words
- * are still theirs to delete afterwards (설정 › 개인정보 · 보관; the right does
- * not go with the membership) -- and a second press does it. The last member
- * is refused by the server and told why.
  */
 
 const SECTION_TITLE = {
@@ -76,9 +66,6 @@ function Members({ teamId }: { teamId: string }) {
   const [pending, setPending] = useState<PendingInvitation[] | null>(null);
   const [cancelling, setCancelling] = useState<number | null>(null);
   const [cancelFailed, setCancelFailed] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [leaving, setLeaving] = useState(false);
-  const [leaveNote, setLeaveNote] = useState<string | null>(null);
 
   const readPending = useCallback(() => {
     listPendingInvitations(teamId)
@@ -100,26 +87,6 @@ function Members({ teamId }: { teamId: string }) {
       setCancelFailed(true);
     } finally {
       setCancelling(null);
-    }
-  };
-
-  const leave = async () => {
-    setLeaving(true);
-    setLeaveNote(null);
-    try {
-      const left = await leaveTeam(teamId);
-      // Every screen holds the team list it read at start: go where the
-      // person now belongs and read it again from there.
-      const next = left[0]?.team_id;
-      if (next) rememberTeam(next);
-      window.location.assign(next ? "/" : "/workspace/new");
-    } catch (error) {
-      setLeaveNote(
-        error instanceof ApiError && error.code === "last_team_member"
-          ? "이 팀에 남은 구성원이 나뿐이라 나갈 수 없습니다. 다른 사람을 초대해 그 사람이 들어온 뒤에 나갈 수 있습니다."
-          : "팀에서 나가지 못했습니다. 잠시 후 다시 시도해 주세요.",
-      );
-      setLeaving(false);
     }
   };
 
@@ -217,38 +184,6 @@ function Members({ teamId }: { teamId: string }) {
         </section>
       ) : null}
 
-      <section className="mt-8" aria-labelledby="leave-title">
-        <h2 id="leave-title" className="mb-2" style={SECTION_TITLE}>
-          팀 나가기
-        </h2>
-        {asking ? (
-          <>
-            <p style={META}>
-              나가면 이 팀의 회의와 기록을 더 볼 수 없습니다. 이 팀 회의에서 내가 한 말과 내가
-              담당한 항목은 팀의 기록으로 남습니다. 내가 한 말은 나간 뒤에도 설정의
-              &lsquo;개인정보 · 보관&rsquo;에서 직접 삭제할 수 있습니다. 다시 들어오려면 팀원의 초대가
-              필요합니다.
-            </p>
-            <div className="mt-2 flex gap-2">
-              <Button tone="quiet" size="compact" loading={leaving} onClick={leave}>
-                이 팀에서 나가기
-              </Button>
-              <Button tone="text" size="compact" onClick={() => setAsking(false)}>
-                취소
-              </Button>
-            </div>
-          </>
-        ) : (
-          <Button tone="text" size="compact" onClick={() => setAsking(true)}>
-            이 팀에서 나가기
-          </Button>
-        )}
-        {leaveNote ? (
-          <p role="alert" className="mt-2" style={META}>
-            {leaveNote}
-          </p>
-        ) : null}
-      </section>
     </>
   );
 }
