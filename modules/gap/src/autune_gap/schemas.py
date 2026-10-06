@@ -67,11 +67,110 @@ class GapCarry(BaseModel):
     What ``POST`` and ``DELETE /gaps/{gap_id}/carry`` both return, the same
     shape as ``GapDismissal`` and for the same reasons: the flag the server
     settled on, no timestamp and nobody's id.
+
+    ``calendar`` is what happened to the next meeting's event on the caller's
+    own Google Calendar (``calendar_writes.AgendaOutcome``), or ``not_tried``.
+    The mark is set whatever it says.
     """
 
     gap_id: str
     meeting_id: str
     carried: bool
+    calendar: str = "not_tried"
+
+
+class GapMeetingCarry(BaseModel):
+    """What "다음 회의 잡기" did (``POST /agenda/{meeting_id}``, #824): how many
+    of the meeting's open gaps are now sent on, and what happened to the next
+    meeting's event on the caller's own calendar (``not_tried`` when there was
+    no gap to send).
+
+    ``slack`` is the one notice on the team's channel
+    (``team_notice.SlackOutcome``): ``posted``, ``no_slack``, ``failed``,
+    ``refused``, or ``not_tried`` when the calendar took no new line."""
+
+    meeting_id: str
+    carried: int
+    calendar: str
+    slack: str = "not_tried"
+
+
+QUESTION_MAX = 500
+"""The longest question a member can write -- a question, not a memo."""
+
+
+class GapQuestionEdit(BaseModel):
+    """``PUT /gaps/{gap_id}/question``: the question in the member's words."""
+
+    question: str = Field(min_length=1, max_length=QUESTION_MAX)
+
+
+class GapQuestion(BaseModel):
+    """What ``PUT /gaps/{gap_id}/question`` settled on: the question as stored,
+    and that it is a person's rather than C's. No timestamp and nobody's id."""
+
+    gap_id: str
+    meeting_id: str
+    suggested_question: str
+    edited: bool
+
+
+class GapAskTarget(BaseModel):
+    """A member of the meeting's team "담당자 지정해 질문" can ask. A name and
+    an id, which every member already sees on the team; nothing about what the
+    member connected."""
+
+    user_id: str
+    name: str
+
+
+class GapAskTargets(BaseModel):
+    """``GET /gaps/{gap_id}/ask``: the members to pick from."""
+
+    gap_id: str
+    members: list[GapAskTarget]
+
+
+class GapAskRequest(BaseModel):
+    """``POST /gaps/{gap_id}/ask``: the member the question is for."""
+
+    user_id: str
+
+
+class GapAsk(BaseModel):
+    """What "담당자 지정해 질문" did: the question was posted on the team's
+    Slack channel mentioning the member (``slack`` is
+    ``team_notice.SlackOutcome``). Nothing is stored."""
+
+    gap_id: str
+    user_id: str
+    slack: str
+
+
+class GapAgendaRequest(BaseModel):
+    """``POST /agenda/{meeting_id}``: the event on the caller's own calendar the
+    gaps go onto. No event means the team's next scheduled meeting's."""
+
+    event_id: str | None = None
+
+
+class GapCalendarEvent(BaseModel):
+    """One event on the caller's own calendar, to pick the next meeting from.
+    Read from Google for that person and shown to them; never stored."""
+
+    id: str
+    summary: str
+    start: datetime
+    end: datetime | None
+
+
+class GapAgendaEvents(BaseModel):
+    """``GET /agenda/{meeting_id}/events``: the caller's own timed events over
+    the next two weeks. ``calendar`` is ``ok``, ``not_connected``,
+    ``reconnect_required`` or ``failed``; the list is empty unless ``ok``."""
+
+    calendar: str
+    events: list[GapCalendarEvent]
 
 
 class TemplateItemRead(BaseModel):
@@ -236,6 +335,9 @@ class GapExplanationRead(BaseModel):
     carried: bool = False
     """Whether somebody sent this gap on to the next meeting (#824). Here rather
     than on ``GapReport``: the contract is E's business, and E has no use for it."""
+    question_edited: bool = False
+    """Whether a member rewrote the gap's question by hand (#824), so S20 can
+    say the question is not C's own."""
 
 
 class CoveredExplanationRead(BaseModel):

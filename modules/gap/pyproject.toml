@@ -10,7 +10,9 @@ dependencies = [
     # masking leaves behind. This module recognises those leftovers in two
     # places (``graph.build_topics`` refuses them, ``spoken.masked_spans``
     # breaks noun runs on them) and both have to mean the same character as the
-    # masker itself. Declared here rather than relied on transitively
+    # masker itself. Also for ``CalendarClient``: S20's two calendar writes
+    # (``calendar_writes``, #824) go through it and its outbound check.
+    # Declared here rather than relied on transitively
     # (/CLAUDE.md invariant 8); importing it is invariant 2's allowance.
     "autune-integrations",
     "fastapi>=0.115",
