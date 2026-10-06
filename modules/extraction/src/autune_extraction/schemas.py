@@ -158,6 +158,11 @@ class ActionItemRead(BaseModel):
     meeting shows it on each card, so a person can tell which meeting an item
     belongs to without opening it (mentoring, 2026-10-01). Read with the item,
     never stored on it."""
+    team_id: str | None = None
+    """The team whose meeting the item came from (``meetings.team_id``), read
+    with the item and never stored on it -- an item has no team of its own,
+    only a meeting. The board across every meeting shows the items team by
+    team with it (the user, 2026-10-06); the names are ``GET /teams/mine``."""
     description: str
     description_resolved: bool = False
     """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
@@ -312,6 +317,14 @@ class EditHistoryEntry(BaseModel):
     """For ``edited``: the fields changed, e.g. ``["due_date"]``. Empty for
     ``created`` and for edits recorded before fields were kept."""
     at: datetime
+
+
+class TeamRead(BaseModel):
+    """One of the reader's teams, by name -- the heading over that team's items
+    on the board across meetings."""
+
+    id: str
+    name: str
 
 
 class ProjectRead(BaseModel):

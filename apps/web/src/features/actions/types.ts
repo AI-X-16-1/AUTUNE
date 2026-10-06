@@ -94,6 +94,11 @@ export interface ActionItemRead extends ActionItem {
   /** The meeting the item came from; the board across meetings shows it. */
   meeting_title?: string | null;
   /**
+   * The team whose meeting the item came from. The board across meetings shows
+   * the items team by team with it; the names come from `listMyTeams`.
+   */
+  team_id?: string | null;
+  /**
    * `model` for what the pipeline drafted, `user` for what a person typed,
    * `followup` for the Follow-up agent's "후속 회의 잡기" (#561), `chat` for an
    * item drafted from an utterance in the chat.
@@ -276,6 +281,16 @@ export interface Project {
   /** Other names people say for it, matched in what was said. */
   aliases: string[];
   jira_project_key: string | null;
+}
+
+/**
+ * One of the reader's teams, by name -- `TeamRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py`. The board across
+ * meetings heads each team's items with it (`ActionItemRead.team_id`).
+ */
+export interface TeamName {
+  id: string;
+  name: string;
 }
 
 export type SendTarget = "notion" | "slack" | "jira" | "calendar";

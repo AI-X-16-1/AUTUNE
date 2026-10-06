@@ -39,6 +39,7 @@ from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import (
     Meeting,
     Participant,
+    Team,
     TeamMember,
     User,
     Utterance,
@@ -136,6 +137,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
     SyncFailureRead,
+    TeamRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -1101,12 +1103,14 @@ def read_model(
     sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
+    team_id: str | None = None,
     carried_meetings: int = 0,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
     ``assignee_departed`` comes from ``departed_assignees``; see
-    ``ActionItemRead.needs_reassignment`` for what it changes.
+    ``ActionItemRead.needs_reassignment`` for what it changes. ``team_id`` is
+    the item's meeting's team, from ``meeting_teams``.
 
     Built here rather than by ``from_attributes`` on the schema because five of
     its fields are not columns: the source ids live in the link table, whether
@@ -1149,6 +1153,7 @@ def read_model(
         id=item.id,
         meeting_id=item.meeting_id,
         meeting_title=meeting_title,
+        team_id=team_id,
         description=item.description,
         description_resolved=item.description_resolved,
         assignee_id=None if assignee_departed else item.assignee_id,
@@ -1235,6 +1240,7 @@ def read_one(
         ),
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
+        team_id=meeting_teams(session, [item]).get(item.meeting_id),
         carried_meetings=meetings_since(session, [item]).get(item.id, 0),
     )
 
@@ -1247,6 +1253,31 @@ def meeting_titles(session: Session, items: Sequence[ExtActionItem]) -> dict[str
         return {}
     rows = session.execute(select(Meeting.id, Meeting.title).where(Meeting.id.in_(ids)))
     return dict(rows.tuples().all())
+
+
+def meeting_teams(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """The team of each meeting ``items`` came from, in one query -- an item has
+    no team of its own, only a meeting. Reads the shared ``meetings`` table and
+    never writes it (invariant 4). The team's name is not read here: see
+    ``reader_teams``."""
+    ids = {item.meeting_id for item in items}
+    if not ids:
+        return {}
+    rows = session.execute(select(Meeting.id, Meeting.team_id).where(Meeting.id.in_(ids)))
+    return dict(rows.tuples().all())
+
+
+def reader_teams(session: Session, reader_id: str) -> list[TeamRead]:
+    """Every team ``reader_id`` is on, by name -- what the board across meetings
+    heads each team's items with (``ActionItemRead.team_id``). Reads the shared
+    ``teams`` and ``team_members`` tables and never writes them (invariant 4)."""
+    rows = session.execute(
+        select(Team.id, Team.name)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .where(TeamMember.user_id == reader_id)
+        .order_by(Team.name, Team.id)
+    )
+    return [TeamRead(id=team_id, name=name) for team_id, name in rows.tuples().all()]
 
 
 def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
@@ -1449,6 +1480,7 @@ def list_action_items(
     # so get no calendar failure, which is one person's to see.
     failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
+    teams = meeting_teams(session, items)
     carried = meetings_since(session, items)
     return [
         read_model(
@@ -1459,6 +1491,7 @@ def list_action_items(
             sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
+            team_id=teams.get(item.meeting_id),
             carried_meetings=carried.get(item.id, 0),
         )
         for item in items
@@ -1607,6 +1640,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     departed = departed_assignees(session, shown)
     summaries = action_item_summaries(session, shown)
     refs = action_item_external_refs(session, [item.id for item in shown])
+    teams = meeting_teams(session, shown)
     return CarriedOver(
         open=len(rows),
         overdue=sum(1 for item in rows if late(item)),
@@ -1620,6 +1654,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
                     sync_refs=refs.get(item.id, []),
                     assignee_departed=item.id in departed,
                     meeting_title=earlier[item.meeting_id].title,
+                    team_id=teams.get(item.meeting_id),
                     carried_meetings=carried.get(item.id, 0),
                 ).model_dump(),
                 meeting_started_at=earlier[item.meeting_id].started_at,
@@ -1725,6 +1760,7 @@ def read_detail(
             sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
+            team_id=meeting_teams(session, [item]).get(item.meeting_id),
         ).model_dump(),
         # Why there is no calendar event, where there is none (#680). What is
         # missing from the item is said to any reader; anything about the

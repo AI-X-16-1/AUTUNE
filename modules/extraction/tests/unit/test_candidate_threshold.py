@@ -149,6 +149,7 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
         "id",
         "meeting_id",
         "meeting_title",
+        "team_id",
         "description",
         "description_resolved",
         "assignee_id",

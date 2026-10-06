@@ -441,7 +441,8 @@ other module's tables.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
-| GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text |
+| GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
+| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
