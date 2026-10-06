@@ -338,7 +338,8 @@ person's own grant (it goes with the account), and on a meeting's expiry by a
 queued job, so a slow calendar never holds up the sweep. Both are best effort:
 an account deletion does not wait on Google, so if Google does not answer an
 event can remain on that calendar, and Autune's record of it goes with the
-account anyway.
+account anyway. Module C's agenda lines on a person's own calendar follow
+the same rule -- see "Google Calendar, S20's 다음 회의 잡기" in section 6.
 
 ## 5. Consent
 
@@ -481,9 +482,10 @@ the feature needs.
   - **Out-of-office time, from a person's own calendar:** where a deployment
     turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
     person who connected Google Calendar is not sent the morning DM or
-    Monday's DM while that calendar marks them out of office. This is the
-    one read of a person's calendar that is not of Autune's own events, and
-    it is narrowed at Google twice: out-of-office events only
+    Monday's DM while that calendar marks them out of office. This is one of
+    two reads of a person's calendar that are not of Autune's own events
+    (the other is C's event picker, "Google Calendar, S20's 다음 회의 잡기"
+    below), and it is narrowed at Google twice: out-of-office events only
     (`eventTypes=outOfOffice`), and their start and end only -- no title, no
     description, no attendee, no other event is requested or returned. It
     asks about the minute the message would go, uses the answer to hold that
@@ -522,6 +524,74 @@ the feature needs.
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
+  - **Google Calendar, S20's 다음 회의 잡기 (module C, #824):** the presser's
+    own calendar only, with their own grant (`user_integrations`). A line
+    carries a gap's title and suggested question -- both stored masked -- and
+    the gap's id; never an utterance, a score, or anything from the
+    participation matrix (section 3). Settled with mkkim68 on #824:
+    - *Nobody else's calendar.* S20's "담당자 지정해 질문" does not write to the
+      teammate's calendar: one person's grant is for their own work only
+      (#435's rule), and a question picked by somebody else is not. It is a
+      mention on the team channel instead -- see "Slack, S20's team notices"
+      below.
+    - *The picker reads four fields.* So that the presser can pick the next
+      meeting, C lists the timed, uncancelled events on their own calendar
+      for the next 14 days, asking Google for each event's id, title, start,
+      end and status only (`fields`), and returns them to that person only
+      (`GET /api/gap/agenda/{meeting_id}/events`). Unlike the out-of-office
+      read above, this one returns event titles, and a title can name other
+      people. Nothing of it is stored; the log line holds the count. Without a
+      pick, C looks only at events starting within five minutes of the team's
+      next scheduled meeting, to find that meeting's event.
+    - *The write reads the description and the guest list.* C asks the picked
+      event for its description and its attendees' addresses only, adds one
+      line per gap (`[Autune 갭] <title> — <question> (<gap id>)`), and writes
+      the description back. The existing description passes through Autune's
+      server for that request and goes through the outbound check with the
+      rest of the body, so an event whose description already holds what the
+      check refuses is not written. Neither the description nor the addresses
+      are stored or logged.
+    - *The people already invited are told.* Adding lines asks Google to send
+      its change notice (`sendUpdates=all`) to the event's attendees, so the
+      meeting's members see the agenda in their own calendars. Nobody is
+      invited, and by the refusal below everyone notified is on the team.
+      Taking lines out sends nothing.
+    - *Not onto an event shared outside the team.* Google shows a description
+      to everyone on the event, so an event with an attendee who is not on the
+      meeting's team is refused (`external_attendees`) and the screen says
+      why. Meeting rooms and the presser do not count. A guest list Google
+      hides from the presser cannot be checked, and a guest invited after the
+      line was written sees it until it is taken out.
+    - *Every line is recorded, and comes out again.* `gap_agenda_events` keeps
+      the meeting, the gap, whose calendar and which event -- the calendar's
+      owner is also who pressed, kept because the line can only be removed
+      with their grant, as B keeps an item's assignee; no screen, route or
+      tool reads it. Taking a gap back removes its line and its record. A
+      meeting deleted or expired has its records copied to
+      `gap_agenda_cleanup` by C's meeting hook, and the worker takes the lines
+      out with each owner's grant (`drain_agenda_cleanup`, every ten minutes,
+      five tries). A deleted account has its lines taken out at once by C's
+      user hook, before the grant goes. A person deleting their own speech
+      (#587) resets a question that named their words, and that gap's lines
+      are queued to come out the same way. All best effort, as section 4
+      says: a refused grant, an unreachable Google or a description the
+      outbound check refuses leaves the line on the calendar, logged.
+  - **Slack, S20's team notices (module C, #824):** two messages to the
+    channel of the team that held the meeting, each once per press, with the
+    team's connection. "담당자 지정해 질문" posts one gap's title and suggested
+    question, mentioning the member the presser picked from the meeting's
+    team -- by the Slack account that member linked themselves, or by their
+    display name when they linked none -- and the presser's display name.
+    "다음 회의 잡기" posts, once the calendar took them, the titles and
+    questions of the gaps whose line is new on the event, the meeting's
+    title and the presser's display name; pressing again posts nothing.
+    Titles and questions are stored masked, every value is escaped so it
+    cannot become a mention or a link, and no utterance, score or
+    participation figure is sent. Nothing about either message is stored;
+    the picker returns names and ids only, never whether a member linked
+    Slack or a calendar. A team with no channel connected gets no message
+    and the screen says so. A message already posted stays in the channel
+    when the meeting is deleted.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,

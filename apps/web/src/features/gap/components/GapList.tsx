@@ -58,10 +58,7 @@ export function GapList({
   onToggleLow?: () => void;
   /** "해당 없음". Without it the button is drawn disabled. */
   onDismiss?: (gapId: string) => void;
-  /**
-   * "담당자 지정해 질문": who the question can go to, read when the picker
-   * opens, and the send. Without both the button is drawn disabled.
-   */
+  /** "담당자 지정해 질문": the team to pick from, and the pick. Without both the button is drawn disabled. */
   loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
   onAsk?: (gapId: string, userId: string) => void;
   /** The gap whose write is in flight, so only its button shows it. */
@@ -135,9 +132,9 @@ export function GapList({
       ) : null}
 
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        &quot;담당자 지정해 질문&quot;은 고른 팀원의 Google 캘린더에 해소용 질문을 종일 일정으로
-        넣고, &quot;해당 없음&quot;은 오탐으로 표시합니다. 다음 회의로 넘기는 것은 템플릿 대조
-        옆의 &quot;다음 회의 잡기&quot;에서 이 회의의 열린 갭을 한꺼번에 합니다.
+        &quot;담당자 지정해 질문&quot;은 고른 팀원을 멘션해 팀 Slack 채널에 질문을
+        올립니다. &quot;해당 없음&quot;은 오탐으로 표시합니다. 다음 회의로 넘기는 것은 템플릿 대조 옆의 &quot;다음
+        회의 잡기&quot;에서 이 회의의 열린 갭을 한꺼번에 합니다.
       </p>
     </div>
   );
@@ -205,9 +202,10 @@ function ListSummary({
  * beside the template rail does it for the whole meeting (#824). The card only
  * says a gap was sent on, from the explanation.
  *
- * "담당자 지정해 질문" opens a picker of the team, chosen by hand — never drawn
- * from who spoke (privacy.md section 3) — and puts the question on that
- * person's Google Calendar (`POST /gaps/{id}/ask`).
+ * "담당자 지정해 질문" opens a picker of the meeting's team, and posts the
+ * question on the team's Slack channel mentioning the member picked. It writes
+ * nobody's calendar: one person's grant is for their own work only (mkkim68
+ * on #824).
  */
 function GapCard({
   gap,
@@ -356,17 +354,14 @@ function GapCard({
               }}
             />
           ) : null}
+
         </div>
       ) : null}
     </article>
   );
 }
 
-/**
- * The teammate "담당자 지정해 질문" goes to, picked by hand from the gap's team.
- * Someone without a Google Calendar connected is listed but cannot be picked,
- * and someone already asked about this gap is marked so.
- */
+/** The member "담당자 지정해 질문" mentions, picked by hand from the meeting's team. */
 function AskPicker({
   gapId,
   load,
@@ -414,14 +409,8 @@ function AskPicker({
       >
         <option value="">담당자 선택</option>
         {targets.members.map((member) => (
-          <option
-            key={member.user_id}
-            value={member.user_id}
-            disabled={!member.calendar_connected}
-          >
+          <option key={member.user_id} value={member.user_id}>
             {member.name}
-            {member.asked ? " · 질문함" : ""}
-            {member.calendar_connected ? "" : " · 캘린더 미연결"}
           </option>
         ))}
       </select>
@@ -431,7 +420,7 @@ function AskPicker({
         disabled={!chosen || pending}
         onClick={() => onSend(chosen)}
       >
-        캘린더에 질문 넣기
+        Slack으로 질문 보내기
       </Button>
     </div>
   );
@@ -439,11 +428,9 @@ function AskPicker({
 
 const PENDING = "아직 준비 중인 동작입니다";
 
-const ASK_HINT = "팀원 한 명을 골라 그 사람의 Google 캘린더에 해소용 질문을 넣습니다.";
+const ASK_HINT = "팀원 한 명을 골라, 그 사람을 멘션해 팀 Slack 채널에 해소용 질문을 올립니다.";
 
 const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
-
-
 
 const DOT = { high: "critical", medium: "attention", low: "idle" } as const;
 

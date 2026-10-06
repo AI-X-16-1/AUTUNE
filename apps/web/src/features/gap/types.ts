@@ -157,13 +157,40 @@ export interface GapCarry {
 
 /**
  * What "다음 회의 잡기" did — `POST /api/gap/agenda/{meeting_id}`
- * (`GapMeetingCarry`, #824): how many open gaps were sent on, and what
- * happened to the next meeting's event on the caller's own calendar.
+ * (`GapMeetingCarry`, #824): how many open gaps were sent on, what
+ * happened to the next meeting's event on the caller's own calendar, and
+ * whether the team's Slack channel was told.
  */
 export interface GapMeetingCarry {
   meeting_id: string;
   carried: number;
   calendar: AgendaOutcome;
+  slack: SlackOutcome;
+}
+
+/** `team_notice.SlackOutcome`: what the team's Slack channel did. */
+export type SlackOutcome = "posted" | "no_slack" | "failed" | "not_tried";
+
+/** A member "담당자 지정해 질문" can ask (`GapAskTarget`). */
+export interface GapAskTarget {
+  user_id: string;
+  name: string;
+}
+
+/** `GET /api/gap/gaps/{gap_id}/ask` — the meeting's team (`GapAskTargets`). */
+export interface GapAskTargets {
+  gap_id: string;
+  members: GapAskTarget[];
+}
+
+/**
+ * What "담당자 지정해 질문" did — `POST /api/gap/gaps/{gap_id}/ask` (`GapAsk`):
+ * the question posted on the team's Slack channel, mentioning the member.
+ */
+export interface GapAsk {
+  gap_id: string;
+  user_id: string;
+  slack: SlackOutcome;
 }
 
 /** One event on the caller's own calendar (`GapCalendarEvent`). */
@@ -189,39 +216,11 @@ export type AgendaOutcome =
   | "removed"
   | "no_next_meeting"
   | "no_event"
+  | "external_attendees"
   | "not_connected"
   | "reconnect_required"
   | "failed"
   | "not_tried";
-
-/** `calendar_writes.AskOutcome`. */
-export type AskOutcome =
-  | "added"
-  | "already_asked"
-  | "not_connected"
-  | "reconnect_required"
-  | "failed";
-
-/** What `POST /api/gap/gaps/{id}/ask` returns (`GapAsk`, #824). */
-export interface GapAsk {
-  gap_id: string;
-  user_id: string;
-  outcome: AskOutcome;
-}
-
-/** One teammate "담당자 지정해 질문" can go to (`GapAskTarget`). */
-export interface GapAskTarget {
-  user_id: string;
-  name: string;
-  calendar_connected: boolean;
-  asked: boolean;
-}
-
-/** `GET /api/gap/gaps/{id}/ask` — the gap's team, by name (`GapAskTargets`). */
-export interface GapAskTargets {
-  gap_id: string;
-  members: GapAskTarget[];
-}
 
 /**
  * One utterance a verdict rests on — `EvidenceRead` in

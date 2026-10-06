@@ -11,7 +11,7 @@ for a payload that crosses a boundary and not for one that does not.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -83,11 +83,48 @@ class GapMeetingCarry(BaseModel):
     """What "다음 회의 잡기" did (``POST /agenda/{meeting_id}``, #824): how many
     of the meeting's open gaps are now sent on, and what happened to the next
     meeting's event on the caller's own calendar (``not_tried`` when there was
-    no gap to send)."""
+    no gap to send).
+
+    ``slack`` is the one notice on the team's channel
+    (``team_notice.SlackOutcome``): ``posted``, ``no_slack``, ``failed``, or
+    ``not_tried`` when the calendar took no new line."""
 
     meeting_id: str
     carried: int
     calendar: str
+    slack: str = "not_tried"
+
+
+class GapAskTarget(BaseModel):
+    """A member of the meeting's team "담당자 지정해 질문" can ask. A name and
+    an id, which every member already sees on the team; nothing about what the
+    member connected."""
+
+    user_id: str
+    name: str
+
+
+class GapAskTargets(BaseModel):
+    """``GET /gaps/{gap_id}/ask``: the members to pick from."""
+
+    gap_id: str
+    members: list[GapAskTarget]
+
+
+class GapAskRequest(BaseModel):
+    """``POST /gaps/{gap_id}/ask``: the member the question is for."""
+
+    user_id: str
+
+
+class GapAsk(BaseModel):
+    """What "담당자 지정해 질문" did: the question was posted on the team's
+    Slack channel mentioning the member (``slack`` is
+    ``team_notice.SlackOutcome``). Nothing is stored."""
+
+    gap_id: str
+    user_id: str
+    slack: str
 
 
 class GapAgendaRequest(BaseModel):
@@ -114,43 +151,6 @@ class GapAgendaEvents(BaseModel):
 
     calendar: str
     events: list[GapCalendarEvent]
-
-
-class GapAskRequest(BaseModel):
-    """``POST /gaps/{gap_id}/ask``: who to ask, chosen by hand, and on which
-    day. No day means the next working day."""
-
-    user_id: str
-    day: date | None = None
-
-
-class GapAsk(BaseModel):
-    """What asking did (``calendar_writes.AskOutcome``). ``already_asked``
-    makes no second event."""
-
-    gap_id: str
-    user_id: str
-    outcome: str
-
-
-class GapAskTarget(BaseModel):
-    """One teammate the question can go to. ``calendar_connected`` is whether
-    they have connected a Google Calendar at all, so the picker can say so
-    before anyone presses; ``asked`` is whether this gap was already put on
-    their calendar."""
-
-    user_id: str
-    name: str
-    calendar_connected: bool
-    asked: bool
-
-
-class GapAskTargets(BaseModel):
-    """``GET /gaps/{gap_id}/ask``: the gap's team, by name. Nothing about how
-    anyone took part in the meeting -- the picker is a list of the team."""
-
-    gap_id: str
-    members: list[GapAskTarget]
 
 
 class TemplateItemRead(BaseModel):

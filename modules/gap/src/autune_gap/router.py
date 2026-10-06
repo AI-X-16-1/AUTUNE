@@ -191,6 +191,20 @@ def _carry(session: Session, gap_id: str, reader: User, *, carried: bool) -> Gap
     return result.model_copy(update={"calendar": outcome})
 
 
+@router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)
+def ask_targets(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapAskTargets:
+    """The meeting's team, for "담당자 지정해 질문" to pick the member from."""
+    return service.ask_targets(session, gap_id, reader)
+
+
+@router.post("/gaps/{gap_id}/ask", response_model=GapAsk)
+def ask_gap(gap_id: str, body: GapAskRequest, session: SessionDep, reader: CurrentUser) -> GapAsk:
+    """ "담당자 지정해 질문" on S20 (#824): post the gap's question on the team's
+    Slack channel, mentioning the member picked. Nothing is stored and no
+    calendar is written."""
+    return service.ask(session, gap_id, reader, user_id=body.user_id)
+
+
 @router.get("/agenda/{meeting_id}/events", response_model=GapAgendaEvents)
 def agenda_events(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapAgendaEvents:
     """The caller's own upcoming Google Calendar events, for "다음 회의 잡기" to
@@ -208,30 +222,15 @@ def carry_meeting(
     """Send every open gap of the meeting on to the next meeting -- "다음 회의
     잡기" beside S20's template rail (#824) -- and add them to the event the
     caller picked on their own Google Calendar, or the team's next scheduled
-    meeting's when they picked none. The marks are committed first, so a
-    calendar that cannot take them leaves the marks set. The membership check
-    is the service's first line."""
+    meeting's when they picked none, and say so once on the team's Slack
+    channel. The marks are committed first, so a calendar that cannot take
+    them leaves the marks set. The membership check is the service's first
+    line."""
     gaps = service.carry_meeting(session, meeting_id, reader)
     session.commit()
     return service.carry_meeting_on_calendar(
         session, meeting_id, reader, gaps, event_id=body.event_id if body else None
     )
-
-
-@router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)
-def ask_targets(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapAskTargets:
-    """The picker behind "담당자 지정해 질문": the gap's team by name, with
-    who has a calendar connected and who was already asked (#824)."""
-    return service.ask_targets(session, gap_id, reader)
-
-
-@router.post("/gaps/{gap_id}/ask", response_model=GapAsk)
-def ask_gap(gap_id: str, body: GapAskRequest, session: SessionDep, reader: CurrentUser) -> GapAsk:
-    """Put the gap's question on one teammate's Google Calendar as an all-day
-    event with no attendees (#824). The person is chosen by hand."""
-    result = service.ask(session, gap_id, reader, user_id=body.user_id, day=body.day)
-    session.commit()
-    return result
 
 
 @router.get("/templates", response_model=list[TemplateRead])
