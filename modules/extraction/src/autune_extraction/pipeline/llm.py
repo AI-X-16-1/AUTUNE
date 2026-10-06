@@ -144,8 +144,9 @@ probe for an acknowledgement: after a piece of news this prompt calls
 a 900-character turn (5 of 5); after a request addressed to the speaker it
 calls it a commitment, which is what accepting a request is. The rewrites
 that made the first case nothing also made the second one nothing, or lost
-EVAL_03. Scripts and logs: ``dataset/experiments/2026-10-06-summary-with-labels``
-(local)."""
+EVAL_03. So the first case is a fixed rule after this classifier and not a
+line of this prompt: ``service.drop_bare_acknowledgements``. Scripts and logs:
+``dataset/experiments/2026-10-06-summary-with-labels`` (local)."""
 
 _KINDS = {kind.value: kind for kind in UtteranceKind}
 _RETRY_BACKOFF_SEC = (2.0, 5.0, 10.0)

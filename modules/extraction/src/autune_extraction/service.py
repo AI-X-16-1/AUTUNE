@@ -2707,6 +2707,62 @@ def classify_utterances(
     ]
 
 
+# --- before step 4: a bare acknowledgement is nothing to ask about -------------
+
+
+_ACKNOWLEDGEMENT_WORD = re.compile(
+    r"^(?:(?:네|넵|예|아|음)+|알겠습니다|알겠어요|알았습니다|알았어요)$"
+)
+"""The words a bare acknowledgement is made of. Narrower than ``noun_form``'s,
+which also drops a sentence of thanks: nothing here was measured for
+"감사합니다". "그렇게 하겠습니다" and "좋습니다" are not here either -- those
+agree to something, and asking the speaker what they meant is step 6's job."""
+
+_ACKNOWLEDGEMENT_PUNCTUATION = re.compile(r"[.,!?~…]+")
+
+
+def _is_bare_acknowledgement(text: str) -> bool:
+    words = _ACKNOWLEDGEMENT_PUNCTUATION.sub(" ", text).split()
+    return bool(words) and all(_ACKNOWLEDGEMENT_WORD.match(word) for word in words)
+
+
+def drop_bare_acknowledgements(
+    classified: Sequence[ClassifiedUtterance],
+) -> list[ClassifiedUtterance]:
+    """An ``ambiguous`` turn that is nothing but "네 알겠습니다." becomes none.
+
+    A fixed rule, after the classifier and before step 4 (the user,
+    2026-10-06). ``ambiguous`` means *ask the speaker whether they meant to
+    commit*, and a turn with no content has nothing to ask about: the
+    confirmation would quote "네 알겠습니다." back at the person who said it.
+    The cloud classifier calls such a turn ``ambiguous`` after a piece of news
+    in a short probe and nothing after a long turn, and no rewrite of its
+    prompt fixed the first without losing something else
+    (``pipeline.llm.INSTRUCTIONS``).
+
+    **Only ``ambiguous`` is touched.** The same words after a request addressed
+    to the speaker are an acceptance, the classifier calls that a
+    ``commitment`` (3 of 3 in the same probe), and it stays one. The cost is
+    the acceptance the classifier under-reads as ``ambiguous``: it used to
+    reach the speaker as a question and now reaches nobody. Step 4 would not
+    have saved it -- it reads the utterance alone, without the request.
+
+    Before step 4 and not after, so the turn is not sent to an outbound NLI,
+    and so ``FakeNli`` cannot promote it: "알겠습니다" ends in the "겠습니다"
+    that fake reads as a promise, and the turn became a ``commitment`` and an
+    action-item card waiting for confirmation.
+
+    The turn stays in the sequence with ``kind`` ``None``, like any utterance
+    the classifier calls none; ``store_classifications`` leaves it out.
+    """
+    return [
+        replace(utterance, kind=None)
+        if utterance.kind is UtteranceKind.AMBIGUOUS and _is_bare_acknowledgement(utterance.text)
+        else utterance
+        for utterance in classified
+    ]
+
+
 # --- step 4: NLI verification --------------------------------------------------
 
 

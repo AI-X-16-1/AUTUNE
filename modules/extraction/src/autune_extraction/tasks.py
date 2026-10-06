@@ -200,6 +200,8 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, utterances, consented=consented)
+    # "네 알겠습니다." called ambiguous is nothing to verify or to ask about.
+    classified = service.drop_bare_acknowledgements(classified)
     nli = get_nli()
     # Step 4 sends text out too, when it is the ``llm`` one.
     give_roster(nli, roster)
