@@ -1,7 +1,8 @@
 """Google Calendar.
 
 Owned by the Workload subagent's owner (#260, #261 section 3.1) and shared by
-three callers, per #435: Briefing lists a team calendar's upcoming meetings,
+three callers, per #435: Briefing lists a team calendar's upcoming meetings
+(``list_events``, which asks Google for an event's id, title and times only),
 Follow-up and Workload ask when people are busy, and module B puts each
 person's own confirmed action items on their own calendar and reads back a
 date they moved there. Follow-up's approved meeting is ``create_event``.
@@ -142,6 +143,16 @@ def _when(raw: dict[str, Any] | None) -> datetime | date | None:
     return None
 
 
+EVENT_FIELDS = "id,summary,start,end,status,extendedProperties/private"
+"""What ``_event`` reads of an event, as Google's ``fields`` names it -- and so
+all that the two lists below ask for (#877). Without it Google answers with
+whole event resources: description, location, attendees with outside guests'
+addresses. None of that was kept, but it reached this process, and
+``CalendarEvent`` says attendees are other people's data and no caller needs
+them. Asking for less is the only way not to have it. A field added to
+``_event`` has to be added here, or it comes back empty."""
+
+
 def _event(raw: dict[str, Any]) -> CalendarEvent:
     return CalendarEvent(
         id=str(raw["id"]),
@@ -173,15 +184,25 @@ class CalendarClient(HttpClient):
     def list_events(
         self, calendar_id: str, time_min: datetime, time_max: datetime, *, limit: int = 50
     ) -> list[CalendarEvent]:
-        """Events on the team's own calendar between two instants, recurring
-        ones expanded, in start order. For Briefing's "which meeting starts
-        next" (#435); not for looking at a person's calendar."""
+        """Events on a calendar between two instants, recurring ones expanded,
+        in start order: each one's id, title, start, end and Autune's own
+        private tag, and nothing else of it.
+
+        Unlike ``changed_events`` this is not filtered to Autune's events: on
+        a team's shared calendar it lists the team's meetings (Briefing's
+        "which meeting starts next", #435), and on a person's own it would
+        list everything of theirs in the window, titles included. So the
+        answer is narrowed at Google (``EVENT_FIELDS``) -- no description, no
+        place, no attendee is returned to be mishandled -- and which calendar
+        it may be pointed at is the caller's to justify, in privacy.md, not
+        this client's to decide."""
         params = {
             "timeMin": time_min.isoformat(),
             "timeMax": time_max.isoformat(),
             "singleEvents": "true",
             "orderBy": "startTime",
             "maxResults": str(limit),
+            "fields": f"items({EVENT_FIELDS})",
         }
         body = self.request("GET", f"/calendars/{calendar_id}/events", params=params)
         return [_event(raw) for raw in body.get("items", []) if raw.get("status") != "cancelled"]
@@ -197,12 +218,14 @@ class CalendarClient(HttpClient):
         """Autune's own events -- those whose private property ``tag[0]`` is
         ``tag[1]`` -- changed since ``updated_min``, deletions included
         (``cancelled``). The filter runs at Google, so nothing else on the
-        person's calendar is returned (module docstring)."""
+        person's calendar is returned (module docstring), and of Autune's own
+        events only what ``_event`` reads (``EVENT_FIELDS``)."""
         params: dict[str, str] = {
             "privateExtendedProperty": f"{tag[0]}={tag[1]}",
             "updatedMin": updated_min.isoformat(),
             "showDeleted": "true",
             "maxResults": "250",
+            "fields": f"items({EVENT_FIELDS}),nextPageToken",
         }
         events: list[CalendarEvent] = []
         for _ in range(max_pages):

@@ -13,5 +13,7 @@ export { MembersSettingsScreen } from "./components/MembersSettingsScreen";
 export { StoredMeetingScreen } from "./components/StoredMeetingScreen";
 export { NewMeetingScreen } from "./components/NewMeetingScreen";
 export { PrivacySettingsScreen } from "./components/PrivacySettingsScreen";
+export { TeamMenu } from "./components/TeamMenu";
 export { TeamScope } from "./components/TeamScope";
+export { onTeamChosen, rememberedTeam, rememberTeam } from "./selectedTeam";
 export { WorkspaceScreen } from "./components/WorkspaceScreen";

@@ -4,6 +4,7 @@ and when the registry refuses to build it. No network, no weights."""
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 
 import pytest
 
@@ -52,6 +53,25 @@ def test_a_commitment_both_models_found_is_asserted() -> None:
     got = combine(said(K.COMMITMENT), said(K.COMMITMENT, 0.97))
     assert got.kind is K.COMMITMENT
     assert got.confidence == AGREED_CONFIDENCE
+
+
+def test_what_the_proposer_wrote_for_a_commitment_goes_on_with_it() -> None:
+    """The checker settles how sure the label is. The pieces a long turn was
+    read in and the line written for it are the proposer's (PARK, review of
+    #880): dropped here, the commitment was read whole and sent to the resolver."""
+    proposed = replace(
+        said(K.COMMITMENT),
+        summary="시안을 금요일까지 정리",
+        pieces=(("앞 문장.", None), ("제가 금요일까지 정리할게요.", K.COMMITMENT)),
+        piece_summaries=("", "시안을 금요일까지 정리"),
+    )
+
+    combined = combine(proposed, said(K.COMMITMENT))
+
+    assert combined.confidence == AGREED_CONFIDENCE
+    assert combined.summary == proposed.summary
+    assert combined.pieces == proposed.pieces
+    assert combined.piece_summaries == proposed.piece_summaries
 
 
 def test_a_commitment_only_the_llm_found_is_kept_as_a_candidate() -> None:

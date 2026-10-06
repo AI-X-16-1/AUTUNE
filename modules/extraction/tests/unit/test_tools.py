@@ -32,6 +32,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
     ExtNotionTarget,
+    ExtProject,
     ExtSyncFailure,
 )
 from autune_extraction.schemas import ActionItemCreate
@@ -61,6 +62,8 @@ TABLES = [
     ExtCalendarEvent.__table__,
     ExtSyncFailure.__table__,
     ExtNotionTarget.__table__,
+    # ``open_item_owners`` checks a project is the team's.
+    ExtProject.__table__,
 ]
 
 
@@ -153,6 +156,7 @@ ARGS = {
     tools.person_action_items: (TEAM, "user_in"),
     tools.action_item_status: (TEAM, "act_missing"),
     tools.open_followup_item: (TEAM,),
+    tools.open_item_owners: (TEAM,),
 }
 
 
@@ -1194,3 +1198,114 @@ def test_an_item_of_a_meeting_past_retention_is_neither_found_nor_changed(
     row = session.get(ExtActionItem, "act_old")
     assert row is not None and row.status == "todo"
     assert acting["items"] == []
+
+
+# --- open_item_owners (#756) ----------------------------------------------------------
+
+
+def project(s: Session, project_id: str, team: str = TEAM) -> None:
+    s.add(ExtProject(id=project_id, team_id=team, name=f"{project_id} 프로젝트"))
+    s.flush()
+
+
+def owned(
+    s: Session, item_id: str, who: str | None, *, of: str | None = None, **more: object
+) -> None:
+    """A confirmed, open item, of a project when ``of`` names one."""
+    item(s, item_id, assignee=who, **more)  # type: ignore[arg-type]
+    if of is not None:
+        row = s.get(ExtActionItem, item_id)
+        assert row is not None
+        row.project_id = of
+        s.flush()
+
+
+def teammate(s: Session, user_id: str, name: str) -> None:
+    s.add(User(id=user_id, email=f"{user_id}@example.com", display_name=name))
+    s.add(TeamMember(team_id=TEAM, user_id=user_id))
+    s.flush()
+
+
+def test_the_owners_of_a_projects_open_items_most_items_first(session: Session) -> None:
+    teammate(session, "user_kim", "김하늘")
+    project(session, "prj_pay")
+    project(session, "prj_other")
+    yesterday = date.today() - timedelta(days=1)
+    owned(session, "act_1", "user_in", of="prj_pay", due=yesterday)
+    owned(session, "act_2", "user_in", of="prj_pay", due=date.today() + timedelta(days=3))
+    owned(session, "act_3", "user_kim", of="prj_pay", status="in_progress")
+    owned(session, "act_4", "user_kim", of="prj_other")  # another project's
+    owned(session, "act_5", "user_kim", of="prj_pay", status="done")  # not open
+    owned(session, "act_6", "user_kim", of="prj_pay", status="needs_confirmation")
+
+    answer = tools.open_item_owners(session, TEAM, project_id="prj_pay")
+
+    assert answer["ok"] is True
+    assert answer["summary"] == "진행 중인 확정 액션아이템의 담당자 2명, 담당 없는 항목 0건."
+    assert [(row["id"], row["title"], row["open"], row["overdue"]) for row in answer["items"]] == [
+        ("user_in", "박지영", 2, 1),
+        ("user_kim", "김하늘", 1, 0),
+    ]
+    assert answer["items"][0]["nearest_due"] == yesterday.isoformat()
+    assert answer["items"][1]["nearest_due"] is None
+
+
+def test_what_a_meeting_left_open_and_nobody_is_guessed_for_an_item_without_an_owner(
+    session: Session,
+) -> None:
+    owned(session, "act_1", "user_in")
+    owned(session, "act_2", None)  # nobody's
+    owned(session, "act_3", "user_gone")  # no longer on the team: nobody's here
+
+    answer = tools.open_item_owners(session, TEAM, meeting_id=MEETING)
+
+    assert answer["summary"] == "진행 중인 확정 액션아이템의 담당자 1명, 담당 없는 항목 2건."
+    assert [(row["id"], row["title"], row["open"]) for row in answer["items"]] == [
+        ("user_in", "박지영", 1),
+        ("unowned", "담당 없음", 2),
+    ]
+
+
+def test_owners_cite_no_utterance_and_quote_no_item(session: Session) -> None:
+    """A person is here for the work they hold. Nothing that was said, and not
+    the items' own text."""
+    utterance(session, "utt_1", "제가 금요일까지 하겠습니다", 1.0)
+    owned(session, "act_1", "user_in", source="utt_1")
+
+    answer = tools.open_item_owners(session, TEAM, meeting_id=MEETING)
+
+    assert answer["evidence"] == []
+    assert "act_1 할 일" not in repr(answer) and "금요일" not in repr(answer)
+
+
+@pytest.mark.parametrize(
+    "ids",
+    [
+        {},
+        {"project_id": "prj_pay", "meeting_id": MEETING},
+        {"meeting_id": OTHER_MEETING},
+        {"meeting_id": "mtg_nope"},
+        {"project_id": "prj_theirs"},
+        {"project_id": "prj_nope"},
+    ],
+)
+def test_owners_need_one_id_of_this_team(session: Session, ids: dict) -> None:
+    project(session, "prj_pay")
+    project(session, "prj_theirs", team=OTHER_TEAM)
+    owned(session, "act_1", "user_in", of="prj_pay")
+
+    answer = tools.open_item_owners(session, TEAM, **ids)
+
+    assert answer["ok"] is False and answer["items"] == []
+
+
+def test_an_item_of_another_teams_meeting_is_never_counted_whatever_project_it_names(
+    session: Session,
+) -> None:
+    project(session, "prj_pay")
+    owned(session, "act_1", "user_in", of="prj_pay")
+    owned(session, "act_far", "user_in", of="prj_pay", meeting=OTHER_MEETING)
+
+    answer = tools.open_item_owners(session, TEAM, project_id="prj_pay")
+
+    assert [(row["id"], row["open"]) for row in answer["items"]] == [("user_in", 1)]

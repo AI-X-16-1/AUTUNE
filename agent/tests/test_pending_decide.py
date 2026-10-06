@@ -223,3 +223,27 @@ def test_a_plain_exception_is_recorded_as_failed(session: Session, team: dict[st
         False,
         "the action failed",
     )
+
+
+def test_an_approved_action_records_the_approver_not_the_proposal(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#862: an approver answers for the decision, so a write that records who
+    made it records them, whoever the proposal names."""
+    _approver(session, team)
+    row = _pending(session, team, arguments={"document_id": "rdoc_1", "user_id": "usr_other"})
+    calls: list[dict[str, Any]] = []
+
+    def share(session: Any, team_id: str, document_id: str, user_id: str) -> dict[str, Any]:
+        calls.append({"user_id": user_id})
+        return {"ok": True, "summary": "공유", "evidence": [document_id]}
+
+    done = approve(
+        session,
+        row.id,
+        user_id=team["member"],
+        actions={"fake.share": Action("fake.share", share, "L2")},
+    )
+
+    assert done.status == "approved"
+    assert calls == [{"user_id": team["member"]}]
