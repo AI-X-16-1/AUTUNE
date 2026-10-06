@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from autune_contracts.enums import UtteranceKind
 from autune_core.errors import PrivacyViolationError
@@ -24,6 +25,9 @@ from autune_extraction.pipeline.llm import (
     LLM_CONFIDENCE,
     LlmClassifier,
     parse,
+    pieces,
+    strongest,
+    windows,
 )
 from autune_integrations.errors import TransientIntegrationError
 from autune_integrations.privacy import check_outbound
@@ -137,6 +141,111 @@ def test_each_window_carries_the_lines_before_it_as_context(slept) -> None:
     second = provider.bodies[1]["contents"][0]["parts"][0]["text"].splitlines()
     assert [line.split(" ")[1] for line in second[:CONTEXT_LINES]] == ["[문맥]"] * CONTEXT_LINES
     assert second[CONTEXT_LINES].split(" ")[1] == "[대상]"
+
+
+def turns(n: int, chars: int) -> list[str]:
+    """``n`` distinct turns of about ``chars`` characters each -- one person talking
+    for a while. Every fifth still ends in a promise."""
+    filler = "그 부분은 지난번에 이야기한 흐름대로 조금 더 살펴보면 좋겠고요 "
+    return [
+        f"{i}번째로 " + (filler * (chars // len(filler) + 1))[:chars] + tail
+        for i, tail in enumerate(meeting(n))
+    ]
+
+
+def _lines(body: dict) -> list[tuple[str, str]]:
+    """``(tag, text)`` of each line of one request."""
+    text = body["contents"][0]["parts"][0]["text"]
+    return [(m[1], m[2]) for m in re.finditer(r"^\d+ \[(대상|문맥)\] (.*)$", text, re.M)]
+
+
+def test_a_meeting_of_long_turns_still_goes_out_in_requests_the_guard_accepts(slept) -> None:
+    """dev, 2026-10-05: 82 utterances, and the second request was over the limit
+    -- three long context lines and then a target that had to be admitted. The
+    meeting stored no action item and no decision."""
+    provider = Provider()
+    texts = turns(82, 900)
+    predictions = classifier(provider).classify(texts)
+
+    for body in provider.bodies:
+        check_outbound(body, destination="test", addressing=frozenset({"role", "responseMimeType"}))
+    targets = [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
+    assert targets == texts  # each one asked about once, in order
+    assert [p.kind for p in predictions] == [
+        UtteranceKind.COMMITMENT if i % 5 == 0 else None for i in range(82)
+    ]
+
+
+def test_context_gives_way_before_a_target_does_and_the_nearest_line_stays(slept) -> None:
+    provider = Provider()
+    texts = turns(12, 900)
+    classifier(provider).classify(texts)
+
+    for body in provider.bodies[1:]:
+        lines = _lines(body)
+        context = [text for tag, text in lines if tag == "문맥"]
+        first = next(text for tag, text in lines if tag == "대상")
+        at = texts.index(first)
+        assert 0 < len(context) < CONTEXT_LINES
+        assert context == texts[at - len(context) : at]
+
+
+def test_a_turn_longer_than_a_request_is_asked_about_in_pieces(slept) -> None:
+    """Its own request would be refused and, before, took the meeting with it.
+    Left out, the promise it ends in would be lost; so it goes in pieces."""
+    provider = Provider()
+    texts = turns(20, 300)
+    texts[7] = turns(1, 3200)[0]  # ends in a promise, as turn 0 does
+    with capture_logs() as logs:
+        predictions = classifier(provider).classify(texts)
+
+    for body in provider.bodies:
+        check_outbound(body, destination="test", addressing=frozenset({"role", "responseMimeType"}))
+    targets = [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
+    parts = targets[7:-12]
+    assert targets[:7] == texts[:7] and targets[-12:] == texts[8:]
+    assert len(parts) > 1 and " ".join(parts) == texts[7]  # all of it, in order, once
+    assert predictions[7].kind is UtteranceKind.COMMITMENT  # the last piece's
+    assert [p.kind for p in predictions].count(UtteranceKind.COMMITMENT) == 5  # 0, 5, 7, 10, 15
+    (entry,) = [e for e in logs if e["event"] == "extraction_llm_classified"]
+    assert entry["in_pieces"] == 1 and entry["utterances"] == 20
+    assert texts[7][:40] not in repr(logs)
+
+
+def test_a_turn_one_request_can_carry_is_sent_whole(slept) -> None:
+    provider = Provider()
+    texts = turns(3, 300)
+    texts[1] = turns(1, 2500)[0]
+    classifier(provider).classify(texts)
+
+    targets = [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
+    assert targets == texts
+
+
+def test_pieces_end_after_a_sentence_and_lose_nothing() -> None:
+    text = "첫 문장은 여기서 끝납니다. 둘째 문장은 조금 더 길게 이어집니다. 셋째는 짧아요."
+    got = pieces(text, 40)
+
+    assert all(len(piece) <= 40 for piece in got)
+    assert " ".join(got) == text
+    assert got[0].endswith("끝납니다.") or got[0].endswith("이어집니다.")
+    # No sentence end and no space in reach: cut at the limit, still nothing lost.
+    assert pieces("가" * 95, 40) == ["가" * 40, "가" * 40, "가" * 15]
+    assert pieces("짧은 말", 40) == ["짧은 말"] and pieces("", 40) == [""]
+
+
+def test_of_several_pieces_the_kind_the_record_is_made_from_wins() -> None:
+    kind = UtteranceKind
+    assert strongest([kind.CONCERN, None, kind.DECISION]) is kind.DECISION
+    assert strongest([kind.AMBIGUOUS, kind.COMMITMENT, kind.DECISION]) is kind.COMMITMENT
+    assert strongest([kind.OPEN_QUESTION, kind.CONCERN]) is kind.OPEN_QUESTION
+    assert strongest([None, None]) is None and strongest([]) is None
+
+
+def test_no_window_holds_a_line_one_request_cannot_carry() -> None:
+    """``classify`` never passes one; if something else does, the line is left
+    out rather than sent to be refused with everything after it."""
+    assert windows(["가" * 500, "나" * 10, "다" * 10], 100) == [(1, 1, 3)]
 
 
 def test_the_body_holds_utterance_text_and_the_instructions_and_nothing_else(slept) -> None:
