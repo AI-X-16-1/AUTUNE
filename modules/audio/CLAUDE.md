@@ -46,7 +46,9 @@ Contract: `/docs/architecture/contracts.md`.
   own Gmail (`invitation_mail.py`), inside the request that made it. The
   team's members can list what is pending and cancel it. A link may be made
   for no address: then whoever opens it signed in joins, so it works once
-  and for an hour, and an inviter has one open for a team.
+  and for an hour, and an inviter has one open for a team. That limits a
+  mistake and does not undo one: nothing takes a member off a team today
+  (`docs/architecture/privacy.md`), so do not widen the link.
 - `aud_speaker_names` — a name typed for a speaker with no account on the
   team, for that one meeting. No user id and no voice; it never reaches the
   published transcript. Cascades with the meeting.
