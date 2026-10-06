@@ -49,7 +49,7 @@ from autune_extraction.models import (
     ExtMeetingSummary,
     ExtProject,
 )
-from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
+from autune_extraction.pipeline import FakeClassifier, FakeNli, NliScores, Prediction
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -381,10 +381,10 @@ def test_a_non_consenting_turn_still_counts_in_the_decision_gap(session: Session
 # --- the task ------------------------------------------------------------------
 
 
-def transcript(*, masked: bool = True) -> dict:
+def transcript(*, masked: bool = True, lines: list[tuple[str, float, str]] = LINES) -> dict:
     return TranscriptReady(
         meeting_id=MEETING,
-        utterances=spoken(),
+        utterances=spoken(lines),
         metadata=TranscriptMetadata(
             duration=20.0,
             source=next(iter(TranscriptSource)),
@@ -464,6 +464,54 @@ def test_the_task_runs_step_4_on_ambiguous_rows_only(wired: Session) -> None:
         "utt_4": False,
         "utt_5": True,
     }
+
+
+class _AcknowledgementIsAmbiguous(FakeClassifier):
+    """The fake, calling "알겠습니다" ambiguous as the cloud classifier does after
+    a piece of news. (By its ending the fake itself would call it a commitment.)"""
+
+    def classify(self, texts: list[str]) -> list[Prediction]:
+        return [
+            Prediction(kind=K.AMBIGUOUS, confidence=0.9, scores={K.AMBIGUOUS: 0.9})
+            if "알겠습니다" in text
+            else prediction
+            for text, prediction in zip(texts, super().classify(texts), strict=True)
+        ]
+
+
+class _RecordingNli(FakeNli):
+    """The fake, remembering every premise it was asked about."""
+
+    seen: list[str] = []
+
+    def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
+        type(self).seen = [premise for premise, _ in pairs]
+        return super().classify(pairs)
+
+
+def test_the_task_drops_a_bare_acknowledgement_before_step_4(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """utt_2 is called ambiguous and says nothing: it is not verified, stored,
+    recorded for a confirmation or made a card. Without the rule the fake NLI
+    read its "겠습니다" as a promise and the task drafted an item from it.
+    utt_3 is weak assent with content, and goes on as before."""
+    lines = [
+        ("utt_1", 0.0, "다음 주 배포는 화요일로 밀렸습니다"),
+        ("utt_2", 4.0, "네 알겠습니다."),
+        ("utt_3", 8.0, "한번 볼게요"),
+    ]
+    stored(wired, lines)
+    monkeypatch.setattr(tasks, "get_classifier", _AcknowledgementIsAmbiguous)
+    monkeypatch.setattr(_RecordingNli, "seen", [])
+    monkeypatch.setattr(tasks, "get_nli", _RecordingNli)
+
+    tasks.on_transcript_ready(transcript(lines=lines))
+
+    assert _RecordingNli.seen == ["한번 볼게요"]
+    assert kinds(wired) == {"utt_3": "ambiguous"}
+    assert [row.utterance_id for row in wired.scalars(select(ExtConfirmation))] == ["utt_3"]
+    assert wired.query(ExtActionItem).count() == 0
 
 
 def test_the_task_refuses_an_unmasked_transcript_before_classifying(

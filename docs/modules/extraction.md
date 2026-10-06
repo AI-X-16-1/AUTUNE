@@ -121,7 +121,11 @@ agreement, and sync the result to Notion and Jira.
    classifier's own one-line summary. The due date is still read from the original
    words, which carry the verb ending it depends on.
 4. **NLI verification** — check whether an apparent agreement entails an actual
-   commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
+   commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`. Before this
+   step a fixed rule takes the label off an `ambiguous` turn that is nothing but
+   an acknowledgement ("네 알겠습니다."): it has no content to ask the speaker
+   about, so it is not verified, recorded or asked. The same words labeled
+   `commitment` -- an acceptance of a request -- are left alone.
 5. **Build decision entities** — group the utterances classified as decisions
    into `Decision` records with a `dec_` id and the statement as settled. One
    decision often spans several utterances. **Module D depends on this**: it is
