@@ -65,7 +65,12 @@ def build_schema() -> dict:
 
 def main() -> int:
     TS_DIR.mkdir(parents=True, exist_ok=True)
-    SCHEMA_PATH.write_text(json.dumps(build_schema(), indent=2, ensure_ascii=False) + "\n")
+    # UTF-8 by name: without it Python writes in the locale's encoding, and on a
+    # Korean Windows (cp949) the first em dash in a description stops the run
+    # with the file already emptied (#217).
+    SCHEMA_PATH.write_text(
+        json.dumps(build_schema(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
 
     result = subprocess.run(
         [
