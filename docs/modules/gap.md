@@ -1021,7 +1021,7 @@ here, so the no-deletion-hook sentence above still holds.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/reports/{meeting_id}` | Full gap report |
-| GET | `/topics/{meeting_id}` | Topic graph for visualization |
+| GET | `/topics/{meeting_id}` | Topic graph, for debugging the pipeline (S20 does not draw it) |
 | GET | `/explanations/{meeting_id}` | Why each gap was raised: its basis, the utterances it rests on, its score breakdown |
 | GET | `/gaps?team_id=` | Every open gap across a team's meetings, newest meeting first (`severity` repeats, default `high`) |
 | POST | `/gaps/{id}/dismiss` | Mark a gap as a false positive (feeds threshold tuning) |
@@ -1076,9 +1076,14 @@ was added to `apps/` to mount them.
   module's own shape: it carries `betweenness`, which `autune_contracts.Topic`
   does not, and E neither calls an endpoint nor draws a graph. A visualization
   shape in `packages/contracts` would be four modules' business for no reason.
+- **S20 does not draw the graph (#913).** The list of topic pairs and how they
+  relate was a developer's view, not something a team acts on, so the 토픽 tab
+  shows the ranking from the report only. The endpoint stays for anyone
+  debugging the pipeline, and the graph still feeds risk scoring and the agent
+  tools.
 - **Nodes come in the report's order** — most central first, ties to the topic
-  the meeting reached first — so S20 can show the picture beside the list
-  without reconciling two orderings. Edges come strongest first, ties by where
+  the meeting reached first — so the graph and the report never need two
+  orderings reconciled. Edges come strongest first, ties by where
   their endpoints sit in that order, never by `gap_topic_edges.id`: that is an
   autoincrement a re-run reassigns, and the same graph would redraw differently
   every time the meeting was reprocessed.
