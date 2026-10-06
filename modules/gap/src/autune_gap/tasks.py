@@ -13,7 +13,7 @@ from celery import shared_task
 
 from autune_contracts import TranscriptReady, validate_major_version
 from autune_core import get_logger, periodic
-from autune_gap import service
+from autune_gap import calendar_writes, service
 from autune_gap.enqueue import PUBLISH_REPORT
 
 log = get_logger(__name__)
@@ -62,3 +62,13 @@ def rescore_changed_people() -> None:
     that finds nothing changed is one query.
     """
     service.rescore_where_people_changed()
+
+
+@shared_task(name="autune.gap.periodic.drain_agenda_cleanup")
+@periodic(timedelta(minutes=10))
+def drain_agenda_cleanup() -> int:
+    """Take the gap lines of deleted or expired meetings off their owners'
+    calendars, each with the owner's own grant (privacy.md section 4). See
+    ``calendar_writes.drain_agenda_cleanup``. A run with nothing queued is one
+    query."""
+    return calendar_writes.drain_agenda_cleanup()

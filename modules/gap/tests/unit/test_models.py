@@ -14,10 +14,11 @@ from sqlalchemy import Table
 
 from autune_contracts.enums import GapSeverity
 from autune_gap.models import (
+    GapAgendaCleanup,
+    GapAgendaEvent,
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
-    GapQuestion,
     GapRelatedTopic,
     GapScoring,
     GapTopic,
@@ -34,7 +35,8 @@ ALL_TABLES: tuple[Table, ...] = (
     GapRelatedTopic.__table__,
     GapMeetingTemplate.__table__,
     GapScoring.__table__,
-    GapQuestion.__table__,
+    GapAgendaEvent.__table__,
+    GapAgendaCleanup.__table__,
 )
 
 
@@ -126,8 +128,10 @@ def test_every_table_cascades_towards_a_meeting(table: Table) -> None:
 
     Either the table references ``meetings`` directly or it hangs off one that
     does, and every hop is ``CASCADE`` — one ``SET NULL`` in the chain would
-    strand the rows below it. ``users`` is a parent too: ``gap_questions``
-    names the person asked, and goes when that person does.
+    strand the rows below it. ``users`` is a parent too: the agenda tables
+    name whose calendar holds a gap's line, and go when that person does --
+    ``gap_agenda_cleanup`` hangs off ``users`` alone, because it has to outlive
+    the meeting.
     """
     parents = {"meetings", "gap_topics", "gap_gaps", "utterances", "participants", "users"}
     foreign_keys = list(table.foreign_keys)
@@ -267,7 +271,8 @@ def migration_tables() -> dict[str, set[str]]:
     as much as ``op.create_table``, because a column added by a later revision
     is a column the database has — and reading only ``create_table`` made the
     first such column (``gap_topic_edges.extractor_version``, #32) look like a
-    model with no migration behind it.
+    model with no migration behind it. A table a later revision drops is gone
+    from the result, and only each ``upgrade`` is read.
 
     A column added to a table no model here describes is not silently accepted
     either: it shows up as a key, and ``test_no_migration_creates_a_table_no_
@@ -277,7 +282,12 @@ def migration_tables() -> dict[str, set[str]]:
     migrations = Path(__file__).resolve().parents[2] / "migrations"
     tables: dict[str, set[str]] = {}
     for path in sorted(migrations.glob("*.py")):
-        source = path.read_text(encoding="utf-8")
+        # The upgrade only: a downgrade that restores a dropped table
+        # (``gap_questions``, #872) would otherwise read as creating it.
+        source = path.read_text(encoding="utf-8").split("\ndef downgrade(")[0]
+        # A table a later revision drops is not one the database has.
+        for dropped in re.findall(r'op\.drop_table\(\s*"(\w+)"', source):
+            tables.pop(dropped, None)
         for match in re.finditer(r'op\.create_table\(\s*"(\w+)",(.*?)\n    \)', source, re.S):
             tables[match.group(1)] = set(
                 re.findall(r'sa\.Column\(\s*\n?\s*"(\w+)"', match.group(2))
@@ -286,8 +296,7 @@ def migration_tables() -> dict[str, set[str]]:
         # statement declared, and adding one is the normal way a table grows
         # after its first revision. Reading only `create_table` let a model grow
         # a column with no migration behind it at all, which is the single thing
-        # this test exists to catch. `downgrade` drops rather than adds, so
-        # scanning the whole file picks up no reversal.
+        # this test exists to catch.
         for table, column in re.findall(
             r'op\.add_column\(\s*\n?\s*"(\w+)",\s*\n?\s*sa\.Column\(\s*\n?\s*"(\w+)"', source
         ):

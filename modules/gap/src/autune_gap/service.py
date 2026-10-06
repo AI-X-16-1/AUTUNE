@@ -12,7 +12,7 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, nulls_last, select
@@ -30,19 +30,25 @@ from autune_core import (
     ids,
     new_id,
     session_scope,
-    users_with_integration,
 )
 from autune_core.deletion import on_speech_deleted
 from autune_core.errors import NotFoundError, PrivacyViolationError, ValidationError
 from autune_core.events import publish
-from autune_gap import calendar_writes, detect, graph, semantic, template, verification
+from autune_gap import (
+    calendar_writes,
+    detect,
+    graph,
+    semantic,
+    team_notice,
+    template,
+    verification,
+)
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.enqueue import enqueue_publish_report
 from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
-    GapQuestion,
     GapRelatedTopic,
     GapScoring,
     GapTopic,
@@ -68,6 +74,7 @@ from autune_gap.schemas import (
     GapExplanationRead,
     GapExplanations,
     GapMeetingCarry,
+    GapQuestion,
     ScoreBreakdownRead,
     ScorePartRead,
     TeamGapRead,
@@ -78,6 +85,7 @@ from autune_gap.schemas import (
     TopicGraphRead,
     TopicNodeRead,
 )
+from autune_integrations import find_unmasked
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -562,7 +570,8 @@ def refresh_questions(meeting_id: str, *, apply: bool = True) -> int:
             checklist = detect.checklist_words(chosen)
             subject = detect.subject_of(views, names, checklist)
             question = detect.question_for(item, matched, subject, checklist)
-            if gap.suggested_question != question:
+            # A question a member rewrote is theirs, not C's to recompute.
+            if gap.question_edited_at is None and gap.suggested_question != question:
                 changed += 1
                 if apply:
                     gap.suggested_question = question
@@ -862,78 +871,91 @@ def carry_meeting_on_calendar(
     event_id: str | None = None,
 ) -> GapMeetingCarry:
     """Write the gaps ``carry_meeting`` sent onto the event the caller picked
-    on their own calendar, or the next meeting's when they picked none. Called
-    after the marks are committed."""
+    on their own calendar, or the next meeting's when they picked none, then
+    say so once on the team's Slack channel. Called after the marks are
+    committed.
+
+    The notice lists only the gaps whose line is new on the event, so pressing
+    again posts nothing; and it is posted only once the calendar took them,
+    so the channel never announces an agenda the event does not hold.
+    """
     if not gaps:
         return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
     meeting = session.get(Meeting, meeting_id)
     assert meeting is not None  # carry_meeting checked it
+    gap_ids = [gap.id for gap in gaps]
+    before = calendar_writes.written_lines(session, user_id=reader.id, gap_ids=gap_ids)
     outcome = calendar_writes.update_agenda(
         session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True, event_id=event_id
     )
-    return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome)
+    session.flush()
+    added = calendar_writes.written_lines(session, user_id=reader.id, gap_ids=gap_ids) - before
+    fresh = [gap for gap in gaps if gap.id in {gap_id for gap_id, _ in added}]
+    slack: team_notice.SlackOutcome = "not_tried"
+    if outcome == "added" and fresh:
+        slack = team_notice.post_agenda(session, meeting, fresh, presser=reader)
+    return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome, slack=slack)
+
+
+def edit_question(session: Session, gap_id: str, reader: User, *, question: str) -> GapQuestion:
+    """Rewrite a gap's 해소용 질문 in a member's own words (S20, #824).
+
+    The question reaches the team's Slack channel, a calendar event and E's
+    report, so text that reads as personal data is refused rather than stored:
+    the invariant that nothing unmasked is written applies to what a person
+    types as much as to a transcript (privacy.md section 2). The refusal names
+    no value. Marked as edited so a re-run keeps it; nobody's id is stored and
+    the log holds ids only. The caller commits and republishes."""
+    row, _ = _gap_for_member(session, gap_id, reader, "gap_question_refused")
+    text = " ".join(question.split())
+    if not text:
+        raise ValidationError("the question is empty", field="question")
+    if find_unmasked(text):
+        log.info("gap_question_refused_pii", gap_id=gap_id)
+        raise ValidationError(
+            "the question looks like it holds personal data; it was not saved",
+            field="question",
+        )
+    if text != row.suggested_question:
+        row.suggested_question = text
+        row.question_edited_at = datetime.now(tz=UTC)
+    session.flush()
+    log.info("gap_question_edited", gap_id=gap_id, meeting_id=row.meeting_id)
+    return GapQuestion(
+        gap_id=gap_id,
+        meeting_id=row.meeting_id,
+        suggested_question=text,
+        edited=row.question_edited_at is not None,
+    )
 
 
 def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:
-    """Who on the gap's team the question can go to, by name, with whether
-    each has a calendar connected and was already asked about this gap."""
-    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    """The meeting's team, for "담당자 지정해 질문" to pick from, by name."""
+    _, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
     members = session.execute(
         select(User.id, User.display_name)
         .join(TeamMember, TeamMember.user_id == User.id)
         .where(TeamMember.team_id == meeting.team_id)
         .order_by(User.display_name, User.id)
     ).all()
-    connected = set(users_with_integration(session, calendar_writes.CALENDAR))
-    asked = set(session.scalars(select(GapQuestion.user_id).where(GapQuestion.gap_id == row.id)))
     return GapAskTargets(
-        gap_id=row.id,
-        members=[
-            GapAskTarget(
-                user_id=user_id,
-                name=name,
-                calendar_connected=user_id in connected,
-                asked=user_id in asked,
-            )
-            for user_id, name in members
-        ],
+        gap_id=gap_id,
+        members=[GapAskTarget(user_id=user_id, name=name) for user_id, name in members],
     )
 
 
-def ask(
-    session: Session, gap_id: str, reader: User, *, user_id: str, day: date | None = None
-) -> GapAsk:
-    """Put the gap's question on one teammate's calendar -- "담당자 지정해
-    질문" on S20 (#824).
-
-    The person is chosen by hand and must be on the meeting's team. Asking the
-    same person twice makes no second event. Nothing is stored unless the
-    event was made, so a person who connects their calendar later can be asked
-    again. Who asked is not stored or logged.
-    """
+def ask(session: Session, gap_id: str, reader: User, *, user_id: str) -> GapAsk:
+    """ "담당자 지정해 질문": post the gap's question on the team's Slack
+    channel, mentioning the member it is for (mkkim68 on #824). The member
+    must be on the meeting's team; anybody else is the same 404 as an unknown
+    gap's, so the route cannot be used to tell who exists. Nothing is stored."""
     row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
-    if not _is_team_member(session, user_id=user_id, team_id=meeting.team_id):
-        raise ValidationError("the person asked must be on the meeting's team", field="user_id")
-
-    existing = session.scalar(
-        select(GapQuestion.id).where(GapQuestion.gap_id == row.id, GapQuestion.user_id == user_id)
-    )
-    if existing is not None:
-        return GapAsk(gap_id=row.id, user_id=user_id, outcome="already_asked")
-
-    when = day or calendar_writes.next_working_day(datetime.now(UTC).date())
-    outcome, calendar_id, event_id = calendar_writes.ask_on_calendar(
-        session, row, user_id=user_id, day=when
-    )
-    if outcome == "added" and calendar_id is not None and event_id is not None:
-        session.add(
-            GapQuestion(
-                gap_id=row.id, user_id=user_id, day=when, calendar_id=calendar_id, event_id=event_id
-            )
-        )
-        session.flush()
-    log.info("gap_question_set", gap_id=row.id, meeting_id=row.meeting_id, outcome=outcome)
-    return GapAsk(gap_id=row.id, user_id=user_id, outcome=outcome)
+    member = session.get(User, user_id)
+    if member is None or not _is_team_member(session, user_id=user_id, team_id=meeting.team_id):
+        log.info("gap_ask_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+    outcome = team_notice.post_ask(session, meeting, row, asker=reader, member=member)
+    return GapAsk(gap_id=gap_id, user_id=user_id, slack=outcome)
 
 
 @dataclass(frozen=True)
@@ -943,6 +965,9 @@ class SpeechForgotten:
     meetings: tuple[str, ...]
     topics_deleted: int
     questions_reset: int
+    reset_gaps: tuple[str, ...] = ()
+    """The gaps whose question named a label that is gone: their lines on
+    anybody's calendar quote it, and are taken out (``calendar_writes``)."""
 
 
 def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgotten:
@@ -1005,13 +1030,18 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
         general = _general_question(gap)
         if general != question:
             gap.suggested_question = general
+            # Deleted speech wins over an edit: the words are gone either way.
+            gap.question_edited_at = None
             reset.add(gap.id)
 
     meetings = tuple(sorted(labels))
     session.execute(delete(GapTopic).where(GapTopic.id.in_(orphaned)))
     session.flush()
     return SpeechForgotten(
-        meetings=meetings, topics_deleted=len(topics), questions_reset=len(reset)
+        meetings=meetings,
+        topics_deleted=len(topics),
+        questions_reset=len(reset),
+        reset_gaps=tuple(sorted(reset)),
     )
 
 
@@ -1046,6 +1076,10 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """
     with session_scope() as session:
         done = forget_speech(session, utterance_ids)
+        # A line on somebody's calendar quotes the old question: it is taken
+        # out by the worker with that person's grant, not rewritten here, so
+        # the deletion never waits on Google (privacy.md section 4).
+        lines = calendar_writes.queue_gap_lines(session, done.reset_gaps)
     try:
         for meeting_id in done.meetings:
             enqueue_publish_report(meeting_id)
@@ -1058,6 +1092,7 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         meetings=len(done.meetings),
         topics_deleted=done.topics_deleted,
         questions_reset=done.questions_reset,
+        calendar_lines_queued=lines,
     )
 
 
@@ -1345,6 +1380,7 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
             basis="none",
             keywords=keywords,
             carried=gap.carried_at is not None,
+            question_edited=gap.question_edited_at is not None,
         )
         if matched:
             explanation.basis = "topic"
@@ -1639,7 +1675,9 @@ def _store_gaps(
         gap.risk_score = finding.risk_score
         gap.template_item = finding.template_item
         gap.template_version = chosen.version
-        gap.suggested_question = finding.question
+        # A question a member rewrote outlives a re-run, as a dismissal does.
+        if gap.question_edited_at is None:
+            gap.suggested_question = finding.question
         gap.coverage = finding.coverage.value
         session.flush()
 
