@@ -6,7 +6,7 @@ import { timecode } from "../format";
 import { useSpeakers } from "../hooks/useSpeakers";
 import { useTranscript } from "../hooks/useTranscript";
 import { useUtteranceAnchor } from "../hooks/useUtteranceAnchor";
-import type { SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
+import type { SpeakerCandidate, SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
 import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
 import { TranscriptRow } from "./TranscriptRow";
 import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
@@ -93,6 +93,7 @@ export function StoredTranscript({
   } = useSpeakers(meetingId, teamId);
   const unidentified = speakers.filter((entry) => entry.user_id === null);
   const nameOf = speakerNames(speakers, members);
+  const pick = unassigned(speakers, members);
   const ids = useMemo(
     () => (state.status === "ready" ? state.utterances.map((utterance) => utterance.id) : null),
     [state],
@@ -153,9 +154,9 @@ export function StoredTranscript({
         <UnidentifiedSpeaker
           key={entry.speaker_label}
           speaker={entry.speaker_label}
-          candidate={entry.candidate}
+          candidate={pick.candidate(entry.candidate)}
           displayName={entry.display_name}
-          members={members}
+          members={pick.members}
           membersError={membersError}
           pending={pending}
           onAssign={(userId) => void assign(entry.speaker_label, userId)}
@@ -243,6 +244,28 @@ export function speakerNames(
     const id = idByLabel.has(label) ? idByLabel.get(label) : storedId;
     if (id) return nameById.get(id) ?? null;
     return typedByLabel.get(label) ?? null;
+  };
+}
+
+/**
+ * What the speaker prompts may still offer: the team minus anyone already put
+ * to a speaker in this meeting. Once 화자 1 is 김민경, 화자 2 and 화자 3 pick
+ * from the other two, and a candidate who is already somebody else's voice is
+ * not suggested again.
+ *
+ * This rules out one person on two labels, which diarization does produce when
+ * it splits a voice in two. That was the team's call (2026-10-06): a wrong
+ * second assignment cannot be undone yet, and a short list is the more common
+ * help. A label split that way stays unassigned, or takes a typed name.
+ */
+export function unassigned(
+  speakers: SpeakerEntry[],
+  members: TeamMember[],
+): { members: TeamMember[]; candidate: (candidate: SpeakerCandidate | null) => SpeakerCandidate | null } {
+  const taken = new Set(speakers.flatMap((entry) => (entry.user_id ? [entry.user_id] : [])));
+  return {
+    members: members.filter((member) => !taken.has(member.user_id)),
+    candidate: (candidate) => (candidate && !taken.has(candidate.user_id) ? candidate : null),
   };
 }
 
