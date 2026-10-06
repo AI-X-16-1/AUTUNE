@@ -143,16 +143,37 @@ def test_a_newer_run_supersedes_the_same_subagents_pending_proposal(
     assert dict(statuses)[second.id] == "pending"
 
 
-def test_a_chat_turn_never_supersedes_a_waiting_proposal(
+def test_a_chat_replaces_the_pipelines_proposal_of_the_same_action(
     session: Session, team: dict[str, str]
 ) -> None:
-    # #651 review: a chat on a meeting page is bound to that meeting, and must
-    # not retire the proposal the pipeline left waiting for an approver.
+    # #879: "다시 써줘" or "올려줘" on a meeting page proposes the same post the
+    # pipeline left; keeping both leaves a dead or doubled card. The approver
+    # still has one card to decide.
     event = _run(session, team, "report", team["meeting"])
     queue_l2(session, actions={}, run=event, proposed=[_l2("intelligence.publish_meeting_report")])
     chat = _run(session, team, "report", team["meeting"], trigger={"kind": "chat"})
 
     queue_l2(session, actions={}, run=chat, proposed=[_l2("intelligence.publish_meeting_report")])
+
+    statuses = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert statuses == {event.id: "superseded", chat.id: "pending"}
+
+
+def test_a_chat_leaves_the_pipelines_proposal_of_another_action(
+    session: Session, team: dict[str, str]
+) -> None:
+    # #651 review still holds for a different action: asking on a meeting page
+    # must not retire what the pipeline left there for an approver.
+    event = _run(session, team, "report", team["meeting"])
+    queue_l2(session, actions={}, run=event, proposed=[_l2("intelligence.publish_meeting_report")])
+    chat = _run(session, team, "report", team["meeting"], trigger={"kind": "chat"})
+
+    queue_l2(
+        session,
+        actions={},
+        run=chat,
+        proposed=[_l2("intelligence.publish_meeting_report_correction", correction_id="rco_1")],
+    )
 
     statuses = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
     assert statuses == {event.id: "pending", chat.id: "pending"}
@@ -411,7 +432,7 @@ def test_a_team_wide_chat_supersedes_what_the_timer_left(
     assert rows == {timer.id: "superseded", chat.id: "pending"}
 
 
-def test_a_chat_on_a_meeting_replaces_only_an_earlier_chat(
+def test_a_chat_on_a_meeting_replaces_an_earlier_chat_and_the_same_pipeline_proposal(
     session: Session, team: dict[str, str]
 ) -> None:
     event = _run(session, team, "followup", team["meeting"])
@@ -423,7 +444,7 @@ def test_a_chat_on_a_meeting_replaces_only_an_earlier_chat(
     queue_l2(session, actions={}, run=second, proposed=[_l2("extraction.add_followup_item")])
 
     rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
-    assert rows == {event.id: "pending", first.id: "superseded", second.id: "pending"}
+    assert rows == {event.id: "superseded", first.id: "superseded", second.id: "pending"}
 
 
 def test_a_team_wide_run_leaves_other_subagents_and_other_teams_alone(
@@ -522,10 +543,10 @@ def test_asking_again_from_the_team_screen_replaces_the_last_card(
     assert rows == {runs[0].id: "superseded", runs[1].id: "pending"}
 
 
-def test_a_team_chat_leaves_the_pipelines_proposal_for_that_meeting(
+def test_a_team_chat_replaces_the_pipelines_same_proposal_for_that_meeting(
     session: Session, team: dict[str, str]
 ) -> None:
-    """The meeting-page rule (#651 review) holds from the team screen too."""
+    """The meeting-page rule (#879) holds from the team screen too."""
     event = _run(session, team, "report", team["meeting"])
     queue_l2(session, actions={}, run=event, proposed=[_publish(team["meeting"])])
     chat = _run(session, team, "report", None, trigger={"kind": "chat"})
@@ -533,7 +554,7 @@ def test_a_team_chat_leaves_the_pipelines_proposal_for_that_meeting(
     queue_l2(session, actions={}, run=chat, proposed=[_publish(team["meeting"])])
 
     rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
-    assert rows == {event.id: "pending", chat.id: "pending"}
+    assert rows == {event.id: "superseded", chat.id: "pending"}
 
 
 def test_a_team_chat_naming_another_teams_meeting_is_refused(
