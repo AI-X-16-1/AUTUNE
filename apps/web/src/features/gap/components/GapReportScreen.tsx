@@ -132,7 +132,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, notice, dismiss, undoDismiss, carry, undoCarry, ask, choose } =
+  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, choose } =
     useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
@@ -278,9 +278,6 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           showLow={showLow}
                           onToggleLow={() => setShowLow((on) => !on)}
                           onDismiss={(gapId) => void dismiss(gapId)}
-                          onCarry={(gapId, carried) =>
-                            void (carried ? carry(gapId) : undoCarry(gapId))
-                          }
                           loadAskTargets={getAskTargets}
                           onAsk={(gapId, userId) => void ask(gapId, userId)}
                           pendingGapId={pending}
@@ -308,9 +305,6 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     showLow={showLow}
                     onToggleLow={() => setShowLow((on) => !on)}
                     onDismiss={(gapId) => void dismiss(gapId)}
-                    onCarry={(gapId, carried) =>
-                      void (carried ? carry(gapId) : undoCarry(gapId))
-                    }
                     loadAskTargets={getAskTargets}
                     onAsk={(gapId, userId) => void ask(gapId, userId)}
                     pendingGapId={pending}
@@ -349,6 +343,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                 templates={templates}
                 onChoose={(templateKey) => void choose(meetingId, templateKey)}
                 onUndoDismiss={(gapId) => void undoDismiss(gapId)}
+                onScheduleNext={() => void scheduleNext(meetingId)}
                 pending={pending}
               />
             )}

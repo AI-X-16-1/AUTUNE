@@ -35,6 +35,7 @@ from .schemas import (
     GapCarry,
     GapDismissal,
     GapExplanations,
+    GapMeetingCarry,
     TeamGapRead,
     TemplateComparison,
     TemplateRead,
@@ -186,6 +187,18 @@ def _carry(session: Session, gap_id: str, reader: User, *, carried: bool) -> Gap
     session.commit()
     outcome = service.carry_on_calendar(session, gap_id, reader, carried=carried)
     return result.model_copy(update={"calendar": outcome})
+
+
+@router.post("/agenda/{meeting_id}", response_model=GapMeetingCarry)
+def carry_meeting(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapMeetingCarry:
+    """ "다음 회의 잡기" beside S20's template rail (#824): send every open gap of
+    the meeting on to the next meeting, and add them to the next scheduled
+    meeting's event on the caller's own Google Calendar. The marks are
+    committed first, so a calendar that cannot take them leaves the marks set.
+    The membership check is the service's first line."""
+    gaps = service.carry_meeting(session, meeting_id, reader)
+    session.commit()
+    return service.carry_meeting_on_calendar(session, meeting_id, reader, gaps)
 
 
 @router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)

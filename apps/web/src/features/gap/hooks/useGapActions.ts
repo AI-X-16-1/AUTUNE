@@ -2,28 +2,27 @@
 
 import { useCallback, useState } from "react";
 
-import {
-  askGap,
-  carryGap,
-  chooseTemplate,
-  dismissGap,
-  undoCarryGap,
-  undoDismissGap,
-} from "../api";
-import type { AgendaOutcome, AskOutcome, GapAsk, GapCarry } from "../types";
+import { askGap, carryMeeting, chooseTemplate, dismissGap, undoDismissGap } from "../api";
+import type { AgendaOutcome, AskOutcome, GapAsk, GapMeetingCarry } from "../types";
 
-/** What the screen says after "다음 회의 어젠다로", by what the calendar did. */
+/** The second half of what "다음 회의 잡기" says, by what the calendar did. */
 export const AGENDA_NOTICE: Record<AgendaOutcome, string | null> = {
-  added: "다음 회의 일정 설명에 이 갭을 추가했습니다.",
-  removed: "다음 회의 일정 설명에서 이 갭을 뺐습니다.",
-  no_next_meeting: "예정된 다음 회의가 없어 다음 회의로 넘김 표시만 남겼습니다.",
-  no_event:
-    "내 Google 캘린더에서 다음 회의 일정을 찾지 못해 다음 회의로 넘김 표시만 남겼습니다.",
-  not_connected: "Google 캘린더가 연결되어 있지 않아 다음 회의로 넘김 표시만 남겼습니다.",
-  reconnect_required: "Google 캘린더를 다시 연결해야 합니다. 다음 회의로 넘김 표시만 남겼습니다.",
-  failed: "캘린더에 쓰지 못해 다음 회의로 넘김 표시만 남겼습니다.",
+  added: "다음 회의 일정 설명에 추가했습니다.",
+  removed: "다음 회의 일정 설명에서 뺐습니다.",
+  no_next_meeting: "예정된 다음 회의가 없어 캘린더에는 넣지 못했습니다.",
+  no_event: "내 Google 캘린더에서 다음 회의 일정을 찾지 못했습니다.",
+  not_connected: "Google 캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다.",
+  reconnect_required: "Google 캘린더를 다시 연결해야 합니다.",
+  failed: "캘린더에 쓰지 못했습니다.",
   not_tried: null,
 };
+
+/** What the screen says after "다음 회의 잡기". */
+export function meetingCarryNotice(result: GapMeetingCarry): string {
+  if (result.carried === 0) return "다음 회의로 넘길 갭이 없습니다.";
+  const calendar = AGENDA_NOTICE[result.calendar];
+  return `갭 ${result.carried}건을 다음 회의로 넘겼습니다.${calendar ? ` ${calendar}` : ""}`;
+}
 
 /** What the screen says after "담당자 지정해 질문". */
 export const ASK_NOTICE: Record<AskOutcome, string> = {
@@ -35,8 +34,9 @@ export const ASK_NOTICE: Record<AskOutcome, string> = {
 };
 
 /**
- * The writes S20 makes: dismissing a gap and sending one on to the next meeting
- * (#824), taking either back, and holding the meeting to another template.
+ * The writes S20 makes: dismissing a gap and taking that back, sending the
+ * meeting's open gaps on to the next meeting and asking a teammate a gap's
+ * question (#824), and holding the meeting to another template.
  *
  * **Every write is followed by a read, never by a local edit.** The server
  * decides what a dismissal does to the report and the rail — the gap leaves
@@ -45,7 +45,7 @@ export const ASK_NOTICE: Record<AskOutcome, string> = {
  * re-implementing those rules in a second place, which is how the two come to
  * disagree.
  *
- * `pending` names what is in flight (a gap id, or `"template"`) so exactly that
+ * `pending` names what is in flight (a gap id, `"template"` or `"agenda"`) so exactly that
  * control can show it. `notice` is what the last calendar write did — the mark
  * is set either way, so it is a note rather than a failure.
  */
@@ -97,24 +97,13 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
-  const carry = useCallback(
-    (gapId: string) =>
+  const scheduleNext = useCallback(
+    (meetingId: string) =>
       run(
-        gapId,
-        () => carryGap(gapId),
+        "agenda",
+        () => carryMeeting(meetingId),
         "갭을 다음 회의로 넘기지 못했습니다. 잠시 후 다시 시도해 주세요.",
-        (result: GapCarry) => AGENDA_NOTICE[result.calendar],
-      ),
-    [run],
-  );
-
-  const undoCarry = useCallback(
-    (gapId: string) =>
-      run(
-        gapId,
-        () => undoCarryGap(gapId),
-        "다음 회의로 넘긴 것을 되돌리지 못했습니다. 잠시 후 다시 시도해 주세요.",
-        (result: GapCarry) => AGENDA_NOTICE[result.calendar],
+        meetingCarryNotice,
       ),
     [run],
   );
@@ -140,5 +129,5 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
-  return { pending, failure, notice, dismiss, undoDismiss, carry, undoCarry, ask, choose };
+  return { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, choose };
 }

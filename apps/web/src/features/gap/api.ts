@@ -4,7 +4,7 @@ import { api } from "@/shared/api/client";
 import type {
   GapAsk,
   GapAskTargets,
-  GapCarry,
+  GapMeetingCarry,
   GapDismissal,
   GapExplanations,
   GapReport,
@@ -91,17 +91,13 @@ export const undoDismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });
 
 /**
- * "다음 회의 어젠다로": mark this gap as sent on to the next meeting (#824), and
- * add a line about it to the next scheduled meeting's event on the caller's own
- * Google Calendar when there is one (`calendar` says what happened). No meeting
- * is created and nobody is invited. The gap stays on the report.
+ * "다음 회의 잡기": send every open gap of this meeting on to the next meeting
+ * (#824), and add them to the next scheduled meeting's event on the caller's
+ * own Google Calendar when there is one (`calendar` says what happened). No
+ * meeting is created and nobody is invited. The gaps stay on the report.
  */
-export const carryGap = (gapId: string) =>
-  api.gap<GapCarry>(`/gaps/${gapId}/carry`, { method: "POST" });
-
-/** Take it back, and take the line out of the next meeting's event. */
-export const undoCarryGap = (gapId: string) =>
-  api.gap<GapCarry>(`/gaps/${gapId}/carry`, { method: "DELETE" });
+export const carryMeeting = (meetingId: string) =>
+  api.gap<GapMeetingCarry>(`/agenda/${meetingId}`, { method: "POST" });
 
 /**
  * Who "담당자 지정해 질문" can go to: the gap's team by name, whether each has a

@@ -248,6 +248,64 @@ def test_a_calendar_that_cannot_take_the_line_still_leaves_the_mark(
     assert session.get(GapGap, "gap_1").carried_at is not None
 
 
+# --- "다음 회의 잡기" -----------------------------------------------------------
+
+
+def test_scheduling_sends_every_open_gap_onto_the_next_meetings_event(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_high", risk_score=0.9)
+    gap(session, "gap_second", risk_score=0.8)
+    gap(session, "gap_dismissed", dismissed=True)
+    session.get(GapGap, gap(session, "gap_low", risk_score=0.1)).severity = "low"
+    session.flush()
+    next_meeting(session)
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+
+    first = client.post(f"{PREFIX}/agenda/{MEETING}")
+    again = client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert first.json() == {"meeting_id": MEETING, "carried": 2, "calendar": "added"}
+    assert again.json()["calendar"] == "added"
+    lines = google.descriptions["evt_meeting"].splitlines()
+    assert [line.rsplit(" ", 1)[1] for line in lines] == ["(gap_high)", "(gap_second)"]
+    marked = {g.id for g in session.scalars(select(GapGap)) if g.carried_at is not None}
+    assert marked == {"gap_high", "gap_second"}
+
+
+def test_scheduling_with_no_open_gap_writes_nothing(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_dismissed", dismissed=True)
+    next_meeting(session)
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert response.json() == {"meeting_id": MEETING, "carried": 0, "calendar": "not_tried"}
+    assert google.descriptions == {}
+
+
+def test_scheduling_without_a_next_meeting_still_sends_the_gaps(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert response.json()["calendar"] == "no_next_meeting"
+    assert session.get(GapGap, "gap_1").carried_at is not None
+
+
+def test_another_teams_meeting_cannot_be_scheduled_from(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_foreign", meeting_id="mtg_elsewhere")
+
+    assert client.post(f"{PREFIX}/agenda/mtg_elsewhere").status_code == 404
+    assert session.get(GapGap, "gap_foreign").carried_at is None
+
+
 # --- "담당자 지정해 질문" ------------------------------------------------------
 
 

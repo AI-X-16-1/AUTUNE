@@ -1,7 +1,9 @@
 """S20's two Google Calendar writes (#824).
 
-- **"다음 회의 어젠다로"** adds one line about the gap to the description of the
-  team's next meeting, on the calendar of whoever pressed it. The next meeting
+- **"다음 회의 잡기"** (beside the template rail's heading) adds one line per
+  open gap of the meeting to the description of the team's next meeting, on
+  the calendar of whoever pressed it. The per-gap carry route writes the same
+  line for one gap. The next meeting
   is the team's next ``scheduled`` meeting in Autune; its event is the one on
   that person's calendar that starts when the meeting does. Nothing links a
   meeting to an event id, so the start time is the link, and a person whose
@@ -28,7 +30,7 @@ quote the event.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
@@ -143,27 +145,35 @@ def _is_line_of(line: str, gap_id: str) -> bool:
     return line.startswith(AGENDA_PREFIX) and line.rstrip().endswith(f"({gap_id})")
 
 
+def edited(description: str, gaps: Sequence[GapGap], *, carried: bool) -> str | None:
+    """The description with every gap's line added (or taken out), or ``None``
+    when nothing changes -- so an event is not written for nothing."""
+    text, changed = description, False
+    for gap in gaps:
+        updated = (
+            with_line(text, agenda_line(gap), gap.id) if carried else without_line(text, gap.id)
+        )
+        if updated is not None:
+            text, changed = updated, True
+    return text if changed else None
+
+
 def update_agenda(
     session: Session,
-    gap: GapGap,
+    gaps: Sequence[GapGap],
     *,
     team_id: str,
     user_id: str,
     carried: bool,
     now: datetime | None = None,
 ) -> AgendaOutcome:
-    """Add the gap's line to the next meeting's event, or take it out."""
+    """Add the gaps' lines to the next meeting's event, or take them out."""
     meeting = next_meeting(session, team_id, now=now or datetime.now(UTC))
     if meeting is None or meeting.started_at is None:
         return "no_next_meeting"
     # SQLite hands back a naive datetime; PostgreSQL's is already UTC-aware.
     starts = (
         meeting.started_at if meeting.started_at.tzinfo else meeting.started_at.replace(tzinfo=UTC)
-    )
-    edit: Callable[[str], str | None] = (
-        (lambda text: with_line(text, agenda_line(gap), gap.id))
-        if carried
-        else (lambda text: without_line(text, gap.id))
     )
     try:
         with calendar_of(session, user_id) as calendar:
@@ -185,15 +195,15 @@ def update_agenda(
                 return "no_event"
             path = f"/calendars/{calendar_id}/events/{event.id}"
             current = str(client.request("GET", path).get("description") or "")
-            updated = edit(current)
+            updated = edited(current, gaps, carried=carried)
             if updated is not None:
                 client.request("PATCH", path, json={"description": updated})
     except ReconnectRequiredError:
         return "reconnect_required"
     except (IntegrationError, PrivacyViolationError) as exc:
-        log.warning("gap_agenda_failed", gap_id=gap.id, error=type(exc).__name__)
+        log.warning("gap_agenda_failed", meeting_id=meeting.id, error=type(exc).__name__)
         return "failed"
-    log.info("gap_agenda_set", gap_id=gap.id, meeting_id=meeting.id, carried=carried)
+    log.info("gap_agenda_set", meeting_id=meeting.id, gaps=len(gaps), carried=carried)
     return "added" if carried else "removed"
 
 

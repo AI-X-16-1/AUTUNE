@@ -79,6 +79,17 @@ class GapCarry(BaseModel):
     calendar: str = "not_tried"
 
 
+class GapMeetingCarry(BaseModel):
+    """What "다음 회의 잡기" did (``POST /agenda/{meeting_id}``, #824): how many
+    of the meeting's open gaps are now sent on, and what happened to the next
+    meeting's event on the caller's own calendar (``not_tried`` when there was
+    no gap to send)."""
+
+    meeting_id: str
+    carried: int
+    calendar: str
+
+
 class GapAskRequest(BaseModel):
     """``POST /gaps/{gap_id}/ask``: who to ask, chosen by hand, and on which
     day. No day means the next working day."""

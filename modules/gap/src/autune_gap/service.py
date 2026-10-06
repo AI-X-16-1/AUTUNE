@@ -65,6 +65,7 @@ from autune_gap.schemas import (
     GapDismissal,
     GapExplanationRead,
     GapExplanations,
+    GapMeetingCarry,
     ScoreBreakdownRead,
     ScorePartRead,
     TeamGapRead,
@@ -796,8 +797,52 @@ def carry_on_calendar(session: Session, gap_id: str, reader: User, *, carried: b
     set and says so."""
     row, meeting = _gap_for_member(session, gap_id, reader, "gap_carry_refused")
     return calendar_writes.update_agenda(
-        session, row, team_id=meeting.team_id, user_id=reader.id, carried=carried
+        session, [row], team_id=meeting.team_id, user_id=reader.id, carried=carried
     )
+
+
+def carry_meeting(session: Session, meeting_id: str, reader: User) -> list[GapGap]:
+    """Send every open gap of a meeting on to the next meeting -- "다음 회의
+    잡기" beside S20's template rail (#824). Returns the gaps sent.
+
+    Open is what S20 shows by default: not dismissed and not ``low``, the
+    precision rule the agent's Report and Briefing keep too. A gap already sent
+    keeps its first moment; nobody's id is stored, as for ``set_carried``.
+    """
+    require_readable_meeting(session, meeting_id, reader)
+    gaps = list(
+        session.scalars(
+            select(GapGap)
+            .where(
+                GapGap.meeting_id == meeting_id,
+                GapGap.dismissed_at.is_(None),
+                GapGap.severity != GapSeverity.LOW.value,
+            )
+            .order_by(GapGap.risk_score.desc(), GapGap.id)
+        )
+    )
+    now = datetime.now(tz=UTC)
+    for gap in gaps:
+        if gap.carried_at is None:
+            gap.carried_at = now
+    session.flush()
+    log.info("gap_meeting_carry_set", meeting_id=meeting_id, gaps=len(gaps))
+    return gaps
+
+
+def carry_meeting_on_calendar(
+    session: Session, meeting_id: str, reader: User, gaps: Sequence[GapGap]
+) -> GapMeetingCarry:
+    """Write the gaps ``carry_meeting`` sent onto the next meeting's event on
+    the caller's own calendar. Called after the marks are committed."""
+    if not gaps:
+        return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
+    meeting = session.get(Meeting, meeting_id)
+    assert meeting is not None  # carry_meeting checked it
+    outcome = calendar_writes.update_agenda(
+        session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True
+    )
+    return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome)
 
 
 def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:

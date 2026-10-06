@@ -26,6 +26,7 @@ from autune_gap.schemas import (
     GapDismissal,
     GapExplanationRead,
     GapExplanations,
+    GapMeetingCarry,
     ScoreBreakdownRead,
     ScorePartRead,
     TeamGapRead,
@@ -131,6 +132,7 @@ def test_the_web_calendar_write_mirrors_are_current() -> None:
     part in the meeting must not arrive in the picker by accident."""
     for interface, model in (
         ("GapCarry", GapCarry),
+        ("GapMeetingCarry", GapMeetingCarry),
         ("GapAsk", GapAsk),
         ("GapAskTarget", GapAskTarget),
         ("GapAskTargets", GapAskTargets),

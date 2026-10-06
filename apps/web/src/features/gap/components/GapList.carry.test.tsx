@@ -1,12 +1,13 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { GapList } from "./GapList";
 import { DEMO_EXPLANATIONS, DEMO_REPORT } from "../fixtures/report-demo";
 import type { GapExplanations } from "../types";
 
-// "다음 회의 어젠다로" (#824): a mark on the gap, taken back by the same button.
-// "담당자 지정해 질문" is GapList.ask.test.tsx; without its handlers it is disabled.
+// Sending gaps on to the next meeting is "다음 회의 잡기" beside the template rail
+// (TemplateRail.schedule.test.tsx, #824). The card only says a gap was sent on,
+// and holds "담당자 지정해 질문" and "해당 없음".
 
 const gaps = (DEMO_REPORT.gaps ?? []).slice(0, 1);
 const gapId = gaps[0]!.id;
@@ -20,45 +21,27 @@ const card = () => screen.getAllByRole("article")[0]!;
 
 afterEach(cleanup);
 
-describe("GapList — 다음 회의 어젠다로", () => {
-  it("sends the gap on when pressed", () => {
-    const onCarry = vi.fn();
-    render(<GapList gaps={gaps} explanations={explained(false)} onCarry={onCarry} />);
+describe("GapList — a gap sent on to the next meeting", () => {
+  it("says a carried gap was sent on", () => {
+    render(<GapList gaps={gaps} explanations={explained(true)} />);
 
-    fireEvent.click(within(card()).getByRole("button", { name: "다음 회의 어젠다로" }));
+    expect(within(card()).getByText("다음 회의로 넘김")).toBeTruthy();
+  });
 
-    expect(onCarry).toHaveBeenCalledWith(gapId, true);
+  it("says nothing for a gap not sent on", () => {
+    render(<GapList gaps={gaps} explanations={explained(false)} />);
+
     expect(within(card()).queryByText("다음 회의로 넘김")).toBeNull();
   });
 
-  it("says a carried gap was sent on, and takes it back", () => {
-    const onCarry = vi.fn();
-    render(<GapList gaps={gaps} explanations={explained(true)} onCarry={onCarry} />);
+  it("has no per-card button for it", () => {
+    render(<GapList gaps={gaps} explanations={explained(false)} />);
 
-    expect(within(card()).getByText("다음 회의로 넘김")).toBeTruthy();
-    fireEvent.click(within(card()).getByRole("button", { name: "다음 회의에서 빼기" }));
-
-    expect(onCarry).toHaveBeenCalledWith(gapId, false);
-  });
-
-  it("waits for the explanation, which is where the state comes from", () => {
-    render(<GapList gaps={gaps} explanations={null} onCarry={vi.fn()} />);
-
-    const button = within(card()).getByRole("button", { name: "다음 회의 어젠다로" });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("is disabled while that gap's write is in flight", () => {
-    render(
-      <GapList gaps={gaps} explanations={explained(false)} onCarry={vi.fn()} pendingGapId={gapId} />,
-    );
-
-    const button = within(card()).getByRole("button", { name: "다음 회의 어젠다로" });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(within(card()).queryByRole("button", { name: "다음 회의 어젠다로" })).toBeNull();
   });
 
   it("leaves 담당자 지정해 질문 disabled without its handlers", () => {
-    render(<GapList gaps={gaps} explanations={explained(false)} onCarry={vi.fn()} />);
+    render(<GapList gaps={gaps} explanations={explained(false)} />);
 
     const ask = within(card()).getByRole("button", { name: "담당자 지정해 질문" });
     expect((ask as HTMLButtonElement).disabled).toBe(true);

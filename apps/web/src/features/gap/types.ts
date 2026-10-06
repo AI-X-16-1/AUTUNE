@@ -155,6 +155,17 @@ export interface GapCarry {
   calendar: AgendaOutcome;
 }
 
+/**
+ * What "다음 회의 잡기" did — `POST /api/gap/agenda/{meeting_id}`
+ * (`GapMeetingCarry`, #824): how many open gaps were sent on, and what
+ * happened to the next meeting's event on the caller's own calendar.
+ */
+export interface GapMeetingCarry {
+  meeting_id: string;
+  carried: number;
+  calendar: AgendaOutcome;
+}
+
 /** `calendar_writes.AgendaOutcome`, plus `not_tried`. */
 export type AgendaOutcome =
   | "added"

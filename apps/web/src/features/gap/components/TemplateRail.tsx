@@ -33,12 +33,17 @@ import type {
  * back: the gap has left the list by then, so the rail is the only place it is
  * still visible. Both are optional props, so a rail with no writes wired
  * renders as a plain read.
+ *
+ * "다음 회의 잡기" sits beside the heading: it is about the whole meeting, not
+ * one gap. It sends every open gap on to the next meeting and adds them to the
+ * next scheduled meeting's event on the caller's own Google Calendar (#824).
  */
 export function TemplateRail({
   comparison,
   templates = [],
   onChoose,
   onUndoDismiss,
+  onScheduleNext,
   pending = null,
 }: {
   comparison: TemplateComparison;
@@ -46,7 +51,9 @@ export function TemplateRail({
   templates?: readonly TemplateOption[];
   onChoose?: (templateKey: string) => void;
   onUndoDismiss?: (gapId: string) => void;
-  /** What is in flight: a gap id, or `"template"`. */
+  /** "다음 회의 잡기". Without it no button is drawn. */
+  onScheduleNext?: () => void;
+  /** What is in flight: a gap id, `"template"` or `"agenda"`. */
   pending?: string | null;
 }) {
   const picking = onChoose !== undefined && templates.length > 1;
@@ -57,16 +64,33 @@ export function TemplateRail({
         {/* The version names every file that contributed, which is how two
             meetings are known to be held to the same checklist. A reader has
             no use for the identifier, so it is a tooltip rather than text. */}
-        <h2
-          className="text-[var(--color-ink-strong)]"
-          title={`템플릿 버전 ${comparison.version}`}
-          style={{
-            fontSize: "var(--text-heading)",
-            fontWeight: "var(--text-heading-weight)",
-          }}
+        <div
+          className="flex flex-wrap items-center justify-between"
+          style={{ gap: "var(--space-8)" }}
         >
-          템플릿 대조 · {comparison.name}
-        </h2>
+          <h2
+            className="text-[var(--color-ink-strong)]"
+            title={`템플릿 버전 ${comparison.version}`}
+            style={{
+              fontSize: "var(--text-heading)",
+              fontWeight: "var(--text-heading-weight)",
+            }}
+          >
+            템플릿 대조 · {comparison.name}
+          </h2>
+          {onScheduleNext ? (
+            <Button
+              tone="secondary"
+              size="compact"
+              disabled={!comparison.analysed || pending === "agenda"}
+              aria-busy={pending === "agenda" || undefined}
+              title="이 회의의 열린 갭을 다음 회의로 넘기고, 내 Google 캘린더의 다음 회의 일정 설명에 덧붙입니다."
+              onClick={onScheduleNext}
+            >
+              {pending === "agenda" ? "처리 중" : "다음 회의 잡기"}
+            </Button>
+          ) : null}
+        </div>
         {picking ? (
           <label className="mt-2 block">
             <span className="sr-only">대조할 템플릿</span>

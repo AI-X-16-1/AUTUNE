@@ -46,7 +46,6 @@ export function GapList({
   showLow = false,
   onToggleLow,
   onDismiss,
-  onCarry,
   loadAskTargets,
   onAsk,
   pendingGapId = null,
@@ -59,11 +58,6 @@ export function GapList({
   onToggleLow?: () => void;
   /** "해당 없음". Without it the button is drawn disabled. */
   onDismiss?: (gapId: string) => void;
-  /**
-   * "다음 회의 어젠다로" and taking it back: `carried` is the state asked for.
-   * Without it the button is drawn disabled.
-   */
-  onCarry?: (gapId: string, carried: boolean) => void;
   /**
    * "담당자 지정해 질문": who the question can go to, read when the picker
    * opens, and the send. Without both the button is drawn disabled.
@@ -99,7 +93,6 @@ export function GapList({
       meetingId={meetingId}
       defaultOpen={open}
       onDismiss={onDismiss}
-      onCarry={onCarry}
       loadAskTargets={loadAskTargets}
       onAsk={onAsk}
       pending={pendingGapId === gap.id}
@@ -142,9 +135,9 @@ export function GapList({
       ) : null}
 
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        &quot;다음 회의 어젠다로&quot;는 이 갭을 다음 회의로 넘겼다고 표시하고, 내 Google 캘린더의
-        다음 회의 일정 설명에 덧붙입니다. &quot;담당자 지정해 질문&quot;은 고른 팀원의 Google
-        캘린더에 해소용 질문을 종일 일정으로 넣습니다. &quot;해당 없음&quot;은 오탐으로 표시합니다.
+        &quot;담당자 지정해 질문&quot;은 고른 팀원의 Google 캘린더에 해소용 질문을 종일 일정으로
+        넣고, &quot;해당 없음&quot;은 오탐으로 표시합니다. 다음 회의로 넘기는 것은 템플릿 대조
+        옆의 &quot;다음 회의 잡기&quot;에서 이 회의의 열린 갭을 한꺼번에 합니다.
       </p>
     </div>
   );
@@ -208,12 +201,9 @@ function ListSummary({
  * positive, it leaves the report, and the rail keeps the item marked — which is
  * where it can be taken back.
  *
- * "다음 회의 어젠다로" is one too: `POST /gaps/{id}/carry` marks the gap as sent
- * on to the next meeting (#824) and adds a line to the next meeting's event on
- * the caller's own Google Calendar. The gap stays on the report, the card says
- * it was sent, and the same button takes it back. Nothing is scheduled and
- * nobody is invited. Its state comes from the explanation, so until that loads
- * the button is disabled.
+ * Sending gaps on to the next meeting is not a card action: "다음 회의 잡기"
+ * beside the template rail does it for the whole meeting (#824). The card only
+ * says a gap was sent on, from the explanation.
  *
  * "담당자 지정해 질문" opens a picker of the team, chosen by hand — never drawn
  * from who spoke (privacy.md section 3) — and puts the question on that
@@ -226,7 +216,6 @@ function GapCard({
   meetingId,
   defaultOpen,
   onDismiss,
-  onCarry,
   loadAskTargets,
   onAsk,
   pending,
@@ -237,7 +226,6 @@ function GapCard({
   meetingId?: string;
   defaultOpen: boolean;
   onDismiss?: (gapId: string) => void;
-  onCarry?: (gapId: string, carried: boolean) => void;
   loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
   onAsk?: (gapId: string, userId: string) => void;
   pending: boolean;
@@ -335,17 +323,6 @@ function GapCard({
           />
 
           <div className="-ml-2 flex flex-wrap" style={{ gap: "var(--space-4)" }}>
-            <Button
-              tone="text"
-              size="compact"
-              disabled={!onCarry || !explanation || pending}
-              aria-pressed={carried}
-              aria-busy={pending || undefined}
-              title={onCarry ? (carried ? UNCARRY_HINT : CARRY_HINT) : PENDING}
-              onClick={() => onCarry?.(gap.id, !carried)}
-            >
-              {carried ? "다음 회의에서 빼기" : "다음 회의 어젠다로"}
-            </Button>
             <Button
               tone="text"
               size="compact"
@@ -466,10 +443,7 @@ const ASK_HINT = "팀원 한 명을 골라 그 사람의 Google 캘린더에 해
 
 const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
 
-const CARRY_HINT =
-  "이 갭을 다음 회의로 넘겼다고 표시합니다. 일정을 잡거나 사람을 초대하지는 않습니다.";
 
-const UNCARRY_HINT = "다음 회의로 넘긴 표시를 지웁니다.";
 
 const DOT = { high: "critical", medium: "attention", low: "idle" } as const;
 
