@@ -581,6 +581,43 @@ def test_somebody_who_withdrew_consent_is_not_in_the_report(
     assert reported == {participant_id(meeting_id, "이건우")}
 
 
+def test_a_meeting_somebody_consented_to_is_reported_as_measured(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    meeting_id = build(team_id, MEETING)
+    service.publish_report(meeting_id)
+
+    assert published_report(sent).measured is True
+
+
+def test_a_meeting_nobody_consented_to_is_reported_as_not_measured(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    """#248. Nothing was read, so there are no topics and no gaps, and E scored
+    that as a meeting with nothing missing: its best score. ``measured`` is what
+    tells the two apart."""
+    meeting_id = build(team_id, MEETING, declined=frozenset({"김서연", "이건우"}))
+    service.detect_gaps(meeting_id)
+    service.publish_report(meeting_id)
+
+    report = published_report(sent)
+    assert report.topics == [] and report.gaps == []
+    assert report.measured is False
+
+
+def test_a_consented_meeting_with_no_topic_is_still_measured(
+    team_id: str, sent: list[tuple[str, dict]]
+) -> None:
+    """Read and found nothing is a measurement; never read is not."""
+    lines = [Line("김서연", "네"), Line("이건우", "좋습니다")]
+    meeting_id = build(team_id, lines)
+    service.publish_report(meeting_id)
+
+    report = published_report(sent)
+    assert report.topics == []
+    assert report.measured is True
+
+
 def test_the_report_carries_no_utterance_text(team_id: str, sent: list[tuple[str, dict]]) -> None:
     """Topic labels are words the meeting used; whole utterances are not. E
     reads the quotation by id, from ``utterances``, if it needs one."""

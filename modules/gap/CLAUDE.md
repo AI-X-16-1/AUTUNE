@@ -31,7 +31,9 @@ same PR.
 
 ## Publishes
 
-`GapReport` on `autune.gap.completed`, consumed by E.
+`GapReport` on `autune.gap.completed`, consumed by E. `measured` is `false`
+when no consented speech reached C, so E does not read the empty gaps of an
+unread meeting as a meeting with none (#248, contract 2.5).
 
 ## Owns
 

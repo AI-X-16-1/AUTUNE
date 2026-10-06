@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import delete, func, nulls_last, select
+from sqlalchemy import delete, exists, func, nulls_last, select
 
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
@@ -1325,6 +1325,26 @@ def _analysed(session: Session, meeting_id: str) -> bool:
     return (count or 0) > 0
 
 
+def _measured(session: Session, meeting_id: str) -> bool:
+    """Whether the meeting holds any speech C may read: an utterance whose
+    speaker consented, under the same join as ``_speech``.
+
+    Not ``_analysed``. A consented meeting whose extractor found no topic was
+    read and raised nothing, which is a measurement; a meeting with no
+    consented speech was never read at all (contract 2.5).
+    """
+    return bool(
+        session.scalar(
+            select(
+                exists()
+                .where(Utterance.meeting_id == meeting_id)
+                .where(Participant.id == Utterance.participant_id)
+                .where(Participant.consented.is_(True))
+            )
+        )
+    )
+
+
 def _thresholds(settings: GapSettings) -> detect.Thresholds:
     """``config`` values as the shape ``detect`` takes.
 
@@ -1596,6 +1616,9 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
     - A dismissed gap is not reported. Its row stays for threshold tuning, but
       the team has said it is wrong, and E counting it would score the meeting
       on a gap nobody believes in.
+    - ``measured`` says whether any consented speech reached C (#248). Without
+      it E reads a meeting nobody consented to as a meeting with no gaps, its
+      best score. See ``_measured``.
     """
     topics = _topics_in_reading_order(session, meeting_id)
     topic_ids = [topic.id for topic in topics]
@@ -1627,6 +1650,7 @@ def build_report(session: Session, meeting_id: str) -> GapReport:
 
     return GapReport(
         meeting_id=meeting_id,
+        measured=_measured(session, meeting_id),
         topics=[
             Topic(
                 id=topic.id,
