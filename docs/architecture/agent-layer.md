@@ -358,10 +358,13 @@ does not make it more or less so.
 
 ### Rules for a tool
 
-1. **Synchronous, with type hints.** Arguments are `packages/contracts` models
-   or ids; the return is `ToolResult`. *Not* `async` — this repository is
-   synchronous SQLAlchemy and synchronous routes throughout, and an `async def`
-   wrapping a blocking call is a lie that costs a thread.
+1. **Synchronous, with type hints.** Arguments are `packages/contracts` models,
+   ids, or short scalars — a date, a number, or a short search string that the
+   tool uses only in-process (E's `explain_metric(question)` and
+   `meeting_reports(title_contains)`, #881): never free text that leaves the
+   process or is stored. The return is `ToolResult`. *Not* `async` — this
+   repository is synchronous SQLAlchemy and synchronous routes throughout, and
+   an `async def` wrapping a blocking call is a lie that costs a thread.
 2. **The docstring is the prompt.** Say **when to use it**, and when not to,
    before saying what it does. Half of an agent's accuracy is decided here.
 3. **One high-level tool and two or three primitives.** Only the high-level
