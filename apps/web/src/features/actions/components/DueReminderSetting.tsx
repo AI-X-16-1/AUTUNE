@@ -12,6 +12,10 @@ import {
  * The person's own switch for due-date reminders (review of #751): a Slack DM
  * the day before an item of theirs is due and once after it passes. On unless
  * they turn it off. It changes only their own; nobody else's is shown here.
+ *
+ * The same switch governs the Monday digest and the morning DM. The Monday
+ * digest goes on the week's first working day when Monday is a public holiday
+ * (#850), and the label says so.
  */
 export function DueReminderSetting() {
   const [setting, setSetting] = useState<Setting | null>(null);
@@ -34,6 +38,17 @@ export function DueReminderSetting() {
 
   if (setting === null) return null;
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
+  // One switch, three messages, and a server turns each on by itself: the
+  // line under the switch says which of them this one sends. It used to read
+  // the reminder's flag alone and say "none yet" on a server sending both
+  // digests (dev, 2026-10-05).
+  const kinds: [string, boolean][] = [
+    ["마감 알림", setting.sent_here],
+    ["월요일 요약", setting.weekly_here],
+    ["아침 요약", setting.daily_here],
+  ];
+  const sent = kinds.filter(([, here]) => here).map(([name]) => name);
+  const unsent = kinds.filter(([, here]) => !here).map(([name]) => name);
 
   const change = (on: boolean) => {
     setSaving(true);
@@ -57,12 +72,15 @@ export function DueReminderSetting() {
           onChange={(event) => change(event.target.checked)}
         />
         마감 알림 받기 (마감 전날과 마감이 지난 뒤 한 번, 월요일의 내 할 일
-        요약, 화~금 아침 요약 · Slack DM)
+        요약 — 월요일이 공휴일이면 그 주의 첫 평일 —, 화~금 아침 요약 · Slack
+        DM)
       </label>
-      {!setting.sent_here && (
+      {unsent.length > 0 && (
         <span className="text-[var(--color-ink-muted)]" style={meta}>
-          이 서버는 아직 마감 알림을 보내지 않습니다. 켜 두면 보내기 시작할
-          때부터 받습니다.
+          {sent.length === 0
+            ? "이 서버는 아직 이 알림들을 보내지 않습니다."
+            : `이 서버는 지금 ${sent.join(", ")}만 보냅니다. 아직 보내지 않는 것: ${unsent.join(", ")}.`}{" "}
+          켜 두면 보내기 시작할 때부터 받습니다.
         </span>
       )}
       {failed && (

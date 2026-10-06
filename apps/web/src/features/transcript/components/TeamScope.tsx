@@ -6,7 +6,7 @@ import { ApiError } from "@/shared/api/client";
 import { Button, ChipToggle } from "@/shared/ui";
 
 import { listTeams, pinTeam, unpinTeam } from "../api";
-import { rememberTeam, teamToOpen } from "../selectedTeam";
+import { onTeamChosen, rememberTeam, teamToOpen } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
 /**
@@ -77,6 +77,10 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
     };
   }, []);
 
+  // A team chosen elsewhere on the page -- the sidebar's menu -- is this
+  // screen's team at once. The row's own click goes the same way round.
+  useEffect(() => onTeamChosen(setTeamId), []);
+
   const muted = { fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" } as const;
 
   if (error)
@@ -88,7 +92,9 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
   if (teams === null) return <p style={muted}>팀을 불러오는 중입니다…</p>;
   if (teams.length === 0 || teamId === null) return <p style={muted}>속한 팀이 없습니다.</p>;
 
-  const current = teams.find((team) => team.team_id === teamId);
+  // A team chosen elsewhere that is not in this list (it cannot be: both
+  // read the same teams) would show nothing, so fall back to the first.
+  const current = teams.find((team) => team.team_id === teamId) ?? teams[0];
 
   return (
     <>
@@ -99,10 +105,7 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
               <ChipToggle
                 key={team.team_id}
                 selected={team.team_id === teamId}
-                onClick={() => {
-                  setTeamId(team.team_id);
-                  rememberTeam(team.team_id);
-                }}
+                onClick={() => rememberTeam(team.team_id)}
               >
                 {team.pinned ? `${team.name} · 고정` : team.name}
               </ChipToggle>

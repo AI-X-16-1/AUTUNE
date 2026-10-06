@@ -56,6 +56,14 @@ class Prediction:
     the one kind the utterance is stored and published with
     (``llm.strongest``); the pieces are what items and decisions are made from
     (``decisions.in_pieces``)."""
+    summary: str = ""
+    """One line saying what a commitment or a decision is, when the classifier
+    wrote one with its label (``llm``, 2026-10-06) and it passed that
+    classifier's checks. Empty otherwise -- from every other classifier, for
+    every other kind, and for an utterance that has ``pieces``."""
+    piece_summaries: tuple[str, ...] = ()
+    """The same, a piece: as long as ``pieces``, empty strings where there is
+    none."""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:

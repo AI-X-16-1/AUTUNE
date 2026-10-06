@@ -76,6 +76,13 @@ class ClassifiedUtterance:
     kind, in order (``Prediction.pieces``). ``kind`` above is the one the
     utterance is stored with; ``in_pieces`` is how the rest of the run reads
     the turn."""
+    summary: str = ""
+    """One line saying what this commitment or decision is, written by the
+    classifier with its label (``Prediction.summary``); empty when there is
+    none. Read by ``service.resolve_commitment_summaries`` and
+    ``service.resolve_decision_summaries`` in place of asking the resolver."""
+    piece_summaries: tuple[str, ...] = ()
+    """The same for each of ``pieces``."""
     part_of: str = ""
     """The id of the utterance this is a piece of, for an entry ``in_pieces``
     made; empty for an utterance itself."""
@@ -121,6 +128,12 @@ def in_pieces(classified: Sequence[ClassifiedUtterance]) -> list[ClassifiedUtter
                     kind=kind,
                     text=text,
                     pieces=(),
+                    summary=(
+                        utterance.piece_summaries[number - 1]
+                        if number <= len(utterance.piece_summaries)
+                        else ""
+                    ),
+                    piece_summaries=(),
                     part_of=utterance.id,
                 )
             )

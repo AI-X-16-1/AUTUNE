@@ -69,6 +69,22 @@ ADOPT_WINDOW = timedelta(days=7)
 """How far back ``adopt_unextracted`` looks. An older meeting nobody extracted
 is not one somebody is still waiting for."""
 
+
+class ResultNotPublishedError(RuntimeError):
+    """A run stored its result and could not tell the other modules.
+
+    Not an extraction that failed: the action items and decisions are on the
+    board. What is missing is ``ExtractionResult`` reaching D and E, so the
+    retry is the publish alone -- no model is asked again -- and what the
+    screen and the team's channel say is that, not "could not extract" (PARK,
+    review of #868: the tab showed rows under "추출하지 못해 다시 시도 중").
+    Carries the class of what the publish raised, never its message.
+    """
+
+
+NOT_PUBLISHED = ResultNotPublishedError.__name__
+"""``reason`` for a meeting whose result is stored and was not passed on."""
+
 NOT_EXTRACTED = "NotExtracted"
 """``reason`` for a meeting the sweep adopted: no run of it is on record at all."""
 
@@ -203,6 +219,21 @@ def failing(session: Session, meeting_ids: Collection[str]) -> set[str]:
     )
 
 
+def unpublished(session: Session, meeting_ids: Collection[str]) -> set[str]:
+    """Which of these meetings failed last at passing a stored result on."""
+    if not meeting_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(ExtExtractionAttempt.meeting_id).where(
+                ExtExtractionAttempt.meeting_id.in_(meeting_ids),
+                ExtExtractionAttempt.failures > 0,
+                ExtExtractionAttempt.reason == NOT_PUBLISHED,
+            )
+        )
+    )
+
+
 def owed_notices(session: Session, *, now: datetime | None = None) -> list[str]:
     """Meetings out of tries whose team has not been told yet."""
     when = now or datetime.now(tz=UTC)
@@ -296,6 +327,7 @@ def state(session: Session, meeting_id: str) -> ExtractionState:
         failures=failures,
         failed_at=row.failed_at if row is not None and failures else None,
         will_retry=0 < failures < MAX_ATTEMPTS,
+        not_published=bool(failures) and row is not None and row.reason == NOT_PUBLISHED,
         requested=row.requested if row is not None else False,
         requested_at=row.requested_at if row is not None else None,
     )
