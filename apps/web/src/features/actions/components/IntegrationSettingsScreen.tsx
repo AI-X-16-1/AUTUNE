@@ -38,17 +38,19 @@ export function IntegrationSettingsScreen({
   onChooseTeam?: (teamId: string) => void;
 } = {}) {
   const [teams, setTeams] = useState<Team[] | null>(null);
+  // The select's own pick, kept only when no route is listening. With a route
+  // the pick is handed to it and comes back as `chosenTeamId`: one value, so
+  // a team picked here cannot outlive a later choice in the sidebar. Keeping
+  // both let the screen show one team while the sidebar marked another
+  // (mkkim68, review of #883).
   const [picked, setPicked] = useState<string | null>(null);
-  // The team picked here, else the one chosen elsewhere while it is one of
-  // this person's, else the first. Derived, so a choice made in the sidebar
-  // while this screen is open moves it without an effect.
   const mine = teams ?? [];
   const known = (id: string | null) => (id !== null && mine.some((t) => t.id === id) ? id : null);
-  const teamId = known(picked) ?? known(chosenTeamId) ?? mine[0]?.id ?? null;
-  const setTeamId = (id: string) => {
-    setPicked(id);
-    onChooseTeam?.(id);
-  };
+  const own = onChooseTeam === undefined ? known(picked) : null;
+  // Derived, so a choice made elsewhere while this screen is open moves it
+  // without an effect; the first team when nothing names one of theirs.
+  const teamId = own ?? known(chosenTeamId) ?? mine[0]?.id ?? null;
+  const setTeamId = onChooseTeam ?? setPicked;
 
   useEffect(() => {
     let alive = true;
