@@ -172,7 +172,7 @@ def links_for_meeting(session: Session, team_id: str, meeting_id: str) -> dict[s
 
     items = [
         {
-            "id": link.id,
+            "id": f"lnk_{link.id}",
             "title": _clip(link.topic_label),
             "body": _link_body(link),
             "score": link.confidence,
@@ -214,7 +214,7 @@ def decision_thread(session: Session, team_id: str, thread_id: str) -> dict[str,
     days = _meeting_days(session, {version.meeting_id for version in shown})
     items = [
         {
-            "id": version.id,
+            "id": version.source_decision_id,
             "title": _clip(version.current_statement),
             "body": (
                 _clip(f"이전 결정: {version.previous_statement}")
