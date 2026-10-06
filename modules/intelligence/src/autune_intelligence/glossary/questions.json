@@ -1,0 +1,187 @@
+[
+  {
+    "question": "회의 품질 점수는 뭘로 계산해?",
+    "expected": "quality.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "각 항목 비중이 얼마씩이야?",
+    "expected": "quality.weights",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "몇 점부터 B등급이야?",
+    "expected": "quality.grades",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "결정 밀도가 뭐야?",
+    "expected": "quality.decision_density",
+    "kind": "definition"
+  },
+  {
+    "question": "왜 우리 팀이 C등급이야?",
+    "expected": "quality.grades",
+    "kind": "why"
+  },
+  {
+    "question": "고위험 갭 부담은 어떻게 나와?",
+    "expected": "quality.gap_burden",
+    "kind": "definition"
+  },
+  {
+    "question": "누가 얼마나 말했는지도 점수에 들어가?",
+    "expected": "quality.participation",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "회의 점수의 확정률은 뭘 뜻해?",
+    "expected": "quality.action_confirmation",
+    "kind": "definition"
+  },
+  {
+    "question": "확정률과 완료율은 뭐가 달라?",
+    "expected": "actions.confirmation_vs_completion",
+    "kind": "definition"
+  },
+  {
+    "question": "완료율은 어떻게 계산돼?",
+    "expected": "actions.confirmation_vs_completion",
+    "kind": "definition"
+  },
+  {
+    "question": "왜 오래된 회의는 완료율에서 빠져?",
+    "expected": "actions.window",
+    "kind": "why"
+  },
+  {
+    "question": "기한 지난 건 왜 옛날 회의 것도 세?",
+    "expected": "actions.overdue",
+    "kind": "why"
+  },
+  {
+    "question": "왜 팀 합계가 안 보여?",
+    "expected": "actions.floor",
+    "kind": "why"
+  },
+  {
+    "question": "완료율이 0%가 아니라 비어 있는 건 왜야?",
+    "expected": "actions.stale",
+    "kind": "why"
+  },
+  {
+    "question": "지난주에 못 끝낸 일은 어디서 봐?",
+    "expected": "actions.carried_over",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "정렬 히트맵은 뭘 보여 주는 거야?",
+    "expected": "alignment.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "직무 간 일치도 점수는 어떻게 구해?",
+    "expected": "alignment.score",
+    "kind": "definition"
+  },
+  {
+    "question": "아무도 의견 안 낸 결정은 합의로 쳐?",
+    "expected": "alignment.silence",
+    "kind": "why"
+  },
+  {
+    "question": "히트맵에 빈 칸이 있는 건 왜야?",
+    "expected": "alignment.floor",
+    "kind": "why"
+  },
+  {
+    "question": "갭 패턴이 뭐야?",
+    "expected": "gaps.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "갭은 어떤 기준으로 종류를 나눠?",
+    "expected": "gaps.classification",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "마감을 안 정했으면 어떤 유형이야?",
+    "expected": "gaps.schedule",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "책임자 없이 끝난 건 어디로 분류돼?",
+    "expected": "gaps.ownership",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "비용 얘기를 안 했으면 무슨 유형이야?",
+    "expected": "gaps.budget",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "다른 팀 의견을 안 물어봤으면?",
+    "expected": "gaps.stakeholder",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "기타로 분류되면 분류가 잘못된 거야?",
+    "expected": "gaps.other",
+    "kind": "why"
+  },
+  {
+    "question": "어떤 갭이 고위험으로 잡혀?",
+    "expected": "gaps.high_severity",
+    "kind": "definition"
+  },
+  {
+    "question": "결정이 뒤집힐 확률은 뭐야?",
+    "expected": "prediction.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "그 확률 계산에 뭘 넣어?",
+    "expected": "prediction.inputs",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "예측이 아직 안 뜨는 건 왜야?",
+    "expected": "prediction.gate",
+    "kind": "why"
+  },
+  {
+    "question": "이 예측 믿어도 돼?",
+    "expected": "prediction.accuracy",
+    "kind": "why"
+  },
+  {
+    "question": "리포트는 바로 슬랙에 올라가?",
+    "expected": "reports.meeting_approval",
+    "kind": "why"
+  },
+  {
+    "question": "내가 리포트 문장을 고치면 승인은 어떻게 돼?",
+    "expected": "reports.meeting_edit",
+    "kind": "why"
+  },
+  {
+    "question": "이미 올라간 리포트가 틀렸으면 어떻게 해?",
+    "expected": "reports.meeting_correction",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "주간 리포트는 언제 나가?",
+    "expected": "reports.weekly_schedule",
+    "kind": "definition"
+  },
+  {
+    "question": "주간 리포트가 안 나온 주엔 나중에 올려 줘?",
+    "expected": "reports.weekly_catch_up",
+    "kind": "why"
+  },
+  {
+    "question": "주간 리포트에는 뭐가 들어 있어?",
+    "expected": "reports.weekly_content",
+    "kind": "definition"
+  }
+]

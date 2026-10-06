@@ -362,6 +362,28 @@ admin override and no team-level variant of this endpoint.
 | Label efficiency | Active learning |
 | Report generation | LLM, from computed numbers only |
 
+## Metric glossary and explain_metric
+
+`explain_metric` answers "what does this number mean" from a glossary of 37
+passages (`autune_intelligence/glossary/`, six files) and retrieves them with
+BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
+`python -m autune_intelligence.retrieval_eval` over `glossary/questions.json`:
+recall@1, recall@3 and MRR.
+
+Measured 2026-10-06 on 37 questions (13 `definition`, 11 `paraphrase`, 13
+`why`; spread over all six files). BM25: recall@1 0.68, recall@3 0.89,
+MRR 0.77. It misses four questions at recall@3, three of them paraphrases whose
+words do not appear in the passage. "완료율은 어떻게 계산돼?" ranks the right
+passage third, not first. Dense and hybrid were not measured, because the
+shared environment lacks the `local-models` extra. To measure them:
+
+```bash
+uv run --package autune-intelligence --extra local-models python -m autune_intelligence.retrieval_eval
+# optionally: --dense-model nlpai-lab/KURE-v1
+```
+
+`retriever_impl` stays `bm25` until that comparison is run.
+
 ## Metric
 
 Prediction calibration, reported by the owner. Dashboard metrics are descriptive
