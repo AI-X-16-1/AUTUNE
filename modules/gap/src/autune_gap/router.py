@@ -31,9 +31,6 @@ from .enqueue import enqueue_publish_report
 from .schemas import (
     GapAgendaEvents,
     GapAgendaRequest,
-    GapAsk,
-    GapAskRequest,
-    GapAskTargets,
     GapCarry,
     GapDismissal,
     GapExplanations,
@@ -216,22 +213,6 @@ def carry_meeting(
     return service.carry_meeting_on_calendar(
         session, meeting_id, reader, gaps, event_id=body.event_id if body else None
     )
-
-
-@router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)
-def ask_targets(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapAskTargets:
-    """The picker behind "담당자 지정해 질문": the gap's team by name, with
-    who has a calendar connected and who was already asked (#824)."""
-    return service.ask_targets(session, gap_id, reader)
-
-
-@router.post("/gaps/{gap_id}/ask", response_model=GapAsk)
-def ask_gap(gap_id: str, body: GapAskRequest, session: SessionDep, reader: CurrentUser) -> GapAsk:
-    """Put the gap's question on one teammate's Google Calendar as an all-day
-    event with no attendees (#824). The person is chosen by hand."""
-    result = service.ask(session, gap_id, reader, user_id=body.user_id, day=body.day)
-    session.commit()
-    return result
 
 
 @router.get("/templates", response_model=list[TemplateRead])

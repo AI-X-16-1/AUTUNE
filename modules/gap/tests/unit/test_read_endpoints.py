@@ -38,10 +38,11 @@ from autune_core import (
 from autune_gap import router as routes
 from autune_gap import service, template
 from autune_gap.models import (
+    GapAgendaCleanup,
+    GapAgendaEvent,
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
-    GapQuestion,
     GapRelatedTopic,
     GapTopic,
     GapTopicEdge,
@@ -79,7 +80,8 @@ TABLES = [
     GapGap.__table__,
     GapRelatedTopic.__table__,
     GapMeetingTemplate.__table__,
-    GapQuestion.__table__,
+    GapAgendaEvent.__table__,
+    GapAgendaCleanup.__table__,
 ]
 
 

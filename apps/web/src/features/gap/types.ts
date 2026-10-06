@@ -189,39 +189,11 @@ export type AgendaOutcome =
   | "removed"
   | "no_next_meeting"
   | "no_event"
+  | "external_attendees"
   | "not_connected"
   | "reconnect_required"
   | "failed"
   | "not_tried";
-
-/** `calendar_writes.AskOutcome`. */
-export type AskOutcome =
-  | "added"
-  | "already_asked"
-  | "not_connected"
-  | "reconnect_required"
-  | "failed";
-
-/** What `POST /api/gap/gaps/{id}/ask` returns (`GapAsk`, #824). */
-export interface GapAsk {
-  gap_id: string;
-  user_id: string;
-  outcome: AskOutcome;
-}
-
-/** One teammate "담당자 지정해 질문" can go to (`GapAskTarget`). */
-export interface GapAskTarget {
-  user_id: string;
-  name: string;
-  calendar_connected: boolean;
-  asked: boolean;
-}
-
-/** `GET /api/gap/gaps/{id}/ask` — the gap's team, by name (`GapAskTargets`). */
-export interface GapAskTargets {
-  gap_id: string;
-  members: GapAskTarget[];
-}
 
 /**
  * One utterance a verdict rests on — `EvidenceRead` in
