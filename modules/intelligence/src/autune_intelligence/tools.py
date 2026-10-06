@@ -719,7 +719,7 @@ def set_weekly_report_schedule(
     """Change when the team's weekly report goes out -- a weekday (0 is Monday),
     an hour in Korean time, and whether a week with nothing to say is posted.
 
-    L1 -- any member may change it on the dashboard without approval (#821).
+    L1 -- runs without approval, as any member may change it on the dashboard (#821).
     ``user_id`` is the person who asked; it must come from the run, never a
     model (#862). Refused for a non-member or a day or hour out of range.
     """
@@ -750,4 +750,5 @@ models, and the main agent's executor alone runs these."""
 
 L1_ACTIONS = [draft_meeting_report, set_weekly_report_schedule]
 """The reversible ones (#509): a draft is not seen by anyone until it is posted,
-and is replaced by the next draft. Everything else in ``ACTIONS`` is L2."""
+and is replaced by the next draft; a schedule is changed back the same way it was
+changed. Everything else in ``ACTIONS`` is L2."""
