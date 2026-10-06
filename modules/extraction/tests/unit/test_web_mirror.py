@@ -20,6 +20,7 @@ from autune_extraction.schemas import (
     EditHistoryEntry,
     ExternalRefRead,
     SourceUtterance,
+    TeamRead,
 )
 
 TYPES_TS = Path(__file__).resolve().parents[4] / "apps/web/src/features/actions/types.ts"
@@ -41,6 +42,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
     assert added == {
         "meeting_id",
         "meeting_title",
+        "team_id",
         "origin",
         "carried_meetings",
         "project_id",
@@ -57,6 +59,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
     }
     assert ts_fields("ActionItemRead") == added, f"update {TYPES_TS}"
     assert ts_fields("ExternalRefRead") == set(ExternalRefRead.model_fields), f"update {TYPES_TS}"
+    assert ts_fields("TeamName") == set(TeamRead.model_fields), f"update {TYPES_TS}"
 
 
 def test_the_web_detail_mirror_is_current() -> None:

@@ -18,6 +18,7 @@ import type {
   Project,
   ProjectDraft,
   ProjectSendReport,
+  TeamName,
   SendTarget,
 } from "./types";
 
@@ -199,6 +200,9 @@ export const listProjectSuggestions = (teamId: string) =>
 
 /** Every project of every team the reader is on, for the board across meetings. */
 export const listMyProjects = () => api.extraction<Project[]>("/projects/mine");
+
+/** The reader's own teams by name, for the board across meetings. */
+export const listMyTeams = () => api.extraction<TeamName[]>("/teams/mine");
 
 export const createProject = (teamId: string, draft: ProjectDraft) =>
   api.extraction<Project>(`/projects?team_id=${encodeURIComponent(teamId)}`, {
