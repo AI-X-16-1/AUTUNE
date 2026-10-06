@@ -522,3 +522,30 @@ def test_a_request_that_cannot_be_fitted_ends_the_loop_without_calling_the_model
     assert model.seen == []
     assert out.proposed == []
     assert out.result.summary == "답할 내용을 찾지 못했습니다. 대시보드에서 확인해 주세요."
+
+
+_NONE_FOUND = {"ok": True, "summary": "조건에 맞는 회의 리포트가 없습니다.", "items": []}
+
+
+def test_an_empty_search_beside_a_report_found_is_left_out(monkeypatch) -> None:
+    tools = {
+        **_tools(),
+        "intelligence.meeting_reports": mock_tool("intelligence.meeting_reports", _NONE_FOUND),
+    }
+    model = Script(
+        [call("intelligence.meeting_reports", title_contains="결제")],
+        [call("intelligence.meeting_report_body")],
+    )
+    out = _run("결제 회의 리포트 보여줘", model, tools, monkeypatch=monkeypatch)
+    assert "회의 리포트입니다" in out.result.summary
+    assert "조건에 맞는" not in out.result.summary
+
+
+def test_an_empty_search_alone_still_says_so(monkeypatch) -> None:
+    tools = {
+        **_tools(),
+        "intelligence.meeting_reports": mock_tool("intelligence.meeting_reports", _NONE_FOUND),
+    }
+    model = Script([call("intelligence.meeting_reports", title_contains="결제")])
+    out = _run("결제 회의 리포트 보여줘", model, tools, monkeypatch=monkeypatch)
+    assert "조건에 맞는 회의 리포트가 없습니다" in out.result.summary
