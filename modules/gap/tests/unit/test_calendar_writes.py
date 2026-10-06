@@ -908,3 +908,24 @@ def test_only_a_member_of_the_team_can_be_asked(
 
     assert response.status_code == 404
     assert channel.posted == []
+
+
+def test_the_notice_names_lines_new_on_the_next_meetings_event(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """Without a pick the event is the next meeting's; a line the presser put
+    on another event earlier is not one already announced there (mminjae97 on
+    #910)."""
+    questioned(session, gap(session, "gap_old"))
+    next_meeting(session)
+    calendars[MEMBER] = FakeCalendar(
+        [event("evt_meeting", STARTS), event("evt_elsewhere", STARTS + timedelta(days=3))]
+    )
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_elsewhere"})
+    channel = slack.connect()
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert response.json()["slack"] == "posted"
+    assert len(channel.posted) == 1
+    assert ("gap_old", MEMBER, "evt_meeting") in recorded(session)

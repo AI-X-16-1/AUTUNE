@@ -335,14 +335,23 @@ def update_agenda(
     return "added" if carried else "removed"
 
 
-def written_gap_ids(session: Session, *, user_id: str, event_id: str | None) -> set[str]:
-    """The gaps whose line this person already wrote onto this event -- or onto
-    any event of theirs, when none is named. What "다음 회의 잡기" leaves out of
-    the team's notice, so pressing again does not announce it again."""
-    query = select(GapAgendaEvent.gap_id).where(GapAgendaEvent.user_id == user_id)
-    if event_id is not None:
-        query = query.where(GapAgendaEvent.event_id == event_id)
-    return set(session.scalars(query))
+def written_lines(
+    session: Session, *, user_id: str, gap_ids: Sequence[str]
+) -> set[tuple[str, str]]:
+    """Which of these gaps' lines this person has written, as ``(gap id, event
+    id)``. Read before and after a write, the difference is the lines that
+    write added -- on whichever event it found, picked or not -- which is what
+    "다음 회의 잡기" announces, so pressing again announces nothing."""
+    if not gap_ids:
+        return set()
+    return {
+        (gap_id, event_id)
+        for gap_id, event_id in session.execute(
+            select(GapAgendaEvent.gap_id, GapAgendaEvent.event_id).where(
+                GapAgendaEvent.user_id == user_id, GapAgendaEvent.gap_id.in_(gap_ids)
+            )
+        )
+    }
 
 
 def _insert(session: Session, model: Any) -> Any:
