@@ -15,7 +15,7 @@ embedding model of a different dimension is a new migration, not a config edit �
 """
 
 SPEECH_DELETED_TEXT = "삭제된 발화에서 만든 항목"
-"""What a decision statement reads once every line it was drawn from was deleted
+"""What a decision statement reads once any line it was drawn from was deleted
 by the person who said it (#587, #614). The same words B uses for its own copy:
 a person sees one phrase wherever the words used to be. A module cannot import
 B's constant, so this one is kept in step by hand."""

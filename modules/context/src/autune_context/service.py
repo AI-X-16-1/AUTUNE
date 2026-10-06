@@ -2229,12 +2229,16 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
       in their words too, so it stays (as in C). A topic with no record of what it
       was cut from (written before ``utterance_ids``) goes with the meeting's
       first deletion: not knowing is not a reason to keep it.
-    - **A decision statement goes the same way**: it reads ``SPEECH_DELETED_TEXT``
-      when every utterance B drew it from goes, or when there is no record of them
-      (written before ``source_utterance_ids``). The thread, its versions, how each
-      changed and when stay -- that is the team's work. Wherever the statement was
-      copied -- a later version's ``previous_statement``, the thread's label --
-      the copy reads the same.
+    - **A decision statement goes when any line it was drawn from goes**: it reads
+      ``SPEECH_DELETED_TEXT`` when one of the utterances B drew it from is deleted,
+      or when there is no record of them (written before ``source_utterance_ids``).
+      The rule differs from a topic's because the two hold different things: a
+      statement is B's assembled quote of those lines, word for word, so a
+      deleted line's words are still in it however many others sit beside them;
+      a topic label is a name several people gave, and is no one person's
+      sentence. The thread, its versions, how each changed and when stay -- that is
+      the team's work. Wherever the statement was copied -- a later version's
+      ``previous_statement``, the thread's label -- the copy reads the same.
     - **The team's agenda snapshot is dropped**: it holds B's issue titles, which
       B rewrites on the same signal, and B republishes it every few minutes. Until
       then the brief says it has no agenda, which is better than quoting a title
@@ -2304,7 +2308,7 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
         if version.current_statement != SPEECH_DELETED_TEXT
         and (
             version.source_utterance_ids is None
-            or (version.source_utterance_ids and set(version.source_utterance_ids) <= gone)
+            or (version.source_utterance_ids and set(version.source_utterance_ids) & gone)
         )
     ]
     if cleared:

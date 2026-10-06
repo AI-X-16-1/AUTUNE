@@ -275,15 +275,26 @@ def test_a_statement_drawn_only_from_the_deleted_lines_is_cleared(team_id: str) 
     assert statement(seeded.only_mine) == SPEECH_DELETED_TEXT
     # ... and the one with no record of its lines (written before the column).
     assert statement(seeded.legacy) == SPEECH_DELETED_TEXT
-    assert done.statements_cleared == 2
+    # ... and the one that also quotes somebody else's line (next test).
+    assert done.statements_cleared == 3
 
 
-def test_a_statement_somebody_else_also_said_stays(team_id: str) -> None:
+def test_a_statement_quoting_one_deleted_line_among_others_is_cleared(team_id: str) -> None:
     seeded = seed(team_id)
 
     forget([seeded.mine])
 
+    # B joins the cited lines word for word, so the deleted line's words are in it.
+    assert statement(seeded.mine_and_theirs) == SPEECH_DELETED_TEXT
+
+
+def test_a_statement_whose_lines_are_all_somebody_elses_stays(team_id: str) -> None:
+    seeded = seed(team_id)
+
+    forget([seeded.other])
+
     assert statement(seeded.mine_and_theirs) == "결제 API는 다음 주"
+    assert statement(seeded.only_mine) == "개인 검색은 미룬다"
 
 
 def test_a_decision_with_no_cited_line_stays(team_id: str) -> None:
