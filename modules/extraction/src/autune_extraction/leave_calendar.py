@@ -18,6 +18,9 @@ Rules, each tested:
 
 - Nothing is written without the tick. A person who has not connected a
   calendar is told so and nothing is tried.
+- A save that does not say (``on_calendar`` left out -- a screen that drew no
+  box) leaves the calendar as it stands: an event there moves with the dates
+  and keeps its id, and where there is none, none is made.
 - A changed range moves the same event; unticking or clearing the dates
   removes it. An event the person deleted in Calendar is made again only by
   another tick.
@@ -262,11 +265,15 @@ def set_leave(
     *,
     starts_on: date | None,
     ends_on: date | None,
-    on_calendar: bool,
+    on_calendar: bool | None,
     now: datetime,
 ) -> Outcome:
     """Set, replace or clear ``user_id``'s own leave dates, and make their
     calendar follow when they asked for that. Returns what happened there.
+
+    ``on_calendar`` is the tick, and ``None`` when the save did not say: then
+    it is whatever stands -- an event already there is kept and moved, and
+    nothing is made where there is none.
 
     The dates are saved whatever the calendar does: a leave that could not be
     written to Google still stops the morning DM.
@@ -294,6 +301,9 @@ def set_leave(
         return "off"
     _refuse_while_claimed(session, pause, now)
     old = pause.calendar_event_id or ""
+    if on_calendar is None:
+        # Not said: as it stands. Read here, under the row's lock.
+        on_calendar = bool(old)
     if not on_calendar:
         # Taken off the row here, under its lock: the removal below is then of
         # an event no other save knows.

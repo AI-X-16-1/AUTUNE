@@ -505,9 +505,12 @@ the feature needs.
     the calendar, the time that save began (`calendar_claimed_at`, cleared
     when it returns; it keeps a second save out and is shown nowhere) -- and
     nothing else: a changed range moves the
-    same event, and a save without the tick, or clearing the dates, removes
-    it (a removal Google does not answer is queued and tried again with the
-    person's grant, as a due-date event's is). Once the last day has passed
+    same event, and a save with the box unticked, or clearing the dates,
+    removes it (a removal Google does not answer is queued and tried again
+    with the person's grant, as a due-date event's is). A save that says
+    neither -- the box was not drawn, the calendar not being connected just
+    then -- leaves the event and its id as they stand, and makes no event
+    where there is none. Once the last day has passed
     the row is deleted as before, the id with it, and **the event stays** on
     the calendar as the person's own record; Autune can no longer reach it.
     A calendar disconnected while the event stands cannot be reached either:

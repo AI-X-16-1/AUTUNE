@@ -730,7 +730,8 @@ def set_my_notification_pause(
 ) -> NotificationPauseRead:
     """Set, replace or -- with both days ``null`` -- clear the caller's own
     pause (the user, 2026-10-05). With ``on_calendar`` the range also goes onto
-    the caller's own calendar (2026-10-06), in the request: they pressed 저장
+    the caller's own calendar (2026-10-06) -- ``false`` takes an earlier event
+    off, and left out leaves the calendar as it stands -- in the request: they pressed 저장
     and wait to see whether it went. The dates are saved whatever the calendar
     answers, and ``calendar`` in the answer says which it was. The dates are
     committed before Google is asked (``leave_calendar.set_leave``); a save

@@ -167,7 +167,7 @@ describe("NotificationPauseSetting", () => {
       (await screen.findByRole("status")).textContent,
     ).toBe("내 Google 캘린더에 휴가 일정을 넣었습니다.");
     expect(box()?.checked).toBe(true);
-    expect(screen.getByText(/내 Google 캘린더에도 들어가 있습니다/)).toBeTruthy();
+    expect(screen.getByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeTruthy();
   });
 
   it("sends an unticked box as false, so an earlier event is taken off", async () => {
@@ -214,9 +214,41 @@ describe("NotificationPauseSetting", () => {
       const alert = await screen.findByRole("alert");
       expect(alert.textContent).toContain(words);
       expect((await first()).value).toBe("2026-10-12");
-      expect(screen.queryByText(/내 Google 캘린더에도 들어가 있습니다/)).toBeNull();
+      expect(screen.queryByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeNull();
     },
   );
+
+  it("sends no tick from a screen that drew no box, and does not say the new range is on the calendar", async () => {
+    // Their calendar is not connected just now, and an event of theirs
+    // stands from before: the server keeps it (the field is left out, not
+    // false) and answers that the calendar could not follow.
+    get.mockResolvedValue({ ...WEEK, on_calendar: true });
+    put.mockResolvedValue({
+      starts_on: "2026-10-19",
+      ends_on: "2026-10-23",
+      on_calendar: true,
+      calendar: "not_connected",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    fireEvent.change(await first(), { target: { value: "2026-10-19" } });
+    fireEvent.change(last(), { target: { value: "2026-10-23" } });
+    expect(box()).toBeNull();
+    fireEvent.click(save());
+
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({
+        starts_on: "2026-10-19",
+        ends_on: "2026-10-23",
+      }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다",
+    );
+    expect(
+      screen.getByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/이 기간은 내 Google 캘린더/)).toBeNull();
+  });
 
   it("says nothing about a calendar after a save that touched none", async () => {
     get.mockResolvedValue(CONNECTED);

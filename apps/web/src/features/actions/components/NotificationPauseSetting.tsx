@@ -125,6 +125,9 @@ export function NotificationPauseSetting() {
           onClick={() =>
             send(
               // The field is sent only by a person who was shown the box.
+              // Left out, the server leaves the calendar as it stands: a
+              // person whose calendar is not connected just now unticked
+              // nothing, and an event of theirs keeps its id for later.
               connected
                 ? { starts_on: first, ends_on: last, on_calendar: onCalendar }
                 : { starts_on: first, ends_on: last },
@@ -147,7 +150,9 @@ export function NotificationPauseSetting() {
         {saved.starts_on !== null && saved.ends_on !== null
           ? `${saved.starts_on}부터 ${saved.ends_on}까지 보내지 않습니다. 마감 알림은 그대로 갑니다.`
           : "기간을 정하면 그동안 보내지 않습니다. 마감 알림은 그대로 갑니다."}
-        {saved.on_calendar === true ? " 이 기간은 내 Google 캘린더에도 들어가 있습니다." : ""}
+        {/* An event of theirs stands. Not "이 기간은": a save the calendar
+            could not follow leaves it on the range it had. */}
+        {saved.on_calendar === true ? " 내 Google 캘린더에도 휴가 일정이 들어가 있습니다." : ""}
       </span>
       {connected ? (
         <>

@@ -276,8 +276,10 @@ export const setDueReminders = (on: boolean) =>
  * The caller's own leave dates (`YYYY-MM-DD`, both included); both null is no
  * pause. `on_calendar` is the person's tick on "내 Google 캘린더에도 추가": sent
  * true, the range also goes onto their own calendar as one private all-day
- * event; left out or false, nothing reaches a calendar and an event put there
- * for an earlier range is removed. Answered true while such an event stands.
+ * event; sent false, an event put there for an earlier range is removed; left
+ * out, the calendar stays as it stands -- an event there moves with the dates
+ * and none is made where there is none. Answered true while such an event
+ * stands.
  */
 export interface NotificationPause {
   starts_on: string | null;

@@ -454,7 +454,7 @@ def set_leave(
     *,
     starts_on: date | None,
     ends_on: date | None,
-    on_calendar: bool,
+    on_calendar: bool | None,
     now: datetime,
 ) -> leave_calendar.Outcome:
     """A person's own leave dates saved, and their own calendar following when

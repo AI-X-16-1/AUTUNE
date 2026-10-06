@@ -484,7 +484,13 @@ other module's tables.
   `AUTUNE_EXTRACTION_DAILY_DIGEST=true` turns it on
 - Those leave dates on the person's own Google Calendar, only when they tick
   "내 Google 캘린더에도 추가" beside them (`leave_calendar.py`, 2026-10-06):
-  `PUT /me/notification-pause` takes `on_calendar` (false when left out) and
+  `PUT /me/notification-pause` takes `on_calendar` -- `true` the tick,
+  `false` the box unticked, and left out by a screen that drew no box, which
+  leaves the calendar as it stands: an event already there moves with the
+  dates and keeps its id, and none is made where there is none (lsh2217's
+  review of #922: read as `false`, a dates-only save by a person whose
+  calendar was disconnected dropped the id, and the next ticked save made a
+  second event) -- and
   writes, moves or removes one private all-day event titled "휴가" in the
   request, through the person's own grant; the answer's `calendar` says what
   happened (`added`, `removed`, `removal_queued`, `not_connected`,

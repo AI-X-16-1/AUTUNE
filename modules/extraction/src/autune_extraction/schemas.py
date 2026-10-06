@@ -473,15 +473,21 @@ class NotificationPause(BaseModel):
 
     ``on_calendar`` is the person's tick on "내 Google 캘린더에도 추가" (the
     user, 2026-10-06): sent ``true``, the range also goes onto their own
-    calendar as one private all-day event; sent ``false`` -- the default -- an
-    event put there for an earlier range is removed. Answered ``true`` while
-    such an event stands. Nothing reaches a calendar without it."""
+    calendar as one private all-day event; sent ``false``, an event put there
+    for an earlier range is removed. **Left out, the calendar stays as it
+    stands**: an event already there moves with the dates, and where there is
+    none, none is made. That is what a screen that drew no box sends -- a
+    person whose calendar is not connected just now did not untick anything,
+    and reading the missing field as ``false`` dropped the event's id, so the
+    next ticked save made a second event beside the first (lsh2217's review of
+    #922). Answered ``true`` while such an event stands. Nothing is put on a
+    calendar without the tick."""
 
     model_config = ConfigDict(extra="forbid")
 
     starts_on: date | None = None
     ends_on: date | None = None
-    on_calendar: bool = False
+    on_calendar: bool | None = None
 
 
 class NotificationPauseRead(NotificationPause):

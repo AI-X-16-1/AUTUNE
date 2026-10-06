@@ -122,7 +122,7 @@ def save(
     first: date | None = FIRST,
     last: date | None = LAST,
     *,
-    on_calendar: bool = True,
+    on_calendar: bool | None = True,
     user_id: str = READER,
 ) -> str:
     return leave_calendar.set_leave(
@@ -415,6 +415,61 @@ def test_clearing_the_dates_with_the_calendar_gone_says_the_event_is_left_too(
 
     assert pause(session) is None
     assert calendar.deleted == []
+
+
+# --- a save that does not say (lsh2217's review of #922) ---------------------------
+
+
+def test_a_save_that_does_not_say_moves_the_event_that_stands(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    assert save(session, mine) == "added"
+
+    assert save(session, mine, LATER_FIRST, LATER_LAST, on_calendar=None) == "added"
+
+    assert calendar.patched == ["evt_1"] and len(calendar.posted) == 1
+    assert calendar.deleted == []
+    row = pause(session)
+    assert row is not None and (row.starts_on, row.calendar_event_id) == (LATER_FIRST, "evt_1")
+
+
+def test_a_save_that_does_not_say_puts_nothing_where_nothing_stands(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    """Left out is never a tick: nothing reaches a calendar without one."""
+    assert save(session, mine, on_calendar=None) == "off"
+    assert save(session, mine, LATER_FIRST, LATER_LAST, on_calendar=None) == "off"
+
+    assert mine.asked == [], "the calendar is not even looked for"
+    assert calendar.posted == [] and calendar.patched == []
+    row = pause(session)
+    assert row is not None and row.calendar_event_id is None
+
+
+def test_a_save_that_does_not_say_keeps_the_id_while_the_calendar_is_gone(
+    session: Session, calendar: FakeCalendar, mine: Any
+) -> None:
+    """The person did not untick anything: the box was not there to untick.
+    The event keeps its id, so the next ticked save moves it."""
+    assert save(session, mine) == "added"
+
+    gone = save(session, lambda _user: None, LATER_FIRST, LATER_LAST, on_calendar=None)
+
+    assert gone == "not_connected"
+    row = pause(session)
+    assert row is not None and (row.starts_on, row.calendar_event_id) == (LATER_FIRST, "evt_1")
+
+    assert save(session, mine, LATER_FIRST, LATER_LAST) == "added"
+    assert calendar.patched == ["evt_1"] and len(calendar.posted) == 1
+
+
+def test_an_unticked_box_still_removes(session: Session, calendar: FakeCalendar, mine: Any) -> None:
+    """``False`` is said, and means it."""
+    assert save(session, mine) == "added"
+
+    assert save(session, mine, on_calendar=False) == "removed"
+
+    assert calendar.deleted == [("primary", "evt_1")]
 
 
 # --- Google is asked with nothing open, one save at a time -------------------------
@@ -750,15 +805,43 @@ def test_the_box_is_not_offered_where_a_tick_could_only_fail(
     assert api.get(f"{PREFIX}/me/notification-pause").json()["calendar_connected"] is offered
 
 
-def test_a_save_without_the_field_is_a_save_without_the_tick(
+def test_a_save_without_the_field_puts_nothing_on_a_calendar(
     api: TestClient, calendar: FakeCalendar
 ) -> None:
-    """The screen before this change sends two fields; it must keep meaning
-    what it meant."""
+    """The screen before the box existed sends two fields, and so does one
+    that draws no box: neither is a tick."""
     answer = put(api, starts_on=FIRST.isoformat(), ends_on=LAST.isoformat())
 
     assert (answer["on_calendar"], answer["calendar"]) == (False, "off")
     assert calendar.posted == []
+
+
+def test_a_dates_only_save_while_disconnected_keeps_the_event_for_the_reconnect(
+    api: TestClient, session: Session, connected: dict[str, Any], calendar: FakeCalendar
+) -> None:
+    """lsh2217's sequence on #922, through the route as the screen drives it:
+    with the calendar not connected the screen draws no box and sends no
+    ``on_calendar``. Read as unticked, that dropped the event's id, and the
+    ticked save after reconnecting made a second event beside the first."""
+    put(api, starts_on=FIRST.isoformat(), ends_on=LAST.isoformat(), on_calendar=True)
+    grant, connected["grant"] = connected["grant"], None
+
+    away = put(api, starts_on=LATER_FIRST.isoformat(), ends_on=LATER_LAST.isoformat())
+
+    assert (away["starts_on"], away["calendar"]) == (LATER_FIRST.isoformat(), "not_connected")
+    assert away["on_calendar"] is True, "the event of theirs still stands, and the read says so"
+    row = session.get(ExtNotificationPause, READER)
+    assert row is not None and row.calendar_event_id == "evt_1"
+
+    connected["grant"] = grant
+    back = put(
+        api, starts_on=LATER_FIRST.isoformat(), ends_on=LATER_LAST.isoformat(), on_calendar=True
+    )
+
+    assert back["calendar"] == "added"
+    assert calendar.patched == ["evt_1"] and len(calendar.posted) == 1
+    assert sorted(calendar.bodies) == ["evt_1"], "one event, moved -- not two"
+    assert calendar.bodies["evt_1"]["start"] == {"date": LATER_FIRST.isoformat()}
 
 
 def test_a_ticked_save_answers_added_and_the_read_keeps_saying_so(
