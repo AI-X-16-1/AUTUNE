@@ -27,6 +27,7 @@ afterEach(() => {
 
 const NONE = { starts_on: null, ends_on: null };
 const NOTICE = /부재중.*일정이 언제부터/;
+const PICKER = /다음 회의 잡기/;
 const connectButton = () => screen.findByRole("button", { name: "내 Google 캘린더에 마감일 넣기" });
 
 describe("CalendarConnect", () => {
@@ -60,8 +61,54 @@ describe("CalendarConnect", () => {
     await connectButton();
     const notice = await screen.findByText(NOTICE);
     expect(notice.textContent).toMatch(/^연결하면 /);
-    expect(notice.textContent).toContain("제목이나 다른 일정은 읽지 않으며");
+    expect(notice.textContent).toContain("이때는 일정의 제목이나 부재중이 아닌 일정은 받지 않으며");
     expect(notice.textContent).toContain("저장하지");
+  });
+
+  it("does not say of the whole connection that no title and no other event is read", async () => {
+    // Review of #872: C's "다음 회의 잡기" reads event titles with the same
+    // grant, so the sentence that was true of the out-of-office read alone
+    // would have been false of the connection.
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: true });
+    const { container } = render(<CalendarConnect />);
+
+    await screen.findByText(NOTICE);
+    expect(container.textContent).not.toContain("일정의 제목이나 다른 일정은 읽지");
+  });
+
+  it("says what pressing '다음 회의 잡기' reads and writes, before the person connects", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: false });
+    render(<CalendarConnect />);
+
+    await connectButton();
+    const line = (await screen.findByText(PICKER)).textContent ?? "";
+    expect(line).toContain("직접 누를 때에만");
+    expect(line).toContain("앞으로 2주 일정(제목과 시간)");
+    expect(line).toContain("설명과 참석자 주소를 읽어");
+    expect(line).toContain("갭 질문을 적습니다");
+    // What is kept is said, and not folded into "nothing is stored".
+    expect(line).toContain("어느 일정에 적었는지만");
+  });
+
+  it("says it to somebody already connected, and where out-of-office time is read too", async () => {
+    connection.mockResolvedValue({ connected: true });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: true });
+    render(<CalendarConnect />);
+
+    expect(await screen.findByText("내 Google 캘린더 연결됨")).toBeTruthy();
+    expect(await screen.findByText(PICKER)).toBeTruthy();
+    expect(await screen.findByText(NOTICE)).toBeTruthy();
+  });
+
+  it("says it when the server cannot be asked about out-of-office time", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockRejectedValue(new Error("500"));
+    render(<CalendarConnect />);
+
+    await connectButton();
+    expect(await screen.findByText(PICKER)).toBeTruthy();
   });
 
   it("says it to somebody who connected earlier as well", async () => {
