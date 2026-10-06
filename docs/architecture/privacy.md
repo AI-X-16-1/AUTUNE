@@ -550,8 +550,11 @@ the feature needs.
     - *Not onto an event shared outside the team.* Google shows a description
       to everyone on the event, so an event with an attendee who is not on the
       meeting's team is refused (`external_attendees`) and the screen says
-      why. Meeting rooms and the presser do not count. A guest list Google
-      hides from the presser cannot be checked, and a guest invited after the
+      why. Meeting rooms and the presser do not count. An event whose guest
+      list Google does not return whole -- the organizer hid it from guests
+      and the presser is not the organizer, or Google says attendees were
+      omitted -- cannot be checked, so it is refused too
+      (`hidden_attendees`; mminjae97 on #872). A guest invited after the
       line was written sees it until it is taken out.
     - *Every line is recorded, and comes out again.* `gap_agenda_events` keeps
       the meeting, the gap, whose calendar and which event -- the calendar's

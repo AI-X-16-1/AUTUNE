@@ -217,6 +217,7 @@ export type AgendaOutcome =
   | "no_next_meeting"
   | "no_event"
   | "external_attendees"
+  | "hidden_attendees"
   | "not_connected"
   | "reconnect_required"
   | "failed"

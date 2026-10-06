@@ -25,7 +25,12 @@ stored, and logs hold counts.
 everyone on the event, so a line written there would hand the gaps to whoever
 else is invited. An event with an attendee who is not on the meeting's team is
 not written (``external_attendees``); meeting rooms and the presser themselves
-do not count. A guest list Google hides from the presser cannot be checked.
+do not count. **Nor is an event whose guest list cannot be read whole**
+(``hidden_attendees``): Google leaves attendees out of what it returns when
+the organizer hid the list from guests and the presser is not the organizer,
+or when the list is too long (``attendeesOmitted``). Such a list would pass the
+check above with outsiders on it, and they would get the line and Google's
+change notice (mminjae97 on #872).
 
 **Every line written is recorded so it can be taken out** (``GapAgendaEvent``):
 the gap, whose calendar and which event. Taking the gap back removes the line
@@ -97,6 +102,7 @@ AgendaOutcome = Literal[
     "no_next_meeting",
     "no_event",
     "external_attendees",
+    "hidden_attendees",
     "not_connected",
     "reconnect_required",
     "failed",
@@ -104,7 +110,9 @@ AgendaOutcome = Literal[
 """What happened to the next meeting's event. ``no_next_meeting``: the team has
 no scheduled meeting ahead. ``no_event``: it has one, and the presser's
 calendar holds no event starting then. ``external_attendees``: the event is
-shared with somebody outside the meeting's team, so nothing was written."""
+shared with somebody outside the meeting's team, so nothing was written.
+``hidden_attendees``: who is on the event cannot be read whole, so nothing was
+written either."""
 
 MATCH_WINDOW = timedelta(minutes=5)
 """How far an event's start may sit from the meeting's and still be it."""
@@ -115,9 +123,13 @@ LIST_FIELDS = "items(id,summary,start,end,status),nextPageToken"
 """All the picker reads of an event. Description, attendees and place stay at
 Google (mkkim68 on #824)."""
 
-WRITE_FIELDS = "description,attendees(email,self,resource)"
-"""All the write reads of the picked event: the description it edits, and the
-attendees' addresses to refuse an event shared outside the team."""
+WRITE_FIELDS = (
+    "description,attendees(email,self,resource),attendeesOmitted,"
+    "guestsCanSeeOtherGuests,organizer(self)"
+)
+"""All the write reads of the picked event: the description it edits, the
+attendees' addresses to refuse an event shared outside the team, and whether
+that list is whole (``attendees_hidden``)."""
 
 DESCRIPTION_FIELDS = "description"
 """All the cleanup reads: the description it takes lines out of."""
@@ -221,6 +233,19 @@ def outside_team(attendees: Sequence[dict[str, Any]], team: set[str]) -> bool:
     return False
 
 
+def attendees_hidden(event: dict[str, Any]) -> bool:
+    """Whether Google may have left attendees out of ``event``: it says so
+    (``attendeesOmitted``), or the organizer hid the guest list from guests
+    and the calendar's owner is not the organizer -- Google shows such a guest
+    the list only partly, and how much it shows is not documented. Google
+    leaves a field at its default out of the answer, so a missing
+    ``guestsCanSeeOtherGuests`` is true and a missing ``organizer.self`` false."""
+    if event.get("attendeesOmitted") is True:
+        return True
+    organizer = event.get("organizer") or {}
+    return organizer.get("self") is not True and event.get("guestsCanSeeOtherGuests") is False
+
+
 def _team_addresses(session: Session, team_id: str) -> set[str]:
     return {
         email.strip().lower()
@@ -271,6 +296,9 @@ def update_agenda(
                 return "no_event"
             path = f"/calendars/{calendar_id}/events/{event_id}"
             current = client.request("GET", path, params={"fields": WRITE_FIELDS})
+            if carried and attendees_hidden(current):
+                log.info("gap_agenda_refused_hidden", gaps=len(gaps))
+                return "hidden_attendees"
             if carried and outside_team(
                 list(current.get("attendees") or []), _team_addresses(session, team_id)
             ):
@@ -458,7 +486,10 @@ def _strip(client: CalendarClient, calendar_id: str, event_id: str, gap_ids: Seq
         current = client.request("GET", path, params={"fields": DESCRIPTION_FIELDS})
         updated = without_lines(str(current.get("description") or ""), gap_ids)
         if updated is not None:
-            client.request("PATCH", path, json={"description": updated})
+            # Taking lines out tells nobody, said rather than left to the default.
+            client.request(
+                "PATCH", path, params={"sendUpdates": "none"}, json={"description": updated}
+            )
     except PermanentIntegrationError as exc:
         if exc.details.get("upstream_status") in (404, 410):
             return
