@@ -1,0 +1,122 @@
+[
+  {
+    "question": "회의 점수는 뭘 가지고 계산해?",
+    "expected": "quality.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "다들 골고루 입 열었는지는 어떻게 봐?",
+    "expected": "quality.participation",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "시간 길게 했는데 딱 정해진 게 몇 개나 되냐는 어떻게 쳐줘?",
+    "expected": "quality.decision_density",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "회의에서 아무것도 안 정했는데 점수가 0점으로 안 깎여. 왜?",
+    "expected": "quality.decision_density",
+    "kind": "why"
+  },
+  {
+    "question": "갭은 어떤 종류로 나눠?",
+    "expected": "gaps.classification",
+    "kind": "definition"
+  },
+  {
+    "question": "갭이 뭐야?",
+    "expected": "gaps.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "돈 얘기 안 하고 끝난 건 어디로 분류돼?",
+    "expected": "gaps.budget",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "갭 분류에 기타가 잔뜩 있는데 분류가 잘못된 거야?",
+    "expected": "gaps.other",
+    "kind": "why"
+  },
+  {
+    "question": "정렬 점수는 어떻게 계산해?",
+    "expected": "alignment.score",
+    "kind": "definition"
+  },
+  {
+    "question": "입장 안 낸 쪽이 있으면 그 안건은 그냥 무시하는 거야?",
+    "expected": "alignment.silence",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "히트맵에서 몇몇 직무 조합이 그냥 공백이야. 왜 그래?",
+    "expected": "alignment.floor",
+    "kind": "why"
+  },
+  {
+    "question": "히트맵에서 기획이랑 개발 칸이 0으로 나오는데 왜 이래?",
+    "expected": "alignment.overview",
+    "kind": "why"
+  },
+  {
+    "question": "불일치 위험 예측은 뭘 맞추는 거야?",
+    "expected": "prediction.overview",
+    "kind": "definition"
+  },
+  {
+    "question": "그 퍼센트는 뭘 근거로 나오는 거야?",
+    "expected": "prediction.inputs",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "그 수치 믿어도 돼? 맞는지 검증은 했어?",
+    "expected": "prediction.accuracy",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "우리 팀은 확률 대신 사유만 떠 있어. 왜?",
+    "expected": "prediction.gate",
+    "kind": "why"
+  },
+  {
+    "question": "완료율이랑 확정률은 뭐가 달라?",
+    "expected": "actions.confirmation_vs_completion",
+    "kind": "definition"
+  },
+  {
+    "question": "이월 항목이 뭐야?",
+    "expected": "actions.carried_over",
+    "kind": "definition"
+  },
+  {
+    "question": "마감 넘긴 건 몇 달 전 회의 거여도 다 포함돼?",
+    "expected": "actions.overdue",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "완료율 칸이 빈 채로 뭔가 못 받았다고 떠. 왜 그래?",
+    "expected": "actions.stale",
+    "kind": "why"
+  },
+  {
+    "question": "주간 리포트에는 뭐가 들어가?",
+    "expected": "reports.weekly_content",
+    "kind": "definition"
+  },
+  {
+    "question": "이미 슬랙에 올라간 요약에 틀린 게 있으면 어떻게 바로잡아?",
+    "expected": "reports.meeting_correction",
+    "kind": "paraphrase"
+  },
+  {
+    "question": "내가 초안 문구 좀 고쳤더니 승인을 다시 받아야 한대. 왜?",
+    "expected": "reports.meeting_edit",
+    "kind": "why"
+  },
+  {
+    "question": "발송이 하루 넘게 밀렸는데 왜 안 올라와?",
+    "expected": "reports.weekly_catch_up",
+    "kind": "why"
+  }
+]

@@ -14,9 +14,10 @@ def test_every_question_names_a_passage_that_exists() -> None:
     from autune_intelligence import glossary
 
     keys = {p.key for p in glossary.passages()}
-    questions = retrieval_eval.questions()
-    assert 25 <= len(questions) <= 40
-    assert all(q["expected"] in keys for q in questions)
+    dev, holdout = retrieval_eval.questions("dev"), retrieval_eval.questions("holdout")
+    assert 25 <= len(dev) <= 40 and 20 <= len(holdout) <= 30
+    assert all(q["expected"] in keys for q in [*dev, *holdout])
+    assert not {q["question"] for q in dev} & {q["question"] for q in holdout}
 
 
 def test_a_model_that_cannot_load_skips_the_dense_rows(monkeypatch, capsys) -> None:  # type: ignore[no-untyped-def]
@@ -27,5 +28,5 @@ def test_a_model_that_cannot_load_skips_the_dense_rows(monkeypatch, capsys) -> N
 
     assert retrieval_eval.main([]) == 0
     out = capsys.readouterr().out
-    assert "bm25" in out
+    assert "dev (" in out and "holdout (" in out and "bm25" in out
     assert "skipped (model unavailable: OSError)" in out

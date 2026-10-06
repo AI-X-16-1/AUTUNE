@@ -16,6 +16,18 @@ from .glossary import Passage, passages
 
 RRF_K = 60
 
+_KEEP = ("N", "V", "XR", "SL", "SN")
+_LEFT_OUT = ("NP", "NNB", "VX", "VCP", "VCN")
+"""Pronouns (뭐, 어디), bound nouns (거), auxiliary verbs and the copula: they
+appear in nearly every question and match passages by accident."""
+LIGHT_WORDS = frozenset(
+    {"하", "되", "있", "없", "않", "어떻", "그렇", "이렇", "보", "주", "들", "같"}
+)
+"""Verbs and adjectives that carry no topic of their own (하다, 있다, 어떻다)."""
+TITLE_WEIGHT = 2
+"""A passage's title counts this many times: it names the topic, the body explains it.
+Chosen by the retrieval evaluation, held-out set included (docs/modules/intelligence.md)."""
+
 
 class Retriever(Protocol):
     def search(self, question: str, k: int = 3) -> list[Passage]: ...
@@ -29,9 +41,22 @@ def _kiwi():
 
 
 def tokens(text: str) -> list[str]:
-    """Content morphemes (nouns, verbs, adjectives, roots, foreign words, numbers)."""
-    keep = ("N", "V", "XR", "SL", "SN")
-    return [t.form for t in _kiwi().tokenize(text) if t.tag.startswith(keep)]
+    """Content morphemes (nouns, verbs, adjectives, roots, foreign words, numbers),
+    without ``_LEFT_OUT`` tags and ``LIGHT_WORDS``. A noun with its suffix is also
+    kept whole (완료 + 율 -> 완료율), so 완료율 is told apart from 완료."""
+    out: list[str] = []
+    prev = None
+    for t in _kiwi().tokenize(text):
+        if t.tag == "XSN" and prev is not None and prev.tag.startswith("NN"):
+            out.append(prev.form + t.form)
+        prev = t
+        if (
+            t.tag.startswith(_KEEP)
+            and not t.tag.startswith(_LEFT_OUT)
+            and t.form not in LIGHT_WORDS
+        ):
+            out.append(t.form)
+    return out
 
 
 def rrf(rankings: list[list[str]], k: int = RRF_K) -> list[str]:
@@ -47,7 +72,9 @@ class BM25Retriever:
         from rank_bm25 import BM25Okapi
 
         self._corpus = list(corpus)
-        self._bm25 = BM25Okapi([tokens(f"{p.title} {p.text}") or ["_"] for p in self._corpus])
+        self._bm25 = BM25Okapi(
+            [tokens(p.title) * TITLE_WEIGHT + tokens(p.text) or ["_"] for p in self._corpus]
+        )
 
     def ranking(self, question: str) -> list[str]:
         query = tokens(question)
