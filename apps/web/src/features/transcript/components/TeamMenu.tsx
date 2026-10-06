@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { listTeams } from "../api";
 import { onTeamChosen, rememberTeam, teamToOpen } from "../selectedTeam";
@@ -32,12 +32,20 @@ import type { TeamSummary } from "../types";
  * fill the list when there are three of them. A sidebar is on every screen
  * and a long list there pushes the menu below it out of reach.
  *
- * **One control under the three shows the rest** (the user, the same day:
- * "누르면 남은 팀들 보이게"). It says how many more there are, opens them in
- * place, and closes again when one is picked or when it is pressed again --
- * so the sidebar is back to three, with the team just picked among them. It
- * is absent when there is nothing more to show. The row at the top of each
- * team-level screen still lists every team, and stays.
+ * **One control under the three shows the rest, in a small window of its
+ * own** (the user, the same day: "누르면 남은 팀들 보이게", then "사이드바에
+ * 직접 늘리지 말고 작은 화면 띄워서"). It says how many more there are and
+ * opens them beside itself, over the page: the sidebar does not grow, so
+ * nothing under the team section moves. The window closes when a team is
+ * picked -- which then takes the last of the three places -- when the
+ * control is pressed again, on Escape, and on a press anywhere outside it.
+ * It lists only the teams that are not already in the sidebar, and is absent
+ * when there are none. The row at the top of each team-level screen still
+ * lists every team, and stays.
+ *
+ * Placed with `position: fixed` from where the control is when it opens: the
+ * sidebar scrolls and clips, and a child positioned inside it would be cut
+ * off at its edge.
  *
  * The team being looked at is always one of the three. When it is not among
  * the first three -- chosen in a screen's row, or remembered from before --
@@ -58,6 +66,33 @@ export function TeamMenu() {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
   const [showingRest, setShowingRest] = useState(false);
+  const [at, setAt] = useState({ left: 0, top: 0 });
+  const control = useRef<HTMLButtonElement>(null);
+  const window_ = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showingRest) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowingRest(false);
+    };
+    const onPress = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (window_.current?.contains(target) || control.current?.contains(target)) return;
+      setShowingRest(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPress);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPress);
+    };
+  }, [showingRest]);
+
+  const toggleRest = () => {
+    const box = control.current?.getBoundingClientRect();
+    if (box) setAt({ left: box.right + 12, top: box.top });
+    setShowingRest((open) => !open);
+  };
 
   useEffect(() => {
     let current = true;
@@ -129,17 +164,37 @@ export function TeamMenu() {
       {rest.length > 0 ? (
         <>
           <button
+            ref={control}
             type="button"
+            aria-haspopup="dialog"
             aria-expanded={showingRest}
             aria-controls="team-menu-rest"
-            onClick={() => setShowingRest((open) => !open)}
+            onClick={toggleRest}
             className="text-left text-[var(--color-ink-muted)] hover:text-[var(--color-ink-strong)]"
             style={{ fontSize: "var(--text-metaSmall)", fontWeight: 500, padding: "6px 0" }}
           >
-            {showingRest ? "접기" : `다른 팀 ${rest.length}개`}
+            다른 팀 {rest.length}개
           </button>
           {showingRest ? (
-            <div id="team-menu-rest" className="flex flex-col">
+            <div
+              ref={window_}
+              id="team-menu-rest"
+              role="dialog"
+              aria-label="다른 팀"
+              className="flex flex-col rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-paper)]"
+              style={{
+                position: "fixed",
+                left: at.left,
+                top: at.top,
+                zIndex: 50,
+                minWidth: 200,
+                maxWidth: 280,
+                maxHeight: 320,
+                overflowY: "auto",
+                padding: "8px 14px",
+                boxShadow: "var(--shadow-overlay)",
+              }}
+            >
               {rest.map((team) => (
                 <button
                   key={team.team_id}

@@ -20,8 +20,15 @@ const B: TeamSummary = { team_id: "team_b", name: "나 팀", pinned: false };
 const C: TeamSummary = { team_id: "team_c", name: "다 팀", pinned: false };
 const D: TeamSummary = { team_id: "team_d", name: "라 팀", pinned: false };
 const E: TeamSummary = { team_id: "team_e", name: "마 팀", pinned: false };
-// The teams listed, not the control that opens the rest.
-const names = () => [...menu().querySelectorAll("button[aria-pressed]")].map((b) => b.textContent);
+// The teams listed in the sidebar itself: not the control that opens the
+// rest, and not what the small window lists.
+const names = () =>
+  [...menu().querySelectorAll("button[aria-pressed]")]
+    .filter((b) => !b.closest('[role="dialog"]'))
+    .map((b) => b.textContent);
+const rest = () => screen.queryByRole("dialog", { name: "다른 팀" });
+const inRest = () =>
+  [...(rest()?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
 const more = () => menu().querySelector("button[aria-expanded]") as HTMLButtonElement | null;
 
 const menu = () => screen.getByRole("navigation", { name: "팀" });
@@ -114,24 +121,29 @@ describe("TeamMenu", () => {
     expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]);
   });
 
-  it("says how many more there are, and shows them when that is pressed", async () => {
-    // The user, 2026-10-06: "누르면 남은 팀들 보이게".
+  it("says how many more there are, and shows them in a small window when pressed", async () => {
+    // The user, 2026-10-06: "누르면 남은 팀들 보이게", and "사이드바에 직접
+    // 늘리지 말고 작은 화면 띄워서 보여줘".
     open([A, B, C, D, E]);
     await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
 
     expect(more()?.textContent).toBe("다른 팀 2개");
     expect(more()?.getAttribute("aria-expanded")).toBe("false");
+    expect(rest()).toBeNull();
     fireEvent.click(more() as HTMLButtonElement);
 
-    expect(names()).toEqual(["가 팀", "나 팀", "다 팀", "라 팀", "마 팀"]);
-    expect(more()?.textContent).toBe("접기");
+    // The rest, and only the rest, in a window of its own ...
+    expect(inRest()).toEqual(["라 팀", "마 팀"]);
     expect(more()?.getAttribute("aria-expanded")).toBe("true");
-    // Pressed again, it is three again.
-    fireEvent.click(more() as HTMLButtonElement);
+    // ... placed over the page, so that the sidebar's own list is still three.
+    expect((rest() as HTMLElement).style.position).toBe("fixed");
     expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]);
+    // Pressed again, it is gone.
+    fireEvent.click(more() as HTMLButtonElement);
+    expect(rest()).toBeNull();
   });
 
-  it("a team picked from the rest is the team on show, among the three, and the rest closes", async () => {
+  it("a team picked there is the team on show, among the three, and the window closes", async () => {
     open([A, B, C, D, E], true);
     await waitFor(() => expect(shown()).toBe("team_a"));
     fireEvent.click(more() as HTMLButtonElement);
@@ -141,8 +153,26 @@ describe("TeamMenu", () => {
     expect(shown()).toBe("team_e");
     expect(names()).toEqual(["가 팀", "나 팀", "마 팀"]);
     expect(chosen()).toEqual(["마 팀"]);
+    expect(rest()).toBeNull();
     expect(more()?.textContent).toBe("다른 팀 2개");
     expect(window.localStorage.getItem("autune.team")).toBe("team_e");
+  });
+
+  it("closes on Escape and on a press outside it, and not on a press inside", async () => {
+    open([A, B, C, D, E], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    fireEvent.click(more() as HTMLButtonElement);
+    fireEvent.mouseDown(rest() as HTMLElement);
+    expect(rest()).not.toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(rest()).toBeNull();
+
+    fireEvent.click(more() as HTMLButtonElement);
+    fireEvent.mouseDown(screen.getByTestId("shown"));
+    expect(rest()).toBeNull();
+    // Nothing was chosen by closing it.
+    expect(shown()).toBe("team_a");
   });
 
   it("has no such control when there is nothing more to show", async () => {
