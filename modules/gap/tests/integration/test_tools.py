@@ -383,3 +383,21 @@ def test_a_rerun_keeps_the_carried_mark(team_id: str) -> None:
 
     with session_scope() as s:
         assert s.get(GapGap, gap_id).carried_at is not None
+
+
+def test_a_rerun_keeps_a_question_a_member_rewrote(team_id: str) -> None:
+    """S20's 편집 (#824): a person's wording is not C's to recompute."""
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    gap_id = carry(m, "risk", T0)
+    with session_scope() as s:
+        gap = s.get(GapGap, gap_id)
+        gap.suggested_question = "출시 전 위험은 누가 점검합니까?"
+        gap.question_edited_at = T0
+
+    service.detect_gaps(m)
+    service.refresh_questions(m)
+
+    with session_scope() as s:
+        gap = s.get(GapGap, gap_id)
+        assert gap.suggested_question == "출시 전 위험은 누가 점검합니까?"
+        assert gap.question_edited_at is not None

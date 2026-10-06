@@ -74,6 +74,7 @@ from autune_gap.schemas import (
     GapExplanationRead,
     GapExplanations,
     GapMeetingCarry,
+    GapQuestion,
     ScoreBreakdownRead,
     ScorePartRead,
     TeamGapRead,
@@ -84,6 +85,7 @@ from autune_gap.schemas import (
     TopicGraphRead,
     TopicNodeRead,
 )
+from autune_integrations import find_unmasked
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -568,7 +570,8 @@ def refresh_questions(meeting_id: str, *, apply: bool = True) -> int:
             checklist = detect.checklist_words(chosen)
             subject = detect.subject_of(views, names, checklist)
             question = detect.question_for(item, matched, subject, checklist)
-            if gap.suggested_question != question:
+            # A question a member rewrote is theirs, not C's to recompute.
+            if gap.question_edited_at is None and gap.suggested_question != question:
                 changed += 1
                 if apply:
                     gap.suggested_question = question
@@ -894,6 +897,38 @@ def carry_meeting_on_calendar(
     return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome, slack=slack)
 
 
+def edit_question(session: Session, gap_id: str, reader: User, *, question: str) -> GapQuestion:
+    """Rewrite a gap's 해소용 질문 in a member's own words (S20, #824).
+
+    The question reaches the team's Slack channel, a calendar event and E's
+    report, so text that reads as personal data is refused rather than stored:
+    the invariant that nothing unmasked is written applies to what a person
+    types as much as to a transcript (privacy.md section 2). The refusal names
+    no value. Marked as edited so a re-run keeps it; nobody's id is stored and
+    the log holds ids only. The caller commits and republishes."""
+    row, _ = _gap_for_member(session, gap_id, reader, "gap_question_refused")
+    text = " ".join(question.split())
+    if not text:
+        raise ValidationError("the question is empty", field="question")
+    if find_unmasked(text):
+        log.info("gap_question_refused_pii", gap_id=gap_id)
+        raise ValidationError(
+            "the question looks like it holds personal data; it was not saved",
+            field="question",
+        )
+    if text != row.suggested_question:
+        row.suggested_question = text
+        row.question_edited_at = datetime.now(tz=UTC)
+    session.flush()
+    log.info("gap_question_edited", gap_id=gap_id, meeting_id=row.meeting_id)
+    return GapQuestion(
+        gap_id=gap_id,
+        meeting_id=row.meeting_id,
+        suggested_question=text,
+        edited=row.question_edited_at is not None,
+    )
+
+
 def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:
     """The meeting's team, for "담당자 지정해 질문" to pick from, by name."""
     _, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
@@ -995,6 +1030,8 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
         general = _general_question(gap)
         if general != question:
             gap.suggested_question = general
+            # Deleted speech wins over an edit: the words are gone either way.
+            gap.question_edited_at = None
             reset.add(gap.id)
 
     meetings = tuple(sorted(labels))
@@ -1343,6 +1380,7 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
             basis="none",
             keywords=keywords,
             carried=gap.carried_at is not None,
+            question_edited=gap.question_edited_at is not None,
         )
         if matched:
             explanation.basis = "topic"
@@ -1637,7 +1675,9 @@ def _store_gaps(
         gap.risk_score = finding.risk_score
         gap.template_item = finding.template_item
         gap.template_version = chosen.version
-        gap.suggested_question = finding.question
+        # A question a member rewrote outlives a re-run, as a dismissal does.
+        if gap.question_edited_at is None:
+            gap.suggested_question = finding.question
         gap.coverage = finding.coverage.value
         session.flush()
 

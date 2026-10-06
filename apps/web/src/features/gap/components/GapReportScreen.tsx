@@ -132,7 +132,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, choose } =
+  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, saveQuestion, choose } =
     useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
@@ -280,6 +280,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           onDismiss={(gapId) => void dismiss(gapId)}
                           loadAskTargets={getAskTargets}
                           onAsk={(gapId, userId) => void ask(gapId, userId)}
+                          onSaveQuestion={saveQuestion}
                           pendingGapId={pending}
                         />
                       );
@@ -307,6 +308,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     onDismiss={(gapId) => void dismiss(gapId)}
                     loadAskTargets={getAskTargets}
                     onAsk={(gapId, userId) => void ask(gapId, userId)}
+                    onSaveQuestion={saveQuestion}
                     pendingGapId={pending}
                   />
                 )}
