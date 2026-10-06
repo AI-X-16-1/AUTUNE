@@ -213,6 +213,23 @@ def _variants(name: str) -> list[str]:
     return [form for form in dict.fromkeys(forms) if len(form) >= 2]
 
 
+def _forms(roster: Sequence[str]) -> dict[str, set[str]]:
+    """Every form a roster member is called by, and whose it is."""
+    owners: dict[str, set[str]] = {}
+    for name in {" ".join(n.split()) for n in roster if n and n.strip()}:
+        for form in _variants(name):
+            owners.setdefault(form, set()).add(name)
+    return owners
+
+
+def _names(owners: dict[str, set[str]]) -> re.Pattern[str] | None:
+    """What matches a roster name in a text, longest form first; ``None`` with
+    no roster."""
+    if not owners:
+        return None
+    return re.compile("|".join(re.escape(f) for f in sorted(owners, key=len, reverse=True)))
+
+
 def substitute_names(texts: list[str], roster: Sequence[str]) -> list[str]:
     """``texts`` with every roster name replaced by ``[사람N]`` (#411).
 
@@ -239,16 +256,13 @@ def substitute_names_mapped(
     placeholder in it would be nonsense. The classifier never reads it: a label
     has no name in it to restore.
     """
-    owners: dict[str, set[str]] = {}
-    for name in {" ".join(n.split()) for n in roster if n and n.strip()}:
-        for form in _variants(name):
-            owners.setdefault(form, set()).add(name)
-    if not owners:
+    owners = _forms(roster)
+    pattern = _names(owners)
+    if pattern is None:
         return list(texts), {}
     person = {
         form: next(iter(p)) if len(p) == 1 else f"shared:{form}" for form, p in owners.items()
     }
-    pattern = re.compile("|".join(re.escape(f) for f in sorted(owners, key=len, reverse=True)))
     numbers: dict[str, int] = {}
     surface: dict[str, str] = {}
 
@@ -345,6 +359,44 @@ def sentences(text: str) -> list[str]:
         else:
             out.append(carried)
     return out or [text]
+
+
+_HELD_OPEN, _HELD_CLOSE = "\ue000", "\ue001"
+_HELD = re.compile(f"{_HELD_OPEN}(\\d+){_HELD_CLOSE}")
+
+
+def said_lines(text: str, names: re.Pattern[str] | None) -> list[str]:
+    """``sentences(text)``, with no cut inside a roster name.
+
+    A long turn is cut as it was said and each line has its names replaced
+    afterwards, so a name that a cut fell inside would be on two lines, matched
+    on neither, and leave as it was said: a display name with a space in it
+    ("Min Kim", "박 재경") at a cut made at a space, any name at a cut made in
+    the middle of unbroken text. So each name is held as one token with no
+    space in it while the turn is cut, and put back; a cut that still landed
+    inside a token -- only the cut at the limit can -- is undone by joining the
+    two lines. Every name is then whole on one line, where
+    ``substitute_names`` replaces it (mkkim68, review of #864: substituting
+    before cutting was what kept a name off a boundary).
+    """
+    if names is None:
+        return sentences(text)
+    held: list[str] = []
+
+    def hold(match: re.Match[str]) -> str:
+        held.append(match.group(0))
+        return f"{_HELD_OPEN}{len(held) - 1}{_HELD_CLOSE}"
+
+    out: list[str] = []
+    open_line = ""
+    for line in sentences(names.sub(hold, text)):
+        open_line += line
+        if open_line.count(_HELD_OPEN) == open_line.count(_HELD_CLOSE):
+            out.append(open_line)
+            open_line = ""
+    if open_line:
+        out.append(open_line)
+    return [_HELD.sub(lambda match: held[int(match.group(1))], line) for line in out]
 
 
 def strongest(kinds: Sequence[UtteranceKind | None]) -> UtteranceKind | None:
@@ -541,9 +593,10 @@ class LlmClassifier(GeminiClient):
         # A long turn is cut as it was said, and each piece keeps those words:
         # an item or a decision is written from the piece, in the database's
         # text. Only the request carries the placeholders, and the budget is
-        # counted on it.
+        # counted on it. No cut falls inside a name (``said_lines``), so every
+        # name is whole on the line it is replaced in.
         budget = MAX_OUTBOUND_CHARS - _BODY_OVERHEAD
-        owners, said = _in_pieces(texts)
+        owners, said = _in_pieces(texts, _names(_forms(self._roster)))
         lines = substitute_names(said, self._roster)
         labels: list[UtteranceKind | None] = [None] * len(lines)
         for index, (context, start, end) in enumerate(windows(lines, budget)):
@@ -577,14 +630,15 @@ class LlmClassifier(GeminiClient):
         return predictions
 
 
-def _in_pieces(texts: list[str]) -> tuple[list[int], list[str]]:
+def _in_pieces(texts: list[str], names: re.Pattern[str] | None) -> tuple[list[int], list[str]]:
     """The lines to ask about, as they were said, and for each the index of
     the utterance it is (a piece of). An utterance of up to ``LONG_TURN_CHARS``
-    is one line, unchanged; a longer one is its ``sentences``."""
+    is one line, unchanged; a longer one is its sentences, cut around the
+    roster's ``names`` (``said_lines``)."""
     owners: list[int] = []
     lines: list[str] = []
     for index, text in enumerate(texts):
-        for piece in sentences(text) if len(text) > LONG_TURN_CHARS else [text]:
+        for piece in said_lines(text, names) if len(text) > LONG_TURN_CHARS else [text]:
             owners.append(index)
             lines.append(piece)
     return owners, lines

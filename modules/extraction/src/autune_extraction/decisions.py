@@ -100,9 +100,9 @@ def in_pieces(classified: Sequence[ClassifiedUtterance]) -> list[ClassifiedUtter
     short enough to summarise, and context for the lines around it.
 
     A piece's ``id`` is the utterance's with ``#n`` after it. It is the key a
-    summary is found by and what a decision's id is derived from -- so two
-    decisions settled in one turn are two rows -- and it is never stored and
-    never leaves: every row cites ``source_id``.
+    summary is found by, and what tells a second decision settled in the same
+    turn from the first (``identified``); it is never stored and never
+    leaves: every row cites ``source_id``.
 
     A turn whose kind no piece has was changed after classification (step 4
     promotes an ambiguous agreement to a commitment); it stays whole, as the
@@ -193,6 +193,36 @@ def decision_id(meeting_id: str, source_utterance_ids: Sequence[str]) -> str:
     """
     encoded = json.dumps([meeting_id, *source_utterance_ids], ensure_ascii=False)
     return f"{DECISION}_{hashlib.sha256(encoded.encode()).hexdigest()[:32]}"
+
+
+def identified(
+    meeting_id: str,
+    groups: Sequence[DecisionGroup],
+    utterances: Sequence[ClassifiedUtterance],
+) -> list[tuple[str, DecisionGroup]]:
+    """Each decision of a meeting with its ``dec_`` id, in order.
+
+    The id is derived from the utterances a decision was settled in (#171),
+    whether the run read them whole or in pieces (``in_pieces``): a decision
+    from a long turn has the id it had before turns were read by sentence, so
+    a person's review of it, and its page outside, still belong to it after a
+    rebuild. Only when two decisions of a meeting were settled in the same
+    utterances -- two in one long turn -- is the later one told apart by the
+    pieces it was settled in, which go into its hash instead.
+
+    ``utterances`` is the sequence ``groups`` was made from.
+    """
+    real = {u.id: u.source_id for u in utterances}
+    taken: set[str] = set()
+    out: list[tuple[str, DecisionGroup]] = []
+    for group in groups:
+        settled_in = list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
+        id_ = decision_id(meeting_id, settled_in)
+        if id_ in taken:
+            id_ = decision_id(meeting_id, group.source_utterance_ids)
+        taken.add(id_)
+        out.append((id_, group))
+    return out
 
 
 def group_decisions(

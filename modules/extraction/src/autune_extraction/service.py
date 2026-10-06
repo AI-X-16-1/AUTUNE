@@ -68,8 +68,8 @@ from .confirmations import (
 from .decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
-    decision_id,
     group_decisions,
+    identified,
     needs_write_up,
 )
 from .edit_cost import EditCost
@@ -2110,15 +2110,13 @@ def build_decisions(
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
 
-    fresh = {
-        decision_id(meeting_id, group.source_utterance_ids): group
-        for group in group_decisions(utterances, max_gap=max_gap, day=day)
-    }
+    fresh = dict(
+        identified(meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances)
+    )
     summaries = summaries or {}
-    # ``utterances`` may be the sequence read in pieces (``in_pieces``). A
-    # decision's id is derived from the entries it was settled in, pieces
-    # included, so two decisions of one long turn are two rows; what is stored
-    # as a source or a related line is always the utterance itself.
+    # ``utterances`` may be the sequence read in pieces (``in_pieces``).
+    # Two decisions of one long turn are two rows (``identified``); what is
+    # stored as a source or a related line is always the utterance itself.
     real = {u.id: u.source_id for u in utterances}
     sources = {
         id_: list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
@@ -2973,7 +2971,13 @@ def resolve_decision_summaries(
     """
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
         return {}
-    groups = [g for g in group_decisions(classified, max_gap=max_gap, day=day) if needs_write_up(g)]
+    groups = [
+        (id_, group)
+        for id_, group in identified(
+            meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
+        )
+        if needs_write_up(group)
+    ]
     if not groups:
         return {}
 
@@ -2982,7 +2986,7 @@ def resolve_decision_summaries(
     position = {u.id: index for index, u in enumerate(classified)}
     requests = []
     keys = []
-    for group in groups:
+    for id_, group in groups:
         here = position[group.substance_id]
         first = min(group.first_position, here)
         last = max(group.last_position, here)
@@ -3001,7 +3005,7 @@ def resolve_decision_summaries(
                 related=tuple((line_id, said[line_id]) for line_id in offered),
             )
         )
-        keys.append(decision_id(meeting_id, group.source_utterance_ids))
+        keys.append(id_)
     resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
     return dict(zip(keys, resolved, strict=True))
 

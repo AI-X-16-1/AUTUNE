@@ -34,7 +34,9 @@ from autune_core import Base, Meeting, Participant, TeamMember, User, Utterance
 from autune_extraction import service, tasks
 from autune_extraction.decisions import (
     ClassifiedUtterance,
+    decision_id,
     group_decisions,
+    identified,
     in_pieces,
     needs_write_up,
 )
@@ -217,11 +219,14 @@ def test_two_decisions_of_one_turn_have_two_ids_and_a_rerun_gives_the_same_two()
     )
 
     def ids() -> list[str]:
-        groups = group_decisions(in_pieces([cut]))
-        return [service.decision_id(MEETING, g.source_utterance_ids) for g in groups]
+        read = in_pieces([cut])
+        return [id_ for id_, _group in identified(MEETING, group_decisions(read), read)]
 
     assert len(set(ids())) == 2
     assert ids() == ids()
+    # The first is the id the turn's decision had when the turn was read whole,
+    # so a person's review of it is still its review.
+    assert ids()[0] == decision_id(MEETING, ["utt_1"])
 
 
 # --- through the task ---------------------------------------------------------------
@@ -352,22 +357,20 @@ def test_the_lines_a_piece_summary_used_are_stored_as_the_utterances_they_are_in
     assert item.description == "설문 문항을 금요일까지 다시 쓰기" and item.description_resolved
     assert [r.utterance_id for r in item.related] == ["utt_3", "utt_1"]
 
-    (group,) = group_decisions(read)
-    decision_id = service.decision_id(MEETING, group.source_utterance_ids)
+    ((made, _group),) = identified(MEETING, group_decisions(read), read)
+    assert made == decision_id(MEETING, ["utt_2"])
     service.build_decisions(
         session,
         meeting_id=MEETING,
         utterances=read,
-        summaries={decision_id: Resolution("A안으로 가기", used=("utt_2#2", "utt_3", "utt_3"))},
+        summaries={made: Resolution("A안으로 가기", used=("utt_2#2", "utt_3", "utt_3"))},
     )
     session.flush()
 
-    assert sources_of(session, decision_id) == ["utt_2"]
+    assert sources_of(session, made) == ["utt_2"]
     assert list(
         session.scalars(
-            select(ExtDecisionRelated.utterance_id).where(
-                ExtDecisionRelated.decision_id == decision_id
-            )
+            select(ExtDecisionRelated.utterance_id).where(ExtDecisionRelated.decision_id == made)
         )
     ) == ["utt_3"]
 

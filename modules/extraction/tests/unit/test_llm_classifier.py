@@ -223,6 +223,34 @@ def test_a_turn_over_three_hundred_characters_is_read_sentence_by_sentence(slept
     assert long_one.kind is UtteranceKind.COMMITMENT and short_one.kind is UtteranceKind.COMMITMENT
 
 
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        # A cut at a space would fall between the two words of the name.
+        ("Min Kim", "가" * 196 + " Min Kim 님이 다음 주까지 보기로 했어요 " + "나" * 150),
+        # A cut at the limit, in text with no space at all, would fall inside it.
+        ("MinKim", "가" * 198 + "MinKim" + "나" * 250),
+    ],
+)
+def test_no_cut_falls_inside_a_name_so_none_leaves_unreplaced(slept, name: str, said: str) -> None:
+    """Names are replaced line by line after the cut (#411). A name on two
+    lines would match on neither and leave as it was said."""
+    provider = Provider()
+    c = classifier(provider)
+    c.use_roster([name])
+
+    (prediction,) = c.classify([said])
+
+    sent = "\n".join(body["contents"][0]["parts"][0]["text"] for body in provider.bodies)
+    assert "Min" not in sent and "Kim" not in sent
+    assert "[사람1]" in sent
+    assert len(prediction.pieces) > 1
+    assert any(name in text for text, _kind in prediction.pieces)  # whole, on one line
+    assert "".join(text for text, _kind in prediction.pieces).replace(" ", "") == said.replace(
+        " ", ""
+    )
+
+
 def test_sentences_lose_nothing_and_speech_without_a_full_stop_is_cut_at_a_space() -> None:
     unpunctuated = turns(1, 900)[0]
     cut = sentences(unpunctuated)
