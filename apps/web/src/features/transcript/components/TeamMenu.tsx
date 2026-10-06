@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { listTeams } from "../api";
@@ -43,6 +44,20 @@ import type { TeamSummary } from "../types";
  * when there are none. The row at the top of each team-level screen still
  * lists every team, and stays.
  *
+ * **Inside a meeting, another team pressed here goes to that team's
+ * meetings** (the user, the same day: "회의 상태에서 사이드바에 다른 팀 누르면
+ * 해당 팀의 회의로 이동"). A meeting's own screens show one team's meeting
+ * and have no row that could follow the choice, so the page used to stay on
+ * a meeting of the team just left. Now the choice is kept and the app goes to
+ * the home screen, which lists the chosen team's meetings. The team already
+ * marked does nothing new, as before.
+ *
+ * Not on "회의 시작" (`/meetings/new`): a recording or an upload may be in
+ * progress there, and a press in the sidebar must not drop it. There the
+ * choice changes and the page stays, as it did. Whether to ask first and go
+ * is the module owner's to settle. On a meeting's review screens the move is
+ * what any other sidebar entry already does.
+ *
  * Placed with `position: fixed` from where the control is when it opens: the
  * sidebar scrolls and clips, and a child positioned inside it would be cut
  * off at its edge. It starts just past the sidebar's edge (the nearest
@@ -59,6 +74,13 @@ export const MENU_TEAMS = 3;
 /** The small window scrolls past this height rather than grow down the page. */
 const REST_MAX_HEIGHT = 320;
 
+/** A meeting's own screens: `/meetings/<id>` and its tabs, never "회의 시작". */
+function insideAMeeting(pathname: string | null): boolean {
+  return (
+    pathname !== null && pathname.startsWith("/meetings/") && !pathname.startsWith("/meetings/new")
+  );
+}
+
 function listed(teams: TeamSummary[], teamId: string | null): TeamSummary[] {
   const first = teams.slice(0, MENU_TEAMS);
   if (teamId === null || first.some((team) => team.team_id === teamId)) return first;
@@ -71,6 +93,8 @@ export function TeamMenu() {
   const [teamId, setTeamId] = useState<string | null>(null);
   const [showingRest, setShowingRest] = useState(false);
   const [at, setAt] = useState({ left: 0, top: 0 });
+  const pathname = usePathname();
+  const router = useRouter();
   const control = useRef<HTMLButtonElement>(null);
   const window_ = useRef<HTMLDivElement>(null);
 
@@ -91,6 +115,12 @@ export function TeamMenu() {
       document.removeEventListener("mousedown", onPress);
     };
   }, [showingRest]);
+
+  const choose = (chosenId: string) => {
+    const another = chosenId !== teamId;
+    rememberTeam(chosenId);
+    if (another && insideAMeeting(pathname)) router.push("/");
+  };
 
   const toggleRest = () => {
     const box = control.current?.getBoundingClientRect();
@@ -159,7 +189,7 @@ export function TeamMenu() {
             key={team.team_id}
             type="button"
             aria-pressed={chosen}
-            onClick={() => rememberTeam(team.team_id)}
+            onClick={() => choose(team.team_id)}
             className={
               chosen
                 ? "truncate rounded-[var(--radius)] bg-[var(--color-accent-selection)] text-left text-[var(--color-accent-hover)]"
@@ -215,7 +245,7 @@ export function TeamMenu() {
                   type="button"
                   aria-pressed={false}
                   onClick={() => {
-                    rememberTeam(team.team_id);
+                    choose(team.team_id);
                     setShowingRest(false);
                   }}
                   className="truncate text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"

@@ -8,6 +8,13 @@ import type { TeamSummary } from "../types";
 // The team is chosen in the sidebar (the user, 2026-10-06): the menu and a
 // screen's row are two views of one choice, and each follows the other.
 
+const pathname = vi.fn(() => "/");
+const push = vi.fn<(to: string) => void>();
+vi.mock("next/navigation", () => ({
+  usePathname: () => pathname(),
+  useRouter: () => ({ push }),
+}));
+
 const list = vi.fn<() => Promise<TeamSummary[]>>();
 vi.mock("../api", () => ({
   listTeams: () => list(),
@@ -54,6 +61,8 @@ afterEach(() => {
   cleanup();
   window.localStorage.clear();
   list.mockReset();
+  push.mockReset();
+  pathname.mockImplementation(() => "/");
 });
 
 describe("TeamMenu", () => {
@@ -157,6 +166,61 @@ describe("TeamMenu", () => {
     expect(more()?.textContent).toBe("다른 팀 2개");
     expect(window.localStorage.getItem("autune.team")).toBe("team_e");
   });
+
+  it.each(["/meetings/mtg_1", "/meetings/mtg_1/actions", "/meetings/mtg_1/summary"])(
+    "on %s another team pressed goes to that team's meetings",
+    async (path) => {
+      // The user, 2026-10-06: "회의 상태에서 사이드바에 다른 팀 누르면 해당 팀의
+      // 회의로 이동". Home lists the chosen team's meetings.
+      pathname.mockImplementation(() => path);
+      open([A, B, C]);
+      await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+
+      fireEvent.click(entry("나 팀"));
+
+      expect(window.localStorage.getItem("autune.team")).toBe("team_b");
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push).toHaveBeenCalledWith("/");
+    },
+  );
+
+  it("the team already marked goes nowhere, inside a meeting too", async () => {
+    pathname.mockImplementation(() => "/meetings/mtg_1");
+    open([A, B, C]);
+    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+
+    fireEvent.click(entry("가 팀"));
+
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("a team picked from the small window inside a meeting goes there as well", async () => {
+    pathname.mockImplementation(() => "/meetings/mtg_1/gap");
+    open([A, B, C, D, E]);
+    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+    fireEvent.click(more() as HTMLButtonElement);
+
+    fireEvent.click(entry("마 팀"));
+
+    expect(push).toHaveBeenCalledWith("/");
+    expect(window.localStorage.getItem("autune.team")).toBe("team_e");
+  });
+
+  it.each(["/meetings/new", "/meetings/new?meeting=mtg_1", "/", "/actions", "/dashboard"])(
+    "on %s the choice changes and the page stays",
+    async (path) => {
+      // "회의 시작" may hold a recording or an upload in progress: a press in
+      // the sidebar must not drop it. Elsewhere the screens follow by themselves.
+      pathname.mockImplementation(() => path.split("?")[0] as string);
+      open([A, B, C]);
+      await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+
+      fireEvent.click(entry("나 팀"));
+
+      expect(chosen()).toEqual(["나 팀"]);
+      expect(push).not.toHaveBeenCalled();
+    },
+  );
 
   it("opens just past the sidebar's edge, level with the control", async () => {
     // Seen in a browser: placed from the control alone it lay half on the
