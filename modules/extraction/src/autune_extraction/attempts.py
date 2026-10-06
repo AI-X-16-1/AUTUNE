@@ -15,6 +15,7 @@ exception raised over a meeting's rows can carry what was said in it
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,6 +36,18 @@ NOTICE_WINDOW = timedelta(days=1)
 """How long after the last failure the team's channel is still owed its notice.
 A Slack that did not answer is asked again on the next sweep; a team that
 connects a channel a week later is not told about a week-old failure."""
+
+RETRY_HOLD = timedelta(minutes=9)
+"""How long after a failure, or after a sweep took a meeting to retry, no
+sweep takes it (again). Just under the sweep's ten minutes, so the sweep after
+a failure retries it; and longer than a run, so a sweep that is still working
+through its meetings when the next one starts does not have a meeting it is
+in the middle of run a second time beside it (mminjae97 and lsh2217, review of
+#868: after a deploy the adopted backlog can keep one sweep past ten minutes)."""
+
+RETRY_CAP = 5
+"""Meetings one sweep retries at most, oldest failure first. A backlog is
+worked off over several sweeps instead of holding the worker for one."""
 
 REQUEST_COOLDOWN = timedelta(minutes=2)
 """How long after one "다시 추출" the next is refused. A run is a minute or
@@ -69,7 +82,9 @@ def adopt_unextracted(session: Session, *, now: datetime | None = None) -> list[
     A, nothing of B's, and nothing that would ever try again. Counted as the
     first failure, so the sweep makes the other two attempts."""
     when = now or datetime.now(tz=UTC)
-    newest = func.max(Utterance.created_at)
+    # The window is in WHERE, so the lines read are a week's and not the
+    # table's (mminjae97, review of #868); the half hour is on the newest of
+    # them.
     lost = sorted(
         session.scalars(
             select(Utterance.meeting_id)
@@ -78,11 +93,12 @@ def adopt_unextracted(session: Session, *, now: datetime | None = None) -> list[
                 ExtExtractionAttempt, ExtExtractionAttempt.meeting_id == Utterance.meeting_id
             )
             .where(
+                Utterance.created_at > when - ADOPT_WINDOW,
                 ExtExtractionRun.meeting_id.is_(None),
                 ExtExtractionAttempt.meeting_id.is_(None),
             )
             .group_by(Utterance.meeting_id)
-            .having(newest <= when - ADOPT_AFTER, newest > when - ADOPT_WINDOW)
+            .having(func.max(Utterance.created_at) <= when - ADOPT_AFTER)
         )
     )
     for meeting_id in lost:
@@ -131,16 +147,58 @@ def note_success(session: Session, meeting_id: str) -> None:
     )
 
 
-def due_for_retry(session: Session) -> list[str]:
-    """Meetings whose extraction failed and has tries left, oldest failure first."""
+def _retryable(when: datetime) -> tuple[Any, ...]:
+    return (
+        ExtExtractionAttempt.failures > 0,
+        ExtExtractionAttempt.failures < MAX_ATTEMPTS,
+        ExtExtractionAttempt.failed_at <= when - RETRY_HOLD,
+    )
+
+
+def due_for_retry(session: Session, *, now: datetime | None = None) -> list[str]:
+    """Meetings whose extraction failed, has tries left and is not held
+    (``RETRY_HOLD``): ``RETRY_CAP`` at most, oldest failure first."""
+    when = now or datetime.now(tz=UTC)
     return list(
         session.scalars(
             select(ExtExtractionAttempt.meeting_id)
-            .where(
-                ExtExtractionAttempt.failures > 0,
-                ExtExtractionAttempt.failures < MAX_ATTEMPTS,
-            )
+            .where(*_retryable(when))
             .order_by(ExtExtractionAttempt.failed_at, ExtExtractionAttempt.meeting_id)
+            .limit(RETRY_CAP)
+        )
+    )
+
+
+def claim_retry(session: Session, meeting_id: str, *, now: datetime | None = None) -> bool:
+    """Whether this sweep is the one that retries the meeting now; holds it
+    when so.
+
+    One statement, asked just before the run: of two sweeps that both read the
+    meeting as due, the second finds it held and passes over it. The hold is
+    ``failed_at`` moved to now -- no failure is counted by it, and a run that
+    then fails moves it again."""
+    when = now or datetime.now(tz=UTC)
+    return (
+        session.execute(
+            update(ExtExtractionAttempt)
+            .where(ExtExtractionAttempt.meeting_id == meeting_id, *_retryable(when))
+            .values(failed_at=when)
+            .returning(ExtExtractionAttempt.meeting_id)
+        ).first()
+        is not None
+    )
+
+
+def failing(session: Session, meeting_ids: Collection[str]) -> set[str]:
+    """Which of these meetings have a failure on record, tries left or not."""
+    if not meeting_ids:
+        return set()
+    return set(
+        session.scalars(
+            select(ExtExtractionAttempt.meeting_id).where(
+                ExtExtractionAttempt.meeting_id.in_(meeting_ids),
+                ExtExtractionAttempt.failures > 0,
+            )
         )
     )
 
