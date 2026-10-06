@@ -12,6 +12,7 @@ import httpx
 import pytest
 
 from autune_core.errors import PrivacyViolationError
+from autune_integrations import calendar
 from autune_integrations.calendar import (
     CalendarClient,
     ReconnectRequiredError,
@@ -71,9 +72,12 @@ def test_a_token_endpoint_outage_is_transient() -> None:
 
 
 def test_list_events_reads_timed_and_all_day_events_and_skips_cancelled() -> None:
+    asked: list[str] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/calendar/v3/calendars/team_cal/events"
         assert request.url.params["singleEvents"] == "true"
+        asked.append(request.url.params["fields"])
         return httpx.Response(
             200,
             json={
@@ -100,6 +104,9 @@ def test_list_events_reads_timed_and_all_day_events_and_skips_cancelled() -> Non
 
     assert [e.id for e in events] == ["e1", "e2"]
     assert "guest@else.com" not in repr(events[0])  # other people's addresses stay out
+    # And are not asked for (#877): Google returns only what is kept, so no
+    # description, place or attendee reaches this process at all.
+    assert asked == ["items(id,summary,start,end,status,extendedProperties/private)"]
     assert not events[0].all_day
     assert events[1].all_day
     assert events[1].start == date(2026, 10, 2)
@@ -245,6 +252,10 @@ def test_changed_events_asks_google_for_autunes_events_only_and_pages() -> None:
     assert seen[0].params["privateExtendedProperty"] == "autune=1"
     assert seen[0].params["showDeleted"] == "true"
     assert seen[1].params["pageToken"] == "p2"
+    # Only what is kept, and the token the paging needs, on every page (#877).
+    assert [url.params["fields"] for url in seen] == [
+        "items(id,summary,start,end,status,extendedProperties/private),nextPageToken"
+    ] * 2
     assert events[0].start == date(2026, 10, 5)
     assert events[0].private == {"autune_item": "act_1"}
     assert events[1].cancelled
@@ -339,3 +350,27 @@ def test_out_of_office_with_none_is_empty_and_a_refusal_is_raised() -> None:
 def test_the_fake_answers_out_of_office_with_what_a_test_put_in() -> None:
     fake = FakeCalendar(away=[(date(2026, 10, 7), date(2026, 10, 9))])
     assert fake.out_of_office("primary", START, END) == [(date(2026, 10, 7), date(2026, 10, 9))]
+
+
+def test_the_fields_asked_for_are_the_fields_an_event_is_read_from() -> None:
+    """``EVENT_FIELDS`` narrows the answer at Google; a field ``_event`` reads
+    and this does not name would come back empty without an error. Each name
+    is one the event below carries, and the event read from only those is the
+    event read from all of it."""
+    whole = {
+        "id": "e1",
+        "summary": "주간 회의",
+        "start": {"dateTime": "2026-10-01T10:00:00+09:00"},
+        "end": {"dateTime": "2026-10-01T11:00:00+09:00"},
+        "status": "confirmed",
+        "extendedProperties": {"private": {"autune_item": "act_1"}, "shared": {"x": "y"}},
+        "description": "안건: 예산",
+        "location": "3층 회의실",
+        "attendees": [{"email": "guest@else.com"}],
+    }
+    names = calendar.EVENT_FIELDS.split(",")
+    narrowed = {name.split("/")[0]: whole[name.split("/")[0]] for name in names}
+    narrowed["extendedProperties"] = {"private": whole["extendedProperties"]["private"]}
+
+    assert set(narrowed) == {"id", "summary", "start", "end", "status", "extendedProperties"}
+    assert calendar._event(narrowed) == calendar._event(whole)
