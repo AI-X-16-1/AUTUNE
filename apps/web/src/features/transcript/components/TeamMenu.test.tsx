@@ -20,7 +20,9 @@ const B: TeamSummary = { team_id: "team_b", name: "나 팀", pinned: false };
 const C: TeamSummary = { team_id: "team_c", name: "다 팀", pinned: false };
 const D: TeamSummary = { team_id: "team_d", name: "라 팀", pinned: false };
 const E: TeamSummary = { team_id: "team_e", name: "마 팀", pinned: false };
-const names = () => [...menu().querySelectorAll("button")].map((b) => b.textContent);
+// The teams listed, not the control that opens the rest.
+const names = () => [...menu().querySelectorAll("button[aria-pressed]")].map((b) => b.textContent);
+const more = () => menu().querySelector("button[aria-expanded]") as HTMLButtonElement | null;
 
 const menu = () => screen.getByRole("navigation", { name: "팀" });
 const entry = (name: string) =>
@@ -110,6 +112,44 @@ describe("TeamMenu", () => {
     // Back to one of the first three: the first three again.
     fireEvent.click(entry("나 팀"));
     expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]);
+  });
+
+  it("says how many more there are, and shows them when that is pressed", async () => {
+    // The user, 2026-10-06: "누르면 남은 팀들 보이게".
+    open([A, B, C, D, E]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
+
+    expect(more()?.textContent).toBe("다른 팀 2개");
+    expect(more()?.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more() as HTMLButtonElement);
+
+    expect(names()).toEqual(["가 팀", "나 팀", "다 팀", "라 팀", "마 팀"]);
+    expect(more()?.textContent).toBe("접기");
+    expect(more()?.getAttribute("aria-expanded")).toBe("true");
+    // Pressed again, it is three again.
+    fireEvent.click(more() as HTMLButtonElement);
+    expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]);
+  });
+
+  it("a team picked from the rest is the team on show, among the three, and the rest closes", async () => {
+    open([A, B, C, D, E], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    fireEvent.click(more() as HTMLButtonElement);
+
+    fireEvent.click(entry("마 팀"));
+
+    expect(shown()).toBe("team_e");
+    expect(names()).toEqual(["가 팀", "나 팀", "마 팀"]);
+    expect(chosen()).toEqual(["마 팀"]);
+    expect(more()?.textContent).toBe("다른 팀 2개");
+    expect(window.localStorage.getItem("autune.team")).toBe("team_e");
+  });
+
+  it("has no such control when there is nothing more to show", async () => {
+    open([A, B, C]);
+
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
+    expect(more()).toBeNull();
   });
 
   it("the screen's own row still offers every team", async () => {

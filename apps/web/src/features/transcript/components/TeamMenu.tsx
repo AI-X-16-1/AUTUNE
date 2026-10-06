@@ -30,8 +30,14 @@ import type { TeamSummary } from "../types";
  * 포함해서 3개만"). They are the first three of the order above, so pinned
  * teams -- of which a person may have three -- come before any other and
  * fill the list when there are three of them. A sidebar is on every screen
- * and a long list there pushes the menu below it out of reach; the full
- * list is the row at the top of each team-level screen, which stays.
+ * and a long list there pushes the menu below it out of reach.
+ *
+ * **One control under the three shows the rest** (the user, the same day:
+ * "누르면 남은 팀들 보이게"). It says how many more there are, opens them in
+ * place, and closes again when one is picked or when it is pressed again --
+ * so the sidebar is back to three, with the team just picked among them. It
+ * is absent when there is nothing more to show. The row at the top of each
+ * team-level screen still lists every team, and stays.
  *
  * The team being looked at is always one of the three. When it is not among
  * the first three -- chosen in a screen's row, or remembered from before --
@@ -51,6 +57,7 @@ function listed(teams: TeamSummary[], teamId: string | null): TeamSummary[] {
 export function TeamMenu() {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
+  const [showingRest, setShowingRest] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -90,10 +97,13 @@ export function TeamMenu() {
       </div>
     );
 
+  const three = listed(teams, teamId);
+  const rest = teams.filter((team) => !three.includes(team));
+
   return (
     <nav aria-label="팀" className="flex flex-col">
       {heading}
-      {listed(teams, teamId).map((team) => {
+      {three.map((team) => {
         const chosen = team.team_id === teamId;
         return (
           <button
@@ -116,6 +126,39 @@ export function TeamMenu() {
           </button>
         );
       })}
+      {rest.length > 0 ? (
+        <>
+          <button
+            type="button"
+            aria-expanded={showingRest}
+            aria-controls="team-menu-rest"
+            onClick={() => setShowingRest((open) => !open)}
+            className="text-left text-[var(--color-ink-muted)] hover:text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-metaSmall)", fontWeight: 500, padding: "6px 0" }}
+          >
+            {showingRest ? "접기" : `다른 팀 ${rest.length}개`}
+          </button>
+          {showingRest ? (
+            <div id="team-menu-rest" className="flex flex-col">
+              {rest.map((team) => (
+                <button
+                  key={team.team_id}
+                  type="button"
+                  aria-pressed={false}
+                  onClick={() => {
+                    rememberTeam(team.team_id);
+                    setShowingRest(false);
+                  }}
+                  className="truncate text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
+                  style={{ ...text, padding: "6px 0" }}
+                >
+                  {team.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </nav>
   );
 }
