@@ -12,7 +12,7 @@ from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import collect_tools
 from autune_agent.main.subagents import TRIGGER_EVENTS
 from autune_agent.results import SubagentResult
-from autune_agent.subagents.report import SUBAGENT
+from autune_agent.subagents.report import SUBAGENT, chat, graph
 from autune_agent.subagents.report.graph import (
     ACTIONS_TOOL,
     AWAITING_TOOL,
@@ -356,9 +356,9 @@ def test_the_gap_read_is_a_tool_c_actually_ships() -> None:
     assert GAPS_TOOL in collect_tools(["gap"])
 
 
-def test_the_allow_list_is_exactly_the_five_reads() -> None:
+def test_the_allow_list_is_the_template_reads_and_es_chat_reads() -> None:
     assert SUBAGENT.name == "report"
-    assert set(SUBAGENT.tools) == {ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL, AWAITING_TOOL}
+    assert SUBAGENT.tools == (*graph.TOOLS, *chat.CHAT_READS)
     assert "extraction.unresolved_questions" not in SUBAGENT.tools
     assert "extraction.open_action_items" not in SUBAGENT.tools
     assert SUBAGENT.description.startswith("Use this")

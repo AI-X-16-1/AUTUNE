@@ -121,7 +121,7 @@ and keeps their module's `tools.py`.
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; lists the team's open Jira issues (B's `TeamAgenda`, #436) | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), the team's open Jira issues as B reported them (`brief_agenda`) | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
-| **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
+| **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them. A chat request is answered about all of E through a Gemini tool loop (`chat.py`); the template path (no LLM) is unchanged | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade. The chat path also reads E's own tools and `explain_metric` | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
 
 Three things in that table are decisions, not descriptions:
 
@@ -358,10 +358,13 @@ does not make it more or less so.
 
 ### Rules for a tool
 
-1. **Synchronous, with type hints.** Arguments are `packages/contracts` models
-   or ids; the return is `ToolResult`. *Not* `async` — this repository is
-   synchronous SQLAlchemy and synchronous routes throughout, and an `async def`
-   wrapping a blocking call is a lie that costs a thread.
+1. **Synchronous, with type hints.** Arguments are `packages/contracts` models,
+   ids, or short scalars — a date, a number, or a short search string that the
+   tool uses only in-process (E's `explain_metric(question)` and
+   `meeting_reports(title_contains)`, #881): never free text that leaves the
+   process or is stored. The return is `ToolResult`. *Not* `async` — this
+   repository is synchronous SQLAlchemy and synchronous routes throughout, and
+   an `async def` wrapping a blocking call is a lie that costs a thread.
 2. **The docstring is the prompt.** Say **when to use it**, and when not to,
    before saying what it does. Half of an agent's accuracy is decided here.
 3. **One high-level tool and two or three primitives.** Only the high-level
@@ -389,7 +392,7 @@ says.
 | B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
 | C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form |
 | D | this meeting's links; a decision thread; the team's decisions; the earlier meeting an upcoming meeting follows; the Jira issues it should take up | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, and `brief_recap`, `brief_agenda` over the pre-meeting brief's own rows (Briefing's reads), named by D's owner |
-| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate); a meeting report's stored draft, by `draft_id`, for the approval card | E's aggregate reads. No speaking-ratio tool (invariant 11). Two actions for the Report subagent: `draft_meeting_report` (L1) and `publish_meeting_report` (L2) |
+| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate); a meeting report's stored draft, by `draft_id`, for the approval card | E's aggregate reads. No speaking-ratio tool (invariant 11). Six more reads for the Report subagent's chat path: `meeting_reports`, `meeting_report_body`, `role_alignment`, `weekly_reports`, `weekly_report_schedule` and `explain_metric` (a metric's meaning, from a glossary). Actions for the Report subagent: `draft_meeting_report` (L1), `set_weekly_report_schedule` (L1, held back from chat until #862), `publish_meeting_report` (L2) and `publish_meeting_report_correction` (L2) |
 
 - **C — the charter reaching gap detection is a proposal, to be agreed with
   C.** An earlier draft said `detect_gaps` would take a `checklist: list[str]`
