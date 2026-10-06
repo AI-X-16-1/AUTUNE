@@ -45,6 +45,52 @@ def test_topic_link_notice_states_the_korean_date() -> None:
     assert "2026년 9월 4일" in _text(blocks)
 
 
+_PING = "결정: <!channel> 배포는 <https://evil.example|board> & 금요일"
+_PING_ESCAPED = "결정: &lt;!channel&gt; 배포는 &lt;https://evil.example|board&gt; &amp; 금요일"
+
+
+def _carries_no_control_sequence(fallback: str, blocks: list[dict]) -> None:
+    """Slack reads ``<...>`` in the fallback as well as in the blocks."""
+    for text in (fallback, _text(blocks)):
+        assert "<!channel>" not in text
+        assert "<https://evil.example" not in text
+        assert "&lt;!channel&gt;" in text
+
+
+def test_topic_link_notice_escapes_the_topic_label() -> None:
+    fallback, blocks = build_topic_link_notice(
+        topic_label="<!channel>", linked_meeting_date=date(2026, 9, 4)
+    )
+
+    _carries_no_control_sequence(fallback, blocks)
+
+
+def test_drift_channel_notice_escapes_the_label_and_the_statement() -> None:
+    fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="<!channel>",
+        current_statement=_PING,
+        change_type=ChangeType.REVERSED,
+        absent_count=1,
+        meeting_date=None,
+    )
+
+    _carries_no_control_sequence(fallback, blocks)
+    assert _PING_ESCAPED in _text(blocks)
+
+
+def test_drift_personal_dm_escapes_the_label_and_the_statement() -> None:
+    fallback, blocks = build_decision_drift_personal_dm(
+        thread_label="<!channel>",
+        current_statement=_PING,
+        change_type=ChangeType.MODIFIED,
+        meeting_date=None,
+    )
+
+    assert "<!channel>" not in _text(blocks)
+    assert _PING_ESCAPED in _text(blocks)
+    assert "<" not in fallback
+
+
 def test_topic_link_notice_carries_the_topic_label() -> None:
     _fallback, blocks = build_topic_link_notice(
         topic_label="검색 정렬 기준", linked_meeting_date=date(2026, 9, 4)

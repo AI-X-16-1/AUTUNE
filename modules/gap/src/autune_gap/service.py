@@ -12,7 +12,7 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, nulls_last, select
@@ -30,17 +30,19 @@ from autune_core import (
     ids,
     new_id,
     session_scope,
+    users_with_integration,
 )
 from autune_core.deletion import on_speech_deleted
 from autune_core.errors import NotFoundError, PrivacyViolationError, ValidationError
 from autune_core.events import publish
-from autune_gap import detect, graph, semantic, template, verification
+from autune_gap import calendar_writes, detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.enqueue import enqueue_publish_report
 from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
+    GapQuestion,
     GapRelatedTopic,
     GapScoring,
     GapTopic,
@@ -54,10 +56,18 @@ from autune_gap.pipeline import (
     get_template_verifier,
 )
 from autune_gap.schemas import (
+    CoveredExplanationRead,
     EvidenceRead,
+    GapAgendaEvents,
+    GapAsk,
+    GapAskTarget,
+    GapAskTargets,
+    GapCalendarEvent,
+    GapCarry,
     GapDismissal,
     GapExplanationRead,
     GapExplanations,
+    GapMeetingCarry,
     ScoreBreakdownRead,
     ScorePartRead,
     TeamGapRead,
@@ -415,7 +425,7 @@ def detect_gaps(meeting_id: str) -> int:
     **A re-run keeps the gap rows it already raised.** They are recognised by
     ``(meeting_id, template_key, template_item_key)`` and updated in place, so
     ``id`` survives — a link somebody sent to a gap still opens it — and so does
-    ``dismissed_at``, which is a person's judgement and the input ADR 0006's
+    ``dismissed_at``, which is a person's judgement and the input
     threshold tuning reads. A row this run did not produce is deleted: the
     meeting covers that item now, and a gap that is no longer a gap should not
     sit in the table waiting to be counted. Only template rows are touched;
@@ -696,7 +706,7 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
 
     ``dismissed_at`` is the whole write. The row stays either way: a dismissed
     gap leaves the report (``build_report``) but not the table, because
-    threshold tuning reads what was dismissed (ADR 0006). Nobody's id is stored
+    threshold tuning reads what was dismissed (docs/modules/gap.md, Storage). Nobody's id is stored
     or logged with it — which teammate pressed "해당 없음" is a per-person
     record of conduct ADR 0003 refuses.
 
@@ -730,6 +740,200 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
 
     log.info("gap_dismissal_set", gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
     return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+
+
+def set_carried(session: Session, gap_id: str, reader: User, *, carried: bool) -> GapCarry:
+    """Send one gap on to the next meeting, or take that back -- "다음 회의
+    어젠다로" on S20 (#824).
+
+    ``carried_at`` is the whole write, and its rules are ``set_dismissed``'s: a
+    second press keeps the first moment, taking back a mark that is not there
+    does nothing, nobody's id is stored or logged, and an unknown gap and
+    another team's gap are the same 404.
+
+    It does not republish. ``GapReport`` carries no such mark, so E's copy does
+    not change; the next meeting's picture reads it through
+    ``tools.carried_gaps``.
+    """
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info("gap_carry_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+
+    if carried and row.carried_at is None:
+        row.carried_at = datetime.now(tz=UTC)
+    elif not carried:
+        row.carried_at = None
+    session.flush()
+
+    log.info("gap_carry_set", gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
+    return GapCarry(gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
+
+
+def _gap_for_member(
+    session: Session, gap_id: str, reader: User, event: str
+) -> tuple[GapGap, Meeting]:
+    """The gap and its meeting, for a member of the meeting's team. An unknown
+    gap and another team's are the same 404, as for ``set_dismissed``."""
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info(event, gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+    return row, meeting
+
+
+def carry_on_calendar(session: Session, gap_id: str, reader: User, *, carried: bool) -> str:
+    """Add the gap's line to the next meeting's event on the caller's own
+    calendar, or take it out (``calendar_writes.update_agenda``). Called after
+    the mark is committed: a calendar that cannot be reached leaves the mark
+    set and says so."""
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_carry_refused")
+    return calendar_writes.update_agenda(
+        session, [row], team_id=meeting.team_id, user_id=reader.id, carried=carried
+    )
+
+
+def carry_meeting(session: Session, meeting_id: str, reader: User) -> list[GapGap]:
+    """Send every open gap of a meeting on to the next meeting -- "다음 회의
+    잡기" beside S20's template rail (#824). Returns the gaps sent.
+
+    Open is what S20 shows by default: not dismissed and not ``low``, the
+    precision rule the agent's Report and Briefing keep too. A gap already sent
+    keeps its first moment; nobody's id is stored, as for ``set_carried``.
+    """
+    require_readable_meeting(session, meeting_id, reader)
+    gaps = list(
+        session.scalars(
+            select(GapGap)
+            .where(
+                GapGap.meeting_id == meeting_id,
+                GapGap.dismissed_at.is_(None),
+                GapGap.severity != GapSeverity.LOW.value,
+            )
+            .order_by(GapGap.risk_score.desc(), GapGap.id)
+        )
+    )
+    now = datetime.now(tz=UTC)
+    for gap in gaps:
+        if gap.carried_at is None:
+            gap.carried_at = now
+    session.flush()
+    log.info("gap_meeting_carry_set", meeting_id=meeting_id, gaps=len(gaps))
+    return gaps
+
+
+def agenda_events(session: Session, meeting_id: str, reader: User) -> GapAgendaEvents:
+    """The caller's own upcoming events, to pick the next meeting from for this
+    meeting's gaps. The membership check comes first, as on every route naming
+    a meeting."""
+    require_readable_meeting(session, meeting_id, reader)
+    outcome, events = calendar_writes.upcoming_events(session, reader.id)
+    return GapAgendaEvents(
+        calendar=outcome,
+        events=[
+            GapCalendarEvent(
+                id=e.id,
+                summary=e.summary,
+                start=e.start,
+                end=e.end if isinstance(e.end, datetime) else None,
+            )
+            for e in events
+            if isinstance(e.start, datetime)
+        ],
+    )
+
+
+def carry_meeting_on_calendar(
+    session: Session,
+    meeting_id: str,
+    reader: User,
+    gaps: Sequence[GapGap],
+    *,
+    event_id: str | None = None,
+) -> GapMeetingCarry:
+    """Write the gaps ``carry_meeting`` sent onto the event the caller picked
+    on their own calendar, or the next meeting's when they picked none. Called
+    after the marks are committed."""
+    if not gaps:
+        return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
+    meeting = session.get(Meeting, meeting_id)
+    assert meeting is not None  # carry_meeting checked it
+    outcome = calendar_writes.update_agenda(
+        session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True, event_id=event_id
+    )
+    return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome)
+
+
+def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:
+    """Who on the gap's team the question can go to, by name, with whether
+    each has a calendar connected and was already asked about this gap."""
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    members = session.execute(
+        select(User.id, User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == meeting.team_id)
+        .order_by(User.display_name, User.id)
+    ).all()
+    connected = set(users_with_integration(session, calendar_writes.CALENDAR))
+    asked = set(session.scalars(select(GapQuestion.user_id).where(GapQuestion.gap_id == row.id)))
+    return GapAskTargets(
+        gap_id=row.id,
+        members=[
+            GapAskTarget(
+                user_id=user_id,
+                name=name,
+                calendar_connected=user_id in connected,
+                asked=user_id in asked,
+            )
+            for user_id, name in members
+        ],
+    )
+
+
+def ask(
+    session: Session, gap_id: str, reader: User, *, user_id: str, day: date | None = None
+) -> GapAsk:
+    """Put the gap's question on one teammate's calendar -- "담당자 지정해
+    질문" on S20 (#824).
+
+    The person is chosen by hand and must be on the meeting's team. Asking the
+    same person twice makes no second event. Nothing is stored unless the
+    event was made, so a person who connects their calendar later can be asked
+    again. Who asked is not stored or logged.
+    """
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    if not _is_team_member(session, user_id=user_id, team_id=meeting.team_id):
+        raise ValidationError("the person asked must be on the meeting's team", field="user_id")
+
+    existing = session.scalar(
+        select(GapQuestion.id).where(GapQuestion.gap_id == row.id, GapQuestion.user_id == user_id)
+    )
+    if existing is not None:
+        return GapAsk(gap_id=row.id, user_id=user_id, outcome="already_asked")
+
+    when = day or calendar_writes.next_working_day(datetime.now(UTC).date())
+    outcome, calendar_id, event_id = calendar_writes.ask_on_calendar(
+        session, row, user_id=user_id, day=when
+    )
+    if outcome == "added" and calendar_id is not None and event_id is not None:
+        session.add(
+            GapQuestion(
+                gap_id=row.id, user_id=user_id, day=when, calendar_id=calendar_id, event_id=event_id
+            )
+        )
+        session.flush()
+    log.info("gap_question_set", gap_id=row.id, meeting_id=row.meeting_id, outcome=outcome)
+    return GapAsk(gap_id=row.id, user_id=user_id, outcome=outcome)
 
 
 @dataclass(frozen=True)
@@ -1039,7 +1243,7 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
     A dismissed gap keeps its coverage and is marked ``dismissed``. Somebody
     calling a gap a false positive is a judgement about the gap, not evidence
     that the meeting covered the item, and the row is what threshold tuning
-    reads (ADR 0006).
+    reads (docs/modules/gap.md, Storage).
     """
     chosen = template.get_template(selected_template_key(session, meeting_id))
 
@@ -1136,7 +1340,11 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
         coverage = gap.coverage
 
         explanation = GapExplanationRead(
-            gap_id=gap.id, coverage=coverage, basis="none", keywords=keywords
+            gap_id=gap.id,
+            coverage=coverage,
+            basis="none",
+            keywords=keywords,
+            carried=gap.carried_at is not None,
         )
         if matched:
             explanation.basis = "topic"
@@ -1181,7 +1389,46 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
         high_threshold=thresholds.high,
         medium_threshold=thresholds.medium,
         gaps=explained,
+        covered=_explain_covered(session, meeting_id, chosen, views, thresholds),
     )
+
+
+def _explain_covered(
+    session: Session,
+    meeting_id: str,
+    chosen: template.Template,
+    views: dict[str, detect.TopicView],
+    thresholds: detect.Thresholds,
+) -> list[CoveredExplanationRead]:
+    """The topic each covered item rests on, found again over the stored graph.
+
+    Covered is what ``template_comparison`` reads: an analysed meeting, and no
+    gap row for the item -- dismissed or not, a row is a gap. The topic is
+    ``detect.match``'s first, held to the same ``classify`` rule; one that no
+    longer clears it is not offered as the reason (``CoveredExplanationRead``).
+    """
+    if not views:
+        return []
+    raised = set(
+        session.scalars(
+            select(GapGap.template_item_key).where(
+                GapGap.meeting_id == meeting_id, GapGap.template_key == chosen.key
+            )
+        )
+    )
+    topics = list(views.values())
+    covered = []
+    for item in chosen.items:
+        if item.key in raised:
+            continue
+        reason = CoveredExplanationRead(item_key=item.key)
+        matched = detect.match(item, topics)
+        if detect.classify(matched, False, thresholds) is detect.Coverage.COVERED:
+            reason.topic_label = matched[0].label
+            reason.topic_centrality = matched[0].centrality
+            reason.evidence = _topic_evidence(session, matched[0].id)
+        covered.append(reason)
+    return covered
 
 
 def _topic_evidence(session: Session, topic_id: str) -> list[EvidenceRead]:
@@ -1405,7 +1652,7 @@ def _store_gaps(
         if stale in produced:
             continue
         # A dismissal made under another template outlives the switch away from
-        # it: it is threshold tuning's input (ADR 0006), and S20's picker makes
+        # it: it is threshold tuning's input (docs/modules/gap.md, Storage), and S20's picker makes
         # trying a template one click. Kept, it is also still there when the
         # meeting is switched back. It never reaches a reader in the meantime —
         # the report leaves dismissed rows out and the rail reads only the

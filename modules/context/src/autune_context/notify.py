@@ -31,6 +31,7 @@ DM needs no such resolution: the recipient already knows who they are.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -43,6 +44,21 @@ _CHANGE_VERB: dict[ChangeType, str] = {
     ChangeType.REVERSED: "번복",
     ChangeType.MODIFIED: "변경",
 }
+
+
+_SLACK_ENTITIES = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}
+
+
+def _escape(text: str) -> str:
+    """Slack's three control characters as entities, so text reads as text.
+
+    Every value a notice interpolates came from a meeting or from a tracker
+    (a topic label, a decision statement, a meeting or issue title). Slack reads
+    each ``<...>`` in it, so ``<!channel>`` would be a channel-wide mention and
+    ``<https://x|board>`` a link that hides its address (#804). Autune's own
+    markup around a value (the ``*bold*`` and the agenda link) is not escaped.
+    """
+    return "".join(_SLACK_ENTITIES.get(char, char) for char in text)
 
 
 def _change_verb(change_type: ChangeType) -> str:
@@ -66,6 +82,7 @@ def build_topic_link_notice(
     any module's screens (see #204), so there is nothing to link to.
     """
     when = _korean_date(linked_meeting_date)
+    topic_label = _escape(topic_label)
     fallback = f"'{topic_label}' — {when} 회의에서 논의된 적 있습니다."
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": "● *이전에 논의된 안건*"}},
@@ -118,6 +135,8 @@ def build_decision_drift_channel_notice(
     """
     verb = _change_verb(change_type)
     changed_at = f"{_korean_date(meeting_date)} 회의에서 " if meeting_date is not None else ""
+    thread_label = _escape(thread_label)
+    current_statement = _escape(current_statement)
     fallback = f"{changed_at}결정이 {verb}되었습니다: {thread_label}"
     absence_note = (
         f"{changed_at}핵심 이해관계자 {absent_count}명이 자리에 없는 상태에서 {verb}되었습니다."
@@ -149,6 +168,8 @@ def build_decision_drift_personal_dm(
     """
     verb = _change_verb(change_type)
     changed_at = f"{_korean_date(meeting_date)} 회의에서 " if meeting_date is not None else ""
+    thread_label = _escape(thread_label)
+    current_statement = _escape(current_statement)
     fallback = f"{changed_at}자리를 비운 사이 결정이 바뀌었습니다."
     absence_note = f"{changed_at}이 결정이 바뀔 때 회의에 참석하지 않으셨습니다."
     blocks: list[dict[str, Any]] = [
@@ -179,6 +200,7 @@ BRIEF_TAG_CHARS = 20
 """An issue key or status ("AUT-123", "진행 중")."""
 BRIEF_URL_CHARS = 100
 """An agenda link longer than this is shown as its key alone."""
+_UNLINKABLE = re.compile(r"[|\s]")
 # The brief is a glance before a meeting, not the minutes. These caps are also
 # what keep the whole message under ``autune_integrations``'s outbound size
 # limit (4000 characters across every string), which refuses the post outright
@@ -214,8 +236,23 @@ class AgendaItem:
 
 
 def _clip(text: str, limit: int = BRIEF_ITEM_CHARS) -> str:
-    text = " ".join(text.split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+    """``text`` on one line, escaped for Slack, at most ``limit`` characters
+    *after* escaping.
+
+    The limit counts the escaped text because that is what the outbound size
+    limit counts, and it is cut a character at a time so a clipped string never
+    ends in half an entity (``&am…``)."""
+    pieces = [_SLACK_ENTITIES.get(char, char) for char in " ".join(text.split())]
+    if sum(map(len, pieces)) <= limit:
+        return "".join(pieces)
+    kept: list[str] = []
+    used = 0
+    for piece in pieces:
+        if used + len(piece) > limit - 1:
+            break
+        kept.append(piece)
+        used += len(piece)
+    return "".join(kept) + "…"
 
 
 def _bullets(lines: Sequence[str], *, cap: int) -> str:
@@ -235,8 +272,11 @@ def _decision_line(decision: BriefDecision) -> str:
 def _agenda_line(item: AgendaItem) -> str:
     title = _clip(item.title, BRIEF_AGENDA_CHARS)
     key = _clip(item.key, BRIEF_TAG_CHARS) if item.key else None
-    if key and item.url and len(item.url) <= BRIEF_URL_CHARS:
-        head = f"<{item.url}|{key}> "
+    url = _escape(item.url) if item.url else None
+    # A "|" or a space in the address would end it early and let the rest pose
+    # as the link's label, so such an address is not linked at all.
+    if key and url and len(url) <= BRIEF_URL_CHARS and not _UNLINKABLE.search(url):
+        head = f"<{url}|{key}> "
     elif key:
         head = f"{key} "
     else:

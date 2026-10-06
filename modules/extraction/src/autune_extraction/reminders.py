@@ -44,7 +44,7 @@ outbound check reads it like every other message.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 
@@ -115,20 +115,41 @@ def build_due_reminder(
 
 # --- the weekly digest (the user, 2026-10-04) ----------------------------------
 
-DIGEST_WEEKDAY = 0
-"""Monday, in Korea: the week's open work, as it starts."""
+DIGEST_WEEKDAYS = 5
+"""The week's digest goes on its first working day: Monday, in Korea -- or,
+when Monday is a public holiday, the first of Tuesday to Friday that is not
+(the user, 2026-10-05: "공휴일이 아닌 업무일에 요약"). A week with no working
+day has none."""
 
 DIGEST_MAX_LINES = 10
 """Items a digest lists; the rest are counted, and the board has them all."""
 
 
-def digest_week(now: datetime) -> date | None:
-    """The Monday a digest sent at ``now`` is for -- or ``None`` when ``now`` is
-    not a Monday's sending hours in Korea, and nothing goes."""
+def _no_holidays(_day: date) -> bool:
+    return False
+
+
+def digest_day(week: date, is_holiday: Callable[[date], bool] = _no_holidays) -> date | None:
+    """The day the digest of the week starting on Monday ``week`` goes: that
+    week's first Monday-to-Friday that is not a public holiday. ``None`` when
+    all five are."""
+    for offset in range(DIGEST_WEEKDAYS):
+        day = week + timedelta(days=offset)
+        if not is_holiday(day):
+            return day
+    return None
+
+
+def digest_week(now: datetime, is_holiday: Callable[[date], bool] = _no_holidays) -> date | None:
+    """The Monday of the week a digest sent at ``now`` is for -- or ``None``
+    when ``now`` is not the sending hours, in Korea, of that week's digest day
+    (``digest_day``), and nothing goes. The week is named by its Monday
+    whichever day its digest goes on, so a week has one digest and not two."""
     if not sending_hours(now):
         return None
     today = korean_day(now)
-    return today if today.weekday() == DIGEST_WEEKDAY else None
+    week = today - timedelta(days=today.weekday())
+    return week if digest_day(week, is_holiday) == today else None
 
 
 @dataclass(frozen=True)

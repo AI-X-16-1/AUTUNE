@@ -245,7 +245,10 @@ def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str
     assert item.meeting_id == second
     assert item.description == "후속 회의 잡기"
     assert item.status == "needs_confirmation", "it reaches nobody until confirmed"
-    assert item.assignee_id is None and item.due_date is None
+    # No assignee: the lead picks one. The date is the one the card suggested.
+    assert item.assignee_id is None
+    assert item.due_date is not None
+    assert item.due_date.isoformat() == row.arguments["due_date"]
 
     # A second approval writes nothing more.
     assert lead.post(f"/api/agent/pending/{row.id}/approve").status_code == SECOND_APPROVE

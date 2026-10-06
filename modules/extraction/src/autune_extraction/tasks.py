@@ -7,9 +7,10 @@ docs/architecture/async-pipeline.md.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any, cast
 
 from celery import shared_task
@@ -61,6 +62,7 @@ from autune_integrations import (
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from . import (
+    attempts,
     calendar_sync,
     days_off,
     jira_sync,
@@ -74,6 +76,7 @@ from . import (
 )
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
+from .decisions import in_pieces
 from .models import (
     ExtActionItem,
     ExtCalendarCleanup,
@@ -141,6 +144,12 @@ def on_transcript_ready(payload: dict) -> None:
     (``decisions.decision_id``), and module A mints new ``utt_`` ids whenever it
     reprocesses a recording (#194), so D has to hear the ids that are now in the
     table.
+
+    **A run that raises is counted before the error goes on**
+    (``_extract_counted``): ``retry_failed_extractions`` tries the meeting
+    again from the stored transcript, and after ``attempts.MAX_ATTEMPTS``
+    failures in a row the team is told. Celery does not redeliver a task that
+    raised, so without the count the meeting had no second chance.
     """
     transcript = TranscriptReady.model_validate(payload)
     validate_major_version(transcript)
@@ -152,7 +161,7 @@ def on_transcript_ready(payload: dict) -> None:
         meeting_id=transcript.meeting_id,
         utterances=len(transcript.utterances),
     )
-    _extract(transcript.meeting_id, transcript.utterances)
+    _extract_counted(transcript.meeting_id, transcript.utterances)
 
 
 def _follow_corrections(corrections: service.SourceCorrections) -> None:
@@ -195,16 +204,22 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     give_roster(nli, roster)
     classified = service.verify_utterances(nli, classified)
 
+    # A turn the classifier asked about in pieces is read piece by piece from
+    # here on: each commitment or decision in it becomes a row of its own, with
+    # a target the resolver can summarise. What is stored per utterance --
+    # its one kind, an ambiguous agreement to ask about -- reads ``classified``.
+    read = in_pieces(classified)
+
     resolver = get_resolver()
     # The resolver sends text out too, when it is the ``llm`` one (#411).
     give_roster(resolver, roster)
-    summaries = service.resolve_commitment_summaries(resolver, classified)
+    summaries = service.resolve_commitment_summaries(resolver, read)
     resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
     related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
     # Agreements their speakers confirmed keep a summary through the rebuild.
     confirmed_summaries = service.confirmed_summaries(resolver, classified, confirmed)
     decision_summaries = service.resolve_decision_summaries(
-        resolver, classified, meeting_id=meeting_id, day=day
+        resolver, read, meeting_id=meeting_id, day=day
     )
 
     with session_scope() as session:
@@ -217,14 +232,14 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         decisions = service.build_decisions(
             session,
             meeting_id=meeting_id,
-            utterances=classified,
+            utterances=read,
             summaries=decision_summaries,
         )
         items = service.build_action_items(
             session,
             meeting_id=meeting_id,
             utterances=utterances,
-            classified=classified,
+            classified=read,
             resolved=resolved_descriptions,
             related=related_lines,
             confirmed=confirmed_summaries,
@@ -256,6 +271,8 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
+        # With the rows too: only a run that stored its result ends the count.
+        attempts.note_success(session, meeting_id)
         result = service.result_for_meeting(session, meeting_id)
 
     _follow_corrections(corrections)
@@ -718,6 +735,206 @@ def reextract_consent_changes() -> list[str]:
     return done
 
 
+def _extract_counted(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None:
+    """``_extract``, with a failure counted before it is raised (``attempts``).
+
+    In a transaction of its own: the run's was rolled back. A count that
+    cannot be written -- the meeting was deleted meanwhile, the database is
+    what failed -- is logged, and the extraction's own error is still the one
+    raised."""
+    try:
+        _extract(meeting_id, utterances)
+    except Exception as exc:
+        try:
+            with session_scope() as session:
+                failures = attempts.note_failure(session, meeting_id, exc)
+        except Exception as unrecorded:  # noqa: BLE001 -- ``exc`` is raised below
+            log.warning(
+                "extraction_failure_not_counted",
+                meeting_id=meeting_id,
+                error=type(unrecorded).__name__,
+            )
+        else:
+            # The class only: the message can carry what was said.
+            log.warning(
+                "extraction_failed",
+                meeting_id=meeting_id,
+                failures=failures,
+                reason=type(exc).__name__,
+            )
+        raise
+
+
+@shared_task(name="autune.extraction.reextract_meeting", acks_late=True)
+def reextract_meeting(meeting_id: str) -> None:
+    """Extract one meeting again from its stored transcript -- a failed run's
+    next try, or the 액션 tab's "다시 추출".
+
+    The event's own run (``_extract``): model rows are replaced, an item list
+    a person has edited is kept (``service.build_action_items``), and
+    ``ExtractionResult`` is published again. A meeting whose lines are all gone
+    by now is extracted to nothing, which is what it holds."""
+    with session_scope() as session:
+        utterances = service.stored_transcript(session, meeting_id)
+    _extract_counted(meeting_id, utterances)
+
+
+def _failure_notice(title: str, board_url: str) -> str:
+    return (
+        f"「{title}」 회의에서 액션 아이템과 결정을 추출하지 못했습니다. "
+        f"{attempts.MAX_ATTEMPTS}번 시도했고, 자동으로는 더 시도하지 않습니다. "
+        f"회의의 액션 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
+    )
+
+
+def _tell_teams() -> list[str]:
+    """One message to the team's Slack channel for each meeting out of tries:
+    its title, the count and a link to its 액션 tab, nothing that was said in
+    it. A team with no channel
+    connected is not told here; the meeting's own screen says it either way.
+
+    Marked told before it is sent and unmarked when the send fails, so two
+    sweeps at once post once. A refusal by the outbound check stays marked --
+    the title would be refused again -- and is raised by the caller."""
+    with session_scope() as session:
+        owed = attempts.owed_notices(session)
+
+    told: list[str] = []
+    refused: list[str] = []
+    for meeting_id in owed:
+        with session_scope() as session:
+            meeting = session.get(Meeting, meeting_id)
+            slack = (
+                load_integration(session, meeting.team_id, "slack") if meeting is not None else None
+            )
+            channel = slack.config.get("channel") if slack is not None else None
+            if meeting is None or slack is None or not slack.secret or not channel:
+                continue
+            if not attempts.claim_notice(session, meeting_id):
+                continue
+            title, secret = meeting.title, slack.secret
+        client = SlackClient(secret)
+        try:
+            client.post_message(
+                str(channel), _failure_notice(title, service.answer_url(meeting_id))
+            )
+        except PrivacyViolationError:
+            refused.append(meeting_id)
+            continue
+        except Exception as exc:  # noqa: BLE001 -- owed again; the next sweep asks
+            log.warning(
+                "extraction_failure_notice_not_sent",
+                meeting_id=meeting_id,
+                reason=type(exc).__name__,
+            )
+            with session_scope() as session:
+                attempts.release_notice(session, meeting_id)
+            continue
+        finally:
+            client.close()
+        told.append(meeting_id)
+    if refused:
+        raise PrivacyViolationError(
+            f"unmasked value in the failure notice of {len(refused)} meeting(s): "
+            f"{', '.join(refused)}"
+        )
+    return told
+
+
+@shared_task(name="autune.extraction.periodic.retry_failed_extractions")
+@periodic(timedelta(minutes=10))
+def retry_failed_extractions() -> list[str]:
+    """Try again every meeting whose extraction failed and has tries left, then
+    tell the teams of those that have none. Returns the meetings that went
+    through.
+
+    A provider that was down for a minute costs a meeting ten minutes, not its
+    result. The first failure is the event's; this makes the second and third
+    attempts, ten minutes apart, and stops (the user, 2026-10-06: three in
+    all). A failure that repeats every time -- a refusal by the outbound
+    check, a bug -- is spent in twenty minutes and then said, in the team's
+    channel and on the meeting's 액션 tab, instead of being retried for good.
+
+    **A meeting with a transcript and no extraction on record is taken for a
+    failed one** (``attempts.adopt_unextracted``): a run that raised before
+    failures were counted, or one lost with a worker a deploy recreated,
+    leaves no row to retry from. Half an hour after its last line was stored,
+    and for a week, the sweep counts it as failed once and tries it.
+
+    One meeting failing does not stop the rest, and its failure is already
+    counted and logged where it happened. **A privacy violation is raised**
+    once the others and the notices are done, ids only, as
+    ``reextract_consent_changes`` does."""
+    with session_scope() as session:
+        adopted = attempts.adopt_unextracted(session)
+        due = attempts.due_for_retry(session)
+
+    done: list[str] = []
+    violations: list[str] = []
+    for meeting_id in due:
+        try:
+            reextract_meeting(meeting_id)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
+        except Exception:  # noqa: BLE001, S112 -- counted and logged by ``_extract_counted``
+            continue
+        done.append(meeting_id)
+
+    told = _tell_teams()
+    log.info(
+        "extraction_failures_swept",
+        adopted=len(adopted),
+        due=len(due),
+        recovered=len(done),
+        told=len(told),
+        violations=len(violations),
+    )
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value on a retried extraction in {len(violations)} meeting(s): "
+            f"{', '.join(violations)}"
+        )
+    return done
+
+
+@shared_task(name="autune.extraction.periodic.run_requested_extractions")
+@periodic(timedelta(minutes=1))
+def run_requested_extractions() -> list[str]:
+    """Run the extractions people asked for with "다시 추출". Returns the
+    meetings that went through.
+
+    The request is a row because the API process cannot queue a task
+    (``sync_after_confirmation``), and an extraction is model inference that
+    belongs in the worker whichever classifier is configured. Every minute: a
+    person is waiting at the screen, and a run with nothing asked is one
+    statement. Each request is taken once -- the flag is cleared as it is
+    read -- so a run that fails is not started again by this task; it is
+    counted like any other failure, and the screen shows it."""
+    with session_scope() as session:
+        asked = attempts.take_requests(session)
+
+    done: list[str] = []
+    violations: list[str] = []
+    for meeting_id in asked:
+        try:
+            reextract_meeting(meeting_id)
+        except PrivacyViolationError:
+            violations.append(meeting_id)
+            continue
+        except Exception:  # noqa: BLE001, S112 -- counted and logged by ``_extract_counted``
+            continue
+        done.append(meeting_id)
+    if asked:
+        log.info("extraction_requests_run", asked=len(asked), done=len(done))
+    if violations:
+        raise PrivacyViolationError(
+            f"unmasked value on a requested extraction in {len(violations)} meeting(s): "
+            f"{', '.join(violations)}"
+        )
+    return done
+
+
 @shared_task(name="autune.extraction.periodic.fill_identified_assignees")
 @periodic(timedelta(minutes=10))
 def fill_identified_assignees() -> list[str]:
@@ -847,7 +1064,8 @@ def send_weekly_digests() -> list[str]:
     transaction, a team without Slack or a person without a linked account
     skipped and looked at again next run, an unexpected error that one
     digest's, and a privacy refusal never swallowed -- raised after the rest
-    are sent. Every ten minutes; outside a Monday's sending hours in Korea it
+    are sent. Every ten minutes; outside the sending hours of the week's first
+    working day in Korea (Monday, or the next day when Monday is a holiday) it
     finds nothing owed.
     """
     if not get_settings().weekly_digest:
@@ -862,18 +1080,35 @@ def send_weekly_digests() -> list[str]:
 
     sent: list[str] = []
     refused: list[str] = []
+    unasked: list[str] = []
     not_linked = 0
-    away = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        if leave and _out_of_office(digest.user_id, now):
-            # Held back, not claimed: asked again next run, and sent then if
-            # they are back inside the sending hours.
-            away += 1
-            continue
+        if leave:
+            would_go = partial(service.weekly_digest_would_go, digest=digest, now=now)
+            try:
+                if _held_back(would_go, digest.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(digest.user_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one digest's; logged by type, ids only
+                # Asking is part of this digest's send and fails as its send
+                # does: this person's only. The others still get theirs, and
+                # the refusals already collected are still raised at the end
+                # (PARKJAEKYUNG0525, review of #841).
+                log.warning(
+                    "extraction_weekly_digest_failed",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
         try:
             with session_scope() as session:
                 went = service.send_weekly_digest(session, SlackClient(secret), digest, now=now)
@@ -905,19 +1140,15 @@ def send_weekly_digests() -> list[str]:
             continue
         if went:
             sent.append(digest.user_id)
-    if owed:
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_weekly_digests_sent",
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
-            away=away,
         )
-    if refused:
-        raise PrivacyViolationError(
-            f"weekly digest refused by the outbound check for {len(refused)} person(s): "
-            f"{', '.join(refused)}"
-        )
+    _raise_refusals("weekly digest", refused, unasked)
     return sent
 
 
@@ -948,18 +1179,35 @@ def send_daily_digests() -> list[str]:
 
     sent: list[str] = []
     refused: list[str] = []
+    unasked: list[str] = []
     not_linked = 0
-    away = 0
     leave = get_settings().leave_from_calendar
     for digest in owed:
         secret = secrets[digest.team_id]
         if secret is None:
             continue
-        if leave and _out_of_office(digest.user_id, now):
-            # Held back, not claimed: asked again next run, and sent then if
-            # they are back inside the sending hours.
-            away += 1
-            continue
+        if leave:
+            would_go = partial(service.daily_digest_would_go, owed=digest, now=now)
+            try:
+                if _held_back(would_go, digest.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(digest.user_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+                # Asking is part of this DM's send and fails as its send
+                # does: this person's only. The others still get theirs, and
+                # the refusals already collected are still raised at the end
+                # (PARKJAEKYUNG0525, review of #841).
+                log.warning(
+                    "extraction_daily_digest_failed",
+                    user_id=digest.user_id,
+                    team_id=digest.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
         try:
             with session_scope() as session:
                 went = service.send_daily_digest(session, SlackClient(secret), digest, now=now)
@@ -991,26 +1239,70 @@ def send_daily_digests() -> list[str]:
             continue
         if went:
             sent.append(digest.user_id)
-    if owed:
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_daily_digests_sent",
             owed=len(owed),
             sent=len(sent),
             not_linked=not_linked,
-            away=away,
         )
+    _raise_refusals("morning digest", refused, unasked)
+    return sent
+
+
+def _raise_refusals(what: str, refused: list[str], unasked: list[str]) -> None:
+    """Raise the privacy refusals a digest run collected, each as what it was:
+    a message the outbound check refused (its claim already settled), or a
+    question to a person's calendar it refused (nothing claimed -- no message
+    was refused, and the digest is tried again next run)."""
+    said = []
     if refused:
-        raise PrivacyViolationError(
-            f"morning digest refused by the outbound check for {len(refused)} person(s): "
+        said.append(
+            f"{what} refused by the outbound check for {len(refused)} person(s): "
             f"{', '.join(refused)}"
         )
-    return sent
+    if unasked:
+        said.append(
+            f"{what}: the read of a person's calendar was refused by the outbound check "
+            f"for {len(unasked)} person(s): {', '.join(unasked)}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+
+
+def _held_back(would_go: Callable[[Session], bool], user_id: str, now: datetime) -> bool:
+    """Whether this digest waits because its person is out of office right now.
+
+    **The calendar is asked last, and outside the send.** ``would_go`` -- every
+    reason not to send that Autune's own tables hold -- is asked first, in a
+    transaction that is closed before Google is called: a calendar is read
+    only for a message that would otherwise go, no transaction of the send's
+    stays open while Google answers, and a refusal of the question cannot be
+    mistaken for a refusal of the message (review of #838, review of #841).
+
+    **A run that holds somebody back looks like a run with nothing to send.**
+    That is why a deployment that reads calendars logs no summary of its
+    digests: ``owed=1 sent=0`` with no failure beside it is that one person's
+    absence, repeated every ten minutes until the run they came back. Nothing
+    is counted, nothing is claimed and nothing is written here; what a send
+    leaves -- its claim and its time -- is what any send leaves.
+    """
+    with session_scope() as session:
+        if not would_go(session):
+            return False
+    return _out_of_office(user_id, now)
 
 
 def _out_of_office(user_id: str, now: datetime) -> bool:
     """Whether this person's own connected calendar marks them out of office
     right now (``days_off.away_now``) -- ``False`` for someone with no calendar
     connected, and ``False`` when it cannot be read.
+
+    **Nobody's calendar is read for a message that could not reach them.** A
+    person who has not linked a Slack account gets no DM whatever their
+    calendar says, so theirs is not asked about -- every ten minutes of a
+    morning, it would be (mkkim68, review of #838).
 
     **Unknown is not away.** A digest is the person's own work sent to
     themselves; a grant that lapsed or a Google outage must not silence it.
@@ -1019,6 +1311,9 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
     """
     try:
         with session_scope() as session, _calendars(session) as calendar_for:
+            linked = load_user_integration(session, user_id, "slack")
+            if linked is None or not linked.config.get("slack_user_id"):
+                return False
             connection = calendar_for(user_id)
             if connection is None:
                 return False
@@ -1053,7 +1348,9 @@ def refresh_public_holidays() -> int:
     now = datetime.now(tz=UTC)
     try:
         days = days_off.fetch_public_holidays(today=reminders.korean_day(now))
-    except IntegrationError as exc:
+    except Exception as exc:  # noqa: BLE001 -- whatever the answer was, the last read stays
+        # Not only ``IntegrationError``: the answer is somebody else's file,
+        # and no shape of it may fail this task (review of #838).
         log.warning("extraction_public_holidays_not_read", reason=type(exc).__name__)
         return 0
     with session_scope() as session:

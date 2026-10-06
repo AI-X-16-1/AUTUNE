@@ -135,6 +135,64 @@ def test_an_overlong_link_falls_back_to_the_bare_key() -> None:
     assert url not in _text(blocks)
 
 
+def test_an_address_that_could_pose_as_its_label_is_not_linked() -> None:
+    for url in ("https://j/x|<!channel>", "https://j/x y"):
+        _, blocks = _build(agenda=(AgendaItem(title="검색 정렬 버그", key="AUT-12", url=url),))
+
+        assert "• AUT-12 검색 정렬 버그" in _text(blocks)
+        assert "<https" not in _text(blocks)
+
+
+def test_a_linked_address_is_escaped_inside_the_link() -> None:
+    _, blocks = _build(
+        agenda=(AgendaItem(title="버그", key="AUT-12", url="https://j/AUT-12?a=1&b=2"),)
+    )
+
+    assert "<https://j/AUT-12?a=1&amp;b=2|AUT-12>" in _text(blocks)
+
+
+def test_every_interpolated_value_is_escaped() -> None:
+    ping = "<!channel>"
+    fallback, blocks = _build(
+        title=ping,
+        recap=_recap(
+            title=ping,
+            topics=(ping,),
+            decisions=(BriefDecision(ping, ChangeType.NEW),),
+        ),
+        agenda=(AgendaItem(title=ping, key=ping, status=ping),),
+    )
+    unrelated = _build(title=ping, recap=_recap(title=ping), recap_is_related=False)
+
+    for text in (fallback, _text(blocks), unrelated[0], _text(unrelated[1])):
+        assert "<!channel>" not in text
+    assert _text(blocks).count("&lt;!channel&gt;") == 7
+
+
+def test_a_clipped_value_never_ends_in_half_an_entity() -> None:
+    _, blocks = _build(title="&" * (BRIEF_ITEM_CHARS * 2))
+    title = blocks[1]["text"]["text"].strip("*")
+
+    assert title.endswith("&amp;…")
+    assert len(title) <= BRIEF_ITEM_CHARS
+
+
+def test_the_largest_brief_of_characters_that_grow_when_escaped_passes_the_guard() -> None:
+    long = "&" * (BRIEF_ITEM_CHARS * 3)
+    recap = _recap(
+        title=long,
+        topics=tuple(long for _ in range(MAX_BRIEF_TOPICS + 5)),
+        decisions=tuple(BriefDecision(long, ChangeType.REVERSED) for _ in range(10)),
+    )
+    agenda = tuple(
+        AgendaItem(title=long, key=long, status=long, url="https://j/?a&b".ljust(90, "x"))
+        for _ in range(MAX_BRIEF_AGENDA + 5)
+    )
+    fallback, blocks = _build(title=long, recap=recap, agenda=agenda)
+
+    check_outbound({"channel": "C0", "text": fallback, "blocks": blocks}, destination="slack")
+
+
 def test_no_agenda_is_stated_not_left_blank() -> None:
     _, blocks = _build(agenda=())
 

@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { Button, Tabs } from "@/shared/ui";
 
+import { getAgendaEvents, getAskTargets } from "../api";
 import { useGapActions } from "../hooks/useGapActions";
 import { useGapExplanations } from "../hooks/useGapExplanations";
 import { useGapReport } from "../hooks/useGapReport";
@@ -131,7 +132,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, dismiss, undoDismiss, choose } = useGapActions(reloadAll);
+  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, choose } =
+    useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
   const [coverageTab, setCoverageTab] = useState<Coverage>("missing");
@@ -155,7 +157,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         date={explanations?.meeting_date ?? null}
       >
         {/* The one primary on the screen, and it is not wired: the Slack
-            question card is a surface this module has not built (#36). A
+            question card is a surface this module has not built (#824). A
             disabled button alone does not say why, so the reason is written
             beside it rather than left to a tooltip nobody hovers. */}
         <span
@@ -185,6 +187,19 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
           }}
         >
           {failure}
+        </p>
+      ) : null}
+
+      {notice ? (
+        <p
+          role="status"
+          className="text-[var(--color-ink-muted)]"
+          style={{
+            fontSize: "var(--text-metaSmall)",
+            padding: "var(--space-8) var(--space-page) 0",
+          }}
+        >
+          {notice}
         </p>
       ) : null}
 
@@ -233,7 +248,13 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     loading={railLoading}
                     error={railError}
                   >
-                    {() => <CoveredList items={covered} />}
+                    {() => (
+                      <CoveredList
+                        items={covered}
+                        explanations={explanations}
+                        meetingId={meetingId}
+                      />
+                    )}
                   </ReadSection>
                 ) : (
                   <ReadSection
@@ -257,6 +278,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           showLow={showLow}
                           onToggleLow={() => setShowLow((on) => !on)}
                           onDismiss={(gapId) => void dismiss(gapId)}
+                          loadAskTargets={getAskTargets}
+                          onAsk={(gapId, userId) => void ask(gapId, userId)}
                           pendingGapId={pending}
                         />
                       );
@@ -282,6 +305,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     showLow={showLow}
                     onToggleLow={() => setShowLow((on) => !on)}
                     onDismiss={(gapId) => void dismiss(gapId)}
+                    loadAskTargets={getAskTargets}
+                    onAsk={(gapId, userId) => void ask(gapId, userId)}
                     pendingGapId={pending}
                   />
                 )}
@@ -318,6 +343,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                 templates={templates}
                 onChoose={(templateKey) => void choose(meetingId, templateKey)}
                 onUndoDismiss={(gapId) => void undoDismiss(gapId)}
+                loadAgendaEvents={() => getAgendaEvents(meetingId)}
+                onScheduleNext={(eventId) => void scheduleNext(meetingId, eventId)}
                 pending={pending}
               />
             )}

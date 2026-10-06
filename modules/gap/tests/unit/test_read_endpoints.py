@@ -41,6 +41,7 @@ from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
+    GapQuestion,
     GapRelatedTopic,
     GapTopic,
     GapTopicEdge,
@@ -78,6 +79,7 @@ TABLES = [
     GapGap.__table__,
     GapRelatedTopic.__table__,
     GapMeetingTemplate.__table__,
+    GapQuestion.__table__,
 ]
 
 
@@ -1055,3 +1057,119 @@ def test_the_team_list_is_capped(client: TestClient, session: Session) -> None:
     session.flush()
 
     assert len(_team_gaps(client)) == service.TEAM_GAPS_LIMIT
+
+
+# --- "다음 회의 어젠다로" (#824) ---------------------------------------------
+
+
+def _carry_path(gap_id: str) -> str:
+    return f"{PREFIX}/gaps/{gap_id}/carry"
+
+
+def test_a_carried_gap_is_marked_and_stays_on_the_report(
+    client: TestClient, session: Session
+) -> None:
+    """Sending a gap on is not settling it: the report still lists it."""
+    gap(session, "gap_1")
+
+    response = client.post(_carry_path("gap_1"))
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "gap_id": "gap_1",
+        "meeting_id": MEETING,
+        "carried": True,
+        "calendar": "no_next_meeting",
+    }
+    assert session.get(GapGap, "gap_1").carried_at is not None
+    assert [g["id"] for g in client.get(f"{PREFIX}/reports/{MEETING}").json()["gaps"]] == ["gap_1"]
+
+
+def test_the_explanation_says_the_gap_was_carried(client: TestClient, session: Session) -> None:
+    """S20's card reads the mark from ``/explanations``; ``GapReport`` is E's."""
+    first, second = (item.key for item in template.get_template("general").items[:2])
+    topic(session, "top_1")
+    gap(session, "gap_carried", template_key="general", item_key=first, coverage="missing")
+    gap(
+        session,
+        "gap_not",
+        risk_score=0.8,
+        template_key="general",
+        item_key=second,
+        coverage="missing",
+    )
+    client.post(_carry_path("gap_carried"))
+
+    explained = client.get(f"{PREFIX}/explanations/{MEETING}").json()["gaps"]
+
+    assert {e["gap_id"]: e["carried"] for e in explained} == {
+        "gap_carried": True,
+        "gap_not": False,
+    }
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_carrying_does_not_send_e_the_report_again(
+    client: TestClient, session: Session, queued: list[str], method: str
+) -> None:
+    """``GapReport`` carries no such mark, so E's copy has nothing to change."""
+    gap(session, "gap_1")
+
+    getattr(client, method)(_carry_path("gap_1"))
+
+    assert queued == []
+
+
+def test_carrying_twice_keeps_the_first_moment(client: TestClient, session: Session) -> None:
+    gap(session, "gap_1")
+    client.post(_carry_path("gap_1"))
+    first = session.get(GapGap, "gap_1").carried_at
+
+    client.post(_carry_path("gap_1"))
+
+    assert session.get(GapGap, "gap_1").carried_at == first
+
+
+def test_carrying_can_be_taken_back(client: TestClient, session: Session) -> None:
+    gap(session, "gap_1")
+    client.post(_carry_path("gap_1"))
+
+    response = client.delete(_carry_path("gap_1"))
+
+    assert response.json()["carried"] is False
+    assert session.get(GapGap, "gap_1").carried_at is None
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_carrying_an_unknown_gap_and_another_teams_gap_are_the_same_404(
+    client: TestClient, session: Session, method: str
+) -> None:
+    gap(session, "gap_foreign", meeting_id=FOREIGN_MEETING)
+
+    foreign = getattr(client, method)(_carry_path("gap_foreign"))
+    unknown = getattr(client, method)(_carry_path("gap_no_such_thing"))
+
+    assert foreign.status_code == unknown.status_code == 404
+    assert foreign.json()["error"] == {
+        **unknown.json()["error"],
+        "message": foreign.json()["error"]["message"],
+    }
+    assert "meeting" not in foreign.text
+    assert session.get(GapGap, "gap_foreign").carried_at is None
+
+
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_carrying_needs_a_caller(anonymous: TestClient, session: Session, method: str) -> None:
+    gap(session, "gap_1")
+
+    assert getattr(anonymous, method)(_carry_path("gap_1")).status_code == 403
+    assert session.get(GapGap, "gap_1").carried_at is None
+
+
+def test_carrying_records_nobody(client: TestClient, session: Session) -> None:
+    gap(session, "gap_1")
+
+    body = client.post(_carry_path("gap_1")).json()
+
+    assert MEMBER not in str(body)
+    assert set(body) == {"gap_id", "meeting_id", "carried", "calendar"}

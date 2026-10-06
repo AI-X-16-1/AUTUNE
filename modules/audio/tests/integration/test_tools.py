@@ -337,3 +337,17 @@ def test_recent_meetings_items_carry_their_status(db_session: Session, team: str
     item = tools.recent_meetings(db_session, team)["items"][0]
 
     assert item["status"] == "complete"
+
+
+def test_recent_meetings_items_carry_their_start_time(db_session: Session, team: str) -> None:
+    """#854: Follow-up reads the team's meeting rhythm from this, not from ``body``."""
+    started = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+    held = Meeting(team_id=team, title="스프린트 리뷰", started_at=started)
+    unset = Meeting(team_id=team, title="시각 미정", status="scheduled")
+    db_session.add_all([held, unset])
+    db_session.flush()
+
+    items = {i["title"]: i for i in tools.recent_meetings(db_session, team, days=365)["items"]}
+
+    assert datetime.fromisoformat(items["스프린트 리뷰"]["started_at"]) == started
+    assert items["시각 미정"]["started_at"] is None

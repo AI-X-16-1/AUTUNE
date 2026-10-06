@@ -17,6 +17,7 @@ from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
+    GapQuestion,
     GapRelatedTopic,
     GapScoring,
     GapTopic,
@@ -33,6 +34,7 @@ ALL_TABLES: tuple[Table, ...] = (
     GapRelatedTopic.__table__,
     GapMeetingTemplate.__table__,
     GapScoring.__table__,
+    GapQuestion.__table__,
 )
 
 
@@ -124,9 +126,10 @@ def test_every_table_cascades_towards_a_meeting(table: Table) -> None:
 
     Either the table references ``meetings`` directly or it hangs off one that
     does, and every hop is ``CASCADE`` — one ``SET NULL`` in the chain would
-    strand the rows below it.
+    strand the rows below it. ``users`` is a parent too: ``gap_questions``
+    names the person asked, and goes when that person does.
     """
-    parents = {"meetings", "gap_topics", "gap_gaps", "utterances", "participants"}
+    parents = {"meetings", "gap_topics", "gap_gaps", "utterances", "participants", "users"}
     foreign_keys = list(table.foreign_keys)
 
     assert foreign_keys, f"{table.name} has no path to a meeting"

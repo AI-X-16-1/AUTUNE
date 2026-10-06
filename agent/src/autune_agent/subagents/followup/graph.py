@@ -12,11 +12,18 @@ approvals-page preview (#562), never through the arguments.
 
 M is the run's meeting when its scope has one -- the trigger's, or the screen a
 chat was asked from -- and otherwise the team's latest analysed meeting.
+
+**A suggested date.** The proposal carries ``due_date``: the team's usual gap
+between meetings after its latest one (``rules.suggest_date``), read from the
+team's meeting days and nothing else. The lead sees it on the card and moves it
+on the board; the item's due date is what B puts on a calendar (#441).
 """
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 from langgraph.graph import END, START, StateGraph
 
@@ -41,6 +48,8 @@ is L1 since #576 and would run without the lead's approval."""
 TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
 """Meeting statuses after the pipeline's analysis, as Research reads them."""
+KST = ZoneInfo("Asia/Seoul")
+"""The team's calendar day, as A's tools write a meeting's time."""
 
 
 class FollowupState(SubagentState, total=False):
@@ -49,6 +58,8 @@ class FollowupState(SubagentState, total=False):
     open_gaps: ToolResult
     recurring: ToolResult
     questions: ToolResult
+    recent: ToolResult
+    """The team's meetings, when the run had to read them to pick M."""
     verdict: rules.Verdict
 
 
@@ -60,9 +71,44 @@ def _done(summary: str) -> dict[str, Any]:
     return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=summary))}
 
 
+def _today() -> date:
+    return datetime.now(KST).date()
+
+
+def _held(recent: ToolResult | None) -> list[date]:
+    """The days the team's past meetings started on, from ``started_at``.
+
+    A meeting with no start time, or one still ahead, has not set the team's
+    rhythm. An unreadable list is no days, so the suggestion falls back to a
+    fixed few business days rather than holding the proposal back.
+    """
+    if recent is None or not recent.ok:
+        return []
+    now = datetime.now(UTC)
+    days = []
+    for item in recent.items:
+        raw = (item.model_extra or {}).get("started_at")
+        if not isinstance(raw, str):
+            continue
+        try:
+            started = datetime.fromisoformat(raw)
+        except ValueError:
+            continue
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        if started <= now:
+            days.append(started.astimezone(KST).date())
+    return days
+
+
+def _day(value: date) -> str:
+    return f"{value.month}월 {value.day}일({'월화수목금토일'[value.weekday()]})"
+
+
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def read(state: FollowupState) -> dict[str, Any]:
         at: dict[str, str] = {}
+        recent: ToolResult | None = None
         gaps = toolbox.call(OPEN_GAPS)
         if not gaps.ok and gaps.reason == NO_MEETING:
             recent = toolbox.call(RECENT)
@@ -88,7 +134,10 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         questions = toolbox.call(QUESTIONS, **at)
         if not questions.ok:
             return _stop(questions.reason or "questions unreadable", "질문을 읽지 못했습니다.")
-        return {"at": at, "open_gaps": gaps, "recurring": recurring, "questions": questions}
+        read: dict[str, Any] = {"open_gaps": gaps, "recurring": recurring, "questions": questions}
+        if recent is not None:
+            read["recent"] = recent
+        return {"at": at, **read}
 
     def decide(state: FollowupState) -> dict[str, Any]:
         verdict = rules.decide(state["open_gaps"], state["recurring"], state["questions"])
@@ -108,9 +157,15 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
     def propose(state: FollowupState) -> dict[str, Any]:
         verdict = state["verdict"]
         reason = verdict.reason()
+        # Read here, not in ``read``: a run that proposes nothing does not spend it.
+        recent = state.get("recent") or toolbox.call(RECENT)
+        suggested = rules.suggest_date(_held(recent), _today())
         result = ToolResult(
             ok=True,
-            summary=f"후속 회의를 제안했습니다 ({reason}). 팀장이 승인하면 보드에 항목이 생깁니다.",
+            summary=(
+                f"후속 회의를 제안했습니다 ({reason}). 추천 날짜는 {_day(suggested)}입니다. "
+                "팀장이 승인하면 보드에 항목이 생깁니다."
+            ),
             items=rules.cited(state["open_gaps"], verdict),
             evidence=verdict.evidence,
         )
@@ -118,9 +173,9 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             kind="followup_meeting",
             title="후속 회의 제안",
             tool=WRITE,
-            arguments=dict(state["at"]),
+            arguments={**state["at"], "due_date": suggested.isoformat()},
             level="L2",
-            rationale=f"{reason}.",
+            rationale=f"{reason}. 추천 날짜 {_day(suggested)}.",
             evidence=verdict.evidence,
         )
         return {"outcome": SubagentResult(result=result, proposed=[proposal])}

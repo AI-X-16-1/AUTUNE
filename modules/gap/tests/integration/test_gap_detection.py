@@ -273,7 +273,7 @@ def test_a_re_run_keeps_the_identity_of_a_gap_it_already_raised(team_id: str) ->
 
 def test_a_re_run_keeps_a_dismissal(team_id: str) -> None:
     """Somebody called this gap a false positive. That judgement is the input
-    ADR 0006's threshold tuning reads, and re-analysing the meeting must not
+    threshold tuning reads, and re-analysing the meeting must not
     quietly throw it away."""
     meeting_id = seed(team_id, COVERS_TWO)
     service.detect_gaps(meeting_id)
@@ -352,9 +352,10 @@ def test_switching_templates_drops_the_rows_the_old_one_raised(team_id: str) -> 
 
 
 def test_switching_templates_keeps_what_was_dismissed_under_the_old_one(team_id: str) -> None:
-    """A dismissal is threshold tuning's input (ADR 0006), and S20's picker makes
-    trying another template one click. Switching away must not throw the
-    judgement out, and switching back must find it where it was left."""
+    """A dismissal is threshold tuning's input (docs/modules/gap.md, Storage),
+    and S20's picker makes trying another template one click. Switching away
+    must not throw the judgement out, and switching back must find it where it
+    was left."""
     meeting_id = seed(team_id, COVERS_TWO)
     service.detect_gaps(meeting_id)
     dismissed_id = stored(meeting_id)["risk"].id

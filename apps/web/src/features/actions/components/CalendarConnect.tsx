@@ -9,6 +9,8 @@ import {
 } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
+import { getNotificationPause } from "../api";
+
 /**
  * One button to put the person's own due dates on their own Google Calendar
  * (#435). Connected, a date they drag there comes back here within ten minutes.
@@ -20,6 +22,14 @@ import { Button } from "@/shared/ui";
  *
  * Nothing shows until the status is known, and nothing shows for a visitor
  * without a session: a button that could only fail is worse than none.
+ *
+ * **Where this server also reads out-of-office time, it says so here** --
+ * beside the button, before the person connects, and beside "연결됨" for
+ * someone who connected earlier (PARKJAEKYUNG0525, review of #838). Putting
+ * due dates in is what the connection was asked for; reading when somebody is
+ * away is more than that, and a person agrees to what they were told. Where
+ * the server does not read it (`calendar_leave` false, the default) the line
+ * is absent, because it would be untrue.
  */
 /** The person's own calendar: Google shows whichever account the browser is
  * signed in to, which is where a connected person's due dates were put. */
@@ -29,9 +39,17 @@ export function CalendarConnect() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [readsLeave, setReadsLeave] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    // Not told is not read: a failed answer leaves the line off, and the
+    // settings screen says the same thing from the same answer.
+    getNotificationPause()
+      .then((pause) => {
+        if (alive) setReadsLeave(pause.calendar_leave === true);
+      })
+      .catch(() => {});
     void getCalendarConnection().then((status) => {
       if (!alive || status === null) return;
       setConnected(status.connected);
@@ -108,6 +126,17 @@ export function CalendarConnect() {
           내 Google 캘린더에 마감일 넣기
         </Button>
       )}
+      {readsLeave ? (
+        <span
+          className="basis-full text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {connected ? "연결되어 있는 동안" : "연결하면"} 마감일을 넣는 것 외에, 내 캘린더의
+          &lsquo;부재중&rsquo; 일정이 언제부터 언제까지인지도 읽습니다. 그 시간에는 아침
+          요약과 월요일 요약을 보내지 않기 위해서입니다. 일정의 제목이나 다른 일정은 읽지
+          않으며, 읽은 시간은 저장하지 않습니다.
+        </span>
+      ) : null}
       {note ? (
         <span
           role="status"

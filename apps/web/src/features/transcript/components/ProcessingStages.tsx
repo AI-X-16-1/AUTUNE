@@ -236,8 +236,16 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     return (at - from + fraction) / span;
   };
 
+  // The meeting row keeps `original_audio_deleted` and `pii_masked` from the
+  // last transcription that finished, and a new upload for the same meeting
+  // does not clear them: they describe the transcript already stored, not the
+  // run in progress. While a run is analyzing, only its own stage counts.
   const deleted =
-    meeting.original_audio_deleted || finished || failed || at >= ORDER.indexOf("masking");
+    finished ||
+    failed ||
+    at >= ORDER.indexOf("masking") ||
+    (!analyzing && meeting.original_audio_deleted);
+  const masked = !analyzing && meeting.pii_masked;
 
   return [
     {
@@ -273,7 +281,7 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     {
       label: "개인정보 마스킹 · 저장",
       detail: "전화 · 이메일 · 주민번호 · 계좌 · 카드 — 저장 전에 마스킹",
-      state: meeting.pii_masked ? "done" : state(3, 4),
+      state: masked ? "done" : state(3, 4),
       progress: progress(3, 4),
     },
     {

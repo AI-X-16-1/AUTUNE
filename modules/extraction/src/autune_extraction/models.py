@@ -1362,3 +1362,35 @@ class ExtExtractionRun(Base):
     extracted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
+
+
+class ExtExtractionAttempt(Base):
+    """What became of a meeting's extraction since it last went through
+    (``attempts``): how many times in a row it failed, and a person's request
+    to run it again.
+
+    ``failures`` counts runs that raised since the last one that did not;
+    ``tasks.retry_failed_extractions`` tries again while it is under
+    ``attempts.MAX_ATTEMPTS`` and tells the team's Slack channel once when it
+    is not (``told_at``). ``reason`` is the class of the last error and nothing
+    from it -- an exception over a meeting's rows can carry what was said.
+
+    ``requested`` is the 액션 tab's "다시 추출", waiting for the worker: the
+    API process has no broker to queue on, so the request is a row and
+    ``tasks.run_requested_extractions`` takes it. ``requested_at`` stays after
+    that, for the cooldown.
+
+    One row per meeting, deleted with the meeting. Nothing here names a person.
+    """
+
+    __tablename__ = "ext_extraction_attempts"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    failures: Mapped[int] = mapped_column(nullable=False, default=0)
+    reason: Mapped[str | None] = mapped_column(String(80))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    requested: Mapped[bool] = mapped_column(nullable=False, default=False)
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
