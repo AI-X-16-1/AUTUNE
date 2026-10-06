@@ -1172,6 +1172,13 @@ MEETING_REPORT_REVIEW_ACTION: Final = "intel_meeting_report_review"
 """The review button's ``action_id``, acknowledged in slack.py like the other."""
 
 
+class DraftChangedError(ConflictError):
+    """The draft a re-draft was proposed against is no longer the one stored."""
+
+    def __init__(self, meeting_id: str) -> None:
+        super().__init__("meeting report draft changed", meeting_id=meeting_id)
+
+
 def save_meeting_report(
     session: Session,
     meeting_id: str,
@@ -1179,6 +1186,7 @@ def save_meeting_report(
     *,
     pending_review: bool = False,
     draft_id: str | None = None,
+    expected_draft_id: str | None = None,
 ) -> IntelMeetingReport:
     """Store the meeting's report body, replacing an unsent one.
 
@@ -1191,6 +1199,11 @@ def save_meeting_report(
     one also ends every pending approval of the draft it replaced, since that
     approval names an id the row no longer holds. Intended -- the approver did
     not see this text.
+
+    ``expected_draft_id`` is a re-draft's guard (the E agent, spec section 4):
+    under the row lock the save refuses with ``DraftChangedError`` unless the
+    stored draft still carries that id and no member has edited it. Without it
+    an unposted draft is replaced, a person's edit included.
 
     **The body holds this meeting's content only.** The row is deleted with this
     meeting and nothing else, so a sentence quoted from another meeting -- a past
@@ -1222,6 +1235,10 @@ def save_meeting_report(
         session.add(row)
     elif row.sent_at is not None:
         raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    elif expected_draft_id is not None and (
+        row.draft_id != expected_draft_id or row.edited_by is not None
+    ):
+        raise DraftChangedError(meeting_id)
     else:
         row.body_markdown = body_markdown
         row.pending_review = pending_review

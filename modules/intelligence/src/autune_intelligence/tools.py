@@ -387,6 +387,7 @@ def draft_meeting_report(
     body_markdown: str,
     pending_review: bool = False,
     draft_id: str | None = None,
+    replaces_draft_id: str | None = None,
 ) -> dict[str, Any]:
     """Store a meeting's finished report as a draft -- what the Report subagent
     proposes after a meeting's analysis finishes. Nothing is posted.
@@ -397,6 +398,8 @@ def draft_meeting_report(
     when it holds personal data. ``pending_review`` adds a button to B's review
     board when the report is posted. ``draft_id`` names this draft, so a post
     approved for it is not made with a later one. Replaces an unposted draft.
+    ``replaces_draft_id`` is the draft a re-draft was proposed against; a changed
+    or member-edited draft is then left as it is (``draft changed``).
     Refused for another team's meeting, a report already posted, one over the
     length cap, or a body that still holds personal data (by category, never
     the text).
@@ -408,8 +411,15 @@ def draft_meeting_report(
         document = service.meeting_report_document(meeting, body_markdown)
         try:
             service.save_meeting_report(
-                session, meeting_id, document, pending_review=pending_review, draft_id=draft_id
+                session,
+                meeting_id,
+                document,
+                pending_review=pending_review,
+                draft_id=draft_id,
+                expected_draft_id=replaces_draft_id,
             )
+        except service.DraftChangedError:
+            return _refused("draft changed", "그사이 초안이 바뀌어 다시 만들지 않았습니다.")
         except ConflictError:
             return _refused("already posted", "이미 게시된 리포트입니다.")
         except ValidationError:
