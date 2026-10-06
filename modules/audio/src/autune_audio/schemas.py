@@ -260,6 +260,18 @@ class InvitationIssued(BaseModel):
     inviter's own grant and on Gmail, never on the address (``invitation_mail``)."""
 
 
+class PendingInvitation(BaseModel):
+    """An invitation to the team that nobody has accepted yet, as a member of
+    the team sees it: the address the inviter typed, when the link lapses and
+    who invited. Never the token or its hash, and nothing about whether the
+    address has an account."""
+
+    id: int
+    email: str
+    expires_at: datetime
+    invited_by_name: str | None = None
+
+
 class InvitationAccept(BaseModel):
     """The token from an invitation link. Any string is taken and looked up:
     one that is not a token is simply one that names no invitation, and gets
