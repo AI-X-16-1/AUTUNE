@@ -26,6 +26,10 @@ vi.mock("next/link", () => ({
 vi.mock("@/shared/api/auth", () => ({ logout: () => logout() }));
 vi.mock("@/shared/api/client", () => ({ setSignedIn: (value: boolean) => setSignedIn(value) }));
 vi.mock("./SessionGate", () => ({ useSessionUser: () => sessionUser() }));
+// Module A's menu, which reads the person's teams; its own tests are beside it.
+vi.mock("@/features/transcript", () => ({
+  TeamMenu: () => <div data-testid="team-menu" />,
+}));
 
 const ME = { id: "user_me", email: "me@example.com", display_name: "Me", teams: [] };
 
@@ -35,6 +39,17 @@ afterEach(() => {
 });
 
 const signOutButton = () => screen.queryByRole("button", { name: "로그아웃" });
+
+describe("AppSidebar, the team", () => {
+  it("carries the team menu above the screens' own menu", () => {
+    sessionUser.mockReturnValue(ME);
+    render(<AppSidebar />);
+
+    const menu = screen.getByTestId("team-menu");
+    const nav = screen.getByRole("navigation", { name: "주요 메뉴" });
+    expect(menu.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
 
 describe("AppSidebar, signing out", () => {
   it("offers 로그아웃 under the signed-in person's name", () => {

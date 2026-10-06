@@ -9,6 +9,8 @@ import { logout } from "@/shared/api/auth";
 import { setSignedIn } from "@/shared/api/client";
 import { Button } from "@/shared/ui";
 
+import { TeamMenu } from "@/features/transcript";
+
 import { useSessionUser } from "./SessionGate";
 
 /**
@@ -111,6 +113,9 @@ export function AppSidebar() {
         <span aria-hidden className="rounded-full bg-[var(--color-accent-on-accent)]" style={{ width: 8, height: 8 }} />
         회의 시작
       </Link>
+
+      {/* Which team the team-level screens are about; every one of them follows it. */}
+      <TeamMenu />
 
       <nav aria-label="주요 메뉴" className="flex flex-col">
         {NAV.map((item) => (

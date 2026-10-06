@@ -17,25 +17,44 @@ type Team = SessionUser["teams"][number];
 /**
  * S28, 설정 › 연동 (#496): every connection in one place, with no meeting to
  * name the team. The person's own (Google Calendar) comes first; the team's
- * (Slack workspace, Jira, Notion) follow for the team chosen here -- the first
- * by default, a choice when they belong to several. The person's own Slack
+ * (Slack workspace, Jira, Notion) follow for the team chosen here -- the one
+ * chosen elsewhere in the app when the route passes it (`chosenTeamId`), else
+ * the first; a choice when they belong to several, which the route is told
+ * (`onChooseTeam`). The feature that keeps the choice is module A's, and a
+ * feature does not import another: the route joins the two. The person's own Slack
  * link (DM 받기) is under the team's Slack, shown once that is connected. Any
  * member may connect a team's integration: there is no admin role yet (#592).
  *
  * The same components the 액션 tab shows, given the team instead of a meeting;
  * the server checks membership either way.
  */
-export function IntegrationSettingsScreen() {
+export function IntegrationSettingsScreen({
+  chosenTeamId = null,
+  onChooseTeam,
+}: {
+  /** The team chosen elsewhere in the app, when the route knows one. */
+  chosenTeamId?: string | null;
+  /** Told when a team is picked here, so the rest of the app can follow. */
+  onChooseTeam?: (teamId: string) => void;
+} = {}) {
   const [teams, setTeams] = useState<Team[] | null>(null);
-  const [teamId, setTeamId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  // The team picked here, else the one chosen elsewhere while it is one of
+  // this person's, else the first. Derived, so a choice made in the sidebar
+  // while this screen is open moves it without an effect.
+  const mine = teams ?? [];
+  const known = (id: string | null) => (id !== null && mine.some((t) => t.id === id) ? id : null);
+  const teamId = known(picked) ?? known(chosenTeamId) ?? mine[0]?.id ?? null;
+  const setTeamId = (id: string) => {
+    setPicked(id);
+    onChooseTeam?.(id);
+  };
 
   useEffect(() => {
     let alive = true;
     void getSession().then((user) => {
       if (!alive) return;
-      const mine = user?.teams ?? [];
-      setTeams(mine);
-      setTeamId((current) => current ?? mine[0]?.id ?? null);
+      setTeams(user?.teams ?? []);
     });
     return () => {
       alive = false;
