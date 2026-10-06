@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { Wordmark } from "@/shared/ui";
+
 import { SignInCard } from "./SignInCard";
 
 /**
@@ -27,11 +29,8 @@ export default function LoginPage() {
         className="flex items-center border-b border-hairline"
         style={{ height: "var(--space-topbar)", paddingInline: "var(--space-page)" }}
       >
-        <span
-          className="text-ink-strong"
-          style={{ fontSize: "var(--text-heading)", fontWeight: "var(--text-heading-weight)" }}
-        >
-          AUTUNE
+        <span className="text-ink-strong">
+          <Wordmark height={20} />
         </span>
       </header>
 

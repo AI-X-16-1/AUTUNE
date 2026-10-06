@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { Wordmark } from "@/shared/ui";
+
 import { getMeeting } from "../api";
 import { timecode } from "../format";
 import type { RecordingState } from "../types";
@@ -37,12 +39,8 @@ export function LiveTopBar({
       className="flex flex-none items-center border-b border-[var(--color-hairline)] bg-[var(--color-surface-panel)]"
       style={{ height: "var(--space-topbar)", padding: "0 var(--space-24)", gap: 14 }}
     >
-      <Link
-        href="/"
-        className="text-[var(--color-ink-strong)]"
-        style={{ fontSize: "var(--control-text-default)", fontWeight: 700, letterSpacing: "0.04em" }}
-      >
-        AUTUNE
+      <Link href="/" className="text-[var(--color-ink-strong)]">
+        <Wordmark height={18} />
       </Link>
       <span aria-hidden style={{ width: 1, height: 20, background: "var(--color-hairline)" }} />
       <div className="min-w-0">
