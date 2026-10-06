@@ -338,10 +338,8 @@ person's own grant (it goes with the account), and on a meeting's expiry by a
 queued job, so a slow calendar never holds up the sweep. Both are best effort:
 an account deletion does not wait on Google, so if Google does not answer an
 event can remain on that calendar, and Autune's record of it goes with the
-account anyway. **Module C's S20 calendar writes do not meet this yet**
-(#824): a question event and an agenda line stay on the calendar when the
-meeting or the account goes -- see "Google Calendar, S20's two buttons" in
-section 6.
+account anyway. Module C's agenda lines on a person's own calendar follow
+the same rule -- see "Google Calendar, S20's 다음 회의 잡기" in section 6.
 
 ## 5. Consent
 
@@ -477,7 +475,7 @@ the feature needs.
     person who connected Google Calendar is not sent the morning DM or
     Monday's DM while that calendar marks them out of office. This is one of
     two reads of a person's calendar that are not of Autune's own events
-    (the other is C's event picker, "Google Calendar, S20's two buttons"
+    (the other is C's event picker, "Google Calendar, S20's 다음 회의 잡기"
     below), and it is narrowed at Google twice: out-of-office events only
     (`eventTypes=outOfOffice`), and their start and end only -- no title, no
     description, no attendee, no other event is requested or returned. It
@@ -517,61 +515,53 @@ the feature needs.
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
-  - **Google Calendar, S20's two buttons (module C, #824):** each write goes
-    through one person's own Google Calendar grant (`user_integrations`) and
+  - **Google Calendar, S20's 다음 회의 잡기 (module C, #824):** the presser's
+    own calendar only, with their own grant (`user_integrations`). A line
     carries a gap's title and suggested question -- both stored masked -- and
     the gap's id; never an utterance, a score, or anything from the
-    participation matrix (section 3).
-    - *"다음 회의 잡기" reads the presser's own events.* So that they can pick
-      the next meeting, C lists the timed, uncancelled events on the
-      presser's own calendar for the next 14 days and returns each one's id,
-      title, start and end to that person only
+    participation matrix (section 3). Settled with mkkim68 on #824:
+    - *Nobody else's calendar.* S20's "담당자 지정해 질문" does not write to the
+      teammate's calendar: one person's grant is for their own work only
+      (#435's rule), and a question picked by somebody else is not. It is to
+      come as a mention on the team channel's card; until then the button is
+      disabled.
+    - *The picker reads four fields.* So that the presser can pick the next
+      meeting, C lists the timed, uncancelled events on their own calendar
+      for the next 14 days, asking Google for each event's id, title, start,
+      end and status only (`fields`), and returns them to that person only
       (`GET /api/gap/agenda/{meeting_id}/events`). Unlike the out-of-office
       read above, this one returns event titles, and a title can name other
-      people. The request is not narrowed at Google: the whole event --
-      description, attendees and place included -- reaches Autune's process,
-      and C keeps the four fields above and drops the rest. Nothing of it is
-      stored; the log line holds the count. Without a pick, C looks only at
-      the events starting within five minutes of the team's next scheduled
-      meeting, to find that meeting's event.
-    - *It then edits that event's description.* C reads the description the
-      event already has, adds one line per gap sent -- the meeting's open
-      gaps, or the one gap of "다음 회의 어젠다로" -- as
-      `[Autune 갭] <title> — <question> (<gap id>)`, and writes the whole
-      description back. The existing description passes through Autune's
+      people. Nothing of it is stored; the log line holds the count. Without a
+      pick, C looks only at events starting within five minutes of the team's
+      next scheduled meeting, to find that meeting's event.
+    - *The write reads the description and the guest list.* C asks the picked
+      event for its description and its attendees' addresses only, adds one
+      line per gap (`[Autune 갭] <title> — <question> (<gap id>)`), and writes
+      the description back. The existing description passes through Autune's
       server for that request and goes through the outbound check with the
       rest of the body, so an event whose description already holds what the
-      check refuses is not written, and the screen says the calendar
-      failed. Neither the description nor the event's title is stored or
-      logged. Taking a gap back removes its line the same way. No other
-      field of the event is changed -- but Google shows a description to
-      everyone the event is shared with, so the event's attendees,
-      people outside the team included, see the lines too.
-    - *"담당자 지정해 질문" writes to a teammate's calendar.* A member picks
-      one person on the meeting's team by hand, and C creates an all-day
-      event on **that person's** calendar with **that person's** grant:
-      `[질문] <gap title>`, the question and a footer; no attendees, so
-      nobody is sent an invitation; Autune's tag and the gap id in its
-      private properties. `gap_questions` keeps the gap, the person asked,
-      the day and the event id -- never who pressed the button -- and goes
-      with the gap (and so the meeting) and with the person asked. It is the
-      one place where one person's action writes to another person's
-      calendar: B puts an item on its assignee's calendar only once the
-      assignee holds it. **Whether a personal grant may be used this way is
-      open on #824** (mkkim68, review of #872). Until that is answered this
-      paragraph describes the code; it is not an approval of it.
-    - *The picker shows who has a calendar.* `GET /api/gap/gaps/{gap_id}/ask`
-      lists the meeting's team by name, with whether each person has
-      connected Google Calendar and whether they were already asked about
-      this gap. Every member of the team sees it.
-    - *Deletion: neither write is removed yet,* which falls short of
-      section 4's rule for a person's own calendar. A question event stays on
-      the asked person's calendar when the gap, the meeting or either account
-      is deleted, or the meeting expires; `gap_questions` goes with them, so
-      Autune loses its record of the event as well. An agenda line stays in
-      the event's description unless the gap is taken back first. A deletion
-      hook that removes question events with the person's own grant, as B's
-      user hook does, is the follow-up.
+      check refuses is not written. Neither the description nor the addresses
+      are stored or logged.
+    - *Not onto an event shared outside the team.* Google shows a description
+      to everyone on the event, so an event with an attendee who is not on the
+      meeting's team is refused (`external_attendees`) and the screen says
+      why. Meeting rooms and the presser do not count. A guest list Google
+      hides from the presser cannot be checked, and a guest invited after the
+      line was written sees it until it is taken out.
+    - *Every line is recorded, and comes out again.* `gap_agenda_events` keeps
+      the meeting, the gap, whose calendar and which event -- the calendar's
+      owner is also who pressed, kept because the line can only be removed
+      with their grant, as B keeps an item's assignee; no screen, route or
+      tool reads it. Taking a gap back removes its line and its record. A
+      meeting deleted or expired has its records copied to
+      `gap_agenda_cleanup` by C's meeting hook, and the worker takes the lines
+      out with each owner's grant (`drain_agenda_cleanup`, every ten minutes,
+      five tries). A deleted account has its lines taken out at once by C's
+      user hook, before the grant goes. A person deleting their own speech
+      (#587) resets a question that named their words, and that gap's lines
+      are queued to come out the same way. All best effort, as section 4
+      says: a refused grant, an unreachable Google or a description the
+      outbound check refuses leaves the line on the calendar, logged.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,

@@ -12,7 +12,7 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, nulls_last, select
@@ -30,7 +30,6 @@ from autune_core import (
     ids,
     new_id,
     session_scope,
-    users_with_integration,
 )
 from autune_core.deletion import on_speech_deleted
 from autune_core.errors import NotFoundError, PrivacyViolationError, ValidationError
@@ -42,7 +41,6 @@ from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
-    GapQuestion,
     GapRelatedTopic,
     GapScoring,
     GapTopic,
@@ -59,9 +57,6 @@ from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
     GapAgendaEvents,
-    GapAsk,
-    GapAskTarget,
-    GapAskTargets,
     GapCalendarEvent,
     GapCarry,
     GapDismissal,
@@ -874,68 +869,6 @@ def carry_meeting_on_calendar(
     return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome)
 
 
-def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:
-    """Who on the gap's team the question can go to, by name, with whether
-    each has a calendar connected and was already asked about this gap."""
-    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
-    members = session.execute(
-        select(User.id, User.display_name)
-        .join(TeamMember, TeamMember.user_id == User.id)
-        .where(TeamMember.team_id == meeting.team_id)
-        .order_by(User.display_name, User.id)
-    ).all()
-    connected = set(users_with_integration(session, calendar_writes.CALENDAR))
-    asked = set(session.scalars(select(GapQuestion.user_id).where(GapQuestion.gap_id == row.id)))
-    return GapAskTargets(
-        gap_id=row.id,
-        members=[
-            GapAskTarget(
-                user_id=user_id,
-                name=name,
-                calendar_connected=user_id in connected,
-                asked=user_id in asked,
-            )
-            for user_id, name in members
-        ],
-    )
-
-
-def ask(
-    session: Session, gap_id: str, reader: User, *, user_id: str, day: date | None = None
-) -> GapAsk:
-    """Put the gap's question on one teammate's calendar -- "담당자 지정해
-    질문" on S20 (#824).
-
-    The person is chosen by hand and must be on the meeting's team. Asking the
-    same person twice makes no second event. Nothing is stored unless the
-    event was made, so a person who connects their calendar later can be asked
-    again. Who asked is not stored or logged.
-    """
-    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
-    if not _is_team_member(session, user_id=user_id, team_id=meeting.team_id):
-        raise ValidationError("the person asked must be on the meeting's team", field="user_id")
-
-    existing = session.scalar(
-        select(GapQuestion.id).where(GapQuestion.gap_id == row.id, GapQuestion.user_id == user_id)
-    )
-    if existing is not None:
-        return GapAsk(gap_id=row.id, user_id=user_id, outcome="already_asked")
-
-    when = day or calendar_writes.next_working_day(datetime.now(UTC).date())
-    outcome, calendar_id, event_id = calendar_writes.ask_on_calendar(
-        session, row, user_id=user_id, day=when
-    )
-    if outcome == "added" and calendar_id is not None and event_id is not None:
-        session.add(
-            GapQuestion(
-                gap_id=row.id, user_id=user_id, day=when, calendar_id=calendar_id, event_id=event_id
-            )
-        )
-        session.flush()
-    log.info("gap_question_set", gap_id=row.id, meeting_id=row.meeting_id, outcome=outcome)
-    return GapAsk(gap_id=row.id, user_id=user_id, outcome=outcome)
-
-
 @dataclass(frozen=True)
 class SpeechForgotten:
     """What ``forget_speech`` changed: ids and counts, never a label."""
@@ -943,6 +876,9 @@ class SpeechForgotten:
     meetings: tuple[str, ...]
     topics_deleted: int
     questions_reset: int
+    reset_gaps: tuple[str, ...] = ()
+    """The gaps whose question named a label that is gone: their lines on
+    anybody's calendar quote it, and are taken out (``calendar_writes``)."""
 
 
 def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgotten:
@@ -1011,7 +947,10 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
     session.execute(delete(GapTopic).where(GapTopic.id.in_(orphaned)))
     session.flush()
     return SpeechForgotten(
-        meetings=meetings, topics_deleted=len(topics), questions_reset=len(reset)
+        meetings=meetings,
+        topics_deleted=len(topics),
+        questions_reset=len(reset),
+        reset_gaps=tuple(sorted(reset)),
     )
 
 
@@ -1046,6 +985,10 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
     """
     with session_scope() as session:
         done = forget_speech(session, utterance_ids)
+        # A line on somebody's calendar quotes the old question: it is taken
+        # out by the worker with that person's grant, not rewritten here, so
+        # the deletion never waits on Google (privacy.md section 4).
+        lines = calendar_writes.queue_gap_lines(session, done.reset_gaps)
     try:
         for meeting_id in done.meetings:
             enqueue_publish_report(meeting_id)
@@ -1058,6 +1001,7 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         meetings=len(done.meetings),
         topics_deleted=done.topics_deleted,
         questions_reset=done.questions_reset,
+        calendar_lines_queued=lines,
     )
 
 

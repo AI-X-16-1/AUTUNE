@@ -884,11 +884,14 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
-| PostgreSQL `gap_questions` | A gap's question put on one teammate's Google Calendar by hand (S20 "담당자 지정해 질문", #824): who was asked and the event, never who asked |
+| PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again. Read by nothing but the cleanup |
+| PostgreSQL `gap_agenda_cleanup` | Lines of a deleted or expired meeting still to take off their owners' calendars, drained by the worker. Keyed by the owner, not the meeting |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
-Everything that exists cascades from `meetings.id`, so no meeting or user
-deletion hook is needed.
+Everything that exists cascades from `meetings.id` (or, for the agenda tables,
+from `users.id` as well). The one thing outside the database is a gap's line
+on a person's own calendar, so C registers a meeting hook and a user hook that
+take those lines out (`calendar_writes`, privacy.md section 6).
 
 **A person deleting their own speech is the exception (#587).** A topic's
 `label` is a span cut from an utterance and a gap's `suggested_question` names

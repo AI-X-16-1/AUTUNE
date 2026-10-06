@@ -3,8 +3,6 @@ import { api } from "@/shared/api/client";
 
 import type {
   GapAgendaEvents,
-  GapAsk,
-  GapAskTargets,
   GapMeetingCarry,
   GapDismissal,
   GapExplanations,
@@ -109,22 +107,6 @@ export const carryMeeting = (meetingId: string, eventId: string) =>
   api.gap<GapMeetingCarry>(`/agenda/${meetingId}`, {
     method: "POST",
     body: JSON.stringify({ event_id: eventId }),
-  });
-
-/**
- * Who "담당자 지정해 질문" can go to: the gap's team by name, whether each has a
- * Google Calendar connected, and whether they were already asked.
- */
-export const getAskTargets = (gapId: string) => api.gap<GapAskTargets>(`/gaps/${gapId}/ask`);
-
-/**
- * "담당자 지정해 질문": put the gap's question on one teammate's Google Calendar
- * as an all-day event with no attendees (#824). No day means the next working day.
- */
-export const askGap = (gapId: string, userId: string) =>
-  api.gap<GapAsk>(`/gaps/${gapId}/ask`, {
-    method: "POST",
-    body: JSON.stringify({ user_id: userId }),
   });
 
 /**
