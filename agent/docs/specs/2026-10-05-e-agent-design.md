@@ -176,8 +176,8 @@ name (`subagents.py`); anything else is chat.
 - **When L1 fails after the answer:**
   - The answer is written before L1 runs. It says what was *requested*
     ("요청했습니다"), never that it is done ("바꿨습니다").
-  - Whether the chat reply also shows the L1 result recorded in
-    `agent_runs.actions` is `main/`'s; confirm with 김민경 (section 7).
+  - The chat reply counts the L1 that worked (`ChatReply.executed`); showing
+    one that failed is asked for in #862 (section 7).
 - **Failure:**
   - A failed tool: the answer says that part could not be fetched.
   - A model error: one apology line and the dashboard link.
@@ -337,12 +337,16 @@ implementation and are recorded in `docs/modules/intelligence.md`.
 
 ## 7. Delivery
 
-0. **An issue to 김민경** (Korean, the owner confirms before it is opened):
+0. **#862 to 김민경** (opened 2026-10-06):
    - fill an action's asker from the scope in `run_action`
    - supersede by the proposal's meeting in a team-scoped run
-   - whether a chat reply shows L1's result
+   - show a failed L1 in the chat reply (S34 shows only `executed`)
 
-   Steps 1 to 3 do not wait for it. Only the chat schedule change does.
+   Steps 1 to 3 do not wait for it. Only the chat schedule change does. The
+   workarounds live in one place in `chat.py`: the list of actions the chat
+   path declares (without `set_weekly_report_schedule`) and one
+   meeting-scope check before a post is proposed. Lifting them once #862
+   lands is a few lines and their tests.
 1. **E's tools and the glossary** (module E, plus `agent-layer.md` section 4),
    with `expected_draft_id`. #821, which this needed, is merged.
 2. **The chat path** (`subagents/report/`, plus `agent-layer.md` section 3.1).
