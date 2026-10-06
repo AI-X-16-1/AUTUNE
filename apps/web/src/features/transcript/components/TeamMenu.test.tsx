@@ -22,10 +22,23 @@ vi.mock("next/navigation", () => ({
 const list = vi.fn<() => Promise<TeamSummary[]>>();
 const pin = vi.fn<(teamId: string) => Promise<TeamSummary[]>>();
 const unpin = vi.fn<(teamId: string) => Promise<TeamSummary[]>>();
+const create = vi.fn<(body: { name: string; role?: string }) => Promise<TeamSummary>>();
+const invite =
+  vi.fn<
+    (teamId: string, email: string, mail?: boolean) => Promise<{ token: string; expires_at: string }>
+  >();
 vi.mock("../api", () => ({
   listTeams: () => list(),
   pinTeam: (teamId: string) => pin(teamId),
   unpinTeam: (teamId: string) => unpin(teamId),
+  createTeam: (body: { name: string; role?: string }) => create(body),
+  inviteToTeam: (teamId: string, email: string, mail?: boolean) => invite(teamId, email, mail),
+}));
+// The invite control asks whether the person has connected Gmail; here they have not.
+vi.mock("@/shared/api/auth", () => ({
+  getGmailConnection: () => Promise.resolve(null),
+  googleGmailConnectUrl: () => "",
+  disconnectGmail: vi.fn(),
 }));
 
 const A: TeamSummary = { team_id: "team_a", name: "가 팀", pinned: false };
@@ -46,7 +59,9 @@ const chosen = () =>
   sidebarTeams()
     .filter((b) => b.getAttribute("aria-pressed") === "true")
     .map((b) => b.textContent);
-const more = () => menu().querySelector('button[aria-haspopup="dialog"]') as HTMLButtonElement | null;
+const more = () => menu().querySelector('button[aria-label="팀 더보기"]') as HTMLButtonElement | null;
+const plus = () => screen.getByRole("button", { name: "새 팀 만들기" }) as HTMLButtonElement;
+const maker = () => screen.queryByRole("dialog", { name: "새 팀 만들기" });
 const inWindow = () =>
   [...(win()?.querySelectorAll("button[aria-pressed]") ?? [])].map((b) => b.textContent);
 const windowEntry = (name: string) =>
@@ -74,7 +89,8 @@ function open(teams: TeamSummary[], withScreen = false) {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
-  for (const mock of [list, pin, unpin, push]) mock.mockReset();
+  for (const mock of [list, pin, unpin, push, create, invite]) mock.mockReset();
+  vi.unstubAllGlobals();
   pathname.mockImplementation(() => "/");
   vi.restoreAllMocks();
 });
@@ -140,7 +156,10 @@ describe("TeamMenu", () => {
     open([A]);
 
     expect(await screen.findByText("가 팀")).toBeTruthy();
-    expect(screen.queryByRole("button")).toBeNull();
+    // No team to press and no "더보기"; only the way to make another team.
+    expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+      "새 팀 만들기",
+    ]);
   });
 
   it("shows nothing to somebody on no team, or when the list cannot be read", async () => {
@@ -274,7 +293,7 @@ describe("TeamMenu, 더보기", () => {
       this: HTMLElement,
     ) {
       if (this.tagName === "ASIDE") return rect(200, 0);
-      if (this.hasAttribute("aria-haspopup")) return rect(181, 249);
+      if (this.getAttribute("aria-label") === "팀 더보기") return rect(181, 249);
       return rect(0, 0);
     });
     list.mockResolvedValue([A, B, C, D, E]);
@@ -296,7 +315,9 @@ describe("TeamMenu, 더보기", () => {
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
       this: HTMLElement,
     ) {
-      return this.hasAttribute("aria-haspopup") ? rect(181, window.innerHeight - 20) : rect(0, 0);
+      return this.getAttribute("aria-label") === "팀 더보기"
+        ? rect(181, window.innerHeight - 20)
+        : rect(0, 0);
     });
     open([A, B, C, D, E]);
     await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
@@ -442,4 +463,163 @@ describe("TeamMenu, inside a meeting", () => {
       expect(push).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("TeamMenu, making a team", () => {
+  // The user, 2026-10-06: "사이드바에 팀 옆에 + 버튼으로 팀생성하면서 구성원들에게
+  // 메일을 보내거나 초대링크를 생성하게 작은 화면 띄워줘".
+  const NEW: TeamSummary = { team_id: "team_new", name: "새 프로젝트", pinned: false };
+  const typeName = (value: string) =>
+    fireEvent.change(screen.getByLabelText("팀 이름"), { target: { value } });
+  const makeButton = () => screen.getByRole("button", { name: "팀 만들기" }) as HTMLButtonElement;
+
+  it("opens a small window over the page from + beside the heading", async () => {
+    open([A, B]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
+    expect(maker()).toBeNull();
+
+    fireEvent.click(plus());
+
+    expect((maker() as HTMLElement).style.position).toBe("fixed");
+    expect(plus().getAttribute("aria-expanded")).toBe("true");
+    expect(makeButton().disabled).toBe(true);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("makes the team, shows it as the team on show, and goes on to inviting", async () => {
+    create.mockResolvedValue(NEW);
+    open([A, B], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    fireEvent.click(plus());
+    list.mockResolvedValue([A, B, NEW]);
+
+    typeName("  새 프로젝트 ");
+    fireEvent.click(screen.getByRole("button", { name: "Design" }));
+    fireEvent.click(makeButton());
+
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "새 프로젝트 팀을 만들었습니다",
+    );
+    expect(create).toHaveBeenCalledExactlyOnceWith({ name: "새 프로젝트", role: "Design" });
+    // The lists read again, and the new team is the one being looked at.
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "새 프로젝트"]));
+    expect(chosen()).toEqual(["새 프로젝트"]);
+    expect(shown()).toBe("team_new");
+    expect(window.localStorage.getItem("autune.team")).toBe("team_new");
+    // The same invite control as S02 and 설정 › 구성원, for the new team.
+    expect(screen.getByLabelText("초대할 이메일 주소")).toBeTruthy();
+  });
+
+  it("sends no role when none is picked", async () => {
+    create.mockResolvedValue(NEW);
+    open([A, B]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
+    fireEvent.click(plus());
+
+    typeName("새 프로젝트");
+    fireEvent.click(makeButton());
+
+    await screen.findByRole("status");
+    expect(create).toHaveBeenCalledExactlyOnceWith({ name: "새 프로젝트" });
+  });
+
+  it("does not make a team from a name that is too short", async () => {
+    open([A, B]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
+    fireEvent.click(plus());
+
+    typeName("가");
+
+    expect(screen.getByRole("alert").textContent).toContain("2~40자");
+    expect(makeButton().disabled).toBe(true);
+    fireEvent.submit(screen.getByLabelText("팀 이름"));
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("says so when the team could not be made, and stays on the form", async () => {
+    create.mockRejectedValue(new Error("이미 같은 이름의 팀이 있습니다."));
+    open([A, B]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
+    fireEvent.click(plus());
+
+    typeName("새 프로젝트");
+    fireEvent.click(makeButton());
+
+    expect((await screen.findByRole("alert")).textContent).toContain("이미 같은 이름의 팀");
+    expect(screen.getByLabelText("팀 이름")).toBeTruthy();
+    expect(names()).toEqual(["가 팀", "나 팀"]);
+  });
+
+  it("makes an invitation link for the new team from the same window", async () => {
+    create.mockResolvedValue(NEW);
+    invite.mockResolvedValue({ token: "tok", expires_at: "2026-10-13T03:00:00Z" });
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: () => Promise.resolve() } });
+    open([A, B]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
+    fireEvent.click(plus());
+    typeName("새 프로젝트");
+    fireEvent.click(makeButton());
+    await screen.findByRole("status");
+
+    fireEvent.change(screen.getByLabelText("초대할 이메일 주소"), {
+      target: { value: "newcomer@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "초대 링크 복사" }));
+
+    await waitFor(() => expect(invite).toHaveBeenCalledTimes(1));
+    expect(invite.mock.calls[0]?.slice(0, 2)).toEqual(["team_new", "newcomer@example.com"]);
+    // Still open: more people can be invited.
+    expect(maker()).not.toBeNull();
+  });
+
+  it("closes on 완료, on 닫기, on Escape and on a press outside", async () => {
+    create.mockResolvedValue(NEW);
+    open([A, B], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    fireEvent.click(plus());
+    fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+    expect(maker()).toBeNull();
+
+    fireEvent.click(plus());
+    fireEvent.mouseDown(maker() as HTMLElement);
+    expect(maker()).not.toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(maker()).toBeNull();
+
+    fireEvent.click(plus());
+    fireEvent.mouseDown(screen.getByTestId("shown"));
+    expect(maker()).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+
+    fireEvent.click(plus());
+    typeName("새 프로젝트");
+    fireEvent.click(makeButton());
+    await screen.findByRole("status");
+    fireEvent.click(screen.getByRole("button", { name: "완료" }));
+    expect(maker()).toBeNull();
+  });
+
+  it("has only one of the two windows open at a time", async () => {
+    open([A, B, C, D]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
+
+    fireEvent.click(more() as HTMLButtonElement);
+    expect(win()).not.toBeNull();
+    fireEvent.click(plus());
+    expect(win()).toBeNull();
+    expect(maker()).not.toBeNull();
+
+    fireEvent.click(more() as HTMLButtonElement);
+    expect(maker()).toBeNull();
+    expect(win()).not.toBeNull();
+  });
+
+  it("is offered to somebody on one team", async () => {
+    open([A]);
+
+    expect(await screen.findByText("가 팀")).toBeTruthy();
+    fireEvent.click(plus());
+    expect(maker()).not.toBeNull();
+  });
 });

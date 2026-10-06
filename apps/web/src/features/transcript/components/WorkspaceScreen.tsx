@@ -27,7 +27,8 @@ import { TeamInvite } from "./TeamInvite";
  * analytics only (the gap heatmap, role summaries), never anything per person.
  */
 
-const ROLES = ["PM", "Backend", "Frontend", "Design", "Data", "Biz"] as const;
+/** The S02 role chips; the sidebar's small window offers the same ones. */
+export const ROLES = ["PM", "Backend", "Frontend", "Design", "Data", "Biz"] as const;
 
 const INPUT =
   "w-full rounded-[var(--radius)] bg-[var(--color-surface-panel)] px-3 text-[var(--color-ink-strong)] focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]";
