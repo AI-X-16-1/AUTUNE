@@ -13,6 +13,7 @@ import {
 } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
+import { NEW_TEAM_ROWS, NewTeamWindow } from "./NewTeamWindow";
 import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
 
 /**
@@ -53,6 +54,12 @@ import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
  * screen showing that team (`/?team=`). The team already marked does nothing
  * new, as before.
  *
+ * **"+" beside the heading makes a team** (the user: "팀 옆에 + 버튼으로
+ * 팀생성하면서 구성원들에게 메일을 보내거나 초대링크를 생성하게 작은 화면").
+ * It opens `NewTeamWindow` -- S02's two steps in a window -- for anybody who
+ * has this menu, a person on one team included. Only one of the two windows
+ * is open at a time.
+ *
  * Not on "회의 시작" (`/meetings/new`): a recording or an upload may be in
  * progress there, and a press in the sidebar must not drop it. There the
  * choice changes and the page stays, as it did. Whether to ask first and go
@@ -71,9 +78,11 @@ export function TeamMenu() {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
   const [at, setAt] = useState<Place | null>(null);
+  const [making, setMaking] = useState<Place | null>(null);
   const pathname = usePathname();
   const router = useRouter();
   const control = useRef<HTMLButtonElement>(null);
+  const plus = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let current = true;
@@ -94,15 +103,43 @@ export function TeamMenu() {
   useEffect(() => onTeamsChanged<TeamSummary>(setTeams), []);
 
   const close = useCallback(() => setAt(null), []);
+  const closeMaking = useCallback(() => setMaking(null), []);
 
   if (teams.length === 0) return null;
 
   const heading = (
     <div
-      className="text-[var(--color-ink-muted)]"
+      className="flex items-center justify-between text-[var(--color-ink-muted)]"
       style={{ fontSize: "var(--text-metaSmall)", fontWeight: 600, padding: "2px 0 4px" }}
     >
-      팀
+      <span>팀</span>
+      <button
+        ref={plus}
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={making !== null}
+        aria-label="새 팀 만들기"
+        onClick={() => {
+          setAt(null);
+          setMaking((open) =>
+            open === null && plus.current ? besideSidebar(plus.current, NEW_TEAM_ROWS) : null,
+          );
+        }}
+        className="hover:text-[var(--color-ink-strong)]"
+        // A 12px glyph is too small a thing to press: the padding makes it
+        // 24px, and the negative margin keeps the heading's own height.
+        style={{
+          fontSize: "var(--control-text-default)",
+          lineHeight: 1,
+          padding: "6px 7px",
+          margin: "-6px -7px",
+        }}
+      >
+        +
+      </button>
+      {making !== null ? (
+        <NewTeamWindow at={making} opener={plus} onClose={closeMaking} />
+      ) : null}
     </div>
   );
   const text = { fontSize: "var(--control-text-default)", fontWeight: 500 } as const;
@@ -156,11 +193,12 @@ export function TeamMenu() {
         aria-expanded={at !== null}
         aria-controls="teams-window"
         aria-label="팀 더보기"
-        onClick={() =>
+        onClick={() => {
+          setMaking(null);
           setAt((open) =>
             open === null && control.current ? besideSidebar(control.current, teams.length) : null,
-          )
-        }
+          );
+        }}
         className="text-left text-[var(--color-ink-muted)] hover:text-[var(--color-ink-strong)]"
         style={{ fontSize: "var(--text-metaSmall)", fontWeight: 500, padding: "6px 0" }}
       >
