@@ -74,7 +74,7 @@ Section 3.1's row and section 4's E row change in the same PR as the code.
 | Weekly reports | "지난주 주간 리포트 보여줘" | read | new `weekly_reports`: latest bodies and whether each went out |
 | The weekly schedule | "주간 리포트 언제 나가?" | read | new `weekly_report_schedule` |
 | What a metric means, how it is computed | "결정 밀도가 뭐야?", "왜 C등급이야?" | read | new `explain_metric` (section 5) |
-| Change the weekly schedule | "주간 리포트 금요일 6시로 바꿔줘" | **L1** | new `set_weekly_report_schedule`, recorded under the person who asked; offered in chat once `main/` fills the asker for actions (section 4) |
+| Change the weekly schedule | "주간 리포트 금요일 6시로 바꿔줘" | **L1** | new `set_weekly_report_schedule`, recorded under the person who asked; offered in chat since #874 (section 4; "Changes during implementation", 15) |
 | Re-draft a meeting's report before it is posted | "최신 수치로 다시 써줘" | L1 | have `draft_meeting_report`, through the template (section 4) |
 | Ask again for a report's post | "리포트 올려줘" | **L2** | have `publish_meeting_report` |
 | Ask again for a correction's post | "정정 올려줘" | **L2** | have `publish_meeting_report_correction`, only for a correction a person wrote on the dashboard |
@@ -163,7 +163,9 @@ name (`subagents.py`); anything else is chat.
   - The chat path does not declare `user_id` to the model, so the model has no
     slot to fill.
   - **Until that lands,** the schedule change is not offered in chat. The
-    agent shows the current schedule and links the dashboard card.
+    agent shows the current schedule and links the dashboard card. *(Landed
+    as #874; the chat path offers it as `set_schedule`. See "Changes during
+    implementation", 15.)*
 - **Posting from the team view** (and, per "Changes during implementation", 10,
   not only there):
   - `queue_l2` supersedes a subagent's earlier proposals by the **run's**
@@ -353,7 +355,8 @@ the measurement kept BM25; see "Changes during implementation", 4 and 7.)*
    workarounds live in one place in `chat.py`: the list of actions the chat
    path declares (without `set_weekly_report_schedule`) and one
    meeting-scope check before a post is proposed. Lifting them once #862
-   lands is a few lines and their tests.
+   lands is a few lines and their tests. *(Request 1 landed as #874 and the
+   schedule change is lifted; requests 2 and 3 are open, with #879.)*
 1. **E's tools and the glossary** (module E, plus `agent-layer.md` section 4),
    with `expected_draft_id`. #821, which this needed, is merged. *(Built as
    the plan's Tasks 1 to 7; see "Changes during implementation", 9.)*
@@ -465,3 +468,11 @@ The sections above are left as designed; each affected one points here.
     failed read (`NO_MEETING` for `redraft`, meeting not found, or any read
     that raised) or a failed compose leaves the retry open. For
     `request_post`, `NO_MEETING` is the team-view redirect, which is terminal.
+15. **The schedule change in chat (section 4, after #874).** `run_action` now
+    pins an action's `user_id` to the run's asker, so the chat path declares
+    `set_schedule(weekday, hour, send_empty?)` and proposes
+    `set_weekly_report_schedule` at L1. The declaration has no `user_id` or
+    `team_id`. A value out of range goes back to the model to correct and is
+    not reported as a missing part; if no call ever fits, the reply asks for a
+    weekday and an hour 0-23. The reply spells out 오전/오후, because "6시"
+    may mean either and the model picks one.
