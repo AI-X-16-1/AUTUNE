@@ -30,15 +30,17 @@ def _report(db_session: Session, team: str, title: str, held: datetime, draft: s
 
 
 def test_meeting_reports_filters_by_korean_date(db_session: Session, team: str) -> None:
-    """23:30 KST on the 5th is the 5th, though it is the 5th 14:30 UTC (Review Focus 1)."""
-    late = _report(
-        db_session, team, "늦은 회의", datetime(2026, 10, 5, 23, 30, tzinfo=KST), "rdr_a"
-    )
-    _report(db_session, team, "다음날 회의", datetime(2026, 10, 6, 9, 0, tzinfo=KST), "rdr_b")
+    """UTC and KST disagree on both meetings (Review Focus 1).
+
+    08:00 KST on the 5th is 23:00Z on the 4th: in the 5th by Korean date, not by UTC.
+    00:30 KST on the 6th is 15:30Z on the 5th: in the 6th by Korean date, not by UTC.
+    """
+    early = _report(db_session, team, "이른 회의", datetime(2026, 10, 5, 8, 0, tzinfo=KST), "rdr_a")
+    _report(db_session, team, "다음날 회의", datetime(2026, 10, 6, 0, 30, tzinfo=KST), "rdr_b")
 
     result = tools.meeting_reports(db_session, team, since="2026-10-05", until="2026-10-05")
 
-    assert [i["meeting_id"] for i in result["items"]] == [late]
+    assert [i["meeting_id"] for i in result["items"]] == [early]
     assert result["items"][0]["date"] == "2026-10-05"
 
 
@@ -248,3 +250,32 @@ def test_the_schedule_action_refuses_a_non_member_and_a_bad_hour(
 def test_the_schedule_action_is_l1() -> None:
     assert tools.set_weekly_report_schedule in tools.L1_ACTIONS
     assert tools.set_weekly_report_schedule in tools.ACTIONS
+
+
+def test_the_schedule_action_keeps_send_empty_when_it_is_left_out(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+    import uuid
+
+    from autune_core import TeamMember, User
+
+    @contextlib.contextmanager
+    def scope():
+        yield db_session
+
+    monkeypatch.setattr(tools, "session_scope", scope)
+    user = User(email=f"k-{uuid.uuid4().hex}@example.com", display_name="요청한 사람")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=team, user_id=user.id))
+    db_session.flush()
+    service.set_weekly_report_schedule(
+        db_session, team, weekday=0, hour=9, send_empty=True, user_id=user.id
+    )
+
+    result = tools.set_weekly_report_schedule(team, user.id, weekday=4, hour=18)
+
+    assert result["ok"] is True
+    kept = service.weekly_report_schedule(db_session, team)
+    assert (kept.weekday, kept.hour, kept.send_empty) == (4, 18, True)

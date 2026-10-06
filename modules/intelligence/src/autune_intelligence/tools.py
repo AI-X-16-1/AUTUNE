@@ -714,16 +714,19 @@ def publish_meeting_report_correction(
 
 
 def set_weekly_report_schedule(
-    team_id: str, user_id: str, weekday: int, hour: int, send_empty: bool = False
+    team_id: str, user_id: str, weekday: int, hour: int, send_empty: bool | None = None
 ) -> dict[str, Any]:
     """Change when the team's weekly report goes out -- a weekday (0 is Monday),
     an hour in Korean time, and whether a week with nothing to say is posted.
+    Leave ``send_empty`` out to keep the team's current choice.
 
     L1 -- runs without approval, as any member may change it on the dashboard (#821).
     ``user_id`` is the person who asked; it must come from the run, never a
     model (#862). Refused for a non-member or a day or hour out of range.
     """
     with session_scope() as session:
+        if send_empty is None:
+            send_empty = service.weekly_report_schedule(session, team_id).send_empty
         try:
             schedule = service.set_weekly_report_schedule(
                 session, team_id, weekday=weekday, hour=hour, send_empty=send_empty, user_id=user_id
