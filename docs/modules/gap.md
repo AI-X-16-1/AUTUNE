@@ -884,6 +884,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
+| PostgreSQL `gap_questions` | A gap's question put on one teammate's Google Calendar by hand (S20 "담당자 지정해 질문", #824): who was asked and the event, never who asked |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
 Everything that exists cascades from `meetings.id`, so no meeting or user

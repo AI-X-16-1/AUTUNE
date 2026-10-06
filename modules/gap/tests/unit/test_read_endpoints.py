@@ -41,6 +41,7 @@ from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
+    GapQuestion,
     GapRelatedTopic,
     GapTopic,
     GapTopicEdge,
@@ -78,6 +79,7 @@ TABLES = [
     GapGap.__table__,
     GapRelatedTopic.__table__,
     GapMeetingTemplate.__table__,
+    GapQuestion.__table__,
 ]
 
 
@@ -1073,7 +1075,12 @@ def test_a_carried_gap_is_marked_and_stays_on_the_report(
     response = client.post(_carry_path("gap_1"))
 
     assert response.status_code == 200
-    assert response.json() == {"gap_id": "gap_1", "meeting_id": MEETING, "carried": True}
+    assert response.json() == {
+        "gap_id": "gap_1",
+        "meeting_id": MEETING,
+        "carried": True,
+        "calendar": "no_next_meeting",
+    }
     assert session.get(GapGap, "gap_1").carried_at is not None
     assert [g["id"] for g in client.get(f"{PREFIX}/reports/{MEETING}").json()["gaps"]] == ["gap_1"]
 
@@ -1165,4 +1172,4 @@ def test_carrying_records_nobody(client: TestClient, session: Session) -> None:
     body = client.post(_carry_path("gap_1")).json()
 
     assert MEMBER not in str(body)
-    assert set(body) == {"gap_id", "meeting_id", "carried"}
+    assert set(body) == {"gap_id", "meeting_id", "carried", "calendar"}

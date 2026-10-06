@@ -2,13 +2,20 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button, MaskedText, Quote, ScoreLabel, StatusDot } from "@/shared/ui";
 
 import { COVERAGE_LABELS, SEVERITY_LABELS, bySeverity } from "../types";
-import type { Gap, GapEvidence, GapExplanation, GapExplanations, ScoreBreakdown } from "../types";
+import type {
+  Gap,
+  GapAskTargets,
+  GapEvidence,
+  GapExplanation,
+  GapExplanations,
+  ScoreBreakdown,
+} from "../types";
 
 /**
  * The gap list on S20: HIGH opened, MEDIUM and LOW closed, LOW behind a toggle.
@@ -40,6 +47,8 @@ export function GapList({
   onToggleLow,
   onDismiss,
   onCarry,
+  loadAskTargets,
+  onAsk,
   pendingGapId = null,
 }: {
   gaps: readonly Gap[];
@@ -55,6 +64,12 @@ export function GapList({
    * Without it the button is drawn disabled.
    */
   onCarry?: (gapId: string, carried: boolean) => void;
+  /**
+   * "담당자 지정해 질문": who the question can go to, read when the picker
+   * opens, and the send. Without both the button is drawn disabled.
+   */
+  loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
+  onAsk?: (gapId: string, userId: string) => void;
   /** The gap whose write is in flight, so only its button shows it. */
   pendingGapId?: string | null;
 }) {
@@ -85,6 +100,8 @@ export function GapList({
       defaultOpen={open}
       onDismiss={onDismiss}
       onCarry={onCarry}
+      loadAskTargets={loadAskTargets}
+      onAsk={onAsk}
       pending={pendingGapId === gap.id}
     />
   );
@@ -125,9 +142,9 @@ export function GapList({
       ) : null}
 
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        &quot;담당자 지정해 질문&quot;은 아직 준비 중이라 누를 수 없습니다. &quot;다음 회의
-        어젠다로&quot;는 이 갭을 다음 회의로 넘겼다고 표시하고, &quot;해당 없음&quot;은 오탐으로
-        표시합니다.
+        &quot;다음 회의 어젠다로&quot;는 이 갭을 다음 회의로 넘겼다고 표시하고, 내 Google 캘린더의
+        다음 회의 일정 설명에 덧붙입니다. &quot;담당자 지정해 질문&quot;은 고른 팀원의 Google
+        캘린더에 해소용 질문을 종일 일정으로 넣습니다. &quot;해당 없음&quot;은 오탐으로 표시합니다.
       </p>
     </div>
   );
@@ -192,13 +209,15 @@ function ListSummary({
  * where it can be taken back.
  *
  * "다음 회의 어젠다로" is one too: `POST /gaps/{id}/carry` marks the gap as sent
- * on to the next meeting (#824). The gap stays on the report, the card says it
- * was sent, and the same button takes it back. Nothing is scheduled and nobody
- * is invited — whoever composes the next meeting reads the marks. Its state
- * comes from the explanation, so until that loads the button is disabled.
+ * on to the next meeting (#824) and adds a line to the next meeting's event on
+ * the caller's own Google Calendar. The gap stays on the report, the card says
+ * it was sent, and the same button takes it back. Nothing is scheduled and
+ * nobody is invited. Its state comes from the explanation, so until that loads
+ * the button is disabled.
  *
- * "담당자 지정해 질문" stays drawn and disabled: asking one person needs a
- * decision about who and how (#824), and the list says so under the cards.
+ * "담당자 지정해 질문" opens a picker of the team, chosen by hand — never drawn
+ * from who spoke (privacy.md section 3) — and puts the question on that
+ * person's Google Calendar (`POST /gaps/{id}/ask`).
  */
 function GapCard({
   gap,
@@ -208,6 +227,8 @@ function GapCard({
   defaultOpen,
   onDismiss,
   onCarry,
+  loadAskTargets,
+  onAsk,
   pending,
 }: {
   gap: Gap;
@@ -217,9 +238,13 @@ function GapCard({
   defaultOpen: boolean;
   onDismiss?: (gapId: string) => void;
   onCarry?: (gapId: string, carried: boolean) => void;
+  loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
+  onAsk?: (gapId: string, userId: string) => void;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [asking, setAsking] = useState(false);
+  const canAsk = Boolean(loadAskTargets && onAsk);
   const coverage = explanation?.coverage ?? null;
   const carried = explanation?.carried ?? false;
 
@@ -321,7 +346,14 @@ function GapCard({
             >
               {carried ? "다음 회의에서 빼기" : "다음 회의 어젠다로"}
             </Button>
-            <Button tone="text" size="compact" disabled title={PENDING}>
+            <Button
+              tone="text"
+              size="compact"
+              disabled={!canAsk || pending}
+              aria-expanded={asking}
+              title={canAsk ? ASK_HINT : PENDING}
+              onClick={() => setAsking((value) => !value)}
+            >
               담당자 지정해 질문
             </Button>
             <Button
@@ -335,13 +367,102 @@ function GapCard({
               {pending ? "처리 중" : "해당 없음"}
             </Button>
           </div>
+
+          {asking && loadAskTargets && onAsk ? (
+            <AskPicker
+              gapId={gap.id}
+              load={loadAskTargets}
+              pending={pending}
+              onSend={(userId) => {
+                onAsk(gap.id, userId);
+                setAsking(false);
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
     </article>
   );
 }
 
+/**
+ * The teammate "담당자 지정해 질문" goes to, picked by hand from the gap's team.
+ * Someone without a Google Calendar connected is listed but cannot be picked,
+ * and someone already asked about this gap is marked so.
+ */
+function AskPicker({
+  gapId,
+  load,
+  pending,
+  onSend,
+}: {
+  gapId: string;
+  load: (gapId: string) => Promise<GapAskTargets>;
+  pending: boolean;
+  onSend: (userId: string) => void;
+}) {
+  const [targets, setTargets] = useState<GapAskTargets | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [chosen, setChosen] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    load(gapId).then(
+      (loaded) => {
+        if (live) setTargets(loaded);
+      },
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [gapId, load]);
+
+  if (failed) return <Muted>팀원 목록을 불러오지 못했습니다.</Muted>;
+  if (!targets) return <Muted>팀원 목록을 불러오는 중입니다.</Muted>;
+
+  return (
+    <div className="flex flex-wrap items-center" style={{ gap: "var(--space-8)" }}>
+      <label className="sr-only" htmlFor={`ask-${gapId}`}>
+        질문할 담당자
+      </label>
+      <select
+        id={`ask-${gapId}`}
+        value={chosen}
+        onChange={(event) => setChosen(event.target.value)}
+        className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)]"
+        style={{ fontSize: "var(--text-metaSmall)", padding: "4px 8px" }}
+      >
+        <option value="">담당자 선택</option>
+        {targets.members.map((member) => (
+          <option
+            key={member.user_id}
+            value={member.user_id}
+            disabled={!member.calendar_connected}
+          >
+            {member.name}
+            {member.asked ? " · 질문함" : ""}
+            {member.calendar_connected ? "" : " · 캘린더 미연결"}
+          </option>
+        ))}
+      </select>
+      <Button
+        tone="text"
+        size="compact"
+        disabled={!chosen || pending}
+        onClick={() => onSend(chosen)}
+      >
+        캘린더에 질문 넣기
+      </Button>
+    </div>
+  );
+}
+
 const PENDING = "아직 준비 중인 동작입니다";
+
+const ASK_HINT = "팀원 한 명을 골라 그 사람의 Google 캘린더에 해소용 질문을 넣습니다.";
 
 const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
 

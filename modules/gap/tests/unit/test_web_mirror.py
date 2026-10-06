@@ -19,6 +19,10 @@ from pathlib import Path
 from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
+    GapAsk,
+    GapAskTarget,
+    GapAskTargets,
+    GapCarry,
     GapDismissal,
     GapExplanationRead,
     GapExplanations,
@@ -119,3 +123,16 @@ def test_the_web_team_gap_mirror_is_current() -> None:
     """The team-wide list (#550). Pinned in both directions: a field added on
     the Python side -- a topic or a person, say -- has to be added here on purpose."""
     assert ts_fields("TeamGap") == set(TeamGapRead.model_fields), f"update {TYPES_TS}"
+
+
+def test_the_web_calendar_write_mirrors_are_current() -> None:
+    """S20's calendar writes (#824). ``GapAskTarget`` is pinned in both
+    directions for the reason ``TeamGap`` is: a field about how somebody took
+    part in the meeting must not arrive in the picker by accident."""
+    for interface, model in (
+        ("GapCarry", GapCarry),
+        ("GapAsk", GapAsk),
+        ("GapAskTarget", GapAskTarget),
+        ("GapAskTargets", GapAskTargets),
+    ):
+        assert ts_fields(interface) == set(model.model_fields), f"{interface}: update {TYPES_TS}"

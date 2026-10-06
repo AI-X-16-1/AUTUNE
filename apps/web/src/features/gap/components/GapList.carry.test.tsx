@@ -6,7 +6,7 @@ import { DEMO_EXPLANATIONS, DEMO_REPORT } from "../fixtures/report-demo";
 import type { GapExplanations } from "../types";
 
 // "다음 회의 어젠다로" (#824): a mark on the gap, taken back by the same button.
-// "담당자 지정해 질문" is still not wired.
+// "담당자 지정해 질문" is GapList.ask.test.tsx; without its handlers it is disabled.
 
 const gaps = (DEMO_REPORT.gaps ?? []).slice(0, 1);
 const gapId = gaps[0]!.id;
@@ -57,7 +57,7 @@ describe("GapList — 다음 회의 어젠다로", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("leaves 담당자 지정해 질문 disabled", () => {
+  it("leaves 담당자 지정해 질문 disabled without its handlers", () => {
     render(<GapList gaps={gaps} explanations={explained(false)} onCarry={vi.fn()} />);
 
     const ask = within(card()).getByRole("button", { name: "담당자 지정해 질문" });

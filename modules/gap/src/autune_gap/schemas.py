@@ -11,7 +11,7 @@ for a payload that crosses a boundary and not for one that does not.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -67,11 +67,53 @@ class GapCarry(BaseModel):
     What ``POST`` and ``DELETE /gaps/{gap_id}/carry`` both return, the same
     shape as ``GapDismissal`` and for the same reasons: the flag the server
     settled on, no timestamp and nobody's id.
+
+    ``calendar`` is what happened to the next meeting's event on the caller's
+    own Google Calendar (``calendar_writes.AgendaOutcome``), or ``not_tried``.
+    The mark is set whatever it says.
     """
 
     gap_id: str
     meeting_id: str
     carried: bool
+    calendar: str = "not_tried"
+
+
+class GapAskRequest(BaseModel):
+    """``POST /gaps/{gap_id}/ask``: who to ask, chosen by hand, and on which
+    day. No day means the next working day."""
+
+    user_id: str
+    day: date | None = None
+
+
+class GapAsk(BaseModel):
+    """What asking did (``calendar_writes.AskOutcome``). ``already_asked``
+    makes no second event."""
+
+    gap_id: str
+    user_id: str
+    outcome: str
+
+
+class GapAskTarget(BaseModel):
+    """One teammate the question can go to. ``calendar_connected`` is whether
+    they have connected a Google Calendar at all, so the picker can say so
+    before anyone presses; ``asked`` is whether this gap was already put on
+    their calendar."""
+
+    user_id: str
+    name: str
+    calendar_connected: bool
+    asked: bool
+
+
+class GapAskTargets(BaseModel):
+    """``GET /gaps/{gap_id}/ask``: the gap's team, by name. Nothing about how
+    anyone took part in the meeting -- the picker is a list of the team."""
+
+    gap_id: str
+    members: list[GapAskTarget]
 
 
 class TemplateItemRead(BaseModel):

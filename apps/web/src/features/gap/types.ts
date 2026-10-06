@@ -144,11 +144,55 @@ export interface GapDismissal {
  * Whether a gap was sent on to the next meeting — what `POST` and `DELETE
  * /api/gap/gaps/{id}/carry` return (`GapCarry`, #824). The flag the server
  * settled on, no timestamp and nobody's id, like `GapDismissal`.
+ *
+ * `calendar` is what happened to the next meeting's event on the caller's own
+ * Google Calendar. The mark is set whatever it says.
  */
 export interface GapCarry {
   gap_id: string;
   meeting_id: string;
   carried: boolean;
+  calendar: AgendaOutcome;
+}
+
+/** `calendar_writes.AgendaOutcome`, plus `not_tried`. */
+export type AgendaOutcome =
+  | "added"
+  | "removed"
+  | "no_next_meeting"
+  | "no_event"
+  | "not_connected"
+  | "reconnect_required"
+  | "failed"
+  | "not_tried";
+
+/** `calendar_writes.AskOutcome`. */
+export type AskOutcome =
+  | "added"
+  | "already_asked"
+  | "not_connected"
+  | "reconnect_required"
+  | "failed";
+
+/** What `POST /api/gap/gaps/{id}/ask` returns (`GapAsk`, #824). */
+export interface GapAsk {
+  gap_id: string;
+  user_id: string;
+  outcome: AskOutcome;
+}
+
+/** One teammate "담당자 지정해 질문" can go to (`GapAskTarget`). */
+export interface GapAskTarget {
+  user_id: string;
+  name: string;
+  calendar_connected: boolean;
+  asked: boolean;
+}
+
+/** `GET /api/gap/gaps/{id}/ask` — the gap's team, by name (`GapAskTargets`). */
+export interface GapAskTargets {
+  gap_id: string;
+  members: GapAskTarget[];
 }
 
 /**

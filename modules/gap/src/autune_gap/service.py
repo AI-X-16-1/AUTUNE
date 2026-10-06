@@ -12,7 +12,7 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, nulls_last, select
@@ -30,17 +30,19 @@ from autune_core import (
     ids,
     new_id,
     session_scope,
+    users_with_integration,
 )
 from autune_core.deletion import on_speech_deleted
 from autune_core.errors import NotFoundError, PrivacyViolationError, ValidationError
 from autune_core.events import publish
-from autune_gap import detect, graph, semantic, template, verification
+from autune_gap import calendar_writes, detect, graph, semantic, template, verification
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.enqueue import enqueue_publish_report
 from autune_gap.models import (
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
+    GapQuestion,
     GapRelatedTopic,
     GapScoring,
     GapTopic,
@@ -56,6 +58,9 @@ from autune_gap.pipeline import (
 from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
+    GapAsk,
+    GapAskTarget,
+    GapAskTargets,
     GapCarry,
     GapDismissal,
     GapExplanationRead,
@@ -765,6 +770,96 @@ def set_carried(session: Session, gap_id: str, reader: User, *, carried: bool) -
 
     log.info("gap_carry_set", gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
     return GapCarry(gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
+
+
+def _gap_for_member(
+    session: Session, gap_id: str, reader: User, event: str
+) -> tuple[GapGap, Meeting]:
+    """The gap and its meeting, for a member of the meeting's team. An unknown
+    gap and another team's are the same 404, as for ``set_dismissed``."""
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info(event, gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+    return row, meeting
+
+
+def carry_on_calendar(session: Session, gap_id: str, reader: User, *, carried: bool) -> str:
+    """Add the gap's line to the next meeting's event on the caller's own
+    calendar, or take it out (``calendar_writes.update_agenda``). Called after
+    the mark is committed: a calendar that cannot be reached leaves the mark
+    set and says so."""
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_carry_refused")
+    return calendar_writes.update_agenda(
+        session, row, team_id=meeting.team_id, user_id=reader.id, carried=carried
+    )
+
+
+def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:
+    """Who on the gap's team the question can go to, by name, with whether
+    each has a calendar connected and was already asked about this gap."""
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    members = session.execute(
+        select(User.id, User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == meeting.team_id)
+        .order_by(User.display_name, User.id)
+    ).all()
+    connected = set(users_with_integration(session, calendar_writes.CALENDAR))
+    asked = set(session.scalars(select(GapQuestion.user_id).where(GapQuestion.gap_id == row.id)))
+    return GapAskTargets(
+        gap_id=row.id,
+        members=[
+            GapAskTarget(
+                user_id=user_id,
+                name=name,
+                calendar_connected=user_id in connected,
+                asked=user_id in asked,
+            )
+            for user_id, name in members
+        ],
+    )
+
+
+def ask(
+    session: Session, gap_id: str, reader: User, *, user_id: str, day: date | None = None
+) -> GapAsk:
+    """Put the gap's question on one teammate's calendar -- "담당자 지정해
+    질문" on S20 (#824).
+
+    The person is chosen by hand and must be on the meeting's team. Asking the
+    same person twice makes no second event. Nothing is stored unless the
+    event was made, so a person who connects their calendar later can be asked
+    again. Who asked is not stored or logged.
+    """
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    if not _is_team_member(session, user_id=user_id, team_id=meeting.team_id):
+        raise ValidationError("the person asked must be on the meeting's team", field="user_id")
+
+    existing = session.scalar(
+        select(GapQuestion.id).where(GapQuestion.gap_id == row.id, GapQuestion.user_id == user_id)
+    )
+    if existing is not None:
+        return GapAsk(gap_id=row.id, user_id=user_id, outcome="already_asked")
+
+    when = day or calendar_writes.next_working_day(datetime.now(UTC).date())
+    outcome, calendar_id, event_id = calendar_writes.ask_on_calendar(
+        session, row, user_id=user_id, day=when
+    )
+    if outcome == "added" and calendar_id is not None and event_id is not None:
+        session.add(
+            GapQuestion(
+                gap_id=row.id, user_id=user_id, day=when, calendar_id=calendar_id, event_id=event_id
+            )
+        )
+        session.flush()
+    log.info("gap_question_set", gap_id=row.id, meeting_id=row.meeting_id, outcome=outcome)
+    return GapAsk(gap_id=row.id, user_id=user_id, outcome=outcome)
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,37 @@
 
 import { useCallback, useState } from "react";
 
-import { carryGap, chooseTemplate, dismissGap, undoCarryGap, undoDismissGap } from "../api";
+import {
+  askGap,
+  carryGap,
+  chooseTemplate,
+  dismissGap,
+  undoCarryGap,
+  undoDismissGap,
+} from "../api";
+import type { AgendaOutcome, AskOutcome, GapAsk, GapCarry } from "../types";
+
+/** What the screen says after "다음 회의 어젠다로", by what the calendar did. */
+export const AGENDA_NOTICE: Record<AgendaOutcome, string | null> = {
+  added: "다음 회의 일정 설명에 이 갭을 추가했습니다.",
+  removed: "다음 회의 일정 설명에서 이 갭을 뺐습니다.",
+  no_next_meeting: "예정된 다음 회의가 없어 다음 회의로 넘김 표시만 남겼습니다.",
+  no_event:
+    "내 Google 캘린더에서 다음 회의 일정을 찾지 못해 다음 회의로 넘김 표시만 남겼습니다.",
+  not_connected: "Google 캘린더가 연결되어 있지 않아 다음 회의로 넘김 표시만 남겼습니다.",
+  reconnect_required: "Google 캘린더를 다시 연결해야 합니다. 다음 회의로 넘김 표시만 남겼습니다.",
+  failed: "캘린더에 쓰지 못해 다음 회의로 넘김 표시만 남겼습니다.",
+  not_tried: null,
+};
+
+/** What the screen says after "담당자 지정해 질문". */
+export const ASK_NOTICE: Record<AskOutcome, string> = {
+  added: "질문을 담당자의 Google 캘린더에 넣었습니다.",
+  already_asked: "이미 이 담당자에게 보낸 질문입니다.",
+  not_connected: "이 담당자는 Google 캘린더를 연결하지 않아 질문을 넣지 못했습니다.",
+  reconnect_required: "이 담당자의 Google 캘린더 연결이 끊겨 질문을 넣지 못했습니다.",
+  failed: "캘린더에 질문을 넣지 못했습니다. 잠시 후 다시 시도해 주세요.",
+};
 
 /**
  * The writes S20 makes: dismissing a gap and sending one on to the next meeting
@@ -16,18 +46,27 @@ import { carryGap, chooseTemplate, dismissGap, undoCarryGap, undoDismissGap } fr
  * disagree.
  *
  * `pending` names what is in flight (a gap id, or `"template"`) so exactly that
- * control can show it.
+ * control can show it. `notice` is what the last calendar write did — the mark
+ * is set either way, so it is a note rather than a failure.
  */
 export function useGapActions(reload: () => void) {
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const run = useCallback(
-    async (key: string, write: () => Promise<unknown>, message: string) => {
+    async <T>(
+      key: string,
+      write: () => Promise<T>,
+      message: string,
+      say?: (result: T) => string | null,
+    ) => {
       setPending(key);
       setFailure(null);
+      setNotice(null);
       try {
-        await write();
+        const result = await write();
+        if (say) setNotice(say(result));
         reload();
       } catch {
         setFailure(message);
@@ -64,6 +103,7 @@ export function useGapActions(reload: () => void) {
         gapId,
         () => carryGap(gapId),
         "갭을 다음 회의로 넘기지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        (result: GapCarry) => AGENDA_NOTICE[result.calendar],
       ),
     [run],
   );
@@ -74,6 +114,7 @@ export function useGapActions(reload: () => void) {
         gapId,
         () => undoCarryGap(gapId),
         "다음 회의로 넘긴 것을 되돌리지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        (result: GapCarry) => AGENDA_NOTICE[result.calendar],
       ),
     [run],
   );
@@ -88,5 +129,16 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
-  return { pending, failure, dismiss, undoDismiss, carry, undoCarry, choose };
+  const ask = useCallback(
+    (gapId: string, userId: string) =>
+      run(
+        gapId,
+        () => askGap(gapId, userId),
+        "질문을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        (result: GapAsk) => ASK_NOTICE[result.outcome],
+      ),
+    [run],
+  );
+
+  return { pending, failure, notice, dismiss, undoDismiss, carry, undoCarry, ask, choose };
 }
