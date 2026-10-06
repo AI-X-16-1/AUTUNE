@@ -41,8 +41,8 @@ action order, left to right: quiet → text → secondary → primary.
 2026-10-06). `autune-wordmark.svg` is canonical — ink `#16191F` (ink.strong)
 with the "un" wave in `#3B4A9E` (accent); `autune-wordmark-dark.svg` swaps the
 ink for the dark theme's ink.strong `#EDEEF0`. The wave stays accent in both
-themes. `autune-icon.svg` is the square mark (the wordmark's "a") used as the
-favicon. In the web app the wordmark is `Wordmark` in `shared/ui`, 18px tall in
+themes. `autune-icon.svg` is the square mark — the "un" wave alone, in accent,
+so it needs no dark variant — used as the favicon. In the web app the wordmark is `Wordmark` in `shared/ui`, 18px tall in
 the sidebar and the live top bar, 20px in the signed-out headers. Never set the
 name as text in its place.
 
