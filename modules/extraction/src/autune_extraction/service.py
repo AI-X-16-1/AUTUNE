@@ -2436,14 +2436,39 @@ def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
 
 
 def team_roster(session: Session, meeting_id: str) -> list[str]:
-    """Display names of the members of the team that held this meeting -- what
-    an outbound classifier replaces before sending (#411). Read only."""
+    """The display names an outbound model is not sent for this meeting (#411):
+    the members of the team that held it, and the accounts named on the
+    meeting's own participant rows. Read only.
+
+    **The second half is for somebody who has left the team** (the user,
+    2026-10-06). Membership alone made a name replaceable only for as long as
+    its owner stayed: a meeting extracted again afterwards -- a failed run's
+    retry, "다시 추출", the consent sweep -- would have sent the name of a
+    person who spoke in it as it was said. Leaving a team (#552) removes the
+    membership and leaves the participant row's ``user_id`` alone, so the
+    people who were in the room are still found from the meeting.
+
+    Not covered, and not coverable from what is stored: somebody who has left
+    and is named in a meeting they did not speak in, or spoke in without ever
+    being identified -- nothing records that they were once on the team; and
+    a deleted account, whose participant rows lose their ``user_id`` and whose
+    display name is gone with it. Like any name that is on neither list, these
+    go as they were said.
+
+    By ``users.id``, so the same meeting gets the same list on every run.
+    """
+    on_the_team = (
+        select(TeamMember.user_id)
+        .join(Meeting, Meeting.team_id == TeamMember.team_id)
+        .where(Meeting.id == meeting_id)
+    )
+    in_the_meeting = select(Participant.user_id).where(
+        Participant.meeting_id == meeting_id, Participant.user_id.is_not(None)
+    )
     return list(
         session.scalars(
             select(User.display_name)
-            .join(TeamMember, TeamMember.user_id == User.id)
-            .join(Meeting, Meeting.team_id == TeamMember.team_id)
-            .where(Meeting.id == meeting_id)
+            .where(or_(User.id.in_(on_the_team), User.id.in_(in_the_meeting)))
             .order_by(User.id)
         )
     )
