@@ -26,7 +26,8 @@ LIGHT_WORDS = frozenset(
 """Verbs and adjectives that carry no topic of their own (하다, 있다, 어떻다)."""
 TITLE_WEIGHT = 2
 """A passage's title counts this many times: it names the topic, the body explains it.
-Chosen by the retrieval evaluation, held-out set included (docs/modules/intelligence.md)."""
+Chosen over 3 on dev; the held-out set was looked at too, so it no longer judges this
+choice (docs/modules/intelligence.md)."""
 
 
 class Retriever(Protocol):

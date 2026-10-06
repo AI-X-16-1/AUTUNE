@@ -393,6 +393,11 @@ helped on holdout too:
   about 완료율 is told apart from every passage that mentions 완료.
 - A passage's title counts twice.
 
+The holdout was looked at while choosing among these, including weight 2 over 3
+(both 0.83 at recall@3 on holdout; 2 led on dev). For this version its numbers
+are therefore slightly optimistic. The next change should be judged on questions
+written after it.
+
 A synonym list (책임자 -> 담당, 돈 -> 예산, ...) was tried and dropped: it raised
 dev to 0.73 / 0.92 / 0.83 and left holdout at 0.46 / 0.83 / 0.63, the words
 having been picked from dev's misses.
