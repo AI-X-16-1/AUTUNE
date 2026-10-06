@@ -9,6 +9,7 @@ the account -- a person who deletes their data leaves no dates behind.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -17,9 +18,16 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, Team, TeamMember, User
-from autune_extraction import service
-from autune_extraction.models import ExtActionItem, ExtDailyDigest, ExtEditEvent
+from autune_extraction import leave_calendar, service
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtCalendarCleanup,
+    ExtDailyDigest,
+    ExtEditEvent,
+    ExtNotificationPause,
+)
 from autune_extraction.schemas import ActionItemUpdate
+from autune_integrations import TransientIntegrationError
 
 TUESDAY = date(2026, 10, 6)
 TUESDAY_10_KST = datetime(2026, 10, 6, 1, 0, tzinfo=UTC)
@@ -225,3 +233,53 @@ def test_a_draft_confirmed_since_the_last_one_is_newly_held(
     text = slack.sent[0][1]
     assert "• 새로 맡음: 어제 확인한 일 · 주간 회의" in text
     assert "새로 맡음: 지난달에 확인한 일" not in text
+
+
+def test_a_leave_on_the_persons_calendar_is_one_row_and_one_event_on_postgres(
+    db_session: Session, person: dict[str, str]
+) -> None:
+    """``leave_calendar`` on the real database: the pause is claimed and locked
+    (``ON CONFLICT`` on its key, ``FOR UPDATE``), so a second save moves the
+    event the first made; a removal Google refuses is queued once."""
+
+    class Calendar:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str]] = []
+            self.down = False
+
+        def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
+            self.calls.append((method, path.rsplit("/", 1)[1]))
+            return {"id": "evt_1"} if method == "POST" else {"status": "confirmed"}
+
+        def delete_event(self, calendar_id: str, event_id: str) -> None:
+            if self.down:
+                raise TransientIntegrationError("down")
+            self.calls.append(("DELETE", event_id))
+
+    calendar = Calendar()
+
+    def save(first: Any, last: Any, *, on_calendar: bool) -> str:
+        return leave_calendar.set_leave(
+            db_session,
+            lambda _user: (calendar, "primary"),
+            person["user"],
+            starts_on=first,
+            ends_on=last,
+            on_calendar=on_calendar,
+            now=TUESDAY_10_KST,
+        )
+
+    assert save(TUESDAY, TUESDAY + timedelta(days=2), on_calendar=True) == "added"
+    assert (
+        save(TUESDAY + timedelta(days=1), TUESDAY + timedelta(days=3), on_calendar=True) == "added"
+    )
+
+    assert calendar.calls == [("POST", "events"), ("PATCH", "evt_1")]
+    (row,) = db_session.scalars(sa.select(ExtNotificationPause)).all()
+    assert (row.calendar_event_id, row.starts_on) == ("evt_1", TUESDAY + timedelta(days=1))
+
+    calendar.down = True
+    assert save(None, None, on_calendar=False) == "removal_queued"
+    assert save(None, None, on_calendar=False) == "off", "nothing left to remove"
+    (queued,) = db_session.scalars(sa.select(ExtCalendarCleanup)).all()
+    assert (queued.user_id, queued.event_id) == (person["user"], "evt_1")

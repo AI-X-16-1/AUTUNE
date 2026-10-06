@@ -482,6 +482,17 @@ other module's tables.
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:
   `AUTUNE_EXTRACTION_DAILY_DIGEST=true` turns it on
+- Those leave dates on the person's own Google Calendar, only when they tick
+  "내 Google 캘린더에도 추가" beside them (`leave_calendar.py`, 2026-10-06):
+  `PUT /me/notification-pause` takes `on_calendar` (false when left out) and
+  writes, moves or removes one private all-day event titled "휴가" in the
+  request, through the person's own grant; the answer's `calendar` says what
+  happened (`added`, `removed`, `removal_queued`, `not_connected`, `failed`,
+  `off`) and the dates are saved whichever it is. The read says
+  `calendar_connected` so the screen draws the box only then. The event's id
+  is kept on the pause (`calendar_event_id`) and goes with it after the last
+  day; the event itself then stays on the calendar. Rules and what is said
+  to the person: `docs/architecture/privacy.md` section 6
 - Neither digest goes on a public holiday (`days_off.py`): the days are read
   twice a day from Google's public calendar of Korea's holidays, with no
   credentials (`autune.extraction.periodic.refresh_public_holidays`;

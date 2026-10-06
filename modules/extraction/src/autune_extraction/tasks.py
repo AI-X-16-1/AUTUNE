@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from typing import Any, cast
 
@@ -67,6 +67,7 @@ from . import (
     calendar_sync,
     days_off,
     jira_sync,
+    leave_calendar,
     notion_backfill,
     notion_setup,
     project_send,
@@ -89,6 +90,7 @@ from .models import (
     ExtExternalCleanup,
     ExtExternalRef,
     ExtMinutesEvent,
+    ExtNotificationPause,
     ExtProjectRefreshOwed,
     ExtProjectSendCleanup,
 )
@@ -444,6 +446,31 @@ def _close(clients: project_send.Clients) -> None:
     for pair in (clients.notion, clients.slack, clients.jira):
         if pair is not None:
             pair[0].close()
+
+
+def set_leave(
+    session: Session,
+    user_id: str,
+    *,
+    starts_on: date | None,
+    ends_on: date | None,
+    on_calendar: bool,
+    now: datetime,
+) -> leave_calendar.Outcome:
+    """A person's own leave dates saved, and their own calendar following when
+    they ticked the box (2026-10-06): the calendar client is built here, where
+    every client is, and ``leave_calendar.set_leave`` does the rest. Runs in
+    the request, as ``send_project_minutes`` does."""
+    with _calendars(session) as calendar_for:
+        return leave_calendar.set_leave(
+            session,
+            calendar_for,
+            user_id,
+            starts_on=starts_on,
+            ends_on=ends_on,
+            on_calendar=on_calendar,
+            now=now,
+        )
 
 
 def send_project_minutes(
@@ -2379,7 +2406,8 @@ CLEANUP_MAX_ATTEMPTS = 5
 @on_user_deleted("extraction")
 def forget_user_calendar_events(user_id: str) -> None:
     """Before an account goes (#582, #588): every due-date event B put on that
-    person's own calendar, removed now.
+    person's own calendar, removed now -- and the leave event they asked for,
+    while its pause still stands (``leave_calendar``).
 
     Now, not queued: the events can only be removed with the person's own
     Google grant (``user_integrations``), and that row goes with ``users``
@@ -2403,10 +2431,13 @@ def forget_user_calendar_events(user_id: str) -> None:
             minutes = list(
                 session.scalars(select(ExtMinutesEvent).where(ExtMinutesEvent.user_id == user_id))
             )
+            # The leave they asked to have there; its row goes with ``users``.
+            pause = session.get(ExtNotificationPause, user_id)
             ids = (
                 [e.event_id for e in events if e.event_id]
                 + [q.event_id for q in queued]
                 + [m.event_id for m in minutes]
+                + ([pause.calendar_event_id] if pause and pause.calendar_event_id else [])
             )
             removed, failed = _remove_events(calendar_for, user_id, ids)
             for row in [*events, *queued, *minutes]:

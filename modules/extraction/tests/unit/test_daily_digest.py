@@ -37,7 +37,7 @@ from autune_core import (
     get_session,
 )
 from autune_core.errors import AutuneError, ValidationError
-from autune_extraction import reminders, service, tasks
+from autune_extraction import leave_calendar, reminders, service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
     ExtActionItem,
@@ -687,7 +687,10 @@ def test_a_refused_monday_digest_is_raised_once_and_not_tried_again(
 
 
 @pytest.fixture
-def api(session: Session) -> TestClient:
+def api(session: Session, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    # The pause read says whether the caller has a calendar connected; here
+    # nobody has (``user_integrations`` is JSONB and not in this SQLite).
+    monkeypatch.setattr(leave_calendar, "load_user_integration", lambda *_: None)
     app = FastAPI()
 
     @app.exception_handler(AutuneError)
@@ -703,10 +706,16 @@ def api(session: Session) -> TestClient:
 def test_a_person_sets_reads_and_clears_their_own_pause(api: TestClient, session: Session) -> None:
     today = reminders.korean_day(datetime.now(tz=UTC))
     first, last = today + timedelta(days=1), today + timedelta(days=3)
+    nothing_on_a_calendar = {
+        "on_calendar": False,
+        "calendar_leave": False,
+        "calendar_connected": False,
+    }
     assert api.get(f"{PREFIX}/me/notification-pause").json() == {
         "starts_on": None,
         "ends_on": None,
-        "calendar_leave": False,
+        **nothing_on_a_calendar,
+        "calendar": None,
     }
 
     answer = api.put(
@@ -718,14 +727,20 @@ def test_a_person_sets_reads_and_clears_their_own_pause(api: TestClient, session
     assert answer.json() == {
         "starts_on": first.isoformat(),
         "ends_on": last.isoformat(),
-        "calendar_leave": False,
+        **nothing_on_a_calendar,
+        "calendar": "off",
     }
-    assert api.get(f"{PREFIX}/me/notification-pause").json() == answer.json()
+    assert api.get(f"{PREFIX}/me/notification-pause").json() == {**answer.json(), "calendar": None}
     (row,) = session.query(ExtNotificationPause).all()
     assert row.user_id == READER, "the signed-in person's, and nobody else's"
 
     cleared = api.put(f"{PREFIX}/me/notification-pause", json={"starts_on": None, "ends_on": None})
-    assert cleared.json() == {"starts_on": None, "ends_on": None, "calendar_leave": False}
+    assert cleared.json() == {
+        "starts_on": None,
+        "ends_on": None,
+        **nothing_on_a_calendar,
+        "calendar": "off",
+    }
     assert session.query(ExtNotificationPause).count() == 0
 
 

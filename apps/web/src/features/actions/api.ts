@@ -272,15 +272,37 @@ export const setDueReminders = (on: boolean) =>
     body: JSON.stringify({ on }),
   });
 
-/** The caller's own leave dates (`YYYY-MM-DD`, both included); both null is no pause. */
+/**
+ * The caller's own leave dates (`YYYY-MM-DD`, both included); both null is no
+ * pause. `on_calendar` is the person's tick on "내 Google 캘린더에도 추가": sent
+ * true, the range also goes onto their own calendar as one private all-day
+ * event; left out or false, nothing reaches a calendar and an event put there
+ * for an earlier range is removed. Answered true while such an event stands.
+ */
 export interface NotificationPause {
   starts_on: string | null;
   ends_on: string | null;
+  on_calendar?: boolean;
 }
 
-/** The pause as it stands, and whether this server also reads out-of-office time from a connected calendar. */
+/** What happened on the person's calendar for the save just made. */
+export type LeaveCalendarOutcome =
+  | "off"
+  | "added"
+  | "removed"
+  | "removal_queued"
+  | "not_connected"
+  | "failed";
+
+/**
+ * The pause as it stands; whether this server also reads out-of-office time
+ * from a connected calendar; whether the caller has a calendar connected (the
+ * box is drawn only then); and, on the answer to a save, what happened there.
+ */
 export interface NotificationPauseRead extends NotificationPause {
   calendar_leave?: boolean;
+  calendar_connected?: boolean;
+  calendar?: LeaveCalendarOutcome | null;
 }
 
 export const getNotificationPause = () =>

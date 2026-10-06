@@ -484,6 +484,37 @@ the feature needs.
     they can read or write it, no screen or route shows it to a teammate or
     an admin, nothing is derived from it, and it is deleted once its last
     day has passed. Due-date reminders do not read it.
+  - **Those dates on the person's own calendar, by their own tick** (the
+    user, 2026-10-06): the one way the dates leave Autune. A person whose own
+    Google Calendar is connected is shown a box beside the dates, "내 Google
+    캘린더에도 추가", **off until they tick it**; nobody else can tick it for
+    them and no setting of a team or a deployment does. Ticked and saved, the
+    range goes onto that person's own calendar through their own grant as one
+    all-day event: the two dates, the fixed title "휴가" and a fixed line
+    saying where it came from -- no meeting, no item, no other person, no
+    attendee, so nobody is invited or notified. **Who can see an event on a
+    calendar is decided by that calendar's sharing, not by Autune**, so it is
+    written `visibility: private`: someone the person shares the calendar
+    with sees that they are busy on those days and not why. That is still
+    more than "theirs alone", and it is why it happens only on the person's
+    own press and is said before they press -- under the box, and beside the
+    calendar's connect button, to somebody already connected as well.
+    Autune keeps the event's id on the pause row and nothing else
+    (`ext_notification_pauses.calendar_event_id`): a changed range moves the
+    same event, and a save without the tick, or clearing the dates, removes
+    it (a removal Google does not answer is queued and tried again with the
+    person's grant, as a due-date event's is). Once the last day has passed
+    the row is deleted as before, the id with it, and **the event stays** on
+    the calendar as the person's own record; Autune can no longer reach it.
+    A calendar disconnected while the event stands cannot be reached either:
+    the event stays there, where the person can delete it.
+    A deleted account has an event that still stands removed first, by B's
+    user hook. Autune never reads the calendar for any of this: a leave the
+    person wrote there themselves is not looked for, and the out-of-office
+    read below asks Google for out-of-office events only, which this plain
+    event is not. No log line carries the dates. Still true of everything
+    inside Autune: no screen, route or message shows one person's dates to
+    another.
   - **Out-of-office time, from a person's own calendar:** where a deployment
     turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
     person who connected Google Calendar is not sent the morning DM or
@@ -528,6 +559,8 @@ the feature needs.
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
+    The one event that is not an item's is the person's own leave, written
+    only by their own tick (above).
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
