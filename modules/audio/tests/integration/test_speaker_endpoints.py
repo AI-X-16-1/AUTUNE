@@ -745,6 +745,127 @@ def test_a_user_outside_the_team_cannot_be_assigned(
     assert profiles == []
 
 
+# --- DELETE /meetings/{id}/speakers/{label} ---------------------------------
+#
+# Undoing a wrong assignment. The label goes back to nobody, and the voice this
+# meeting taught that person's profile goes with it; their other profiles stay.
+
+
+def _unassign(client: TestClient, meeting: str, label: str) -> httpx.Response:
+    return client.delete(f"/api/audio/meetings/{meeting}/speakers/{quote(label)}")
+
+
+def test_unassigning_clears_the_speaker_and_its_profile_from_this_meeting_only(
+    client: TestClient,
+    db_session: Session,
+    meeting: str,
+    candidate: User,
+    voice_profiles_enabled: None,
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.add(observation(meeting, "화자 1", axis(0)))
+    db_session.add(profile(candidate.id, axis(1)))
+    db_session.flush()
+    assert _confirm(client, meeting, "화자 1", candidate.id).status_code == 204
+
+    response = _unassign(client, meeting, "화자 1")
+
+    assert response.status_code == 204
+    [entry] = client.get(f"/api/audio/meetings/{meeting}/speakers").json()
+    assert entry["user_id"] is None
+    assert entry["display_name"] is None
+    from_this_meeting = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(
+                AudSpeakerEmbedding.source_meeting_id == meeting,
+                AudSpeakerEmbedding.source_speaker_label == "화자 1",
+            )
+        )
+    )
+    assert from_this_meeting == []
+    [kept] = list(
+        db_session.scalars(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.user_id == candidate.id)
+        )
+    )
+    assert kept.source_meeting_id is None
+
+
+def test_the_transcript_then_carries_no_speaker_id(
+    client: TestClient, db_session: Session, meeting: str, candidate: User
+) -> None:
+    participant = Participant(meeting_id=meeting, speaker_label="화자 1", user_id=candidate.id)
+    db_session.add(participant)
+    db_session.flush()
+    db_session.add(
+        Utterance(
+            meeting_id=meeting,
+            participant_id=participant.id,
+            speaker_label="화자 1",
+            start_sec=0.0,
+            end_sec=1.0,
+            text="안녕하세요",
+        )
+    )
+    db_session.flush()
+
+    assert _unassign(client, meeting, "화자 1").status_code == 204
+
+    [utterance] = transcript_payload(db_session, meeting_id=meeting).utterances
+    assert utterance.speaker_id is None
+
+
+def test_unassigning_a_speaker_nobody_is_put_to_is_204(
+    client: TestClient, db_session: Session, meeting: str
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1"))
+    db_session.flush()
+
+    assert _unassign(client, meeting, "화자 1").status_code == 204
+
+
+def test_unassigning_an_unknown_label_is_404(client: TestClient, meeting: str) -> None:
+    assert _unassign(client, meeting, "화자 9").status_code == 404
+
+
+def test_an_outsider_cannot_unassign(
+    app_for,
+    db_session: Session,
+    meeting: str,
+    outsider: User,
+    candidate: User,
+) -> None:
+    db_session.add(Participant(meeting_id=meeting, speaker_label="화자 1", user_id=candidate.id))
+    db_session.add(
+        AudSpeakerEmbedding(
+            user_id=candidate.id,
+            vector=axis(0),
+            model_version=MODEL_VERSION,
+            source_meeting_id=meeting,
+            source_speaker_label="화자 1",
+            confirmed_by=candidate.id,
+        )
+    )
+    db_session.flush()
+
+    response = _unassign(app_for(outsider), meeting, "화자 1")
+
+    assert response.status_code == 403
+    participant = db_session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting, Participant.speaker_label == "화자 1"
+        )
+    )
+    assert participant is not None
+    assert participant.user_id == candidate.id
+    assert (
+        db_session.scalar(
+            sa.select(AudSpeakerEmbedding).where(AudSpeakerEmbedding.source_meeting_id == meeting)
+        )
+        is not None
+    )
+
+
 # --- PUT /meetings/{id}/speakers/{label}/name --------------------------------
 #
 # A name for a voice that has no account here -- a guest, someone from another

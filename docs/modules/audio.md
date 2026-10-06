@@ -103,6 +103,7 @@ Plus the shared entities in `packages/core`, which A writes.
 | PATCH | `/utterances/{id}` | Correct speaker or text (planned — no route exists yet; would back `aud_corrections`) |
 | GET | `/meetings/{meeting_id}/speakers` | Each speaker label in the meeting, and the nearest candidate profile above `AUTUNE_AUDIO_IDENTIFICATION_THRESHOLD`, if any |
 | POST | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member confirms who a speaker is; fills `Participant.user_id` and copies the vector into that person's profile |
+| DELETE | `/meetings/{meeting_id}/speakers/{speaker_label}` | A team member undoes a confirmation; clears `Participant.user_id` and deletes the profile vector that (meeting, label) produced |
 | PUT | `/meetings/{meeting_id}/speakers/{speaker_label}/name` | Names a speaker with no account on the team, for this meeting only. No user id, no voice profile, not published |
 | DELETE | `/me/voice-profile` | Deletes every profile row for the caller |
 | GET | `/me/data` | S29 "내 데이터": counts of the caller's own speech, voice profile and consent attestations (`account.my_data`) |

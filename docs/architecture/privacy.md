@@ -286,6 +286,13 @@ person's, those counts are that person's completion record. So:
   meanwhile, so every utterance deleted is one the modules were told about. A
   hook that raises stops the deletion, and so do utterances that are still
   appearing after three rounds (409, try again) (#628).
+  **"Their speech" is the lines whose speaker label is assigned to them.** A
+  label nobody assigned, or one whose assignment was undone
+  (`DELETE /meetings/{id}/speakers/{label}`), is attributable to no one, and
+  deleting one's own speech does not reach it. Undoing is for a wrong
+  assignment; a voice that diarization split into two labels should have both
+  assigned to the same person, which the speaker picker allows behind a
+  confirmation (#912).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
