@@ -385,10 +385,24 @@ holding only the label it was drafted with the account of the one identified,
 consenting speaker behind its sources, and clears the label. An item whose
 assignee a person may have edited -- an edit naming an assignee field, or an
 older edit row naming no fields -- or whose label a person renamed is left
-alone. The fill is write-once: a later re-identification of the speaker is a
-person's reassignment on the board. A confirmed item is synced to Notion,
-Jira and the calendar the way the router syncs a board edit; like a board
-edit, no `ExtractionResult` is published.
+alone. A confirmed item is synced to Notion, Jira and the calendar the way
+the router syncs a board edit; like a board edit, no `ExtractionResult` is
+published.
+
+**A speaker corrected or undone afterwards (#929).** The same run keeps the
+assignee with the speaker in the other direction too. A model item's assignee
+comes from its speaker and from nowhere else, so while no person has chosen
+one it is whatever a fresh extraction would write: when A moves the label to
+another member, the item moves to that member; when A undoes the assignment
+(#928), the item loses the account and shows the speaker label again. The
+same items are left alone as above, and so is one that is done -- who
+finished it is not recorded, and nothing is sent about it any more. An item
+a person confirmed or started does follow: its reminders, digests, Notion
+page, Jira issue and calendar event are what would otherwise stay with the
+person the label was wrongly put to. Two things do not follow: a reminder
+already sent for a due date is not sent again to the new assignee, and the
+previous assignee's calendar event is removed only as far as their grant
+still allows (`calendar_sync`).
 
 **What earlier meetings left open (PRD 5.2, WBS 4.8).** `GET
 /carried-over/{meeting_id}` answers a member of the meeting's team with the
