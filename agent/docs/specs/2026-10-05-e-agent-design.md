@@ -461,5 +461,6 @@ The sections above are left as designed; each affected one points here.
 14. **Once per run, retried after a failure (item 5).** An action counts as
     done only on a terminal outcome: a proposal, `POSTED`, the editor refusal,
     the "회의 화면에서" redirect, or "아직 이 회의의 리포트가 없습니다". A
-    failed read (`NO_MEETING`, meeting not found) or a failed compose leaves
-    the retry open.
+    failed read (`NO_MEETING` for `redraft`, meeting not found, or any read
+    that raised) or a failed compose leaves the retry open. For
+    `request_post`, `NO_MEETING` is the team-view redirect, which is terminal.

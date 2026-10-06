@@ -422,6 +422,32 @@ def test_a_failed_compose_leaves_the_retry_open(monkeypatch) -> None:
     assert [p.tool for p in out.proposed].count(DRAFT_ACTION) == 1
 
 
+def _fails_once(name: str, result: dict[str, Any]) -> Tool:
+    """A per-meeting read whose first call raises, as a transient error would."""
+    calls: list[int] = []
+
+    def fn(_session: object, team_id: str, meeting_id: str) -> dict[str, Any]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise ValueError("transient")
+        return dict(result)
+
+    return Tool(name=name, description="Use this in tests.", fn=fn)
+
+
+@pytest.mark.parametrize("failing", ["intelligence.meeting_report_body", AWAITING_TOOL])
+def test_a_failed_read_leaves_request_post_open(monkeypatch, failing: str) -> None:
+    """Not "아직 리포트가 없습니다" on a transient error, and the retry still proposes."""
+    tools = _tools()
+    first = _body() if failing != AWAITING_TOOL else {"ok": True, "summary": "", "items": []}
+    tools[failing] = _fails_once(failing, first)
+    model = Script([call("request_post")], [call("request_post")])
+    out = _run("리포트 올려줘", model, tools, monkeypatch=monkeypatch)
+    (post,) = out.proposed
+    assert (post.tool, post.arguments.get("draft_id")) == (PUBLISH_ACTION, "rdr_a")
+    assert "아직 이 회의의 리포트가 없습니다" not in out.result.summary
+
+
 def test_the_glossary_passages_survive_the_five_item_cap(monkeypatch) -> None:
     trend = {
         "ok": True,

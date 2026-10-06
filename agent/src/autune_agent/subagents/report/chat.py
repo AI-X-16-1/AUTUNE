@@ -316,12 +316,16 @@ class _Turn:
     def request_post(self, meeting_id: str | None = None) -> ToolResult:
         if "request_post" in self.done:
             return ToolResult(ok=True, summary=ALREADY)
-        # Every outcome below is terminal: a refusal or a redirect is an answer.
-        self.done.add("request_post")
         own, scoped = self._scope_probe()
+        if not own.ok and scoped:
+            # A read that failed (not the team view's NO_MEETING) is no answer:
+            # leave the action open so the model may try again.
+            return own
+        # From here every outcome is an answer: a proposal, a refusal or a redirect.
         own_id = getattr(own.items[0], "id", None) if own.ok and own.items else None
         if not scoped or (meeting_id and own_id and meeting_id != own_id):
             line = "회의 화면에서 '리포트 올려줘'라고 요청해 주세요."
+            self.done.add("request_post")
             if meeting_id:
                 named = self.read(BODY, meeting_id=meeting_id)
                 if named.ok:
@@ -329,14 +333,19 @@ class _Turn:
             self.lines.append(line)
             return ToolResult(ok=True, summary=line)
         if self.post_from == "redraft":
+            self.done.add("request_post")
             line = "게시도 함께 요청했습니다."
             self.lines.append(line)
             return ToolResult(ok=True, summary=line)
         awaiting = self.read(AWAITING_TOOL)
         if not awaiting.ok and awaiting.reason == "already posted":
+            self.done.add("request_post")
             self.lines.append(POSTED)
             return ToolResult(ok=True, summary=POSTED)
-        waiting = awaiting.items[0] if awaiting.ok and awaiting.items else None
+        if not awaiting.ok:
+            return awaiting
+        self.done.add("request_post")
+        waiting = awaiting.items[0] if awaiting.items else None
         correction_id = getattr(waiting, "correction_id", None) if waiting is not None else None
         if getattr(waiting, "kind", None) == "correction" and isinstance(correction_id, str):
             self.proposed.append(
