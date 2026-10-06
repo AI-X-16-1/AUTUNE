@@ -13,9 +13,11 @@ from autune_agent.main.pending import (
     PendingDecidedError,
     PendingNotFoundError,
     approve,
+    queue_l2,
     reject,
 )
-from autune_agent.models import AgentApprover, AgentPendingAction
+from autune_agent.models import AgentApprover, AgentPendingAction, AgentRun
+from autune_agent.results import ProposedAction
 from autune_core import Meeting, Team, TeamMember
 from autune_core.errors import PrivacyViolationError
 
@@ -247,3 +249,44 @@ def test_an_approved_action_records_the_approver_not_the_proposal(
 
     assert done.status == "approved"
     assert calls == [{"user_id": team["member"]}]
+
+
+def test_a_team_chat_proposal_is_approved_under_the_meeting_it_named(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#862: queued from the team screen, the row is the named meeting's, so
+    approval binds that meeting even for a write that takes it from the scope."""
+    _approver(session, team, scope="any")
+    chat = AgentRun(
+        team_id=team["team"],
+        meeting_id=None,
+        trigger={"kind": "chat"},
+        outcome="answered",
+        route="report",
+    )
+    session.add(chat)
+    session.flush()
+    proposal = ProposedAction(
+        kind="publish",
+        title="t",
+        tool="fake.publish",
+        level="L2",
+        rationale="r",
+        arguments={"meeting_id": team["meeting"], "draft_id": "rdr_1"},
+    )
+    queue_l2(session, actions={}, run=chat, proposed=[proposal])
+    row = session.query(AgentPendingAction).one()
+    calls: list[str] = []
+
+    def publish(session: Any, team_id: str, meeting_id: str, draft_id: str) -> dict[str, Any]:
+        calls.append(meeting_id)
+        return {"ok": True, "summary": "게시", "evidence": [draft_id]}
+
+    done = approve(
+        session,
+        row.id,
+        user_id=team["member"],
+        actions={"fake.publish": Action("fake.publish", publish, "L2")},
+    )
+
+    assert (done.status, done.meeting_id, calls) == ("approved", team["meeting"], [team["meeting"]])

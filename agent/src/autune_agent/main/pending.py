@@ -20,10 +20,17 @@ from sqlalchemy.orm import Session
 
 from autune_agent.models import REJECT_REASONS, AgentApprover, AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction
-from autune_core import TeamMember
+from autune_core import Meeting, TeamMember
 from autune_core.errors import AutuneError, ConflictError, NotFoundError, PermissionDeniedError
 
-from .actions import ARGUMENT_REFUSED, NOT_DECLARED, Action, own_reason, run_action
+from .actions import (
+    ARGUMENT_REFUSED,
+    NOT_DECLARED,
+    OUT_OF_SCOPE,
+    Action,
+    own_reason,
+    run_action,
+)
 from .registry import RunScope
 
 _ID = re.compile(r"[a-z]+_[A-Za-z0-9]+")
@@ -37,6 +44,10 @@ SCOPES = {
     "followup": "followup",
     "report": "report",
 }
+
+
+MEETING_NOT_FOUND = OUT_OF_SCOPE[1]
+"""The proposal named a meeting outside the run's team; the id is not echoed."""
 
 
 def arguments_ok(arguments: Mapping[str, Any]) -> bool:
@@ -86,6 +97,12 @@ def queue_l2(
     never left proposed to two people (#636). A chat about a meeting replaces
     only an earlier chat's rows: someone asking on a meeting page must not
     retire the proposal the pipeline left there for an approver (#651 review).
+
+    A run about no meeting (a chat on the team screen) whose proposal names one
+    in ``meeting_id`` is treated as about that meeting: the row is that
+    meeting's, so asking again replaces the last card instead of stacking
+    another, and approval runs under it (#862). A meeting outside the team is
+    refused here rather than queued.
     """
     refused: list[dict[str, Any]] = []
     subagent = run.route or ""
@@ -103,11 +120,25 @@ def queue_l2(
                 }
             )
             continue
+        meeting_id = run.meeting_id or proposal.arguments.get("meeting_id")
+        if meeting_id is not None and run.meeting_id is None:
+            meeting = session.get(Meeting, meeting_id)
+            if meeting is None or meeting.team_id != run.team_id:
+                refused.append(
+                    {
+                        "tool": proposal.tool,
+                        "level": "L2",
+                        "ok": False,
+                        "reason": MEETING_NOT_FOUND,
+                        "evidence": list(proposal.evidence),
+                    }
+                )
+                continue
         from_chat = (run.trigger or {}).get("kind") == "chat"
-        if team_wide or run.meeting_id is not None:
+        if team_wide or meeting_id is not None:
             narrower: tuple[Any, ...] = ()
             if not team_wide:
-                narrower = (AgentPendingAction.meeting_id == run.meeting_id,)
+                narrower = (AgentPendingAction.meeting_id == meeting_id,)
                 if from_chat:
                     chat_runs = select(AgentRun.id).where(
                         AgentRun.trigger["kind"].as_string() == "chat"
@@ -129,7 +160,7 @@ def queue_l2(
         session.add(
             AgentPendingAction(
                 team_id=run.team_id,
-                meeting_id=run.meeting_id,
+                meeting_id=meeting_id,
                 run_id=run.id,
                 subagent=subagent,
                 tool=proposal.tool,
