@@ -45,7 +45,8 @@ import type { TeamSummary } from "../types";
  *
  * Placed with `position: fixed` from where the control is when it opens: the
  * sidebar scrolls and clips, and a child positioned inside it would be cut
- * off at its edge.
+ * off at its edge. It starts just past the sidebar's edge (the nearest
+ * `aside`), so it lies on the page and not across the two.
  *
  * The team being looked at is always one of the three. When it is not among
  * the first three -- chosen in a screen's row, or remembered from before --
@@ -54,6 +55,9 @@ import type { TeamSummary } from "../types";
  * (Ours to decide; the order said three and no more.)
  */
 export const MENU_TEAMS = 3;
+
+/** The small window scrolls past this height rather than grow down the page. */
+const REST_MAX_HEIGHT = 320;
 
 function listed(teams: TeamSummary[], teamId: string | null): TeamSummary[] {
   const first = teams.slice(0, MENU_TEAMS);
@@ -90,7 +94,17 @@ export function TeamMenu() {
 
   const toggleRest = () => {
     const box = control.current?.getBoundingClientRect();
-    if (box) setAt({ left: box.right + 12, top: box.top });
+    // Clear of the sidebar's own edge, not only of the control: the control
+    // ends short of that edge by the sidebar's padding, and a window placed
+    // from the control alone sat half on the sidebar (seen in a browser).
+    const edge = control.current?.closest("aside")?.getBoundingClientRect().right ?? 0;
+    // Level with the control, unless that would run it off the bottom of the
+    // page: then as low as it fits. The height is an estimate (a row is about
+    // 34px), which is enough to keep the last team in reach.
+    const more = Math.max(0, teams.length - MENU_TEAMS);
+    const tall = Math.min(REST_MAX_HEIGHT, more * 34 + 18);
+    const top = box ? Math.max(8, Math.min(box.top, window.innerHeight - tall - 8)) : 0;
+    if (box) setAt({ left: Math.max(box.right + 12, edge + 8), top });
     setShowingRest((open) => !open);
   };
 
@@ -189,7 +203,7 @@ export function TeamMenu() {
                 zIndex: 50,
                 minWidth: 200,
                 maxWidth: 280,
-                maxHeight: 320,
+                maxHeight: REST_MAX_HEIGHT,
                 overflowY: "auto",
                 padding: "8px 14px",
                 boxShadow: "var(--shadow-overlay)",

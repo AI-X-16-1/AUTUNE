@@ -158,6 +158,50 @@ describe("TeamMenu", () => {
     expect(window.localStorage.getItem("autune.team")).toBe("team_e");
   });
 
+  it("opens just past the sidebar's edge, level with the control", async () => {
+    // Seen in a browser: placed from the control alone it lay half on the
+    // sidebar, because the control ends short of the sidebar's edge.
+    const rect = (right: number, top: number) => ({ right, top }) as DOMRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.tagName === "ASIDE") return rect(200, 0);
+      if (this.hasAttribute("aria-expanded")) return rect(181, 249);
+      return rect(0, 0);
+    });
+    list.mockResolvedValue([A, B, C, D, E]);
+    render(
+      <aside>
+        <TeamMenu />
+      </aside>,
+    );
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
+
+    fireEvent.click(more() as HTMLButtonElement);
+
+    const style = (rest() as HTMLElement).style;
+    expect([style.left, style.top]).toEqual(["208px", "249px"]);
+    vi.restoreAllMocks();
+  });
+
+  it("stays on the page when the control is near the bottom of it", async () => {
+    const rect = (right: number, top: number) => ({ right, top }) as DOMRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.hasAttribute("aria-expanded") ? rect(181, window.innerHeight - 20) : rect(0, 0);
+    });
+    open([A, B, C, D, E]);
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]));
+
+    fireEvent.click(more() as HTMLButtonElement);
+
+    // Two teams: about 86px of window, and 8px kept clear under it.
+    const top = Number.parseInt((rest() as HTMLElement).style.top, 10);
+    expect(top).toBe(window.innerHeight - 86 - 8);
+    vi.restoreAllMocks();
+  });
+
   it("closes on Escape and on a press outside it, and not on a press inside", async () => {
     open([A, B, C, D, E], true);
     await waitFor(() => expect(shown()).toBe("team_a"));
