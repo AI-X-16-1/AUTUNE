@@ -63,3 +63,58 @@ describe("UnidentifiedSpeaker direct input", () => {
     expect(onName).not.toHaveBeenCalled();
   });
 });
+
+// One voice split into two labels by diarization: the person already put to
+// 화자 1 stays pickable for 화자 3, last and marked, behind one confirmation.
+// Without that path their 화자 3 lines are tied to nobody, and "내 발화 삭제"
+// cannot find them (#912 review).
+describe("UnidentifiedSpeaker picking someone already assigned", () => {
+  const members = [
+    { user_id: "usr_2", name: "강민구" },
+    { user_id: "usr_1", name: "김민경", assignedTo: "화자 1" },
+  ];
+
+  function pick(userId: string) {
+    fireEvent.change(screen.getByLabelText("화자 3 화자 지정"), { target: { value: userId } });
+    fireEvent.click(screen.getByRole("button", { name: "지정" }));
+  }
+
+  it("marks an assigned member in the list", () => {
+    render(<UnidentifiedSpeaker speaker="화자 3" members={members} onAssign={vi.fn()} />);
+
+    expect(screen.getByRole("option", { name: "김민경 (화자 1로 지정됨)" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "강민구" })).toBeTruthy();
+  });
+
+  it("asks once before putting an assigned member to a second speaker", () => {
+    const onAssign = vi.fn();
+    render(<UnidentifiedSpeaker speaker="화자 3" members={members} onAssign={onAssign} />);
+
+    pick("usr_1");
+    expect(onAssign).not.toHaveBeenCalled();
+    expect(screen.getByText(/같은 사람의 목소리가 둘로 나뉜 경우에만/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "그래도 지정" }));
+    expect(onAssign).toHaveBeenCalledWith("usr_1");
+  });
+
+  it("sends nothing when the confirmation is backed out of", () => {
+    const onAssign = vi.fn();
+    render(<UnidentifiedSpeaker speaker="화자 3" members={members} onAssign={onAssign} />);
+
+    pick("usr_1");
+    fireEvent.click(screen.getByRole("button", { name: "다시 고르기" }));
+
+    expect(onAssign).not.toHaveBeenCalled();
+    expect(screen.queryByText(/같은 사람의 목소리가 둘로 나뉜 경우에만/)).toBeNull();
+  });
+
+  it("assigns an unassigned member without asking", () => {
+    const onAssign = vi.fn();
+    render(<UnidentifiedSpeaker speaker="화자 3" members={members} onAssign={onAssign} />);
+
+    pick("usr_2");
+
+    expect(onAssign).toHaveBeenCalledWith("usr_2");
+  });
+});

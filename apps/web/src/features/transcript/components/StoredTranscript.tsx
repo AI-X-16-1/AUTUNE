@@ -9,7 +9,7 @@ import { useUtteranceAnchor } from "../hooks/useUtteranceAnchor";
 import type { SpeakerCandidate, SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
 import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
 import { TranscriptRow } from "./TranscriptRow";
-import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
+import { type PickableMember, UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
 /**
  * A finished meeting's transcript, read back from what was stored.
@@ -248,24 +248,36 @@ export function speakerNames(
 }
 
 /**
- * What the speaker prompts may still offer: the team minus anyone already put
- * to a speaker in this meeting. Once 화자 1 is 김민경, 화자 2 and 화자 3 pick
- * from the other two, and a candidate who is already somebody else's voice is
- * not suggested again.
+ * What the speaker prompts offer: the members nobody is put to yet first, then
+ * those already put to a speaker in this meeting, last and marked with that
+ * label. Once 화자 1 is 김민경, 화자 2 and 화자 3 lead with the other two. A
+ * candidate who is already somebody else's voice is not suggested again.
  *
- * This rules out one person on two labels, which diarization does produce when
- * it splits a voice in two. That was the team's call (2026-10-06): a wrong
- * second assignment cannot be undone yet, and a short list is the more common
- * help. A label split that way stays unassigned, or takes a typed name.
+ * An assigned member stays in the list, behind a confirmation in
+ * `UnidentifiedSpeaker`, because diarization sometimes splits one voice into
+ * two labels and both have to reach the same account for "내 발화 삭제" to
+ * find every line (#912 review). Removing them, as this first did, closed
+ * that path.
  */
 export function unassigned(
   speakers: SpeakerEntry[],
   members: TeamMember[],
-): { members: TeamMember[]; candidate: (candidate: SpeakerCandidate | null) => SpeakerCandidate | null } {
-  const taken = new Set(speakers.flatMap((entry) => (entry.user_id ? [entry.user_id] : [])));
+): {
+  members: PickableMember[];
+  candidate: (candidate: SpeakerCandidate | null) => SpeakerCandidate | null;
+} {
+  const labelById = new Map(
+    speakers.flatMap((entry) => (entry.user_id ? [[entry.user_id, entry.speaker_label]] : [])),
+  );
   return {
-    members: members.filter((member) => !taken.has(member.user_id)),
-    candidate: (candidate) => (candidate && !taken.has(candidate.user_id) ? candidate : null),
+    members: [
+      ...members.filter((member) => !labelById.has(member.user_id)),
+      ...members.flatMap((member) => {
+        const label = labelById.get(member.user_id);
+        return label ? [{ ...member, assignedTo: label }] : [];
+      }),
+    ],
+    candidate: (candidate) => (candidate && !labelById.has(candidate.user_id) ? candidate : null),
   };
 }
 
