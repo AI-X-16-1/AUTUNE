@@ -47,10 +47,12 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { label: "홈", href: "/", isCurrent: (p) => p === "/" },
-  // The meeting list is the home screen for now, so both entries lead there;
-  // this one is current anywhere inside a meeting.
-  { label: "회의", href: "/", isCurrent: (p) => p.startsWith("/meetings") },
+  // The meeting list is the home screen, so there is no "회의" entry beside
+  // this one: it led to the same place and differed only in when it was lit
+  // (removed on the user's word, 2026-10-06). A meeting is opened from home,
+  // so home is the current entry anywhere inside one -- otherwise nothing in
+  // the sidebar would be lit on the screens people spend most time on.
+  { label: "홈", href: "/", isCurrent: (p) => p === "/" || p.startsWith("/meetings") },
   { label: "액션아이템", href: "/actions", isCurrent: (p) => p === "/actions" },
   { label: "갭 리포트", href: "/gaps", isCurrent: (p) => p === "/gaps" },
   { label: "결정 히스토리", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
