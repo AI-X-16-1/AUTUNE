@@ -17,6 +17,10 @@ vi.mock("../api", () => ({
 
 const A: TeamSummary = { team_id: "team_a", name: "가 팀", pinned: false };
 const B: TeamSummary = { team_id: "team_b", name: "나 팀", pinned: false };
+const C: TeamSummary = { team_id: "team_c", name: "다 팀", pinned: false };
+const D: TeamSummary = { team_id: "team_d", name: "라 팀", pinned: false };
+const E: TeamSummary = { team_id: "team_e", name: "마 팀", pinned: false };
+const names = () => [...menu().querySelectorAll("button")].map((b) => b.textContent);
 
 const menu = () => screen.getByRole("navigation", { name: "팀" });
 const entry = (name: string) =>
@@ -72,6 +76,52 @@ describe("TeamMenu", () => {
     expect(shown()).toBe("team_b");
     expect(chosen()).toEqual(["나 팀"]);
     expect(window.localStorage.getItem("autune.team")).toBe("team_b");
+  });
+
+  it("lists three teams and no more, the first three as the server orders them", async () => {
+    // The user, 2026-10-06. `GET /teams` puts pinned teams first, so a pinned
+    // team is among the three before any that is not.
+    open([{ ...D, pinned: true }, { ...B, pinned: true }, A, C, E]);
+
+    await waitFor(() => expect(names()).toEqual(["라 팀", "나 팀", "가 팀"]));
+    expect(chosen()).toEqual(["라 팀"]);
+  });
+
+  it("keeps the team being looked at among the three, in the last place", async () => {
+    window.localStorage.setItem("autune.team", "team_e");
+
+    open([A, B, C, D, E]);
+
+    await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀", "마 팀"]));
+    expect(chosen()).toEqual(["마 팀"]);
+  });
+
+  it("brings in a team chosen in a screen's row, and stays at three", async () => {
+    open([A, B, C, D, E], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    const row = screen
+      .getAllByRole("button", { name: "라 팀" })
+      .find((b) => !menu().contains(b)) as HTMLElement;
+
+    fireEvent.click(row);
+
+    expect(names()).toEqual(["가 팀", "나 팀", "라 팀"]);
+    expect(chosen()).toEqual(["라 팀"]);
+    // Back to one of the first three: the first three again.
+    fireEvent.click(entry("나 팀"));
+    expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]);
+  });
+
+  it("the screen's own row still offers every team", async () => {
+    open([A, B, C, D, E], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    for (const team of [A, B, C, D, E]) {
+      const outside = screen
+        .getAllByRole("button", { name: team.name })
+        .filter((b) => !menu().contains(b));
+      expect(outside).toHaveLength(1);
+    }
   });
 
   it("follows a team picked in a screen's row", async () => {

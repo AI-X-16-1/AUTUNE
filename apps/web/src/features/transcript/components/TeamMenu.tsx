@@ -25,7 +25,29 @@ import type { TeamSummary } from "../types";
  * One team: its name, with nothing to choose. None, or a list that could not
  * be read: nothing -- the screens say so themselves, and a sidebar that
  * showed an error on every page would say it louder than it deserves.
+ *
+ * **At most three teams are listed** (the user, 2026-10-06: "팀 고정한거
+ * 포함해서 3개만"). They are the first three of the order above, so pinned
+ * teams -- of which a person may have three -- come before any other and
+ * fill the list when there are three of them. A sidebar is on every screen
+ * and a long list there pushes the menu below it out of reach; the full
+ * list is the row at the top of each team-level screen, which stays.
+ *
+ * The team being looked at is always one of the three. When it is not among
+ * the first three -- chosen in a screen's row, or remembered from before --
+ * it takes the last place, because a menu that marked nothing would leave a
+ * person unable to tell from the sidebar which team's data they are reading.
+ * (Ours to decide; the order said three and no more.)
  */
+export const MENU_TEAMS = 3;
+
+function listed(teams: TeamSummary[], teamId: string | null): TeamSummary[] {
+  const first = teams.slice(0, MENU_TEAMS);
+  if (teamId === null || first.some((team) => team.team_id === teamId)) return first;
+  const looking = teams.find((team) => team.team_id === teamId);
+  return looking ? [...first.slice(0, MENU_TEAMS - 1), looking] : first;
+}
+
 export function TeamMenu() {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
@@ -71,7 +93,7 @@ export function TeamMenu() {
   return (
     <nav aria-label="팀" className="flex flex-col">
       {heading}
-      {teams.map((team) => {
+      {listed(teams, teamId).map((team) => {
         const chosen = team.team_id === teamId;
         return (
           <button
