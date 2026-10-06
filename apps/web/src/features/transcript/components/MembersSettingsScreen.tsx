@@ -38,8 +38,10 @@ import { TeamScope } from "./TeamScope";
  *
  * **Leaving is the person's own act, said before it is done.** One press
  * opens what leaving means -- the team's meetings can no longer be read; what
- * they said and the items they hold stay with the team -- and a second press
- * does it. The last member is refused by the server and told why.
+ * they said and the items they hold stay with the team, and their own words
+ * are still theirs to delete afterwards (설정 › 개인정보 · 보관; the right does
+ * not go with the membership) -- and a second press does it. The last member
+ * is refused by the server and told why.
  */
 
 const SECTION_TITLE = {
@@ -223,7 +225,9 @@ function Members({ teamId }: { teamId: string }) {
           <>
             <p style={META}>
               나가면 이 팀의 회의와 기록을 더 볼 수 없습니다. 이 팀 회의에서 내가 한 말과 내가
-              담당한 항목은 팀의 기록으로 남습니다. 다시 들어오려면 팀원의 초대가 필요합니다.
+              담당한 항목은 팀의 기록으로 남습니다. 내가 한 말은 나간 뒤에도 설정의
+              &lsquo;개인정보 · 보관&rsquo;에서 직접 삭제할 수 있습니다. 다시 들어오려면 팀원의 초대가
+              필요합니다.
             </p>
             <div className="mt-2 flex gap-2">
               <Button tone="quiet" size="compact" loading={leaving} onClick={leave}>

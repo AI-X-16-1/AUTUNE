@@ -139,6 +139,8 @@ describe("MembersSettingsScreen", () => {
 
     expect(screen.getByText(/이 팀의 회의와 기록을 더 볼 수 없습니다/)).toBeTruthy();
     expect(screen.getByText(/내가 한 말과 내가\s+담당한 항목은 팀의 기록으로 남습니다/)).toBeTruthy();
+    // The right that does not go with the membership is said too.
+    expect(screen.getByText(/나간 뒤에도 설정의/)).toBeTruthy();
     expect(leave).not.toHaveBeenCalled();
 
     // And it can be put away again.
