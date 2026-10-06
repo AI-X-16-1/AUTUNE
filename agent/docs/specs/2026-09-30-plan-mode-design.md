@@ -58,7 +58,10 @@ not allow. Section 8 is updated to say this (PR C).
      (section 4).
    - Any earlier `pending` proposal with the same subagent and the same
      `meeting_id` becomes `superseded`. A proposal about no meeting supersedes
-     nothing. A run about no meeting (a chat on the team screen) whose
+     nothing. A chat's proposal replaces an earlier chat's, and the
+     pipeline's only when it is the same action (`tool`): asking to redraft or
+     post again replaces the pipeline's post card instead of leaving a dead or
+     doubled one (#879); the pipeline's proposal of another action stays. A run about no meeting (a chat on the team screen) whose
      proposal names a `meeting_id` is about that meeting: the row takes it,
      supersedes by it, and is approved under it; a meeting outside the team
      is refused with `meeting not found` (#862).

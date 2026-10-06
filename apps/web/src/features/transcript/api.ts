@@ -208,12 +208,19 @@ export const assignSpeaker = (meetingId: string, speakerLabel: string, userId: s
 export const nameSpeaker = (meetingId: string, speakerLabel: string, name: string) =>
   writeSpeaker(meetingId, speakerLabel, "/name", "PUT", { name });
 
+/**
+ * Undo a wrong assignment: the label goes back to nobody, and the voice this
+ * meeting added to that person's profile is deleted. 204, no body.
+ */
+export const unassignSpeaker = (meetingId: string, speakerLabel: string) =>
+  writeSpeaker(meetingId, speakerLabel, "", "DELETE");
+
 async function writeSpeaker(
   meetingId: string,
   speakerLabel: string,
   suffix: "" | "/name",
-  method: "POST" | "PUT",
-  payload: Record<string, string>,
+  method: "POST" | "PUT" | "DELETE",
+  payload?: Record<string, string>,
 ): Promise<void> {
   // Same origin, like the upload below: a direct call to the API's own port is
   // cross-origin, so the browser sent a CORS preflight the API answers 405 and
@@ -222,8 +229,10 @@ async function writeSpeaker(
     `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}${suffix}`,
     {
       method,
-      headers: { "content-type": "application/json", ...authHeaders() },
-      body: JSON.stringify(payload),
+      headers: payload
+        ? { "content-type": "application/json", ...authHeaders() }
+        : authHeaders(),
+      body: payload ? JSON.stringify(payload) : undefined,
     },
   );
   if (!response.ok) {

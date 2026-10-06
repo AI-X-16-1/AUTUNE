@@ -190,7 +190,10 @@ def _quotable(result: ToolResult, room: int) -> tuple[ToolResult, int]:
     kept: list[Finding] = []
     quoted = 0
     for item in result.items:
-        if (getattr(item, "id", None) or "").startswith("utt_"):
+        # `id` is an extra key a module chooses (`Finding` allows any), so it
+        # is not always text: an integer once ended the whole run here (#901).
+        item_id = getattr(item, "id", None)
+        if isinstance(item_id, str) and item_id.startswith("utt_"):
             if quoted >= room:
                 continue
             quoted += 1

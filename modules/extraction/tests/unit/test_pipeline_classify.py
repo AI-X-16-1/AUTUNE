@@ -10,6 +10,7 @@ This is not the integration suite: no Postgres, no migrations, no broker.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -49,7 +50,10 @@ from autune_extraction.models import (
     ExtMeetingSummary,
     ExtProject,
 )
-from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
+from autune_extraction.pipeline import FakeClassifier, FakeNli, NliScores, Prediction
+
+from .test_llm_classifier import Provider
+from .test_llm_classifier import classifier as llm_classifier
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -381,10 +385,10 @@ def test_a_non_consenting_turn_still_counts_in_the_decision_gap(session: Session
 # --- the task ------------------------------------------------------------------
 
 
-def transcript(*, masked: bool = True) -> dict:
+def transcript(*, masked: bool = True, lines: list[tuple[str, float, str]] = LINES) -> dict:
     return TranscriptReady(
         meeting_id=MEETING,
-        utterances=spoken(),
+        utterances=spoken(lines),
         metadata=TranscriptMetadata(
             duration=20.0,
             source=next(iter(TranscriptSource)),
@@ -436,6 +440,46 @@ def test_the_task_hands_the_teams_names_to_the_classifier(
     assert rosters == [["김민경"]]
 
 
+def test_the_name_of_a_speaker_who_left_the_team_is_not_sent_out(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real outbound classifier behind the task, its provider recording.
+    한서윤 spoke in this meeting and is no longer on the team: no membership
+    row, a participant row that still names them. A member who stayed says
+    their name. On a run made now -- a retry, "다시 추출" -- the name is
+    replaced like a member's, in every request."""
+    lines = [
+        ("utt_1", 0.0, "그 건은 한서윤 님이 지난주에 정리해 주셨어요"),
+        ("utt_2", 4.0, "네 그럼 서윤 님 자료 받아서 제가 금요일까지 할게요"),
+    ]
+    stored(wired, lines)
+    team_id = wired.get(Meeting, MEETING).team_id  # type: ignore[union-attr]
+    wired.add(User(id="user_stay", email="stay@example.com", display_name="김민경"))
+    wired.add(TeamMember(team_id=team_id, user_id="user_stay"))
+    wired.add(User(id="user_gone", email="gone@example.com", display_name="한서윤"))
+    wired.add(
+        Participant(
+            id="par_gone",
+            meeting_id=MEETING,
+            speaker_label="C",
+            consented=True,
+            user_id="user_gone",
+        )
+    )
+    wired.flush()
+    provider = Provider()
+    outbound = llm_classifier(provider)
+    monkeypatch.setattr(tasks, "get_classifier", lambda: outbound)
+
+    tasks.on_transcript_ready(transcript(lines=lines))
+
+    sent = json.dumps(provider.bodies, ensure_ascii=False)
+    assert provider.bodies, "nothing was sent, so nothing was checked"
+    assert "[사람1]" in sent
+    assert "서윤" not in sent
+    assert kinds(wired) == {"utt_2": "commitment"}, "the answer still lands on the utterance"
+
+
 def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
     stored(wired)
 
@@ -464,6 +508,54 @@ def test_the_task_runs_step_4_on_ambiguous_rows_only(wired: Session) -> None:
         "utt_4": False,
         "utt_5": True,
     }
+
+
+class _AcknowledgementIsAmbiguous(FakeClassifier):
+    """The fake, calling "알겠습니다" ambiguous as the cloud classifier does after
+    a piece of news. (By its ending the fake itself would call it a commitment.)"""
+
+    def classify(self, texts: list[str]) -> list[Prediction]:
+        return [
+            Prediction(kind=K.AMBIGUOUS, confidence=0.9, scores={K.AMBIGUOUS: 0.9})
+            if "알겠습니다" in text
+            else prediction
+            for text, prediction in zip(texts, super().classify(texts), strict=True)
+        ]
+
+
+class _RecordingNli(FakeNli):
+    """The fake, remembering every premise it was asked about."""
+
+    seen: list[str] = []
+
+    def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
+        type(self).seen = [premise for premise, _ in pairs]
+        return super().classify(pairs)
+
+
+def test_the_task_drops_a_bare_acknowledgement_before_step_4(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """utt_2 is called ambiguous and says nothing: it is not verified, stored,
+    recorded for a confirmation or made a card. Without the rule the fake NLI
+    read its "겠습니다" as a promise and the task drafted an item from it.
+    utt_3 is weak assent with content, and goes on as before."""
+    lines = [
+        ("utt_1", 0.0, "다음 주 배포는 화요일로 밀렸습니다"),
+        ("utt_2", 4.0, "네 알겠습니다."),
+        ("utt_3", 8.0, "한번 볼게요"),
+    ]
+    stored(wired, lines)
+    monkeypatch.setattr(tasks, "get_classifier", _AcknowledgementIsAmbiguous)
+    monkeypatch.setattr(_RecordingNli, "seen", [])
+    monkeypatch.setattr(tasks, "get_nli", _RecordingNli)
+
+    tasks.on_transcript_ready(transcript(lines=lines))
+
+    assert _RecordingNli.seen == ["한번 볼게요"]
+    assert kinds(wired) == {"utt_3": "ambiguous"}
+    assert [row.utterance_id for row in wired.scalars(select(ExtConfirmation))] == ["utt_3"]
+    assert wired.query(ExtActionItem).count() == 0
 
 
 def test_the_task_refuses_an_unmasked_transcript_before_classifying(

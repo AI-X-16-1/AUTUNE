@@ -277,6 +277,8 @@ export interface SummaryDecision {
  */
 export interface Project {
   id: string;
+  /** The team it belongs to: what tells two teams' projects of one name apart. */
+  team_id?: string;
   name: string;
   /** Other names people say for it, matched in what was said. */
   aliases: string[];

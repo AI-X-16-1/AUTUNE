@@ -8,6 +8,7 @@ import { useTranscript } from "../hooks/useTranscript";
 import { useUtteranceAnchor } from "../hooks/useUtteranceAnchor";
 import type { SpeakerCandidate, SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
 import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
+import { AssignedSpeaker } from "./AssignedSpeaker";
 import { TranscriptRow } from "./TranscriptRow";
 import { type PickableMember, UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
@@ -88,10 +89,12 @@ export function StoredTranscript({
     membersError,
     assign,
     name,
+    unassign,
     assignError,
     pending,
   } = useSpeakers(meetingId, teamId);
   const unidentified = speakers.filter((entry) => entry.user_id === null);
+  const assigned = speakers.filter((entry) => entry.user_id !== null);
   const nameOf = speakerNames(speakers, members);
   const pick = unassigned(speakers, members);
   const ids = useMemo(
@@ -149,6 +152,16 @@ export function StoredTranscript({
           {membersError}
         </p>
       )}
+
+      {assigned.map((entry) => (
+        <AssignedSpeaker
+          key={entry.speaker_label}
+          speaker={entry.speaker_label}
+          name={nameOf(entry.speaker_label, entry.user_id)}
+          pending={pending}
+          onUnassign={() => void unassign(entry.speaker_label)}
+        />
+      ))}
 
       {unidentified.map((entry) => (
         <UnidentifiedSpeaker

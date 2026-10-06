@@ -13,14 +13,15 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import UtteranceKind
-from autune_core import Meeting, Participant, Team, User, Utterance
+from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance
 from autune_core.entities import TeamIntegration, UserIntegration
 from autune_extraction import service
 from autune_extraction.confirmations import ConfirmationResponse
-from autune_extraction.models import ExtConfirmation
+from autune_extraction.models import ExtActionItem, ExtConfirmation
 
 MEETING = "mtg_slackclick"
 UTTERANCE = "utt_slackclick"
@@ -40,6 +41,7 @@ def session(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> Iterator[Se
         ]
     )
     s.flush()
+    s.add(TeamMember(team_id=TEAM, user_id=KIM))
     s.add(Meeting(id=MEETING, team_id=TEAM, title="주간 회의"))
     s.flush()
     s.add(Participant(id="par_sc_kim", meeting_id=MEETING, speaker_label="김", user_id=KIM))
@@ -102,6 +104,32 @@ def test_the_speakers_own_click_is_recorded(session: Session, recorded: list) ->
     service.answer_from_slack(click("U_SC_KIM"))
 
     assert [r.responder_id for r in recorded] == ["U_SC_KIM"]
+
+
+def test_a_click_by_the_speaker_after_they_left_the_team_is_dropped(
+    session: Session, recorded: list
+) -> None:
+    """The DM stays in their Slack after they leave; its buttons stop counting."""
+    session.execute(sa.delete(TeamMember).where(TeamMember.user_id == KIM))
+    session.flush()
+
+    service.answer_from_slack(click("U_SC_KIM"))
+
+    assert recorded == []
+
+
+def test_a_departed_speakers_click_writes_nothing(session: Session) -> None:
+    """The whole path, nothing stubbed: no answer on the row and no draft on
+    the team's board."""
+    session.execute(sa.delete(TeamMember).where(TeamMember.user_id == KIM))
+    session.flush()
+
+    service.answer_from_slack(click("U_SC_KIM"))
+
+    row = session.get(ExtConfirmation, UTTERANCE, populate_existing=True)
+    assert row is not None
+    assert (row.resolved_kind, row.responded_at) == (None, None)
+    assert session.scalars(sa.select(ExtActionItem)).all() == []
 
 
 def test_someone_elses_click_is_dropped(session: Session, recorded: list) -> None:

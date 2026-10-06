@@ -95,8 +95,11 @@ def queue_l2(
     ``proposals_per == "team"``), all of them whatever meeting they came from.
     A team-wide judgment replaces the last one whoever asked, so one item is
     never left proposed to two people (#636). A chat about a meeting replaces
-    only an earlier chat's rows: someone asking on a meeting page must not
-    retire the proposal the pipeline left there for an approver (#651 review).
+    an earlier chat's rows, and the pipeline's rows only for the same action:
+    "다시 써줘" or "올려줘" proposes the post the pipeline already left, and
+    keeping both leaves a dead or doubled card (#879). Someone asking on a
+    meeting page still never retires the pipeline's proposal of another action
+    (#651 review).
 
     A run about no meeting (a chat on the team screen) whose proposal names one
     in ``meeting_id`` is treated as about that meeting: the row is that
@@ -143,7 +146,12 @@ def queue_l2(
                     chat_runs = select(AgentRun.id).where(
                         AgentRun.trigger["kind"].as_string() == "chat"
                     )
-                    narrower += (AgentPendingAction.run_id.in_(chat_runs),)
+                    narrower += (
+                        or_(
+                            AgentPendingAction.run_id.in_(chat_runs),
+                            AgentPendingAction.tool == proposal.tool,
+                        ),
+                    )
             session.execute(
                 update(AgentPendingAction)
                 .where(

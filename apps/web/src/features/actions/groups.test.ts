@@ -6,6 +6,7 @@ import {
   UNNAMED_TEAM,
   byProject,
   byTeam,
+  projectTeams,
 } from "./groups";
 import type { Project, TeamName } from "./types";
 
@@ -113,5 +114,40 @@ describe("byProject", () => {
     expect(
       byProject(sorted, PROJECTS, TEAMS).map((group) => group.title),
     ).toEqual(["앱", "웹", "앱"]);
+  });
+});
+
+describe("projectTeams", () => {
+  const of = (id: string, name: string, team_id: string): Project => ({
+    ...project(id, name),
+    team_id,
+  });
+
+  it("says each project's team when the list is of several teams", () => {
+    const listed = [
+      of("prj_app", "앱", "team_p"),
+      of("prj_web", "웹", "team_p"),
+      of("prj_app2", "앱", "team_d"),
+    ];
+    expect([...projectTeams(listed, TEAMS)]).toEqual([
+      ["prj_app", "플랫폼"],
+      ["prj_web", "플랫폼"],
+      ["prj_app2", "디자인"],
+    ]);
+  });
+
+  it("says nothing when every project is of one team", () => {
+    const listed = [of("prj_app", "앱", "team_p"), of("prj_web", "웹", "team_p")];
+    expect(projectTeams(listed, TEAMS).size).toBe(0);
+  });
+
+  it("says nothing for a team whose name did not arrive", () => {
+    const listed = [of("prj_app", "앱", "team_p"), of("prj_x", "앱", "team_x")];
+    expect([...projectTeams(listed, TEAMS)]).toEqual([["prj_app", "플랫폼"]]);
+    expect(projectTeams(listed, []).size).toBe(0);
+  });
+
+  it("says nothing for projects that do not say their team", () => {
+    expect(projectTeams(PROJECTS, TEAMS).size).toBe(0);
   });
 });

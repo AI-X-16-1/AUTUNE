@@ -411,6 +411,13 @@ def answer_from_slack(response: ConfirmationResponse) -> None:
     the workspace the meeting's team installed Autune into -- the same "only
     the speaker" the web path checks in ``answer_confirmation`` (#610 review).
     Anything else is logged by id and dropped, like an orphaned click.
+
+    **And when the speaker is still on the meeting's team** (the user,
+    2026-10-07). A DM sent while they were a member stays in their Slack after
+    they leave, buttons and all; "약속입니다" on it would draft an item on a
+    board they can no longer open. The web refuses the same act with its 404
+    (``require_readable_meeting``); here the click is dropped, which is all a
+    click that does not count ever gets -- the message does not change.
     """
     with session_scope() as session:
         allowed = _clicked_by_the_speaker(session, response)
@@ -435,7 +442,9 @@ def _clicked_by_the_speaker(session: Session, response: ConfirmationResponse) ->
     ):
         return False
     team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == row.meeting_id))
-    slack = load_integration(session, team_id, "slack") if team_id else None
+    if not team_id or not _is_team_member(session, user_id=speaker, team_id=team_id):
+        return False
+    slack = load_integration(session, team_id, "slack")
     return (
         slack is not None
         and bool(response.workspace_id)
@@ -2436,14 +2445,39 @@ def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
 
 
 def team_roster(session: Session, meeting_id: str) -> list[str]:
-    """Display names of the members of the team that held this meeting -- what
-    an outbound classifier replaces before sending (#411). Read only."""
+    """The display names an outbound model is not sent for this meeting (#411):
+    the members of the team that held it, and the accounts named on the
+    meeting's own participant rows. Read only.
+
+    **The second half is for somebody who has left the team** (the user,
+    2026-10-06). Membership alone made a name replaceable only for as long as
+    its owner stayed: a meeting extracted again afterwards -- a failed run's
+    retry, "다시 추출", the consent sweep -- would have sent the name of a
+    person who spoke in it as it was said. Leaving a team (#552) removes the
+    membership and leaves the participant row's ``user_id`` alone, so the
+    people who were in the room are still found from the meeting.
+
+    Not covered, and not coverable from what is stored: somebody who has left
+    and is named in a meeting they did not speak in, or spoke in without ever
+    being identified -- nothing records that they were once on the team; and
+    a deleted account, whose participant rows lose their ``user_id`` and whose
+    display name is gone with it. Like any name that is on neither list, these
+    go as they were said.
+
+    By ``users.id``, so the same meeting gets the same list on every run.
+    """
+    on_the_team = (
+        select(TeamMember.user_id)
+        .join(Meeting, Meeting.team_id == TeamMember.team_id)
+        .where(Meeting.id == meeting_id)
+    )
+    in_the_meeting = select(Participant.user_id).where(
+        Participant.meeting_id == meeting_id, Participant.user_id.is_not(None)
+    )
     return list(
         session.scalars(
             select(User.display_name)
-            .join(TeamMember, TeamMember.user_id == User.id)
-            .join(Meeting, Meeting.team_id == TeamMember.team_id)
-            .where(Meeting.id == meeting_id)
+            .where(or_(User.id.in_(on_the_team), User.id.in_(in_the_meeting)))
             .order_by(User.id)
         )
     )
@@ -2553,7 +2587,7 @@ the days after a meeting; a label still unresolved after a month is one nobody
 is going to resolve, and rescanning it every ten minutes forever buys nothing."""
 
 FILL_CAP = 200
-"""Items filled per run at most, newest first. The first run after a deploy may
+"""Items changed per run at most, newest first. The first run after a deploy may
 find a backlog; the rest waits ten minutes rather than one run holding locks on
 all of it."""
 
@@ -2561,33 +2595,44 @@ all of it."""
 def fill_identified_assignees(
     session: Session, *, now: datetime | None = None
 ) -> list[ExtActionItem]:
-    """Give an item its speaker's account once A has identified the speaker.
+    """Keep a model item's assignee with whoever A says its speaker is.
 
-    A commitment by an unidentified speaker is drafted with only the label
-    ("Speaker 2", ``slots.assignee_of``). When somebody later confirms who that
-    was, A fills ``participants.user_id``, and nothing announces it -- #360
-    settled on consumers reading it back rather than on a new event. This
-    finds the model's items still holding only the label their source was
-    spoken under, from the last ``FILL_WINDOW``, whose source utterances all
-    belong to one identified, consenting participant, and sets that account as
-    the assignee, clearing the label, as a fresh extraction would.
+    A commitment is for the speaker who made it (``slots.assignee_of``): an
+    identified speaker's account, or only the label ("Speaker 2") while nobody
+    knows who that was. A changes ``participants.user_id`` afterwards -- a
+    person confirms the speaker, corrects the confirmation to somebody else, or
+    undoes it -- and nothing announces it: #360 settled on consumers reading it
+    back rather than on a new event. This reads it back. For the model's open
+    items from the last ``FILL_WINDOW`` whose source utterances all belong to
+    one consenting participant, the assignee becomes what a fresh extraction
+    would write now:
 
-    **A person's choice is never overwritten.** An item is left alone when:
+    - the speaker is identified: that account, and no label;
+    - the speaker is identified as somebody else than the item holds: the new
+      account (#929);
+    - the speaker is no longer identified: no account, and the label the
+      utterance was spoken under again (#929).
+
+    Only an assignee that came from the speaker is moved. The model's items
+    get theirs from nowhere else, so it is one unless a person has chosen
+    since, and **a person's choice is never overwritten.** An item is left
+    alone when:
 
     - a person's edit of it names an assignee field, or names no fields at all
       -- rows written before ``ext_edit_events.fields`` existed are NULL, and
       may have been exactly that edit (lsh2217's review of #536);
-    - its label is no longer the speaker label it was drafted with -- a person
-      typed a name there;
+    - it holds no account and its label is not the speaker label it was
+      drafted with -- a person typed a name there;
+    - it is done. Who finished it is not recorded, nothing is sent about it
+      any more, and moving it would only rewrite whose finished work it reads
+      as;
     - its assignee or its label changed between the read and the write: the
       update carries both as they were read.
 
-    **Write-once.** A filled item holds an account, as a person-assigned one
-    does, and nothing here follows a later re-identification of the speaker
-    (A can move a label from X to Y): the item then shows X, and a person
-    reassigns it on the board. Following it would need a record of which
-    assignees this wrote, and would move work a person may already have
-    accepted as X's.
+    An item a person confirmed, or moved to in progress, does follow: those
+    edits say the item is real, not whose it is, and it is the confirmed item
+    whose reminders, digests and outside copies would otherwise stay with the
+    person the label was wrongly put to.
 
     No ``ext_edit_events`` row: that table counts a person's corrections
     (ADR 0006), and this is neither. Returns the items it changed.
@@ -2602,49 +2647,78 @@ def fill_identified_assignees(
         )
         .exists()
     )
+    # Every source line of each item in reach, identified or not: who an item
+    # is for is decided over all of them, below.
     rows = session.execute(
-        select(ExtActionItem.id, ExtActionItem.assignee_label, Participant.user_id)
+        select(
+            ExtActionItem.id,
+            ExtActionItem.assignee_id,
+            ExtActionItem.assignee_label,
+            Utterance.speaker_label,
+            Participant.id,
+            Participant.consented,
+            User.id,
+        )
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
         .join(Utterance, Utterance.id == ExtActionItemSource.utterance_id)
-        .join(Participant, Participant.id == Utterance.participant_id)
-        .join(User, User.id == Participant.user_id)
+        .outerjoin(Participant, Participant.id == Utterance.participant_id)
+        # An account that is gone is an unidentified speaker, as it is for
+        # ``assignee_of``.
+        .outerjoin(User, User.id == Participant.user_id)
         .where(
-            ExtActionItem.assignee_id.is_(None),
-            ExtActionItem.assignee_label == Utterance.speaker_label,
             ExtActionItem.origin == "model",
+            ExtActionItem.status != ActionStatus.DONE.value,
             ExtActionItem.created_at >= moment - FILL_WINDOW,
-            Participant.consented.is_(True),
             ~maybe_edited,
         )
         .order_by(ExtActionItem.created_at.desc(), ExtActionItem.id)
     ).all()
-    speakers: dict[str, tuple[str, set[str]]] = {}
-    for item_id, label, user_id in rows:
-        speakers.setdefault(item_id, (label, set()))[1].add(user_id)
+    held: dict[str, tuple[str | None, str | None]] = {}
+    spoken: dict[str, set[tuple[str | None, bool, str | None, str]]] = {}
+    for item_id, assignee_id, label, speaker_label, participant_id, consented, user_id in rows:
+        held[item_id] = (assignee_id, label)
+        spoken.setdefault(item_id, set()).add(
+            (participant_id, bool(consented), user_id, speaker_label)
+        )
 
-    filled: list[ExtActionItem] = []
-    for item_id, (label, users) in list(speakers.items())[:FILL_CAP]:
-        if len(users) != 1:
+    changed: list[ExtActionItem] = []
+    for item_id, (assignee_id, label) in held.items():
+        if len(changed) >= FILL_CAP:
+            break
+        if len(spoken[item_id]) != 1:
             # Model items have one source today; one with sources by two
             # people was never the speaker's alone, and a person decides.
             continue
-        (user_id,) = users
-        changed = session.scalar(
+        ((participant_id, consented, user_id, speaker_label),) = spoken[item_id]
+        if participant_id is None or not consented:
+            continue
+        if assignee_id is None and label != speaker_label:
+            continue  # a name a person typed, or nothing at all
+        if assignee_id is not None and label is not None:
+            continue  # an account and a name: not a state the speaker gives
+        wanted = (user_id, None) if user_id is not None else (None, speaker_label)
+        if (assignee_id, label) == wanted:
+            continue
+        written = session.scalar(
             update(ExtActionItem)
             .where(
                 ExtActionItem.id == item_id,
-                ExtActionItem.assignee_id.is_(None),
-                ExtActionItem.assignee_label == label,
+                ExtActionItem.assignee_id.is_(None)
+                if assignee_id is None
+                else ExtActionItem.assignee_id == assignee_id,
+                ExtActionItem.assignee_label.is_(None)
+                if label is None
+                else ExtActionItem.assignee_label == label,
             )
-            .values(assignee_id=user_id, assignee_label=None)
+            .values(assignee_id=wanted[0], assignee_label=wanted[1])
             .returning(ExtActionItem.id)
         )
-        if changed is None:
+        if written is None:
             continue
         item = session.get(ExtActionItem, item_id, populate_existing=True)
         if item is not None:
-            filled.append(item)
-    return filled
+            changed.append(item)
+    return changed
 
 
 def classify_utterances(
@@ -2704,6 +2778,62 @@ def classify_utterances(
         # they are. The turn is a gap of the right length and nothing more.
         else ClassifiedUtterance(id=utterance.id, kind=None, confidence=0.0, text="")
         for utterance in ordered
+    ]
+
+
+# --- before step 4: a bare acknowledgement is nothing to ask about -------------
+
+
+_ACKNOWLEDGEMENT_WORD = re.compile(
+    r"^(?:(?:네|넵|예|아|음)+|알겠습니다|알겠어요|알았습니다|알았어요)$"
+)
+"""The words a bare acknowledgement is made of. Narrower than ``noun_form``'s,
+which also drops a sentence of thanks: nothing here was measured for
+"감사합니다". "그렇게 하겠습니다" and "좋습니다" are not here either -- those
+agree to something, and asking the speaker what they meant is step 6's job."""
+
+_ACKNOWLEDGEMENT_PUNCTUATION = re.compile(r"[.,!?~…]+")
+
+
+def _is_bare_acknowledgement(text: str) -> bool:
+    words = _ACKNOWLEDGEMENT_PUNCTUATION.sub(" ", text).split()
+    return bool(words) and all(_ACKNOWLEDGEMENT_WORD.match(word) for word in words)
+
+
+def drop_bare_acknowledgements(
+    classified: Sequence[ClassifiedUtterance],
+) -> list[ClassifiedUtterance]:
+    """An ``ambiguous`` turn that is nothing but "네 알겠습니다." becomes none.
+
+    A fixed rule, after the classifier and before step 4 (the user,
+    2026-10-06). ``ambiguous`` means *ask the speaker whether they meant to
+    commit*, and a turn with no content has nothing to ask about: the
+    confirmation would quote "네 알겠습니다." back at the person who said it.
+    The cloud classifier calls such a turn ``ambiguous`` after a piece of news
+    in a short probe and nothing after a long turn, and no rewrite of its
+    prompt fixed the first without losing something else
+    (``pipeline.llm.INSTRUCTIONS``).
+
+    **Only ``ambiguous`` is touched.** The same words after a request addressed
+    to the speaker are an acceptance, the classifier calls that a
+    ``commitment`` (3 of 3 in the same probe), and it stays one. The cost is
+    the acceptance the classifier under-reads as ``ambiguous``: it used to
+    reach the speaker as a question and now reaches nobody. Step 4 would not
+    have saved it -- it reads the utterance alone, without the request.
+
+    Before step 4 and not after, so the turn is not sent to an outbound NLI,
+    and so ``FakeNli`` cannot promote it: "알겠습니다" ends in the "겠습니다"
+    that fake reads as a promise, and the turn became a ``commitment`` and an
+    action-item card waiting for confirmation.
+
+    The turn stays in the sequence with ``kind`` ``None``, like any utterance
+    the classifier calls none; ``store_classifications`` leaves it out.
+    """
+    return [
+        replace(utterance, kind=None)
+        if utterance.kind is UtteranceKind.AMBIGUOUS and _is_bare_acknowledgement(utterance.text)
+        else utterance
+        for utterance in classified
     ]
 
 
@@ -4199,6 +4329,16 @@ def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> li
     speaker and nobody else (``send_confirmation_dm``), so a line with no
     account behind it has nobody to go to: it waits, and is asked if the
     speaker is identified inside the window (#360).
+
+    **And the speaker is on the meeting's team now** (the user, 2026-10-07).
+    The question goes out through that team's Slack bot and links to a meeting
+    only its members can open, and its answer writes to that team's board.
+    Somebody who has left keeps their participant row and their ``user_id`` on
+    it (#552), so the speaker link alone would still find them -- for a
+    question recorded just before they left, or one a later run of the meeting
+    records. Their row is left as it is, not asked: the team sees it
+    unanswered, the same as for a speaker who never linked Slack. Reminders
+    and digests make the same test of an assignee (``_open_items_of``).
     """
     moment = now or datetime.now(UTC)
     rows = session.execute(
@@ -4212,6 +4352,13 @@ def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> li
         .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
         .join(Participant, Participant.id == Utterance.participant_id)
         .join(User, User.id == Participant.user_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == Participant.user_id,
+            ),
+        )
         .where(
             ExtConfirmation.sent_at.is_(None),
             ExtConfirmation.created_at >= moment - CONFIRMATION_TIMEOUT,
@@ -4417,6 +4564,7 @@ def meeting_summary(
 def project_read(row: ExtProject) -> ProjectRead:
     return ProjectRead(
         id=row.id,
+        team_id=row.team_id,
         name=row.name,
         aliases=[a for a in row.aliases.split("\n") if a],
         jira_project_key=row.jira_project_key,

@@ -117,13 +117,36 @@ thinking tokens, medium scored 0.607 on EVAL_02, and high cost more per meeting
 than 3.8 Flash. Only commitment was scored -- the gold on both meetings marks
 commitments only -- so the effect on the other four kinds is unmeasured.
 
-The last sentences, asking for ``summaries`` (2026-10-06), were NOT measured
-on those two meetings: what they do to the labels is known only from one
-invented twelve-utterance meeting run before and after, where the stored
-kinds came out the same but for lines of filler. They are here because the
+The last sentences, asking for ``summaries`` (2026-10-06), cost a little
+precision, measured the same day on those two meetings with ten runs a cell,
+this prompt and the one before it taken in turn: commitment F1 0.961 -> 0.920
+on 8.txt and 0.974 -> 0.949 on EVAL_02, the loss being a few lines called a
+commitment in most runs (recall unchanged on 8.txt, slightly lower on EVAL_02),
+and 8.txt needs three requests where it needed two. They are here because the
 summary used to cost a request a commitment to a resolver that rewrites one
-sentence and cannot shorten a longer one; on that meeting the resolver's six
-to nine requests became none."""
+sentence and cannot shorten a longer one; on an invented twelve-utterance
+meeting the resolver's six to nine requests became none.
+
+**Three rewrites meant to win that precision back were tried and none is
+here** (2026-10-06): sharper definitions (a commitment is the speaker's own
+task or a request made *to them*; "그럼 확정할게요" is a decision; capability,
+routine and an unasked "네, 알겠습니다" are nothing), two more worked examples,
+and both together. Three alternated rounds on four dummy meetings: the two
+above, which were read while the rewrites were written, and EVAL_03 and
+EVAL_04, which were not. On the two that were read every rewrite looked
+better (8.txt 0.938 -> 0.98-0.99). On the two that were not, none did: this
+prompt 0.942 and 1.000; definitions 0.979 and 0.951; examples 0.958 and
+0.981; both 0.900 and 0.981 -- and the longer ones cost a fourth request on
+some meetings. A gain that shows only on the meetings the examples were
+written from is the examples, not the prompt. The same rounds carried a
+probe for an acknowledgement: after a piece of news this prompt calls
+"네 알겠습니다." ``ambiguous`` in a seven-line probe and nothing at all after
+a 900-character turn (5 of 5); after a request addressed to the speaker it
+calls it a commitment, which is what accepting a request is. The rewrites
+that made the first case nothing also made the second one nothing, or lost
+EVAL_03. So the first case is a fixed rule after this classifier and not a
+line of this prompt: ``service.drop_bare_acknowledgements``. Scripts and logs:
+``dataset/experiments/2026-10-06-summary-with-labels`` (local)."""
 
 _KINDS = {kind.value: kind for kind in UtteranceKind}
 _RETRY_BACKOFF_SEC = (2.0, 5.0, 10.0)

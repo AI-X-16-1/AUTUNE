@@ -1,9 +1,15 @@
-"""A speaker identified after extraction becomes the item's assignee (#360).
+"""A speaker identified after extraction becomes the item's assignee (#360),
+and the assignee goes with the speaker when A corrects or undoes that (#929).
 
 SQLite in memory. What is under test: which items the fill touches -- a label
 only, the model's, one identified and consenting speaker, no assignee edit by
-a person -- and what the task does after it: sync an item that has already
-been confirmed, and publish nothing, as a board edit publishes nothing.
+a person -- which it moves or empties afterwards, and what the task does after
+it: sync an item that has already been confirmed, and publish nothing, as a
+board edit publishes nothing.
+
+A's writes are stood in for by ``identify`` and ``undo``: B may not import A,
+and all B reads of either is ``participants.user_id``. Everything on B's side
+is its own writer -- the fill, ``build_action_items``, ``update_action_item``.
 """
 
 from __future__ import annotations
@@ -18,9 +24,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
+from autune_contracts.enums import ActionStatus
+from autune_contracts.transcript import Utterance as SpokenUtterance
 from autune_core import Base, Meeting, Participant, TeamMember, User, Utterance
 from autune_extraction import service, tasks
 from autune_extraction.models import ExtActionItem, ExtActionItemSource, ExtEditEvent
+from autune_extraction.pipeline import FakeClassifier
+from autune_extraction.schemas import ActionItemUpdate
 
 MEETING = "mtg_1"
 
@@ -37,6 +47,13 @@ def session() -> Iterator[Session]:
         s.add(Meeting(id=MEETING, team_id="team_1", title="주간 회의"))
         s.add(User(id="user_kim", email="kim@example.com", display_name="김민경"))
         s.add(User(id="user_lee", email="lee@example.com", display_name="이승환"))
+        # On the meeting's team: an assignee a person names has to be (#737).
+        s.add_all(
+            [
+                TeamMember(team_id="team_1", user_id="user_kim"),
+                TeamMember(team_id="team_1", user_id="user_lee"),
+            ]
+        )
         s.add_all(
             [
                 Participant(
@@ -94,11 +111,31 @@ def item(
 
 
 def identify(session: Session, participant_id: str, user_id: str) -> None:
-    """A's speaker confirmation: fills ``participants.user_id``."""
+    """A's speaker confirmation, first or corrected: ``assign_speaker`` sets
+    ``participants.user_id``."""
     participant = session.get(Participant, participant_id)
     assert participant is not None
     participant.user_id = user_id
     session.flush()
+
+
+def undo(session: Session, participant_id: str) -> None:
+    """A's 지정 해제 (#928): ``unassign_speaker`` clears ``participants.user_id``."""
+    participant = session.get(Participant, participant_id)
+    assert participant is not None
+    participant.user_id = None
+    session.flush()
+
+
+def filled(session: Session, item_id: str, user_id: str = "user_kim") -> ExtActionItem:
+    """An item the fill itself gave to ``user_id``: drafted under the label,
+    then the speaker identified, then one run."""
+    row = item(session, item_id, [f"utt_{item_id}"])
+    identify(session, "par_2", user_id)
+    assert [i.id for i in service.fill_identified_assignees(session)] == [item_id]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (user_id, None)
+    return row
 
 
 def test_an_identified_speaker_becomes_the_assignee_and_the_label_goes(session: Session) -> None:
@@ -212,6 +249,164 @@ def test_a_speaker_who_did_not_consent_is_not_read(session: Session) -> None:
     assert service.fill_identified_assignees(session) == []
 
 
+def test_one_identified_speaker_of_two_is_not_the_items_speaker(session: Session) -> None:
+    said(session, "utt_1", "par_2")
+    said(session, "utt_2", "par_3")
+    row = item(session, "act_1", ["utt_1", "utt_2"])
+    identify(session, "par_2", "user_kim")
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (None, "Speaker 2")
+
+
+# --- the speaker corrected or undone afterwards (#929) ---------------------------
+
+
+def test_a_speaker_corrected_to_somebody_else_takes_the_item_along(session: Session) -> None:
+    row = filled(session, "act_1")
+    identify(session, "par_2", "user_lee")
+
+    moved = service.fill_identified_assignees(session)
+
+    assert [i.id for i in moved] == ["act_1"]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == ("user_lee", None)
+    assert service.fill_identified_assignees(session) == []
+
+
+def test_an_undone_assignment_gives_the_item_its_label_back(session: Session) -> None:
+    row = filled(session, "act_1")
+    undo(session, "par_2")
+
+    emptied = service.fill_identified_assignees(session)
+
+    assert [i.id for i in emptied] == ["act_1"]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (None, "Speaker 2")
+    assert service.fill_identified_assignees(session) == []
+
+    # And it is an unidentified speaker's item again: the next person named
+    # gets it.
+    identify(session, "par_2", "user_lee")
+    assert [i.id for i in service.fill_identified_assignees(session)] == ["act_1"]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == ("user_lee", None)
+
+
+def test_an_item_drafted_for_an_identified_speaker_follows_too(session: Session) -> None:
+    """The speaker was already identified when the meeting was extracted, so
+    the draft itself carried the account (``slots.assignee_of``)."""
+    identify(session, "par_2", "user_kim")
+    said(session, "utt_1", "par_2")
+    line = SpokenUtterance(
+        id="utt_1",
+        speaker="김민경",
+        speaker_id="user_kim",
+        start=0.0,
+        end=2.0,
+        text="제가 금요일까지 정리하겠습니다",
+        confidence=0.9,
+    )
+    classified = service.classify_utterances(FakeClassifier(), [line], consented={"utt_1"})
+    drafted = service.build_action_items(
+        session, meeting_id=MEETING, utterances=[line], classified=classified
+    )
+    assert drafted is not None
+    (row,) = drafted
+    session.flush()
+    assert (row.assignee_id, row.assignee_label) == ("user_kim", None)
+    assert service.fill_identified_assignees(session) == []
+
+    identify(session, "par_2", "user_lee")
+    assert [i.id for i in service.fill_identified_assignees(session)] == [row.id]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == ("user_lee", None)
+
+    undo(session, "par_2")
+    assert [i.id for i in service.fill_identified_assignees(session)] == [row.id]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (None, "Speaker 2")
+
+
+@pytest.mark.parametrize("then", ["corrected", "undone"])
+def test_an_assignee_a_person_chose_after_the_fill_stays(session: Session, then: str) -> None:
+    row = filled(session, "act_1")
+    service.update_action_item(session, row, ActionItemUpdate(assignee_id="user_lee"))
+    session.flush()
+    if then == "corrected":
+        identify(session, "par_2", "user_kim")
+    else:
+        undo(session, "par_2")
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == ("user_lee", None)
+
+
+def test_an_assignee_a_person_cleared_after_the_fill_stays_cleared(session: Session) -> None:
+    row = filled(session, "act_1")
+    service.update_action_item(session, row, ActionItemUpdate(assignee_id=None))
+    session.flush()
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (None, None)
+
+
+@pytest.mark.parametrize("status", [ActionStatus.TODO, ActionStatus.IN_PROGRESS])
+def test_an_item_a_person_confirmed_or_started_still_follows(
+    session: Session, status: ActionStatus
+) -> None:
+    """Those edits say the item is real, not whose it is -- and it is this
+    item whose reminders and outside copies would stay with the wrong person."""
+    row = filled(session, "act_1")
+    service.update_action_item(session, row, ActionItemUpdate(status=status))
+    session.flush()
+    undo(session, "par_2")
+
+    assert [i.id for i in service.fill_identified_assignees(session)] == ["act_1"]
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == (None, "Speaker 2")
+
+
+@pytest.mark.parametrize("then", ["corrected", "undone"])
+def test_a_finished_item_stays_with_whoever_held_it(session: Session, then: str) -> None:
+    row = filled(session, "act_1")
+    service.update_action_item(session, row, ActionItemUpdate(status=ActionStatus.DONE))
+    session.flush()
+    if then == "corrected":
+        identify(session, "par_2", "user_lee")
+    else:
+        undo(session, "par_2")
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == ("user_kim", None)
+
+
+def test_a_speaker_who_withdrew_consent_is_not_followed(session: Session) -> None:
+    row = filled(session, "act_1")
+    participant = session.get(Participant, "par_2")
+    assert participant is not None
+    participant.consented = False
+    participant.user_id = "user_lee"
+    session.flush()
+
+    assert service.fill_identified_assignees(session) == []
+    session.refresh(row)
+    assert (row.assignee_id, row.assignee_label) == ("user_kim", None)
+
+
+def test_an_item_older_than_the_window_does_not_follow(session: Session) -> None:
+    row = filled(session, "act_1")
+    row.created_at = datetime.now(UTC) - service.FILL_WINDOW - timedelta(days=1)
+    session.flush()
+    undo(session, "par_2")
+
+    assert service.fill_identified_assignees(session) == []
+
+
 # --- the task --------------------------------------------------------------------
 
 
@@ -253,3 +448,22 @@ def test_the_task_publishes_nothing_when_nothing_changed(
 
     assert tasks.fill_identified_assignees() == []
     assert wired == {"published": [], "synced": []}
+
+
+def test_the_task_syncs_a_confirmed_item_again_when_its_speaker_is_undone(
+    session: Session, wired: dict[str, list]
+) -> None:
+    """The second sync is what takes the item off the wrong person's Notion
+    page, Jira issue and calendar."""
+    item(session, "act_draft", ["utt_1"])
+    item(session, "act_done", ["utt_2"], status="todo")
+    identify(session, "par_2", "user_kim")
+    tasks.fill_identified_assignees()
+    wired["synced"].clear()
+    undo(session, "par_2")
+
+    emptied = tasks.fill_identified_assignees()
+
+    assert sorted(emptied) == ["act_done", "act_draft"]
+    assert wired["published"] == []
+    assert wired["synced"] == ["act_done"]
