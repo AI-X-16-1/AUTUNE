@@ -2567,6 +2567,48 @@ def drain_calendar_cleanup() -> int:
     return removed
 
 
+@shared_task(name="autune.extraction.periodic.take_back_departed_calendar_events")
+@periodic(timedelta(minutes=10))
+def take_back_departed_calendar_events() -> int:
+    """Take a due-date event off the calendar of somebody who has left the
+    meeting's team (#552). Returns how many items were looked at.
+
+    Leaving a team is module A's act and publishes nothing, so the event a
+    person was given while they were on the team would stay on their own
+    calendar -- the item's text in its title -- until somebody happened to edit
+    the item. Every ten minutes this finds those events
+    (``calendar_sync.events_of_departed_owners``) and runs each item's own
+    calendar sync, which is what removes one: deleted with the person's grant,
+    or queued for ``drain_calendar_cleanup`` when the grant cannot be used,
+    and the row dropped either way -- so an item is looked at once.
+
+    A run with nothing to take back is one query. One item's failure is
+    logged by its id and the error's type and does not stop the rest; it is
+    found again next time.
+
+    Nothing at all on a deployment without the Google client, for the reason
+    ``drain_calendar_cleanup`` gives: no grant could be used, every person
+    would read as not connected, and the sync would drop the row that is the
+    only record of the event's id.
+    """
+    if not _google_client_configured():
+        return 0
+    with session_scope() as session:
+        owed = calendar_sync.events_of_departed_owners(session)
+    for action_item_id in owed:
+        try:
+            sync_action_item_calendar(action_item_id)
+        except Exception as exc:  # noqa: BLE001 -- one item must not stop the others
+            log.warning(
+                "extraction_calendar_take_back_failed",
+                action_item_id=action_item_id,
+                error=type(exc).__name__,
+            )
+    if owed:
+        log.info("extraction_calendar_departed_events_taken_back", items=len(owed))
+    return len(owed)
+
+
 @shared_task(name="autune.extraction.periodic.drain_external_cleanup")
 @periodic(timedelta(minutes=10))
 def drain_external_cleanup() -> int:

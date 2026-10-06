@@ -14,7 +14,7 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -596,6 +596,103 @@ def test_the_pull_reads_each_person_on_their_own_and_keeps_a_cursor(
     assert notion == [row.id]  # Notion follows the new date
     assert wired.get(ExtCalendarPoll, ME) is not None
     assert wired.get(ExtCalendarPoll, "user_a_revoked") is None
+
+
+# --- somebody who left the team (#552) ---------------------------------------------
+
+
+def _own_calendars(monkeypatch: pytest.MonkeyPatch, *user_ids: str) -> dict[str, ClosableCalendar]:
+    """Each person's own fake calendar behind the real ``tasks._calendars``:
+    their refresh token is their id, and so is the access token it buys."""
+    calendars = {user_id: ClosableCalendar() for user_id in user_ids}
+    _grants(monkeypatch, **{user_id: user_id for user_id in user_ids})
+    monkeypatch.setattr(tasks, "refresh_access_token", lambda **kw: kw["refresh_token"])
+    monkeypatch.setattr(tasks, "CalendarClient", lambda token: calendars[token])
+    return calendars
+
+
+def _leave(session: Session, user_id: str, team_id: str = "team_1") -> None:
+    session.execute(
+        delete(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    session.commit()
+
+
+def test_an_event_is_taken_off_the_calendar_of_somebody_who_left_the_team(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nobody edits the item, so nothing else would ever sync it again. The
+    real tasks, each person's own grant; the member beside them keeps theirs."""
+    calendars = _own_calendars(monkeypatch, ME, YOU)
+    mine, yours = item(wired), item(wired, assignee_id=YOU, description="배포 점검")
+    tasks.sync_action_item_calendar(mine.id)
+    tasks.sync_action_item_calendar(yours.id)
+    assert len(calendars[ME].events) == len(calendars[YOU].events) == 1
+    assert tasks.take_back_departed_calendar_events() == 0, "everyone is still on the team"
+
+    _leave(wired, ME)
+
+    assert tasks.take_back_departed_calendar_events() == 1
+    assert calendars[ME].events == {}
+    assert wired.get(ExtCalendarEvent, mine.id) is None
+    assert len(calendars[YOU].events) == 1
+    assert wired.get(ExtCalendarEvent, yours.id) is not None
+    assert tasks.take_back_departed_calendar_events() == 0, "looked at once"
+
+
+def test_being_on_another_team_does_not_keep_the_event(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calendars = _own_calendars(monkeypatch, ME)
+    mine = item(wired)
+    tasks.sync_action_item_calendar(mine.id)
+    wired.add(TeamMember(team_id="team_2", user_id=ME))
+    _leave(wired, ME)
+
+    assert tasks.take_back_departed_calendar_events() == 1
+    assert calendars[ME].events == {}
+
+
+def test_a_departed_owner_whose_grant_is_gone_has_the_event_queued(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """They disconnected their Google account on the way out: the event cannot
+    be reached now, and its id is kept for ``drain_calendar_cleanup``."""
+    _own_calendars(monkeypatch, ME)
+    mine = item(wired)
+    tasks.sync_action_item_calendar(mine.id)
+    event_id = wired.get(ExtCalendarEvent, mine.id).event_id  # type: ignore[union-attr]
+    _leave(wired, ME)
+
+    def refused(**_kw: str) -> str:
+        raise ReconnectRequiredError("the grant was revoked")
+
+    monkeypatch.setattr(tasks, "refresh_access_token", refused)
+
+    assert tasks.take_back_departed_calendar_events() == 1
+    assert wired.get(ExtCalendarEvent, mine.id) is None
+    (queued,) = wired.scalars(select(ExtCalendarCleanup)).all()
+    assert (queued.user_id, queued.event_id) == (ME, event_id)
+
+
+def test_without_the_google_client_nothing_is_taken_back_or_forgotten(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _own_calendars(monkeypatch, ME)
+    mine = item(wired)
+    tasks.sync_action_item_calendar(mine.id)
+    _leave(wired, ME)
+    monkeypatch.setattr(tasks, "get_core_settings", lambda: core_settings())
+
+    assert tasks.take_back_departed_calendar_events() == 0
+    assert wired.get(ExtCalendarEvent, mine.id) is not None, "the event's id is still known"
+
+
+def test_the_take_back_is_a_periodic_task() -> None:
+    assert (
+        tasks.take_back_departed_calendar_events.name
+        == "autune.extraction.periodic.take_back_departed_calendar_events"
+    )
 
 
 def test_the_pull_is_a_periodic_task() -> None:

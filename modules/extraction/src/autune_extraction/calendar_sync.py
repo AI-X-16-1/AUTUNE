@@ -28,8 +28,11 @@ Rules, each tested:
   ``ext_calendar_events.synced_due_date`` is what a read compares against.
 - An event the person deletes in Calendar is let go (the row is dropped); the
   next edit in Autune makes it again.
-- Reassigning, or an assignee leaving the team, takes the event off the old
-  calendar **at the item's next sync** -- nothing watches team membership.
+- Reassigning takes the event off the old calendar at the item's next sync,
+  which the reassigning edit itself starts. An assignee leaving the team
+  starts no sync -- nothing tells this module -- so a sweep looks for their
+  events every ten minutes and runs it (``events_of_departed_owners``,
+  ``tasks.take_back_departed_calendar_events``).
   That cleanup is best effort: a previous assignee whose grant is gone (revoked,
   expired, or they left and never reconnect) must not keep the item off its new
   assignee's calendar (PARKJAEKYUNG0525, mminjae97, review of #441).
@@ -121,6 +124,41 @@ def _calendar_owner(session: Session, item: ExtActionItem | None) -> str | None:
         )
     )
     return item.assignee_id if member is not None else None
+
+
+def events_of_departed_owners(session: Session) -> list[str]:
+    """Ids of the items whose event sits on the calendar of somebody who is no
+    longer on the meeting's team.
+
+    ``sync_due_date_to_calendar`` already takes such an event off -- at the
+    item's next sync, which may never come: nothing tells this module that a
+    person left a team (#552), and an item nobody edits is not synced again.
+    This is what a sweep reads to run that sync itself. The title of the event
+    is the item's description, on the calendar of a person who can no longer
+    open the item.
+
+    The test is the one ``_calendar_owner`` makes, read the other way: a
+    membership of **the meeting's own team**. Somebody on another team of the
+    same deployment is not on this one; somebody still on it is never listed,
+    whoever the item is assigned to now -- a reassignment's event moves with
+    the edit that reassigned it, as before.
+    """
+    on_the_team = (
+        select(TeamMember.id)
+        .where(
+            TeamMember.team_id == Meeting.team_id,
+            TeamMember.user_id == ExtCalendarEvent.user_id,
+        )
+        .exists()
+    )
+    return list(
+        session.scalars(
+            select(ExtCalendarEvent.action_item_id)
+            .join(Meeting, Meeting.id == ExtCalendarEvent.meeting_id)
+            .where(~on_the_team)
+            .order_by(ExtCalendarEvent.action_item_id)
+        )
+    )
 
 
 def _queue_for_cleanup(session: Session, row: ExtCalendarEvent) -> None:
