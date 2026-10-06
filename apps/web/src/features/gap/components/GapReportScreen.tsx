@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { Button, Tabs } from "@/shared/ui";
 
-import { getAgendaEvents } from "../api";
+import { getAgendaEvents, getAskTargets } from "../api";
 import { useGapActions } from "../hooks/useGapActions";
 import { useGapExplanations } from "../hooks/useGapExplanations";
 import { useGapReport } from "../hooks/useGapReport";
@@ -132,7 +132,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, choose } =
+  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, choose } =
     useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
@@ -278,6 +278,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           showLow={showLow}
                           onToggleLow={() => setShowLow((on) => !on)}
                           onDismiss={(gapId) => void dismiss(gapId)}
+                          loadAskTargets={getAskTargets}
+                          onAsk={(gapId, userId) => void ask(gapId, userId)}
                           pendingGapId={pending}
                         />
                       );
@@ -303,6 +305,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     showLow={showLow}
                     onToggleLow={() => setShowLow((on) => !on)}
                     onDismiss={(gapId) => void dismiss(gapId)}
+                    loadAskTargets={getAskTargets}
+                    onAsk={(gapId, userId) => void ask(gapId, userId)}
                     pendingGapId={pending}
                   />
                 )}

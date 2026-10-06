@@ -42,6 +42,12 @@ so a line can be found again. Every request goes through
 ``autune_integrations``, whose outbound check runs on the whole body -- which
 for a description includes what the event already said.
 
+**Adding lines tells the event's attendees.** The write asks Google to send
+its change notice (``sendUpdates=all``) to the people already invited, so the
+meeting's members see the next meeting's agenda in their own calendars; nobody
+is invited. Those people are all on the team, by the refusal above. Taking
+lines out sends nothing.
+
 A calendar failure never undoes the mark. The outcome is returned for the
 screen to say, and logged by kind only: an exception message from Google can
 quote the event.
@@ -272,7 +278,12 @@ def update_agenda(
                 return "external_attendees"
             updated = edited(str(current.get("description") or ""), gaps, carried=carried)
             if updated is not None:
-                client.request("PATCH", path, json={"description": updated})
+                client.request(
+                    "PATCH",
+                    path,
+                    params={"sendUpdates": "all" if carried else "none"},
+                    json={"description": updated},
+                )
             written_to = (calendar_id, event_id)
     except ReconnectRequiredError:
         return "reconnect_required"
@@ -294,6 +305,16 @@ def update_agenda(
     )
     log.info("gap_agenda_set", gaps=len(gaps), carried=carried, picked=starts is None)
     return "added" if carried else "removed"
+
+
+def written_gap_ids(session: Session, *, user_id: str, event_id: str | None) -> set[str]:
+    """The gaps whose line this person already wrote onto this event -- or onto
+    any event of theirs, when none is named. What "다음 회의 잡기" leaves out of
+    the team's notice, so pressing again does not announce it again."""
+    query = select(GapAgendaEvent.gap_id).where(GapAgendaEvent.user_id == user_id)
+    if event_id is not None:
+        query = query.where(GapAgendaEvent.event_id == event_id)
+    return set(session.scalars(query))
 
 
 def _insert(session: Session, model: Any) -> Any:

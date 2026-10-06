@@ -13,9 +13,12 @@ meeting or the account goes -- not the HTTP client, which
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from autune_core import Meeting, TeamMember, User
 from autune_core.errors import PrivacyViolationError
-from autune_gap import calendar_writes, service
+from autune_gap import calendar_writes, service, team_notice
 from autune_gap.models import GapAgendaCleanup, GapAgendaEvent, GapGap
 from autune_integrations import IntegrationError, ReconnectRequiredError
 
@@ -57,6 +60,7 @@ class FakeCalendar:
         self.attendees: dict[str, list[dict[str, Any]]] = {}
         self.fields: list[str] = []
         self.patched: list[str] = []
+        self.send_updates: list[str] = []
         self.fail_with: Exception | None = None
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
@@ -78,6 +82,7 @@ class FakeCalendar:
         event_id = path.rsplit("/", 1)[1]
         if method == "PATCH":
             self.patched.append(event_id)
+            self.send_updates.append(params.get("sendUpdates", ""))
             self.descriptions[event_id] = kwargs["json"]["description"]
             return {}
         found: dict[str, Any] = {"description": self.descriptions.get(event_id, "")}
@@ -112,6 +117,65 @@ def calendars(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(calendar_writes, "calendar_of", calendar_of)
     return by_user
+
+
+class FakeSlack:
+    """The team's channel: every message posted, as ``(channel, text, blocks)``."""
+
+    def __init__(self, fail_with: Exception | None = None) -> None:
+        self.posted: list[tuple[str, str, list[dict[str, Any]]]] = []
+        self.fail_with = fail_with
+
+    def post_message(self, channel: str, text: str, blocks: list[dict[str, Any]]) -> str:
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.posted.append((channel, text, blocks))
+        return "1.0"
+
+    def close(self) -> None:
+        pass
+
+
+@dataclass
+class TeamSlack:
+    """The team's Slack connection, if any, and the members' linked accounts."""
+
+    client: FakeSlack | None = None
+    members: dict[str, str] = field(default_factory=dict)
+
+    def connect(self, **kwargs: Any) -> FakeSlack:
+        self.client = FakeSlack(**kwargs)
+        return self.client
+
+    def card(self) -> str:
+        """The one message posted, text and blocks, as one string."""
+        assert self.client is not None and len(self.client.posted) == 1
+        _, text, blocks = self.client.posted[0]
+        return "\n".join([text, *(json.dumps(b, ensure_ascii=False) for b in blocks)])
+
+
+@pytest.fixture(autouse=True)
+def slack(monkeypatch: pytest.MonkeyPatch) -> TeamSlack:
+    """No team has Slack until a test connects it."""
+    team = TeamSlack()
+
+    def load_integration(_session: Session, _team_id: str, name: str) -> Any:
+        assert name == "slack"
+        if team.client is None:
+            return None
+        return SimpleNamespace(
+            config={"channel": "C_TEAM"}, secret="xoxb-test", require_secret=lambda: "xoxb-test"
+        )
+
+    def load_user_integration(_session: Session, user_id: str, name: str) -> Any:
+        assert name == "slack"
+        member = team.members.get(user_id)
+        return SimpleNamespace(config={"slack_user_id": member}) if member else None
+
+    monkeypatch.setattr(team_notice, "load_integration", load_integration)
+    monkeypatch.setattr(team_notice, "load_user_integration", load_user_integration)
+    monkeypatch.setattr(team_notice, "SlackClient", lambda _token: team.client)
+    return team
 
 
 @pytest.fixture
@@ -275,8 +339,14 @@ def test_scheduling_sends_every_open_gap_onto_the_next_meetings_event(
     first = client.post(f"{PREFIX}/agenda/{MEETING}")
     again = client.post(f"{PREFIX}/agenda/{MEETING}")
 
-    assert first.json() == {"meeting_id": MEETING, "carried": 2, "calendar": "added"}
+    assert first.json() == {
+        "meeting_id": MEETING,
+        "carried": 2,
+        "calendar": "added",
+        "slack": "no_slack",
+    }
     assert again.json()["calendar"] == "added"
+    assert again.json()["slack"] == "not_tried"
     lines = google.descriptions["evt_meeting"].splitlines()
     assert [line.rsplit(" ", 1)[1] for line in lines] == ["(gap_high)", "(gap_second)"]
     marked = {g.id for g in session.scalars(select(GapGap)) if g.carried_at is not None}
@@ -292,7 +362,12 @@ def test_scheduling_with_no_open_gap_writes_nothing(
 
     response = client.post(f"{PREFIX}/agenda/{MEETING}")
 
-    assert response.json() == {"meeting_id": MEETING, "carried": 0, "calendar": "not_tried"}
+    assert response.json() == {
+        "meeting_id": MEETING,
+        "carried": 0,
+        "calendar": "not_tried",
+        "slack": "not_tried",
+    }
     assert google.descriptions == {}
 
 
@@ -353,7 +428,12 @@ def test_scheduling_onto_a_picked_event_needs_no_scheduled_meeting(
 
     response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
 
-    assert response.json() == {"meeting_id": MEETING, "carried": 1, "calendar": "added"}
+    assert response.json() == {
+        "meeting_id": MEETING,
+        "carried": 1,
+        "calendar": "added",
+        "slack": "no_slack",
+    }
     assert google.descriptions["evt_picked"].endswith("(gap_1)")
 
 
@@ -571,3 +651,159 @@ def test_both_hooks_are_registered() -> None:
     meeting_hooks, user_hooks = registered_modules()
     assert "gap" in meeting_hooks
     assert "gap" in user_hooks
+
+
+# --- telling the team (#824) ---------------------------------------------------
+
+
+def test_the_attendees_are_told_when_lines_are_added_and_not_when_taken_out(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    next_meeting(session)
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+
+    client.post(f"{PREFIX}/gaps/gap_1/carry")
+    client.delete(f"{PREFIX}/gaps/gap_1/carry")
+
+    assert google.send_updates == ["all", "none"]
+
+
+def test_scheduling_tells_the_team_channel_once(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    questioned(session, gap(session, "gap_1"))
+    calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    channel = slack.connect()
+
+    first = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+    again = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert first.json()["slack"] == "posted"
+    assert again.json()["slack"] == "not_tried"
+    assert [posted[0] for posted in channel.posted] == ["C_TEAM"]
+    card = slack.card()
+    assert "다음 회의 안건" in card
+    assert "목표 응답 시간을 누가 정합니까?" in card
+
+
+def test_nothing_is_announced_when_the_calendar_refused(
+    client: TestClient,
+    session: Session,
+    calendars: dict[str, Any],
+    slack: TeamSlack,
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.attendees["evt_picked"] = [{"email": "guest@elsewhere.com"}]
+    channel = slack.connect()
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["calendar"] == "external_attendees"
+    assert response.json()["slack"] == "not_tried"
+    assert channel.posted == []
+
+
+def test_a_slack_that_fails_leaves_the_calendar_written(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    slack.connect(fail_with=IntegrationError("slack is down"))
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["calendar"] == "added"
+    assert response.json()["slack"] == "failed"
+    assert google.descriptions["evt_picked"].endswith("(gap_1)")
+
+
+# --- "담당자 지정해 질문" (mkkim68 on #824) ---------------------------------------
+
+
+def test_the_ask_picker_lists_the_team_by_name_only(
+    client: TestClient, session: Session, teammate: str
+) -> None:
+    gap(session, "gap_1")
+
+    response = client.get(f"{PREFIX}/gaps/gap_1/ask")
+
+    assert response.status_code == 200
+    members = response.json()["members"]
+    assert {m["user_id"] for m in members} == {MEMBER, TEAMMATE}
+    assert all(set(m) == {"user_id", "name"} for m in members)
+
+
+def test_asking_mentions_the_member_on_the_team_channel(
+    client: TestClient,
+    session: Session,
+    calendars: dict[str, Any],
+    slack: TeamSlack,
+    teammate: str,
+) -> None:
+    questioned(session, gap(session, "gap_1"))
+    google = calendars[TEAMMATE] = FakeCalendar()
+    slack.members[TEAMMATE] = "U_MATE"
+    slack.connect()
+
+    response = client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    assert response.json() == {"gap_id": "gap_1", "user_id": TEAMMATE, "slack": "posted"}
+    card = slack.card()
+    assert "<@U_MATE>" in card
+    assert "목표 응답 시간을 누가 정합니까?" in card
+    assert google.patched == []
+    assert google.fields == []
+
+
+def test_a_member_without_a_linked_slack_is_named_instead(
+    client: TestClient, session: Session, slack: TeamSlack, teammate: str
+) -> None:
+    gap(session, "gap_1")
+    slack.connect()
+
+    client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    card = slack.card()
+    assert "가나다" in card
+    assert "<@" not in card
+
+
+def test_a_title_cannot_mention_the_whole_channel(
+    client: TestClient, session: Session, slack: TeamSlack, teammate: str
+) -> None:
+    row = session.get(GapGap, gap(session, "gap_1"))
+    assert row is not None
+    row.title = "<!channel> 확인"
+    session.flush()
+    slack.connect()
+
+    client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    card = slack.card()
+    assert "<!channel>" not in card
+    assert "&lt;!channel&gt;" in card
+
+
+def test_asking_without_team_slack_says_so(
+    client: TestClient, session: Session, teammate: str
+) -> None:
+    gap(session, "gap_1")
+
+    response = client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    assert response.json()["slack"] == "no_slack"
+
+
+@pytest.mark.parametrize("target", [OUTSIDER, "usr_nobody"])
+def test_only_a_member_of_the_team_can_be_asked(
+    client: TestClient, session: Session, slack: TeamSlack, target: str
+) -> None:
+    gap(session, "gap_1")
+    channel = slack.connect()
+
+    response = client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": target})
+
+    assert response.status_code == 404
+    assert channel.posted == []

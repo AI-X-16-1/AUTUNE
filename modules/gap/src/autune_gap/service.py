@@ -34,7 +34,15 @@ from autune_core import (
 from autune_core.deletion import on_speech_deleted
 from autune_core.errors import NotFoundError, PrivacyViolationError, ValidationError
 from autune_core.events import publish
-from autune_gap import calendar_writes, detect, graph, semantic, template, verification
+from autune_gap import (
+    calendar_writes,
+    detect,
+    graph,
+    semantic,
+    team_notice,
+    template,
+    verification,
+)
 from autune_gap.config import GapSettings, get_settings
 from autune_gap.enqueue import enqueue_publish_report
 from autune_gap.models import (
@@ -57,6 +65,9 @@ from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
     GapAgendaEvents,
+    GapAsk,
+    GapAskTarget,
+    GapAskTargets,
     GapCalendarEvent,
     GapCarry,
     GapDismissal,
@@ -857,16 +868,56 @@ def carry_meeting_on_calendar(
     event_id: str | None = None,
 ) -> GapMeetingCarry:
     """Write the gaps ``carry_meeting`` sent onto the event the caller picked
-    on their own calendar, or the next meeting's when they picked none. Called
-    after the marks are committed."""
+    on their own calendar, or the next meeting's when they picked none, then
+    say so once on the team's Slack channel. Called after the marks are
+    committed.
+
+    The notice lists only the gaps whose line is new on the event, so pressing
+    again posts nothing; and it is posted only once the calendar took them,
+    so the channel never announces an agenda the event does not hold.
+    """
     if not gaps:
         return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
     meeting = session.get(Meeting, meeting_id)
     assert meeting is not None  # carry_meeting checked it
+    written = calendar_writes.written_gap_ids(session, user_id=reader.id, event_id=event_id)
+    fresh = [gap for gap in gaps if gap.id not in written]
     outcome = calendar_writes.update_agenda(
         session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True, event_id=event_id
     )
-    return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome)
+    slack: team_notice.SlackOutcome = "not_tried"
+    if outcome == "added" and fresh:
+        slack = team_notice.post_agenda(session, meeting, fresh, presser=reader)
+    return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome, slack=slack)
+
+
+def ask_targets(session: Session, gap_id: str, reader: User) -> GapAskTargets:
+    """The meeting's team, for "담당자 지정해 질문" to pick from, by name."""
+    _, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    members = session.execute(
+        select(User.id, User.display_name)
+        .join(TeamMember, TeamMember.user_id == User.id)
+        .where(TeamMember.team_id == meeting.team_id)
+        .order_by(User.display_name, User.id)
+    ).all()
+    return GapAskTargets(
+        gap_id=gap_id,
+        members=[GapAskTarget(user_id=user_id, name=name) for user_id, name in members],
+    )
+
+
+def ask(session: Session, gap_id: str, reader: User, *, user_id: str) -> GapAsk:
+    """ "담당자 지정해 질문": post the gap's question on the team's Slack
+    channel, mentioning the member it is for (mkkim68 on #824). The member
+    must be on the meeting's team; anybody else is the same 404 as an unknown
+    gap's, so the route cannot be used to tell who exists. Nothing is stored."""
+    row, meeting = _gap_for_member(session, gap_id, reader, "gap_ask_refused")
+    member = session.get(User, user_id)
+    if member is None or not _is_team_member(session, user_id=user_id, team_id=meeting.team_id):
+        log.info("gap_ask_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+    outcome = team_notice.post_ask(session, meeting, row, asker=reader, member=member)
+    return GapAsk(gap_id=gap_id, user_id=user_id, slack=outcome)
 
 
 @dataclass(frozen=True)

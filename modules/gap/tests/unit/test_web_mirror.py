@@ -20,6 +20,9 @@ from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
     GapAgendaEvents,
+    GapAsk,
+    GapAskTarget,
+    GapAskTargets,
     GapCalendarEvent,
     GapCarry,
     GapDismissal,
@@ -126,11 +129,14 @@ def test_the_web_team_gap_mirror_is_current() -> None:
 
 
 def test_the_web_calendar_write_mirrors_are_current() -> None:
-    """S20's calendar write (#824), pinned in both directions."""
+    """S20's calendar write and Slack question (#824), pinned in both directions."""
     for interface, model in (
         ("GapCarry", GapCarry),
         ("GapMeetingCarry", GapMeetingCarry),
         ("GapAgendaEvents", GapAgendaEvents),
         ("GapCalendarEvent", GapCalendarEvent),
+        ("GapAskTarget", GapAskTarget),
+        ("GapAskTargets", GapAskTargets),
+        ("GapAsk", GapAsk),
     ):
         assert ts_fields(interface) == set(model.model_fields), f"{interface}: update {TYPES_TS}"

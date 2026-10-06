@@ -522,9 +522,9 @@ the feature needs.
     participation matrix (section 3). Settled with mkkim68 on #824:
     - *Nobody else's calendar.* S20's "담당자 지정해 질문" does not write to the
       teammate's calendar: one person's grant is for their own work only
-      (#435's rule), and a question picked by somebody else is not. It is to
-      come as a mention on the team channel's card; until then the button is
-      disabled.
+      (#435's rule), and a question picked by somebody else is not. It is a
+      mention on the team channel instead -- see "Slack, S20's team notices"
+      below.
     - *The picker reads four fields.* So that the presser can pick the next
       meeting, C lists the timed, uncancelled events on their own calendar
       for the next 14 days, asking Google for each event's id, title, start,
@@ -542,6 +542,11 @@ the feature needs.
       rest of the body, so an event whose description already holds what the
       check refuses is not written. Neither the description nor the addresses
       are stored or logged.
+    - *The people already invited are told.* Adding lines asks Google to send
+      its change notice (`sendUpdates=all`) to the event's attendees, so the
+      meeting's members see the agenda in their own calendars. Nobody is
+      invited, and by the refusal below everyone notified is on the team.
+      Taking lines out sends nothing.
     - *Not onto an event shared outside the team.* Google shows a description
       to everyone on the event, so an event with an attendee who is not on the
       meeting's team is refused (`external_attendees`) and the screen says
@@ -562,6 +567,22 @@ the feature needs.
       are queued to come out the same way. All best effort, as section 4
       says: a refused grant, an unreachable Google or a description the
       outbound check refuses leaves the line on the calendar, logged.
+  - **Slack, S20's team notices (module C, #824):** two messages to the
+    channel of the team that held the meeting, each once per press, with the
+    team's connection. "담당자 지정해 질문" posts one gap's title and suggested
+    question, mentioning the member the presser picked from the meeting's
+    team -- by the Slack account that member linked themselves, or by their
+    display name when they linked none -- and the presser's display name.
+    "다음 회의 잡기" posts, once the calendar took them, the titles and
+    questions of the gaps whose line is new on the event, the meeting's
+    title and the presser's display name; pressing again posts nothing.
+    Titles and questions are stored masked, every value is escaped so it
+    cannot become a mention or a link, and no utterance, score or
+    participation figure is sent. Nothing about either message is stored;
+    the picker returns names and ids only, never whether a member linked
+    Slack or a calendar. A team with no channel connected gets no message
+    and the screen says so. A message already posted stays in the channel
+    when the meeting is deleted.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,

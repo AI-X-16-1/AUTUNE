@@ -3,6 +3,8 @@ import { api } from "@/shared/api/client";
 
 import type {
   GapAgendaEvents,
+  GapAsk,
+  GapAskTargets,
   GapMeetingCarry,
   GapDismissal,
   GapExplanations,
@@ -89,6 +91,19 @@ export const dismissGap = (gapId: string) =>
 export const undoDismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });
 
+/** The meeting's team, for "담당자 지정해 질문" to pick the member from. */
+export const getAskTargets = (gapId: string) => api.gap<GapAskTargets>(`/gaps/${gapId}/ask`);
+
+/**
+ * "담당자 지정해 질문": post the gap's question on the team's Slack channel,
+ * mentioning the member (#824). No calendar is written; nothing is stored.
+ */
+export const askGap = (gapId: string, userId: string) =>
+  api.gap<GapAsk>(`/gaps/${gapId}/ask`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+
 /**
  * The caller's own Google Calendar events over the next two weeks, for "다음
  * 회의 잡기" to pick the next meeting from. `calendar` says when there is no
@@ -99,9 +114,10 @@ export const getAgendaEvents = (meetingId: string) =>
 
 /**
  * "다음 회의 잡기": send every open gap of this meeting on to the next meeting
- * (#824), and add them to the picked event on the caller's own Google Calendar
- * (`calendar` says what happened). No meeting is created and nobody is
- * invited. The gaps stay on the report.
+ * (#824), add them to the picked event on the caller's own Google Calendar
+ * (`calendar` says what happened; the people already invited get Google's
+ * change notice), and say so once on the team's Slack channel (`slack`). No
+ * meeting is created and nobody is invited. The gaps stay on the report.
  */
 export const carryMeeting = (meetingId: string, eventId: string) =>
   api.gap<GapMeetingCarry>(`/agenda/${meetingId}`, {

@@ -157,13 +157,40 @@ export interface GapCarry {
 
 /**
  * What "다음 회의 잡기" did — `POST /api/gap/agenda/{meeting_id}`
- * (`GapMeetingCarry`, #824): how many open gaps were sent on, and what
- * happened to the next meeting's event on the caller's own calendar.
+ * (`GapMeetingCarry`, #824): how many open gaps were sent on, what
+ * happened to the next meeting's event on the caller's own calendar, and
+ * whether the team's Slack channel was told.
  */
 export interface GapMeetingCarry {
   meeting_id: string;
   carried: number;
   calendar: AgendaOutcome;
+  slack: SlackOutcome;
+}
+
+/** `team_notice.SlackOutcome`: what the team's Slack channel did. */
+export type SlackOutcome = "posted" | "no_slack" | "failed" | "not_tried";
+
+/** A member "담당자 지정해 질문" can ask (`GapAskTarget`). */
+export interface GapAskTarget {
+  user_id: string;
+  name: string;
+}
+
+/** `GET /api/gap/gaps/{gap_id}/ask` — the meeting's team (`GapAskTargets`). */
+export interface GapAskTargets {
+  gap_id: string;
+  members: GapAskTarget[];
+}
+
+/**
+ * What "담당자 지정해 질문" did — `POST /api/gap/gaps/{gap_id}/ask` (`GapAsk`):
+ * the question posted on the team's Slack channel, mentioning the member.
+ */
+export interface GapAsk {
+  gap_id: string;
+  user_id: string;
+  slack: SlackOutcome;
 }
 
 /** One event on the caller's own calendar (`GapCalendarEvent`). */
