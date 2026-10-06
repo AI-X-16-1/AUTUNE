@@ -35,6 +35,17 @@ class Prediction(ContractModel):
     probability: float = Field(ge=0, le=1)
 
 
+class MeetingReportPosted(Payload):
+    """E -> C. Where a meeting's report went out in Slack, so a reply can join its
+    thread (#824). Sent once, when the report is posted; a correction is a reply
+    in the same thread and sends nothing."""
+
+    channel: str = Field(min_length=1, description="The Slack channel id the report was posted to.")
+    thread_ts: str = Field(
+        min_length=1, description="The report message's ts: the thread to reply in."
+    )
+
+
 class IntelligenceSnapshot(Payload):
     team_id: str = Field(pattern=r"^team_")
     quality_score: QualityScore

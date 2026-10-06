@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { Band } from "@/shared/ui";
+import { Band, Wordmark } from "@/shared/ui";
 
 import {
   COPY_NOTICE,
@@ -162,15 +162,8 @@ export default function LegalPage() {
           paddingInline: "var(--space-page)",
         }}
       >
-        <Link
-          href="/login"
-          className="text-ink-strong"
-          style={{
-            fontSize: "var(--text-heading)",
-            fontWeight: "var(--text-heading-weight)",
-          }}
-        >
-          AUTUNE
+        <Link href="/login" className="text-ink-strong">
+          <Wordmark height={20} />
         </Link>
       </header>
 

@@ -512,9 +512,14 @@ the feature needs.
     user hook. Autune never reads the calendar for any of this: a leave the
     person wrote there themselves is not looked for, and the out-of-office
     read below asks Google for out-of-office events only, which this plain
-    event is not. No log line carries the dates. Still true of everything
-    inside Autune: no screen, route or message shows one person's dates to
-    another.
+    event is not. No log line carries the dates. Like an item's due date
+    (#435) and a project's minutes a person chose to send (#788,
+    `ext_minutes_events`), it goes onto the writer's own calendar and nobody
+    else's. Unlike a due date, which follows from the connection, it is
+    about the person and not the team's work, so connecting a calendar is
+    never enough: a range goes only when the box is ticked at that save.
+    Still true of everything inside Autune: no screen, route or message
+    shows one person's dates to another.
   - **Out-of-office time, from a person's own calendar:** where a deployment
     turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
     person who connected Google Calendar is not sent the morning DM or
@@ -559,8 +564,6 @@ the feature needs.
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each event is only the item's
     description and date, with no attendees and nothing from the transcript.
-    The one event that is not an item's is the person's own leave, written
-    only by their own tick (above).
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,

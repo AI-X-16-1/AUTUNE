@@ -45,6 +45,12 @@ through E's tools when the event is handled. It is in `TERMINAL_EVENTS`, like
 `autune.intelligence.completed`, because a process without the agent layer
 publishes it to nobody.
 
+`autune.intelligence.meeting_report_posted` (#824, version 2.5) carries a
+`MeetingReportPosted` from E to C: the Slack `channel` and the report message's
+`thread_ts`, sent once when a meeting's report is posted, so C's question cards
+can reply in the report's thread. A correction is a reply in that thread and
+sends nothing. It is in `TERMINAL_EVENTS` until C subscribes; take it out then.
+
 Outside the per-meeting pipeline, two payloads are about a team rather than a
 meeting, so they extend `TeamPayload` (`team_id`) instead of `Payload`
 (`meeting_id`):
@@ -227,9 +233,15 @@ categories they map to.
       "spoke": ["prt_001", "prt_002"],
       "silent": ["prt_003"]
     }
-  ]
+  ],
+  "measured": true
 }
 ```
+
+`measured` (2.5, #248) is `false` when no consented speech reached C, so the
+empty `gaps` of such a meeting mean "not measured", not "no gaps". E leaves the
+meeting's gap burden unscored rather than scoring it as gap-free. `null`, from a
+producer before 2.5, reads as measured.
 
 `severity` is one of `high`, `medium`, `low`. Only `high` is surfaced by
 default in the UI.

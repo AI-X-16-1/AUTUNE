@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { logout } from "@/shared/api/auth";
 import { setSignedIn } from "@/shared/api/client";
-import { Button } from "@/shared/ui";
+import { Button, Wordmark } from "@/shared/ui";
 
 import { TeamMenu } from "@/features/transcript";
 
@@ -101,12 +101,8 @@ export function AppSidebar() {
       className="sticky top-0 flex h-screen flex-col border-r border-[var(--color-hairline)] bg-[var(--color-surface-paper)]"
       style={{ padding: "22px 18px", gap: 20 }}
     >
-      <Link
-        href="/"
-        className="text-[var(--color-ink-strong)]"
-        style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.04em" }}
-      >
-        AUTUNE
+      <Link href="/" className="self-start text-[var(--color-ink-strong)]">
+        <Wordmark height={18} />
       </Link>
 
       <Link

@@ -1,5 +1,5 @@
 /**
- * Generated from packages/contracts (contract version 2.4).
+ * Generated from packages/contracts (contract version 2.5).
  * Do not edit. Run `pnpm run gen:contracts` and commit the result.
  */
 
@@ -143,6 +143,10 @@ export type TopicId = string;
 export type Spoke = string[];
 export type Silent = string[];
 export type Participation = Participation1[];
+/**
+ * Whether C could read the meeting at all (#248). False: no consented speech reached C, so empty gaps mean 'not measured', not 'no gaps'. None: a producer before 2.5; read it as measured.
+ */
+export type Measured = boolean | null;
 export type ContractVersion3 = string;
 export type MeetingId3 = string;
 export type TopicLabel = string;
@@ -398,6 +402,7 @@ export interface GapReport {
   gaps?: Gaps;
   topics?: Topics;
   participation?: Participation;
+  measured?: Measured;
 }
 /**
  * This interface was referenced by `AutuneContracts`'s JSON-Schema
