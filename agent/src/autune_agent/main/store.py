@@ -104,17 +104,20 @@ def run_and_record(
         if outcome is not None and outcome.proposed:
             if actions is None:
                 declared = {**collect_actions(), **collect_own_actions()}
+            unfinished: list[dict[str, str]] = []
             try:
                 row.actions = execute_l1(
                     outcome.proposed,
                     actions=declared,
                     session=session,
                     scope=scope,
+                    unfinished=unfinished,
                 )
             except ActionPrivacyViolationError as exc:
                 # The other actions ran; the row says so, then the run fails.
                 row.actions = exc.done
                 raise
+            state["unfinished"] = unfinished
     except BudgetExceededError:
         row.outcome = "budget_exceeded"
         state["answer"] = BUDGET_ANSWER

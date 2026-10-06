@@ -31,11 +31,17 @@ from autune_contracts.transcript import (
 )
 from autune_contracts.transcript import Utterance as SpokenLine
 from autune_core import Base, Meeting, Participant, TeamMember, User, Utterance
-from autune_extraction import tasks
+from autune_extraction import service, tasks
 from autune_extraction.decisions import ClassifiedUtterance, decision_id, in_pieces
-from autune_extraction.models import ExtActionItem, ExtDecision, ExtDecisionRelated
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtDecision,
+    ExtDecisionRelated,
+    ExtDecisionReview,
+)
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 from autune_extraction.pipeline import llm as llm_module
+from autune_extraction.pipeline.base import Resolution
 from autune_extraction.pipeline.llm import (
     SUMMARY_MAX_CHARS,
     LlmClassifier,
@@ -43,6 +49,9 @@ from autune_extraction.pipeline.llm import (
     parse_summaries,
     usable_summary,
 )
+from autune_extraction.pipeline.related import drawn_on
+from autune_extraction.schemas import DecisionReviewUpdate
+from autune_extraction.service import SPEECH_DELETED_TEXT
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -376,8 +385,195 @@ def test_a_decision_that_already_says_everything_still_shows_the_line_written_fo
     (decision,) = wired.query(ExtDecision).all()
     assert decision.statement == "결제 화면은 A안으로 진행"
     assert decision.original_statement == complete
-    assert wired.query(ExtDecisionRelated).count() == 0  # a line from the classifier cites none
+    # It says nothing the line itself did not: nothing was drawn on, nothing is cited.
+    assert wired.query(ExtDecisionRelated).count() == 0
     assert Asked.targets == []
+
+
+def test_a_line_written_with_the_label_cites_the_lines_it_took_a_word_from(
+    wired: Session,
+) -> None:
+    """The classifier does not say what it drew on, so an item summarised by it
+    stored no related lines and the drawer had nothing under "요약에 쓴 발화"
+    (found in review of #880). The summary says it itself: 서버, 비용 and 견적
+    are in the line before and not in the promise."""
+    asked = "민호 님, 서버 비용 견적은 언제까지 받아 볼 수 있을까요"
+    promise = "네, 그건 제가 수요일까지 받아서 올리겠습니다"
+    Written.lines = {promise: "서버 비용 견적을 수요일까지 받아서 올림"}
+
+    tasks.on_transcript_ready(meeting(wired, CHAT, asked, promise))
+
+    (item,) = wired.query(ExtActionItem).all()
+    assert item.description == "서버 비용 견적을 수요일까지 받아서 올림"
+    assert [r.utterance_id for r in item.related] == ["utt_2"]  # not the chat before it
+    assert [s.utterance_id for s in item.sources] == ["utt_3"]
+
+
+def test_a_decision_written_with_the_label_cites_them_too(wired: Session) -> None:
+    proposed = "결제 화면은 버튼을 위로 올린 시안으로 가면 어떨까요"
+    Written.lines = {SAID_DECISION: "결제 화면은 버튼을 위로 올린 시안으로 진행"}
+
+    tasks.on_transcript_ready(meeting(wired, proposed, SAID_DECISION))
+
+    (decision,) = wired.query(ExtDecision).all()
+    assert [
+        r.utterance_id for r in wired.query(ExtDecisionRelated).filter_by(decision_id=decision.id)
+    ] == ["utt_1"]
+
+
+# --- the speaker deletes the speech ---------------------------------------------------
+
+
+def statement(session: Session) -> str:
+    session.expire_all()
+    (decision,) = session.query(ExtDecision).all()
+    return decision.statement
+
+
+def test_a_decision_line_the_classifier_wrote_stays_when_the_speech_is_deleted(
+    wired: Session,
+) -> None:
+    """The user, 2026-10-06 (on #894): a model's sentence about a decision is the
+    team's record, as an item's summary is, and stays. It cites nothing here --
+    no line before it lends it a word -- and stays all the same."""
+    Written.lines = {SAID_DECISION: "결제 화면은 버튼을 위로 올린 시안으로 진행"}
+    tasks.on_transcript_ready(meeting(wired, CHAT, SAID_DECISION))
+    (decision,) = wired.query(ExtDecision).all()
+    assert wired.query(ExtDecisionRelated).count() == 0
+    assert decision.statement_resolved is True
+
+    tasks.forget_deleted_speech("user_1", ["utt_2"])
+
+    assert statement(wired).startswith("결제 화면은 버튼을 위로 올린 시안으로 진행")
+    assert wired.query(ExtDecision).one().original_statement is None
+
+
+def test_it_stays_the_same_way_when_it_cites_a_line(wired: Session) -> None:
+    """lsh2217, review of #894: with the citation rule the same sentence stayed
+    or went by whether a line before it shared a word. It is one rule now."""
+    proposed = "결제 화면은 버튼을 위로 올린 시안으로 가면 어떨까요"
+    Written.lines = {SAID_DECISION: "결제 화면은 버튼을 위로 올린 시안으로 진행"}
+    tasks.on_transcript_ready(meeting(wired, proposed, SAID_DECISION))
+    assert wired.query(ExtDecisionRelated).count() == 1
+
+    tasks.forget_deleted_speech("user_1", ["utt_2"])
+
+    assert statement(wired).startswith("결제 화면은 버튼을 위로 올린 시안으로 진행")
+
+
+def test_a_decision_that_is_the_line_tidied_reads_the_placeholder(wired: Session) -> None:
+    """No model wrote it: the statement is the speaker's own line, and goes."""
+    said = "결제 화면은 두 번째 시안으로 가기로 했습니다"
+    tasks.on_transcript_ready(meeting(wired, CHAT, said))
+    (decision,) = wired.query(ExtDecision).all()
+    assert decision.statement_resolved is False
+
+    tasks.forget_deleted_speech("user_1", ["utt_2"])
+
+    assert statement(wired) == SPEECH_DELETED_TEXT
+
+
+class WritesUp:
+    """A resolver that writes a decision up; ``cites`` says whether it names a line."""
+
+    model_version = "writes-up"
+    cites = True
+
+    def resolve(self, requests: list) -> list[str]:
+        return [r.text for r in self.resolve_with_evidence(requests)]
+
+    def resolve_with_evidence(self, requests: list) -> list[Resolution]:
+        used = (lambda r: r.context_ids[-1:]) if self.cites else (lambda r: ())
+        return [Resolution("결제 화면을 두 번째 시안으로 진행", used(r)) for r in requests]
+
+
+@pytest.mark.parametrize("cites", [True, False])
+def test_the_resolvers_write_up_stays_too_whether_or_not_it_names_a_line(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, cites: bool
+) -> None:
+    """Before the flag a write-up that named no line was taken for the line
+    tidied and replaced. An item's rewrite never depended on that
+    (``description_resolved``); a decision's does not either now."""
+    monkeypatch.setattr(WritesUp, "cites", cites)
+    monkeypatch.setattr(tasks, "get_resolver", WritesUp)
+    earlier = "결제 화면 시안이 두 개 나와 있습니다"
+    tasks.on_transcript_ready(meeting(wired, earlier, SAID_DECISION))
+    (decision,) = wired.query(ExtDecision).all()
+    assert decision.statement.startswith("결제 화면을 두 번째 시안으로 진행")
+    assert decision.statement_resolved is True
+    assert wired.query(ExtDecisionRelated).count() == (1 if cites else 0)
+
+    tasks.forget_deleted_speech("user_1", ["utt_2"])
+
+    assert statement(wired).startswith("결제 화면을 두 번째 시안으로 진행")
+
+
+def test_a_persons_rewording_stays_while_the_line_under_it_goes(wired: Session) -> None:
+    """A person's wording is kept apart from the model's (``ExtDecisionReview``):
+    the line they reworded reads the placeholder, what they wrote is what stands."""
+    said = "결제 화면은 두 번째 시안으로 가기로 했습니다"
+    tasks.on_transcript_ready(meeting(wired, CHAT, said))
+    (decision,) = wired.query(ExtDecision).all()
+    service.review_decision(
+        wired,
+        decision,
+        DecisionReviewUpdate(status="confirmed", statement="결제 화면은 2안으로 확정"),
+    )
+    wired.commit()
+
+    tasks.forget_deleted_speech("user_1", ["utt_2"])
+
+    assert statement(wired) == SPEECH_DELETED_TEXT
+    review = wired.get(ExtDecisionReview, decision.id)
+    assert review is not None and review.statement == "결제 화면은 2안으로 확정"
+    wired.refresh(decision)
+    assert service._confirmed_statement(decision, review) == "결제 화면은 2안으로 확정"
+
+
+def test_a_line_with_no_text_does_not_use_up_one_of_the_three() -> None:
+    """PARKJAEKYUNG0525, review of #894: a non-consenting speaker's empty line
+    was counted among the three before being left out, so the reach was
+    shorter than the check's whenever one sat in between."""
+    lines = [
+        ClassifiedUtterance(
+            id="utt_1", text="서버 비용 견적은 언제 나오나요", kind=None, confidence=0.9
+        ),
+        ClassifiedUtterance(id="utt_2", text="", kind=None, confidence=0.0),
+        ClassifiedUtterance(id="utt_3", text="오늘 날씨가 참 좋네요", kind=None, confidence=0.9),
+        ClassifiedUtterance(id="utt_4", text="네 그렇네요 정말", kind=None, confidence=0.9),
+        ClassifiedUtterance(
+            id="utt_5",
+            text="그건 제가 금요일까지 정리할게요",
+            kind=UtteranceKind.COMMITMENT,
+            confidence=0.9,
+            summary="서버 견적을 금요일까지 정리",
+        ),
+    ]
+
+    assert service._written(lines, 4).used == ("utt_1",)
+
+
+def test_a_word_the_line_already_has_cites_nothing() -> None:
+    """Not the wide net: sharing "제가" or the promise's own words is not
+    having been drawn on."""
+    before = [
+        ("utt_1", "제가 지난주에 금요일까지 보고서를 냈어요"),
+        ("utt_2", "서버 비용 견적은 언제 나오나요"),
+        ("utt_3", ""),
+    ]
+
+    assert drawn_on("제가 금요일까지 정리", "제가 금요일까지 정리할게요", before) == []
+    assert drawn_on("서버 견적을 금요일까지 정리", "그건 제가 금요일까지 정리할게요", before) == [
+        "utt_2"
+    ]
+    # A particle or an ending does not make a different word: 견적은 in the
+    # line is the 견적을 of the summary, both ways.
+    assert drawn_on("견적을 정리", "견적은 제가 정리할게요", [("utt_9", "견적이 늦네요")]) == []
+    assert drawn_on(
+        "견적을 금요일까지 정리",
+        "그건 제가 금요일까지 정리할게요",
+        [("utt_9", "견적은 언제 나오나요")],
+    ) == ["utt_9"]
 
 
 def test_with_no_line_written_everything_is_as_it_was(wired: Session) -> None:
@@ -406,3 +602,34 @@ def test_a_piece_read_as_a_line_carries_the_summary_written_for_it() -> None:
         ("utt_1#2", "시안을 금요일까지 정리"),
     ]
     assert all(u.piece_summaries == () for u in read)
+
+
+def test_a_line_further_back_than_the_summarys_own_context_is_not_cited(wired: Session) -> None:
+    """Only the lines the summary was checked against can be what it drew on."""
+    asked = "민호 님, 서버 비용 견적은 언제까지 받아 볼 수 있을까요"
+    promise = "네, 그건 제가 수요일까지 받아서 올리겠습니다"
+    Written.lines = {promise: "서버 비용 견적을 수요일까지 받아서 올림"}
+
+    tasks.on_transcript_ready(meeting(wired, asked, CHAT, CHAT, CHAT, promise))
+
+    (item,) = wired.query(ExtActionItem).all()
+    assert [r.utterance_id for r in item.related] == []
+
+
+def test_a_rerun_that_brings_a_written_line_marks_the_same_row(wired: Session) -> None:
+    """The mark follows the statement on a rerun: the row is the same row
+    (same utterances, same id), and what it says changed from the line to a
+    model's sentence -- or back."""
+    event = meeting(wired, CHAT, SAID_DECISION)
+    tasks.on_transcript_ready(event)
+    assert wired.query(ExtDecision).one().statement_resolved is False
+
+    Written.lines = {SAID_DECISION: "결제 화면은 버튼을 위로 올린 시안으로 진행"}
+    tasks.on_transcript_ready(event)
+    wired.expire_all()
+    assert wired.query(ExtDecision).one().statement_resolved is True
+
+    Written.lines = {}
+    tasks.on_transcript_ready(event)
+    wired.expire_all()
+    assert wired.query(ExtDecision).one().statement_resolved is False

@@ -135,3 +135,36 @@ describe("Assistant launcher alert", () => {
     ).toBe(false);
   });
 });
+
+describe("Assistant reply", () => {
+  // #862: the subagent answers before L1 runs, so what did not go through
+  // comes with the reply, each with why.
+  it("says what did not go through and why", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(api, "sendChat").mockResolvedValue({
+      run_id: "run_1",
+      outcome: "answered",
+      route: "report",
+      answer: "다시 만들어 볼게요.",
+      items: [],
+      proposed: 1,
+      executed: 0,
+      queued: 0,
+      pending: [],
+      unfinished: [
+        { title: "리포트 초안 다시 만들기", reason: "초안이 바뀌었습니다" },
+      ],
+    });
+
+    open("/actions");
+    fireEvent.click(
+      screen.getByRole("button", { name: "업무가 한 사람에게 몰려 있어?" }),
+    );
+
+    expect(await screen.findByText("처리하지 못한 것 1건")).toBeTruthy();
+    expect(
+      screen.getByText("리포트 초안 다시 만들기 — 초안이 바뀌었습니다"),
+    ).toBeTruthy();
+    expect(screen.queryByText(/바로 처리한 것/)).toBeNull();
+  });
+});

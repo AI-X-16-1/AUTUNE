@@ -9,6 +9,9 @@ dependencies = [
     "autune-integrations",
     "fastapi>=0.115",
     "celery>=5.4",
+    # explain_metric's BM25 over Korean morphemes, as module D does (spec section 5).
+    "rank-bm25>=0.2",
+    "kiwipiepy>=0.18",
 ]
 
 [project.optional-dependencies]

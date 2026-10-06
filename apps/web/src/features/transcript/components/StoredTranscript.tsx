@@ -6,10 +6,10 @@ import { timecode } from "../format";
 import { useSpeakers } from "../hooks/useSpeakers";
 import { useTranscript } from "../hooks/useTranscript";
 import { useUtteranceAnchor } from "../hooks/useUtteranceAnchor";
-import type { SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
+import type { SpeakerCandidate, SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
 import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
 import { TranscriptRow } from "./TranscriptRow";
-import { UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
+import { type PickableMember, UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
 /**
  * A finished meeting's transcript, read back from what was stored.
@@ -93,6 +93,7 @@ export function StoredTranscript({
   } = useSpeakers(meetingId, teamId);
   const unidentified = speakers.filter((entry) => entry.user_id === null);
   const nameOf = speakerNames(speakers, members);
+  const pick = unassigned(speakers, members);
   const ids = useMemo(
     () => (state.status === "ready" ? state.utterances.map((utterance) => utterance.id) : null),
     [state],
@@ -153,9 +154,9 @@ export function StoredTranscript({
         <UnidentifiedSpeaker
           key={entry.speaker_label}
           speaker={entry.speaker_label}
-          candidate={entry.candidate}
+          candidate={pick.candidate(entry.candidate)}
           displayName={entry.display_name}
-          members={members}
+          members={pick.members}
           membersError={membersError}
           pending={pending}
           onAssign={(userId) => void assign(entry.speaker_label, userId)}
@@ -243,6 +244,40 @@ export function speakerNames(
     const id = idByLabel.has(label) ? idByLabel.get(label) : storedId;
     if (id) return nameById.get(id) ?? null;
     return typedByLabel.get(label) ?? null;
+  };
+}
+
+/**
+ * What the speaker prompts offer: the members nobody is put to yet first, then
+ * those already put to a speaker in this meeting, last and marked with that
+ * label. Once 화자 1 is 김민경, 화자 2 and 화자 3 lead with the other two. A
+ * candidate who is already somebody else's voice is not suggested again.
+ *
+ * An assigned member stays in the list, behind a confirmation in
+ * `UnidentifiedSpeaker`, because diarization sometimes splits one voice into
+ * two labels and both have to reach the same account for "내 발화 삭제" to
+ * find every line (#912 review). Removing them, as this first did, closed
+ * that path.
+ */
+export function unassigned(
+  speakers: SpeakerEntry[],
+  members: TeamMember[],
+): {
+  members: PickableMember[];
+  candidate: (candidate: SpeakerCandidate | null) => SpeakerCandidate | null;
+} {
+  const labelById = new Map(
+    speakers.flatMap((entry) => (entry.user_id ? [[entry.user_id, entry.speaker_label]] : [])),
+  );
+  return {
+    members: [
+      ...members.filter((member) => !labelById.has(member.user_id)),
+      ...members.flatMap((member) => {
+        const label = labelById.get(member.user_id);
+        return label ? [{ ...member, assignedTo: label }] : [];
+      }),
+    ],
+    candidate: (candidate) => (candidate && !labelById.has(candidate.user_id) ? candidate : null),
   };
 }
 

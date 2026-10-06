@@ -16,7 +16,7 @@ from autune_agent.main.store import run_and_record
 from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_agent.testing import FakeRouter
-from autune_core import Meeting
+from autune_core import Meeting, Team
 
 
 def _run(
@@ -491,3 +491,63 @@ def test_a_run_reads_the_subagents_declaration(
 
 def test_proposals_default_to_per_meeting() -> None:
     assert _proposing("research", _reassign()).proposals_per == "meeting"
+
+
+def _publish(meeting: str) -> ProposedAction:
+    return _l2("intelligence.publish_meeting_report", meeting_id=meeting, draft_id="rdr_1")
+
+
+def test_a_team_chat_proposal_belongs_to_the_meeting_it_names(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#862: a chat on the team screen has no meeting; the proposal names one."""
+    chat = _run(session, team, "report", None, trigger={"kind": "chat"})
+
+    queue_l2(session, actions={}, run=chat, proposed=[_publish(team["meeting"])])
+
+    row = session.scalars(select(AgentPendingAction)).one()
+    assert row.meeting_id == team["meeting"]
+
+
+def test_asking_again_from_the_team_screen_replaces_the_last_card(
+    session: Session, team: dict[str, str]
+) -> None:
+    runs = []
+    for _ in range(2):
+        chat = _run(session, team, "report", None, trigger={"kind": "chat"})
+        queue_l2(session, actions={}, run=chat, proposed=[_publish(team["meeting"])])
+        runs.append(chat)
+
+    rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert rows == {runs[0].id: "superseded", runs[1].id: "pending"}
+
+
+def test_a_team_chat_leaves_the_pipelines_proposal_for_that_meeting(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The meeting-page rule (#651 review) holds from the team screen too."""
+    event = _run(session, team, "report", team["meeting"])
+    queue_l2(session, actions={}, run=event, proposed=[_publish(team["meeting"])])
+    chat = _run(session, team, "report", None, trigger={"kind": "chat"})
+
+    queue_l2(session, actions={}, run=chat, proposed=[_publish(team["meeting"])])
+
+    rows = {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+    assert rows == {event.id: "pending", chat.id: "pending"}
+
+
+def test_a_team_chat_naming_another_teams_meeting_is_refused(
+    session: Session, team: dict[str, str]
+) -> None:
+    other = Team(name="다른 팀")
+    session.add(other)
+    session.flush()
+    foreign = Meeting(team_id=other.id, title="남의 회의")
+    session.add(foreign)
+    session.flush()
+    chat = _run(session, team, "report", None, trigger={"kind": "chat"})
+
+    refused = queue_l2(session, actions={}, run=chat, proposed=[_publish(foreign.id)])
+
+    assert session.scalars(select(AgentPendingAction)).all() == []
+    assert [r["reason"] for r in refused] == ["meeting not found"]

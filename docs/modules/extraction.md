@@ -83,9 +83,14 @@ agreement, and sync the result to Notion and Jira.
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
    three said before it) is the description, and the resolver is asked only
-   about a commitment that has none. **Such a line cites nothing**: the
-   classifier does not say what it drew on, so no row is written to
-   `ext_action_item_related` and the drawer shows the quotation alone.
+   about a commitment that has none. The classifier does not say what it
+   drew on, so that is read off the line: of the three lines with text said
+   just before -- the ones the summary was checked against, except that the
+   check also stops at the start of its request -- those that hold a word the
+   summary has and the commitment itself does not (`related.drawn_on`) are
+   stored in `ext_action_item_related` and shown as "요약에 쓴 발화". A summary
+   that added nothing from them cites none, and the drawer shows the quotation
+   alone.
    A decision is written up the same way (`ext_decision_related`, "요약에 쓴
    발화" on S15) -- but only when its settling turn does not say what was decided:
    short, or pointing at something said before ("그렇게 하죠"). Asked about every
@@ -93,8 +98,9 @@ agreement, and sync the result to Notion and Jira.
    the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
    a model. That limit is the resolver's. With `classifier_impl=llm` **every
    decision the classifier wrote a line for shows that line**, whether or not
-   its settling turn already said what was decided, and cites no lines
-   (`ext_decision_related` stays empty for it): the owner asked for each
+   its settling turn already said what was decided, and cites the lines it
+   took a word from, found the same way (`ext_decision_related`): the owner
+   asked for each
    action item and decision as one line (2026-10-06), and the line came with
    the label at no further request. A decision with no such line goes the
    resolver's way as before.
@@ -250,8 +256,10 @@ is treated as a confirmed item, so the words do not stay there with no row left
 to find them by (#657); a confirmed item whose
 description is the line itself reads "삭제된 발화에서 만든 항목" and its
 `due_text` is cleared; a decision loses `original_statement`, and a model
-statement with no cited lines reads the same placeholder; a model summary or a
-person's text stays. Changes to a row that has copies outside — a confirmed one,
+statement that is the settling line tidied reads the same placeholder; a model
+summary or a person's text stays -- for a decision that is the classifier's
+one line or the resolver's write-up, marked when it is stored
+(`ext_decisions.statement_resolved`) and not by whether it cites a line. Changes to a row that has copies outside — a confirmed one,
 or an item moved back to 확인 필요 that kept them (`service.copies_follow`) — are
 queued to Notion, Jira (summary and description) and the calendar. Nothing is
 republished: what C, D and E already
@@ -433,7 +441,8 @@ other module's tables.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
-| GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text |
+| GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
+| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
@@ -683,7 +692,7 @@ comparison with numbers taken before `none` existed.
 | Metric | Six weeks | Three months |
 | --- | --- | --- |
 | Action item F1 | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
-| Classifier macro F1 over the five kinds, `none` present | set in week 2 from the AMI dialogue-act literature, once the evaluation set exists | above it |
+| Classifier macro F1 over the five kinds, `none` present | not set (#221). The AMI dialogue-act literature reports accuracy over a 15-tag set, so it has no figure that is like for like with this metric; and the owner chose the LLM classifier (`classifier_impl=llm`) over the trained one for cost (2026-10-06), so no target is set for the trained one. The code's default is still `local` | not set |
 | Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 
 ```bash

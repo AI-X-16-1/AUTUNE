@@ -397,6 +397,126 @@ def test_upsert_links_an_existing_magic_link_user_by_email(db: Session) -> None:
     assert user.google_sub == "sub-1"
 
 
+# --- an address is compared without case (#552) --------------------------------------
+
+
+def test_a_row_stored_with_capitals_is_the_same_person_and_not_a_second_account(
+    db: Session,
+) -> None:
+    """The case this closes: a row a magic link (or an older sign-in) stored as
+    typed, and Google sending the same mailbox in lower case."""
+    db.add(User(id="user_pre", email="Kim.Minsu@Example.com", display_name="Pre"))
+    db.flush()
+
+    user = upsert_user_from_google(db, _identity(email="kim.minsu@example.com"))
+
+    assert user.id == "user_pre"
+    assert user.google_sub == "sub-1"
+    assert db.query(User).count() == 1
+    # Found without case, and left as stored: a sign-in does not rewrite an address.
+    assert user.email == "Kim.Minsu@Example.com"
+
+
+def test_the_other_way_round_is_one_person_too(db: Session) -> None:
+    db.add(User(id="user_pre", email="kim@example.com", display_name="Pre"))
+    db.flush()
+
+    user = upsert_user_from_google(db, _identity(email="Kim@Example.COM"))
+
+    assert user.id == "user_pre"
+    assert db.query(User).count() == 1
+
+
+def test_a_new_account_is_stored_trimmed_and_in_lower_case(db: Session) -> None:
+    user = upsert_user_from_google(db, _identity(email="  New.Person@Example.com ", name=None))
+
+    assert user.email == "new.person@example.com"
+    assert user.display_name == "new.person@example.com"
+
+
+def test_a_later_sign_in_does_not_take_a_case_difference_for_a_changed_address(
+    db: Session,
+) -> None:
+    """Found by ``google_sub``, with the address stored in capitals: nothing
+    changed at Google, so nothing is written and nobody is warned about."""
+    db.add(User(id="user_pre", email="A@Example.com", display_name="Pre", google_sub="sub-1"))
+    db.flush()
+
+    with capture_logs() as logs:
+        user = upsert_user_from_google(db, _identity(email="a@example.com"))
+
+    assert user.id == "user_pre"
+    assert user.email == "A@Example.com"
+    assert not [entry for entry in logs if entry["event"] == "auth_google_email_taken"]
+
+
+def test_a_changed_address_is_stored_in_lower_case(db: Session) -> None:
+    upsert_user_from_google(db, _identity())
+
+    user = upsert_user_from_google(db, _identity(email="Moved@Example.com"))
+
+    assert user.email == "moved@example.com"
+
+
+def test_an_address_another_account_holds_in_another_case_is_still_taken(db: Session) -> None:
+    first = upsert_user_from_google(db, _identity())
+    db.add(User(id="user_other", email="Taken@Example.com", display_name="Other"))
+    db.flush()
+
+    with capture_logs() as logs:
+        user = upsert_user_from_google(db, _identity(email="taken@example.com"))
+
+    assert user.id == first.id
+    assert user.email == "a@example.com"
+    (warning,) = [entry for entry in logs if entry["event"] == "auth_google_email_taken"]
+    assert warning["holder_id"] == "user_other"
+    # Ids only: an address is personal data and is in no log line.
+    assert "example.com" not in repr(logs).lower()
+
+
+def test_two_rows_that_differ_only_by_case_do_not_break_the_sign_in(db: Session) -> None:
+    """The unique constraint lets them exist. The one stored as Google sends the
+    address is the one signed in to; with neither exact, the older."""
+    old = datetime(2026, 9, 1, tzinfo=UTC)
+    db.add(User(id="user_caps", email="Kim@Example.com", display_name="Caps", created_at=old))
+    db.add(
+        User(
+            id="user_lower",
+            email="kim@example.com",
+            display_name="Lower",
+            created_at=old + timedelta(days=1),
+        )
+    )
+    db.flush()
+
+    with capture_logs() as logs:
+        exact = upsert_user_from_google(db, _identity(sub="sub-a", email="kim@example.com"))
+    assert exact.id == "user_lower"
+    (warning,) = [e for e in logs if e["event"] == "auth_email_held_twice_by_case"]
+    assert warning["user_ids"] == ["user_caps", "user_lower"]
+
+    neither = upsert_user_from_google(db, _identity(sub="sub-b", email="KIM@example.com"))
+    assert neither.id == "user_caps"
+    assert db.query(User).count() == 2
+
+
+def test_the_callback_signs_a_capitalised_row_in_without_making_a_second_account(
+    api: tuple[TestClient, dict[str, object]], db: Session
+) -> None:
+    """Through the route a browser takes, not the function alone."""
+    db.add(User(id="user_pre", email="Kim@Example.com", display_name="Pre"))
+    db.commit()
+    client, holder = api
+    holder["identity"] = _identity(email="kim@example.com")
+
+    response = _complete_login(client, holder["state_store"])  # type: ignore[arg-type]
+
+    assert response.status_code == 303
+    assert SESSION_COOKIE in response.cookies
+    (user,) = db.query(User).all()
+    assert (user.id, user.google_sub) == ("user_pre", "sub-1")
+
+
 # --------------------------------------------------------------------------- #
 # /api/auth router
 # --------------------------------------------------------------------------- #

@@ -1,9 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { listTeamMembers } from "../api";
+import { Button } from "@/shared/ui";
+
+import {
+  cancelInvitation,
+  listPendingInvitations,
+  listTeamMembers,
+  type PendingInvitation,
+} from "../api";
 import type { TeamMember } from "../types";
 import { TeamInvite } from "./TeamInvite";
 import { TeamScope } from "./TeamScope";
@@ -17,8 +24,14 @@ import { TeamScope } from "./TeamScope";
  * making a new, empty workspace.
  *
  * The list is the team's members by name, as the speaker picker already shows
- * them. Pending invitations are not listed: nothing reads them back, on
- * purpose (`invitations.py`).
+ * them.
+ *
+ * **Pending invitations are listed, with a way to take one back** (the
+ * follow-up left on #552). What a member sees is what the inviter typed and
+ * the team already holds -- the address, when the link lapses, who invited --
+ * and never the link. The section is absent when nothing is pending, and when
+ * the list cannot be read: an invitation that looked cancellable and was not
+ * would be worse than none shown.
  */
 
 const SECTION_TITLE = {
@@ -50,6 +63,32 @@ export function MembersSettingsScreen() {
 function Members({ teamId }: { teamId: string }) {
   const [members, setMembers] = useState<TeamMember[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [pending, setPending] = useState<PendingInvitation[] | null>(null);
+  const [cancelling, setCancelling] = useState<number | null>(null);
+  const [cancelFailed, setCancelFailed] = useState(false);
+
+  const readPending = useCallback(() => {
+    listPendingInvitations(teamId)
+      .then(setPending)
+      // Not read is not shown: the section stays off.
+      .catch(() => setPending(null));
+  }, [teamId]);
+
+  useEffect(() => {
+    readPending();
+  }, [readPending]);
+
+  const cancel = async (invitationId: number) => {
+    setCancelling(invitationId);
+    setCancelFailed(false);
+    try {
+      setPending(await cancelInvitation(teamId, invitationId));
+    } catch {
+      setCancelFailed(true);
+    } finally {
+      setCancelling(null);
+    }
+  };
 
   useEffect(() => {
     let current = true;
@@ -98,8 +137,61 @@ function Members({ teamId }: { teamId: string }) {
         <h2 id="invite-title" className="mb-2" style={SECTION_TITLE}>
           팀원 초대
         </h2>
-        <TeamInvite teamId={teamId} canConnectMail />
+        <TeamInvite teamId={teamId} canConnectMail onInvited={readPending} />
       </section>
+
+      {pending !== null && pending.length > 0 ? (
+        <section className="mt-8" aria-labelledby="pending-title">
+          <h2 id="pending-title" style={SECTION_TITLE}>
+            수락을 기다리는 초대
+          </h2>
+          <ul className="mt-2 border-t border-[var(--color-hairline)]">
+            {pending.map((invitation) => (
+              <li
+                key={invitation.id}
+                className="flex flex-wrap items-center gap-3 border-b border-[var(--color-hairline)]"
+                style={{ paddingBlock: "var(--space-8)" }}
+              >
+                <span
+                  className="text-[var(--color-ink-strong)]"
+                  style={{ fontSize: "var(--text-rowBody)" }}
+                >
+                  {invitation.email}
+                </span>
+                <span style={META}>
+                  {invitation.invited_by_name ? `${invitation.invited_by_name} 님이 초대 · ` : ""}
+                  {lapses(invitation.expires_at)}까지
+                </span>
+                <span className="ml-auto">
+                  <Button
+                    tone="quiet"
+                    size="compact"
+                    loading={cancelling === invitation.id}
+                    onClick={() => cancel(invitation.id)}
+                    aria-label={`${invitation.email} 초대 취소`}
+                  >
+                    초대 취소
+                  </Button>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {cancelFailed ? (
+            <p role="alert" className="mt-2" style={META}>
+              초대를 취소하지 못했습니다. 잠시 후 다시 시도해 주세요.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
     </>
   );
+}
+
+/** The day a link lapses, as a date: the hour says little a week ahead. */
+function lapses(expiresAt: string): string {
+  const day = new Date(expiresAt);
+  return Number.isNaN(day.getTime())
+    ? expiresAt
+    : day.toLocaleDateString("ko-KR", { month: "long", day: "numeric" });
 }

@@ -112,6 +112,28 @@ export const inviteToTeam = (teamId: string, email: string, sendEmail = false) =
     body: JSON.stringify({ email, send_email: sendEmail }),
   });
 
+/** An invitation to the team that nobody has accepted yet, as its members see it. */
+export type PendingInvitation = {
+  id: number;
+  email: string;
+  expires_at: string;
+  invited_by_name: string | null;
+};
+
+/** The team's pending invitations (#552). Members of the team only. */
+export const listPendingInvitations = (teamId: string) =>
+  api.audio<PendingInvitation[]>(`/teams/${encodeURIComponent(teamId)}/invitations`);
+
+/**
+ * Take a pending invitation back: its link stops working. Answers with the
+ * list as it now stands; one already gone is not an error.
+ */
+export const cancelInvitation = (teamId: string, invitationId: number) =>
+  api.audio<PendingInvitation[]>(
+    `/teams/${encodeURIComponent(teamId)}/invitations/${invitationId}`,
+    { method: "DELETE" },
+  );
+
 /**
  * Join the team an invitation link names, as the signed-in owner of the
  * invited address. Every refusal is the same 404; show one sentence for it.

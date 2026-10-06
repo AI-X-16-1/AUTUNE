@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/design/brand/autune-wordmark-dark.svg">
+    <img src="docs/design/brand/autune-wordmark.svg" alt="autune" width="320">
+  </picture>
+</p>
+
 # AUTUNE (오튠)
 
 > **Auto + Attune** — 어긋난 소통을 자동으로 조율하는 회의 인텔리전스

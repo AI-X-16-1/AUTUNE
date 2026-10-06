@@ -10,3 +10,4 @@ export { Row } from "./Row";
 export { ScoreLabel, type ScoreLevel } from "./ScoreLabel";
 export { StatusDot, type StatusVariant } from "./StatusDot";
 export { TabLinks, Tabs } from "./Tabs";
+export { Wordmark } from "./Wordmark";

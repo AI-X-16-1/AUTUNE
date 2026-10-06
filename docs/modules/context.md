@@ -692,7 +692,7 @@ cleaned up by a deletion hook (see "Deletion").
 | `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `utterance_ids` (JSONB, nullable), `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
 | `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
 | `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
-| `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
+| `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `source_utterance_ids` (JSONB, nullable: the lines B drew it from, ids only), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
 | `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at`, `notified_at` | `meeting_id` FK `CASCADE` |
 | `ctx_briefs` | One pre-meeting brief per scheduled meeting: which past meeting it recaps, and whether it went out. The choice, never the recap | `previous_meeting_id`, `match_reason` (`series`/`topic`/`latest`), `sent_at` | `meeting_id` FK `CASCADE`; `previous_meeting_id` FK `ON DELETE SET NULL` |
 | `ctx_team_agendas` | The latest `TeamAgenda` B published for a team: its open Jira issues, for the brief's agenda. Holds B's masked item titles, so it is short-lived | `as_of`, `issues` (JSONB: `title`, `key`, `status`, `url`) | `team_id` PK and FK `CASCADE`; purged once older than `AGENDA_STALE_AFTER` |
@@ -777,6 +777,37 @@ Meeting deletion itself cascades through `meeting_id` foreign keys and reaches
   triggered a lineage build still holds that meeting's `topic_label` in the
   interim; every other exposure above is likewise bounded to "until the next
   sweep run," not indefinite.
+
+### A person deleting their own speech (#587, #614)
+
+A person can delete their own utterances without deleting the meeting
+(`DELETE /api/audio/me/speech`, and account deletion). Decided with the user on
+#587: their words go and the team's work stays. D registers
+`@on_speech_deleted("context")` (`service.forget_deleted_speech`), which runs
+before A deletes the utterances and clears what D copied from them. The two
+kinds of copy follow different rules, because they hold different things. A
+**topic** is cleared only when **every** line it was cut from is deleted (C's
+rule): its label is a name several people gave, so it is still the meeting's,
+said in someone else's words too. A **decision statement** is cleared when
+**any** line it was drawn from is deleted: B sends the lines it cited joined
+word for word, and B itself drops that sentence on the same signal, so a
+deleted line's words would otherwise stay in the decision history.
+
+| Row | When it goes | What happens |
+| --- | --- | --- |
+| `ctx_embeddings` (`kind='topic'`) and the `ctx_topic_links` carrying its label | `utterance_ids` all deleted, or `NULL` (no record) | deleted |
+| `ctx_decision_versions.current_statement` | any of `source_utterance_ids` deleted, or `NULL` (no record) | reads `삭제된 발화에서 만든 항목`; the version, its `change_type` and its place in the thread stay |
+| a later version's `previous_statement`, and the thread's `topic_label`, when they copy a cleared statement | follows the statement | read the same |
+| `ctx_team_agendas` of the meeting's team | always | dropped; B republishes it every few minutes with its own titles already rewritten |
+
+A decision B cited no line for (`source_utterance_ids = []`) stays: nothing
+says it was theirs. A cleared head is skipped by `_thread_heads`, so no new
+decision matches a thread on the placeholder. `ctx_briefs` holds ids only.
+
+Not covered, and said so: messages D already posted to Slack (topic notices,
+drift warnings, briefs) cannot be edited, because D does not keep their
+message timestamps. D does not republish `ContextLinks`: E clears its own copy
+of D's results on the same signal.
 
 A test that deletes a meeting and asserts every `ctx_*` row for it is gone —
 threads included, after the sweep — is part of shipping the schema, not an extra.

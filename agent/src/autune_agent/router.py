@@ -176,6 +176,11 @@ def _read(session: Session, row: AgentPendingAction) -> PendingRead:
     return PendingRead(**fields)
 
 
+class Unfinished(BaseModel):
+    title: str
+    reason: str
+
+
 class ChatReply(BaseModel):
     run_id: str
     outcome: str
@@ -194,6 +199,10 @@ class ChatReply(BaseModel):
     pending: list[PendingRead] = Field(default_factory=list)
     """L2 proposals this run queued that the caller may decide -- an approver
     with the scope, or ``any`` (plan mode's rule). S34 draws 승인 / 거절 for these."""
+    unfinished: list[Unfinished] = Field(default_factory=list)
+    """L1 actions that did not go through, each with why, for the asker only
+    (#862). The subagent's answer is written before L1 runs, so it cannot say.
+    Never stored: ``agent_runs.actions`` keeps only this layer's reasons."""
 
 
 class RunRead(BaseModel):
@@ -269,6 +278,7 @@ def chat(
         executed=sum(1 for a in row.actions if a.get("ok")),
         queued=len(waiting),
         pending=[_read(session, r) for r in waiting if can_decide(scopes, r)],
+        unfinished=[Unfinished(**u) for u in state.get("unfinished", [])],
     )
 
 

@@ -62,3 +62,41 @@ export function teamToOpen(teams: readonly { team_id: string }[]): string | null
   if (kept !== null && teams.some((team) => team.team_id === kept)) return kept;
   return teams[0]?.team_id ?? null;
 }
+
+/**
+ * How many teams the sidebar's menu -- and the home screen's row -- list
+ * before the rest goes behind "더보기" (the user, 2026-10-06).
+ */
+export const LISTED_TEAMS = 3;
+
+/**
+ * The teams to list where only a few fit: the first `LISTED_TEAMS` of the
+ * order the server gives (pinned first, then the order joined), with the team
+ * being looked at always among them -- in the last place when it is not one
+ * of the first, because a list that marked nothing would not say whose data
+ * is on screen.
+ */
+export function teamsToList<T extends { team_id: string }>(teams: T[], teamId: string | null): T[] {
+  const first = teams.slice(0, LISTED_TEAMS);
+  if (teamId === null || first.some((team) => team.team_id === teamId)) return first;
+  const looking = teams.find((team) => team.team_id === teamId);
+  return looking ? [...first.slice(0, LISTED_TEAMS - 1), looking] : first;
+}
+
+const TEAMS = "autune:teams-changed";
+
+/**
+ * Tell every list of teams on the page that the list changed -- a team was
+ * pinned or unpinned, which reorders it. The sidebar's menu, a screen's row
+ * and the small window each loaded their own copy; without this a pin made in
+ * one showed in the others only after a reload.
+ */
+export function announceTeams<T>(teams: T[]): void {
+  window.dispatchEvent(new CustomEvent<T[]>(TEAMS, { detail: teams }));
+}
+
+export function onTeamsChanged<T>(listener: (teams: T[]) => void): () => void {
+  const heard = (event: Event) => listener((event as CustomEvent<T[]>).detail);
+  window.addEventListener(TEAMS, heard);
+  return () => window.removeEventListener(TEAMS, heard);
+}
