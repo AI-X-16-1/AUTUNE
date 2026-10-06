@@ -37,6 +37,15 @@ Dashboard · Settings · user. There is no Meetings entry: the meeting list is
 Home, which is the lit entry inside a meeting too. Content panel top bar 56, hairline only. Top-bar
 action order, left to right: quiet → text → secondary → primary.
 
+**Logo:** the lowercase stroke wordmark in `docs/design/brand/` (chosen
+2026-10-06). `autune-wordmark.svg` is canonical — ink `#16191F` (ink.strong)
+with the "un" wave in `#3B4A9E` (accent); `autune-wordmark-dark.svg` swaps the
+ink for the dark theme's ink.strong `#EDEEF0`. The wave stays accent in both
+themes. `autune-icon.svg` is the square mark (the wordmark's "a") used as the
+favicon. In the web app the wordmark is `Wordmark` in `shared/ui`, 18px tall in
+the sidebar and the live top bar, 20px in the signed-out headers. Never set the
+name as text in its place.
+
 **Canvas widths:** 1280 for standard screens, 1440 for S13 (live transcript),
 380 for S33 (desktop mini window).
 
