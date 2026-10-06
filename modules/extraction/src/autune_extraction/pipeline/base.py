@@ -49,6 +49,13 @@ class Prediction:
     confidence: float
     scores: dict[UtteranceKind, float]
     none_score: float = 0.0
+    pieces: tuple[tuple[str, UtteranceKind | None], ...] = ()
+    """For an utterance a classifier had to ask about in pieces (``llm.pieces``):
+    its text as it was cut, in spoken order, and the kind each piece got. Empty
+    for every other utterance and from every other classifier. ``kind`` is then
+    the one kind the utterance is stored and published with
+    (``llm.strongest``); the pieces are what items and decisions are made from
+    (``decisions.in_pieces``)."""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:

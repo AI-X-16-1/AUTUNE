@@ -17,7 +17,7 @@ import hashlib
 import json
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 from autune_contracts.enums import UtteranceKind
@@ -71,6 +71,60 @@ class ClassifiedUtterance:
     side collection, because every later step that reads ``kind``
     (``build_action_items``, ``record_ambiguous_agreements``,
     ``store_classifications``) reads this the same way."""
+    pieces: tuple[tuple[str, UtteranceKind | None], ...] = ()
+    """For a turn the classifier asked about in pieces: each piece's text and
+    kind, in order (``Prediction.pieces``). ``kind`` above is the one the
+    utterance is stored with; ``in_pieces`` is how the rest of the run reads
+    the turn."""
+    part_of: str = ""
+    """The id of the utterance this is a piece of, for an entry ``in_pieces``
+    made; empty for an utterance itself."""
+
+    @property
+    def source_id(self) -> str:
+        """The utterance a row built from this cites: itself, or the one it is
+        a piece of. The only id that is ever stored or leaves the module."""
+        return self.part_of or self.id
+
+
+def in_pieces(classified: Sequence[ClassifiedUtterance]) -> list[ClassifiedUtterance]:
+    """The meeting's sequence with every turn that was classified in pieces
+    replaced by its pieces, each an entry of its own.
+
+    One person talking for minutes is one utterance and can hold a decision,
+    two promises and a good deal else. Read as one line it gave one item whose
+    description was the whole turn -- too long for the resolver to summarise
+    -- and lost whatever its one kind was not (the user, 2026-10-06: an item
+    for each). So the resolver, the decision grouping and the item builder
+    read the pieces: each piece is a line with its own kind and text, a target
+    short enough to summarise, and context for the lines around it.
+
+    A piece's ``id`` is the utterance's with ``#n`` after it. It is the key a
+    summary is found by and what a decision's id is derived from -- so two
+    decisions settled in one turn are two rows -- and it is never stored and
+    never leaves: every row cites ``source_id``.
+
+    A turn whose kind no piece has was changed after classification (step 4
+    promotes an ambiguous agreement to a commitment); it stays whole, as the
+    step that changed it read it.
+    """
+    out: list[ClassifiedUtterance] = []
+    for utterance in classified:
+        if not utterance.pieces or utterance.kind not in {kind for _, kind in utterance.pieces}:
+            out.append(utterance)
+            continue
+        for number, (text, kind) in enumerate(utterance.pieces, start=1):
+            out.append(
+                replace(
+                    utterance,
+                    id=f"{utterance.id}#{number}",
+                    kind=kind,
+                    text=text,
+                    pieces=(),
+                    part_of=utterance.id,
+                )
+            )
+    return out
 
 
 @dataclass(frozen=True)
@@ -99,6 +153,10 @@ class DecisionGroup:
     """``담당 박지영, 기한 2026-10-02``, or empty: what is added after the line."""
 
     substance_id: str = ""
+    from_piece: bool = False
+    """Whether the substance is a piece of a long turn (``in_pieces``): up to
+    half a request of speech, which is not a line of minutes until a model has
+    written what was decided in it (``needs_write_up``)."""
     first_position: int = 0
     last_position: int = 0
     """Where the decision's first and last utterance sit in the meeting's sequence,
@@ -227,7 +285,7 @@ def needs_write_up(group: DecisionGroup) -> bool:
     or it points at something said before.
     """
     core = group.core_text.strip()
-    return len(core) < SELF_CONTAINED or bool(_POINTS_AT.search(core))
+    return group.from_piece or len(core) < SELF_CONTAINED or bool(_POINTS_AT.search(core))
 
 
 def _substance(members: Sequence[ClassifiedUtterance]) -> ClassifiedUtterance:
@@ -328,6 +386,7 @@ def _build(
         core_text=core,
         suffix=suffix,
         substance_id=substance.id,
+        from_piece=bool(substance.part_of),
         first_position=span[0],
         last_position=span[1],
     )

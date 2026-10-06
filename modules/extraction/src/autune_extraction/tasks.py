@@ -76,6 +76,7 @@ from . import (
 )
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
+from .decisions import in_pieces
 from .models import (
     ExtActionItem,
     ExtCalendarCleanup,
@@ -203,16 +204,22 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     give_roster(nli, roster)
     classified = service.verify_utterances(nli, classified)
 
+    # A turn the classifier asked about in pieces is read piece by piece from
+    # here on: each commitment or decision in it becomes a row of its own, with
+    # a target the resolver can summarise. What is stored per utterance --
+    # its one kind, an ambiguous agreement to ask about -- reads ``classified``.
+    read = in_pieces(classified)
+
     resolver = get_resolver()
     # The resolver sends text out too, when it is the ``llm`` one (#411).
     give_roster(resolver, roster)
-    summaries = service.resolve_commitment_summaries(resolver, classified)
+    summaries = service.resolve_commitment_summaries(resolver, read)
     resolved_descriptions = {uid: resolution.text for uid, resolution in summaries.items()}
     related_lines = {uid: resolution.used for uid, resolution in summaries.items()}
     # Agreements their speakers confirmed keep a summary through the rebuild.
     confirmed_summaries = service.confirmed_summaries(resolver, classified, confirmed)
     decision_summaries = service.resolve_decision_summaries(
-        resolver, classified, meeting_id=meeting_id, day=day
+        resolver, read, meeting_id=meeting_id, day=day
     )
 
     with session_scope() as session:
@@ -225,14 +232,14 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         decisions = service.build_decisions(
             session,
             meeting_id=meeting_id,
-            utterances=classified,
+            utterances=read,
             summaries=decision_summaries,
         )
         items = service.build_action_items(
             session,
             meeting_id=meeting_id,
             utterances=utterances,
-            classified=classified,
+            classified=read,
             resolved=resolved_descriptions,
             related=related_lines,
             confirmed=confirmed_summaries,
