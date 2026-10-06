@@ -1,7 +1,7 @@
 <!-- E's misalignment prediction passages. Text is Korean (user-facing); numbers are placeholders. -->
 
 ## prediction.overview | 불일치 위험 예측이란
-이 회의에서 내린 결정이 {prediction.horizon} 안에 뒤집힐 확률입니다. 뒤집힌 결정은 맥락 모듈이 기록한 번복으로 정합니다.
+이 회의에서 내린 결정이 {prediction.horizon} 안에 뒤집힐 예상 확률입니다. 뒤집힌 결정은 맥락 모듈이 기록한 번복으로 정합니다.
 
 ## prediction.inputs | 예측에 쓰는 정보
 회의 품질 점수, 갭 개수, 가장 낮은 직무 정렬, 결정 번복 흐름, 핵심 이해관계자가 빠진 채 바뀐 결정이 있었는지, 불확실한 합의, 확정되지 않은 액션 아이템, 빠진 입력을 씁니다. 이해관계자는 누구인지가 아니라 있었는지만 봅니다.

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from autune_intelligence import glossary, service
 
 
@@ -18,6 +20,11 @@ def test_constants_print_as_people_read_them() -> None:
     assert glossary.CONSTANTS["action.min_meetings"] == "3건"
     assert glossary.CONSTANTS["weight.decision_density"] == "30%"
     assert glossary.CONSTANTS["grade.cutoffs"].startswith("A 0.9 이상")
+    assert glossary.CONSTANTS["weekly.active_within"] == "13주"
+    assert glossary.CONSTANTS["report.correction_window"] == "5분"
+    assert glossary.CONSTANTS["weekly.default_weekday"] == "월요일"
+    assert glossary.CONSTANTS["prediction.horizon"] == "14일"
+    assert glossary.CONSTANTS["prediction.min_history"] == "4주"
 
 
 def test_the_weights_quoted_are_the_weights_in_code() -> None:
@@ -41,7 +48,10 @@ def test_a_passage_is_short_enough_for_the_budget() -> None:
 
 
 def test_an_unknown_placeholder_fails_loudly() -> None:
-    import pytest
-
     with pytest.raises(KeyError):
         glossary.fill("{no.such}")
+
+
+def test_a_passage_renders_its_constant() -> None:
+    window = next(p for p in glossary.passages() if p.key == "actions.window")
+    assert glossary.CONSTANTS["action.window"] in window.text

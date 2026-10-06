@@ -40,6 +40,8 @@ def _cutoffs() -> str:
     return ", ".join(f"{grade} {cutoff:.1f} 이상" for cutoff, grade in service.GRADE_CUTOFFS)
 
 
+_WEEKDAYS = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
+
 CONSTANTS: dict[str, str] = {
     **{f"weight.{k}": f"{v:.0%}" for k, v in service.WEIGHTS.items()},
     "grade.cutoffs": _cutoffs(),
@@ -52,6 +54,7 @@ CONSTANTS: dict[str, str] = {
     "action.window": _span(service.ACTION_COMPLETION_WINDOW),
     "action.min_meetings": f"{service.ACTION_PROGRESS_MIN_MEETINGS}건",
     "action.stale_after": _span(ACTION_PROGRESS_STALE_AFTER),
+    "weekly.default_weekday": _WEEKDAYS[service.WEEKLY_REPORT_DEFAULT_WEEKDAY],
     "weekly.default_hour": f"{service.WEEKLY_REPORT_DEFAULT_HOUR}시",
     "weekly.catch_up": _span(service.WEEKLY_REPORT_CATCH_UP),
     "weekly.active_within": _span(service.WEEKLY_REPORT_ACTIVE_WITHIN),
