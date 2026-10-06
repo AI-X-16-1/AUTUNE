@@ -287,8 +287,8 @@ describe("TeamInvite", () => {
 });
 
 describe("TeamInvite, a link for no address", () => {
-  // #552, 2026-10-06 (the module owner's conditions; the hour is the product
-  // owner's): beside the invitation for an address, once, for an hour.
+  // #552, 2026-10-06 (the module owner's conditions; the hour is also the
+  // requester's): beside the invitation for an address, once, for an hour.
   const OPEN = { token: "tok_open", expires_at: "2026-10-06T08:05:00Z" };
   const OPEN_LINK = `${window.location.origin}/invite#tok_open`;
   const openButton = () =>

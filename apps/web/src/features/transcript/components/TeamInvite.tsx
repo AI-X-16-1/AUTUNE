@@ -32,7 +32,7 @@ import { invitationLink } from "../invitationLink";
  * copy it.
  *
  * **A link for no address is the smaller, second way** (#552, the module
- * owner's conditions and the product owner's hour, 2026-10-06). Under the
+ * owner's conditions, 2026-10-06; the hour is also the requester's). Under the
  * address field: "주소 없이 링크 만들기". It names nobody, so whoever opens
  * it signed in joins -- which the line beside the button says before it is
  * pressed -- and it is kept small to match: it works once and for an hour,

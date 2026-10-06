@@ -24,9 +24,10 @@ needs a signed-in account whose email is the invited address, compared without
 case.
 
 **A link made for no address is the exception, and is kept small** (the
-module owner's conditions on #552, 2026-10-06; the one hour is also the
-product owner's). It is a bearer link: whoever opens it signed in joins the
-team -- there is no address to hold it to. So it adds one person, once (the
+module owner's conditions on #552, 2026-10-06; the one hour is also what the
+person who asked for the link set). It is a bearer link: whoever opens it
+signed in joins the team -- there is no address to hold it to. So it adds one
+person, once (the
 row goes on acceptance, like any other); it lapses ``LINK_LIFETIME`` after it
 is made, not after seven days; an inviter has one open for a team at a time,
 and making another replaces it; and the team's members see it in the pending

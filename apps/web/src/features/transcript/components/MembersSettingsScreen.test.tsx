@@ -70,6 +70,14 @@ describe("MembersSettingsScreen", () => {
 
     const section = await pendingSection();
     expect(within(section).getByText("주소 없는 링크")).toBeTruthy();
+    // It lasts an hour: the time it stops working, not a date.
+    const at = new Date(OUT.expires_at);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    expect(
+      within(section).getByText(
+        `서연 님이 초대 · ${pad(at.getHours())}:${pad(at.getMinutes())}까지, 한 번만`,
+      ),
+    ).toBeTruthy();
     fireEvent.click(within(section).getByRole("button", { name: "주소 없는 링크 초대 취소" }));
 
     await waitFor(() => expect(cancel).toHaveBeenCalledWith("team_1", 9));
