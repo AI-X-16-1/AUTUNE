@@ -125,7 +125,7 @@ def test_meeting_reports_refuses_a_bad_date(db_session: Session, team: str) -> N
 
 
 def test_meeting_reports_title_filter_is_not_a_pattern(db_session: Session, team: str) -> None:
-    _report(db_session, team, "결제 회의", datetime(2026, 10, 2, tzinfo=UTC), "rdr_a")
+    _report(db_session, team, "500 회의", datetime(2026, 10, 2, tzinfo=UTC), "rdr_a")
 
     assert tools.meeting_reports(db_session, team, title_contains="50%")["items"] == []
 
