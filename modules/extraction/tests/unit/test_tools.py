@@ -35,6 +35,7 @@ from autune_extraction.models import (
     ExtSyncFailure,
 )
 from autune_extraction.schemas import ActionItemCreate
+from autune_extraction.slots import KST
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
@@ -147,6 +148,7 @@ def classification(s: Session, uid: str, kind: str) -> None:
 
 ARGS = {
     tools.open_action_items: (TEAM,),
+    tools.stalled_action_items: (TEAM,),
     tools.workload_by_owner: (TEAM,),
     tools.person_action_items: (TEAM, "user_in"),
     tools.action_item_status: (TEAM, "act_missing"),
@@ -722,6 +724,93 @@ def test_a_second_followup_item_is_refused_while_one_is_open(
     assert tools.add_followup_item(TEAM, MEETING)["ok"] is True  # a closed one does not block
 
 
+# --- the day Follow-up recommends becomes the item's due date (#853) -------------------
+
+KOREA_TODAY = datetime.now(tz=KST).date()
+
+
+def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """The date the team lead saw on the card. No assignee is set and the item
+    still waits, so nothing goes to a calendar and nobody is reminded."""
+    day = KOREA_TODAY + timedelta(days=3)
+
+    result = tools.add_followup_item(TEAM, MEETING, day.isoformat())
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert (row.due_date, row.assignee_id, row.status, row.origin) == (
+        day,
+        None,
+        "needs_confirmation",
+        "followup",
+    )
+    assert row.description == tools.FOLLOWUP_DESCRIPTION
+    assert acting["items"] == []
+    assert session.query(ExtEditEvent).count() == 0
+
+
+def test_a_date_of_today_is_still_a_date(session: Session, acting: dict[str, list[str]]) -> None:
+    assert tools.add_followup_item(TEAM, MEETING, KOREA_TODAY.isoformat())["ok"] is True
+
+    assert session.query(ExtActionItem).one().due_date == KOREA_TODAY
+
+
+@pytest.mark.parametrize("text", ["2026-13-45", "2026-02-30", "내일", "next week", ""])
+def test_text_that_is_not_a_date_is_refused_and_makes_no_item(
+    session: Session, acting: dict[str, list[str]], text: str
+) -> None:
+    """``2026-13-45`` passes a ``YYYY-MM-DD`` pattern and is no day (#853)."""
+    result = tools.add_followup_item(TEAM, MEETING, text)
+
+    assert result["ok"] is False and "not a date" in result["reason"]
+    assert session.query(ExtActionItem).count() == 0
+
+
+def test_a_date_that_has_passed_is_left_off_and_the_item_is_still_made(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """The approval was for the item. A recommendation approved after its day
+    must not fail it, and must not make an item that is born overdue."""
+    yesterday = KOREA_TODAY - timedelta(days=1)
+
+    result = tools.add_followup_item(TEAM, MEETING, yesterday.isoformat())
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert row.due_date is None
+    assert "기한은 넣지 않았습니다" in result["summary"]
+
+
+def test_once_confirmed_it_is_an_ordinary_item_with_a_date(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """From here the date does what any item's date does: the copies that
+    follow a confirmation (the board's sync, the assignee's calendar) are
+    queued for it."""
+    day = KOREA_TODAY + timedelta(days=3)
+    tools.add_followup_item(TEAM, MEETING, day.isoformat())
+    (row,) = session.query(ExtActionItem).all()
+
+    assert tools.set_action_item_status(TEAM, row.id, "todo")["ok"] is True
+
+    session.refresh(row)
+    assert (row.status, row.due_date) == ("todo", day)
+    assert acting["items"] == [row.id]
+
+
+def test_a_second_followup_item_is_refused_whatever_date_it_brings(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    tools.add_followup_item(TEAM, MEETING)
+
+    refused = tools.add_followup_item(TEAM, MEETING, (KOREA_TODAY + timedelta(days=3)).isoformat())
+
+    assert refused["ok"] is False and "already has an open follow-up item" in refused["reason"]
+    assert session.query(ExtActionItem).one().due_date is None
+
+
 def test_a_followup_item_only_on_the_teams_own_meeting(
     session: Session, acting: dict[str, list[str]]
 ) -> None:
@@ -822,6 +911,203 @@ def test_item_rows_say_whether_they_are_late(session: Session) -> None:
     assert (row["overdue"], row["needs_reassignment"]) == (True, False)
 
 
+# --- stalled_action_items (#856: what a team should be asked to look at again) ---------
+
+THEN = "mtg_then"
+
+
+def held(s: Session, meeting_id: str, days_ago: int) -> None:
+    s.add(
+        Meeting(
+            id=meeting_id,
+            team_id=TEAM,
+            title=f"{days_ago}일 전 회의",
+            status="complete",
+            started_at=datetime.now(UTC) - timedelta(days=days_ago),
+        )
+    )
+    s.flush()
+
+
+def a_month_of_meetings(s: Session) -> None:
+    """A meeting a month ago and three held since: an item made in the first
+    and still open has been carried through ``STALE_AFTER`` meetings."""
+    held(s, THEN, 30)
+    for n, days_ago in enumerate((20, 10, 5)):
+        held(s, f"mtg_later_{n}", days_ago)
+
+
+def made(s: Session, item_id: str, days_ago: int) -> None:
+    row = s.get(ExtActionItem, item_id)
+    assert row is not None
+    row.created_at = datetime.now(UTC) - timedelta(days=days_ago)
+    s.flush()
+
+
+def stalled(result: dict[str, Any]) -> dict[str, list[str]]:
+    return {i["id"]: i["stalled"] for i in result["items"]}
+
+
+def test_work_that_stopped_moving_is_named_with_the_way_it_stopped(session: Session) -> None:
+    a_month_of_meetings(session)
+    item(session, "act_late", due=TODAY - timedelta(days=1))
+    item(session, "act_carried", meeting=THEN)
+    item(session, "act_both", due=TODAY - timedelta(days=9), meeting=THEN)
+    item(session, "act_moving", due=TODAY + timedelta(days=2))
+    item(session, "act_done_late", status="done", due=TODAY - timedelta(days=9), meeting=THEN)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert result["ok"] is True
+    assert stalled(result) == {
+        "act_both": ["overdue", "carried"],
+        "act_late": ["overdue"],
+        "act_carried": ["carried"],
+    }, "both ways first, late before carried; moving and finished work is not here"
+    assert [i["id"] for i in result["items"]] == ["act_both", "act_late", "act_carried"]
+    (carried,) = [i for i in result["items"] if i["id"] == "act_carried"]
+    assert carried["carried_meetings"] == service.STALE_AFTER
+    assert "기한 지남 2건" in result["summary"]
+    assert f"회의 {service.STALE_AFTER}번 이상 이월 2건" in result["summary"]
+
+
+def test_an_item_carried_through_fewer_meetings_is_not_stalled(session: Session) -> None:
+    held(session, THEN, 30)
+    held(session, "mtg_later_0", 20)
+    held(session, "mtg_later_1", 10)
+    item(session, "act_recent", meeting=THEN)
+
+    assert tools.stalled_action_items(session, TEAM)["items"] == []
+
+
+def test_an_item_nobody_confirmed_is_given_by_id_and_never_quoted(session: Session) -> None:
+    """#261 rule 3, kept here too: what a model drafted is not quoted before a
+    person has confirmed it -- not its text, not who it named, not its date."""
+    utterance(session, "utt_1", "제가 금요일까지 계약서 보낼게요", 0.0)
+    item(
+        session,
+        "act_waiting",
+        status="needs_confirmation",
+        due=TODAY + timedelta(days=1),
+        source="utt_1",
+    )
+    made(session, "act_waiting", 4)
+    item(session, "act_fresh", status="needs_confirmation")
+    made(session, "act_fresh", 2)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert result["items"] == [
+        {
+            "title": "액션아이템 확인 대기",
+            "body": "4일째 확인 대기",
+            "score": 0.5,
+            "id": "act_waiting",
+            "meeting_id": MEETING,
+            "stalled": ["unconfirmed"],
+            "waiting_days": 4,
+        }
+    ]
+    assert "act_waiting 할 일" not in repr(result) and "박지영" not in repr(result)
+    assert result["evidence"] == [], "nothing unconfirmed is sourced either"
+    assert "3일 넘게 확인 대기 1건" in result["summary"]
+
+
+def test_how_long_unconfirmed_counts_is_the_callers_to_say(session: Session) -> None:
+    item(session, "act_fresh", status="needs_confirmation")
+    made(session, "act_fresh", 2)
+
+    assert stalled(tools.stalled_action_items(session, TEAM, unconfirmed_days=2)) == {
+        "act_fresh": ["unconfirmed"]
+    }
+    assert tools.stalled_action_items(session, TEAM, unconfirmed_days=3)["items"] == []
+    # Below a day is a day: "0 days" would call every draft stalled the moment it is made.
+    made(session, "act_fresh", 0)
+    assert tools.stalled_action_items(session, TEAM, unconfirmed_days=0)["items"] == []
+
+
+@pytest.mark.parametrize("typed", ["three", 2.5, True, None, float("nan")])
+def test_a_wait_that_is_not_a_day_count_is_refused(session: Session, typed: object) -> None:
+    result = tools.stalled_action_items(session, TEAM, unconfirmed_days=typed)  # type: ignore[arg-type]
+
+    assert result["ok"] is False
+    assert result["reason"] == "unconfirmed_days is not a whole number of days"
+
+
+def test_confirmed_work_comes_before_drafts_and_only_it_is_sourced(session: Session) -> None:
+    utterance(session, "utt_1", "배포 일정 제가 확인하겠습니다", 0.0)
+    item(session, "act_late", due=TODAY - timedelta(days=1), source="utt_1")
+    item(session, "act_waiting", status="needs_confirmation")
+    made(session, "act_waiting", 10)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert [i["id"] for i in result["items"]] == ["act_late", "act_waiting"]
+    assert result["evidence"] == ["utt_1"]
+
+
+def test_the_draft_that_has_waited_longest_comes_first(session: Session) -> None:
+    for item_id, days in (("act_four", 4), ("act_ten", 10), ("act_six", 6)):
+        item(session, item_id, status="needs_confirmation")
+        made(session, item_id, days)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert [(i["id"], i["waiting_days"]) for i in result["items"]] == [
+        ("act_ten", 10),
+        ("act_six", 6),
+        ("act_four", 4),
+    ]
+
+
+def test_it_is_a_tool_the_agent_layer_is_offered_and_not_a_write() -> None:
+    assert tools.stalled_action_items in tools.TOOLS
+    assert tools.stalled_action_items not in tools.ACTIONS
+
+
+def test_five_are_listed_and_all_are_counted(session: Session) -> None:
+    for n in range(7):
+        item(session, f"act_late_{n}", due=TODAY - timedelta(days=n + 1))
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert len(result["items"]) == tools.MAX_ITEMS
+    assert "기한 지남 7건" in result["summary"]
+
+
+def test_another_teams_stalled_work_is_not_this_teams(session: Session) -> None:
+    item(session, "act_theirs", due=TODAY - timedelta(days=3), meeting=OTHER_MEETING)
+    item(session, "act_theirs_draft", status="needs_confirmation", meeting=OTHER_MEETING)
+    made(session, "act_theirs_draft", 30)
+
+    assert tools.stalled_action_items(session, TEAM)["items"] == []
+    assert stalled(tools.stalled_action_items(session, OTHER_TEAM)) == {
+        "act_theirs": ["overdue"],
+        "act_theirs_draft": ["unconfirmed"],
+    }
+
+
+def test_it_counts_items_and_never_people(session: Session) -> None:
+    """Not a tally of who is behind: the summary has no name in it, and an
+    item's line is the one every other read tool gives."""
+    item(session, "act_late", due=TODAY - timedelta(days=1))
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert "박지영" not in result["summary"]
+    assert set(result["items"][0]) == {
+        "title",
+        "body",
+        "score",
+        "id",
+        "meeting_id",
+        "overdue",
+        "needs_reassignment",
+        "stalled",
+        "carried_meetings",
+    }
+
+
 # --- a meeting past its retention window (#656) -------------------------------------
 
 EXPIRED = "mtg_expired"
@@ -860,6 +1146,7 @@ def expired_meeting(s: Session) -> None:
     ("tool", "args"),
     [
         (tools.open_action_items, (TEAM,)),
+        (tools.stalled_action_items, (TEAM,)),
         (tools.workload_by_owner, (TEAM,)),
         (tools.person_action_items, (TEAM, "user_in")),
         (tools.open_followup_item, (TEAM,)),

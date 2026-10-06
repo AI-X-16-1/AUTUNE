@@ -131,7 +131,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, dismiss, undoDismiss, choose } = useGapActions(reloadAll);
+  const { pending, failure, dismiss, undoDismiss, carry, undoCarry, choose } =
+    useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
   const [coverageTab, setCoverageTab] = useState<Coverage>("missing");
@@ -155,7 +156,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         date={explanations?.meeting_date ?? null}
       >
         {/* The one primary on the screen, and it is not wired: the Slack
-            question card is a surface this module has not built (#36). A
+            question card is a surface this module has not built (#824). A
             disabled button alone does not say why, so the reason is written
             beside it rather than left to a tooltip nobody hovers. */}
         <span
@@ -233,7 +234,13 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     loading={railLoading}
                     error={railError}
                   >
-                    {() => <CoveredList items={covered} />}
+                    {() => (
+                      <CoveredList
+                        items={covered}
+                        explanations={explanations}
+                        meetingId={meetingId}
+                      />
+                    )}
                   </ReadSection>
                 ) : (
                   <ReadSection
@@ -257,6 +264,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           showLow={showLow}
                           onToggleLow={() => setShowLow((on) => !on)}
                           onDismiss={(gapId) => void dismiss(gapId)}
+                          onCarry={(gapId, carried) =>
+                            void (carried ? carry(gapId) : undoCarry(gapId))
+                          }
                           pendingGapId={pending}
                         />
                       );
@@ -282,6 +292,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     showLow={showLow}
                     onToggleLow={() => setShowLow((on) => !on)}
                     onDismiss={(gapId) => void dismiss(gapId)}
+                    onCarry={(gapId, carried) =>
+                      void (carried ? carry(gapId) : undoCarry(gapId))
+                    }
                     pendingGapId={pending}
                   />
                 )}

@@ -54,7 +54,9 @@ from autune_gap.pipeline import (
     get_template_verifier,
 )
 from autune_gap.schemas import (
+    CoveredExplanationRead,
     EvidenceRead,
+    GapCarry,
     GapDismissal,
     GapExplanationRead,
     GapExplanations,
@@ -415,7 +417,7 @@ def detect_gaps(meeting_id: str) -> int:
     **A re-run keeps the gap rows it already raised.** They are recognised by
     ``(meeting_id, template_key, template_item_key)`` and updated in place, so
     ``id`` survives — a link somebody sent to a gap still opens it — and so does
-    ``dismissed_at``, which is a person's judgement and the input ADR 0006's
+    ``dismissed_at``, which is a person's judgement and the input
     threshold tuning reads. A row this run did not produce is deleted: the
     meeting covers that item now, and a gap that is no longer a gap should not
     sit in the table waiting to be counted. Only template rows are touched;
@@ -696,7 +698,7 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
 
     ``dismissed_at`` is the whole write. The row stays either way: a dismissed
     gap leaves the report (``build_report``) but not the table, because
-    threshold tuning reads what was dismissed (ADR 0006). Nobody's id is stored
+    threshold tuning reads what was dismissed (docs/modules/gap.md, Storage). Nobody's id is stored
     or logged with it — which teammate pressed "해당 없음" is a per-person
     record of conduct ADR 0003 refuses.
 
@@ -730,6 +732,39 @@ def set_dismissed(session: Session, gap_id: str, reader: User, *, dismissed: boo
 
     log.info("gap_dismissal_set", gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
     return GapDismissal(gap_id=gap_id, meeting_id=row.meeting_id, dismissed=dismissed)
+
+
+def set_carried(session: Session, gap_id: str, reader: User, *, carried: bool) -> GapCarry:
+    """Send one gap on to the next meeting, or take that back -- "다음 회의
+    어젠다로" on S20 (#824).
+
+    ``carried_at`` is the whole write, and its rules are ``set_dismissed``'s: a
+    second press keeps the first moment, taking back a mark that is not there
+    does nothing, nobody's id is stored or logged, and an unknown gap and
+    another team's gap are the same 404.
+
+    It does not republish. ``GapReport`` carries no such mark, so E's copy does
+    not change; the next meeting's picture reads it through
+    ``tools.carried_gaps``.
+    """
+    row = session.get(GapGap, gap_id)
+    meeting = session.get(Meeting, row.meeting_id) if row is not None else None
+    if (
+        row is None
+        or meeting is None
+        or not _is_team_member(session, user_id=reader.id, team_id=meeting.team_id)
+    ):
+        log.info("gap_carry_refused", gap_id=gap_id)
+        raise NotFoundError("gap", gap_id)
+
+    if carried and row.carried_at is None:
+        row.carried_at = datetime.now(tz=UTC)
+    elif not carried:
+        row.carried_at = None
+    session.flush()
+
+    log.info("gap_carry_set", gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
+    return GapCarry(gap_id=gap_id, meeting_id=row.meeting_id, carried=carried)
 
 
 @dataclass(frozen=True)
@@ -1039,7 +1074,7 @@ def template_comparison(session: Session, meeting_id: str) -> TemplateComparison
     A dismissed gap keeps its coverage and is marked ``dismissed``. Somebody
     calling a gap a false positive is a judgement about the gap, not evidence
     that the meeting covered the item, and the row is what threshold tuning
-    reads (ADR 0006).
+    reads (docs/modules/gap.md, Storage).
     """
     chosen = template.get_template(selected_template_key(session, meeting_id))
 
@@ -1136,7 +1171,11 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
         coverage = gap.coverage
 
         explanation = GapExplanationRead(
-            gap_id=gap.id, coverage=coverage, basis="none", keywords=keywords
+            gap_id=gap.id,
+            coverage=coverage,
+            basis="none",
+            keywords=keywords,
+            carried=gap.carried_at is not None,
         )
         if matched:
             explanation.basis = "topic"
@@ -1181,7 +1220,46 @@ def explain(session: Session, meeting_id: str) -> GapExplanations:
         high_threshold=thresholds.high,
         medium_threshold=thresholds.medium,
         gaps=explained,
+        covered=_explain_covered(session, meeting_id, chosen, views, thresholds),
     )
+
+
+def _explain_covered(
+    session: Session,
+    meeting_id: str,
+    chosen: template.Template,
+    views: dict[str, detect.TopicView],
+    thresholds: detect.Thresholds,
+) -> list[CoveredExplanationRead]:
+    """The topic each covered item rests on, found again over the stored graph.
+
+    Covered is what ``template_comparison`` reads: an analysed meeting, and no
+    gap row for the item -- dismissed or not, a row is a gap. The topic is
+    ``detect.match``'s first, held to the same ``classify`` rule; one that no
+    longer clears it is not offered as the reason (``CoveredExplanationRead``).
+    """
+    if not views:
+        return []
+    raised = set(
+        session.scalars(
+            select(GapGap.template_item_key).where(
+                GapGap.meeting_id == meeting_id, GapGap.template_key == chosen.key
+            )
+        )
+    )
+    topics = list(views.values())
+    covered = []
+    for item in chosen.items:
+        if item.key in raised:
+            continue
+        reason = CoveredExplanationRead(item_key=item.key)
+        matched = detect.match(item, topics)
+        if detect.classify(matched, False, thresholds) is detect.Coverage.COVERED:
+            reason.topic_label = matched[0].label
+            reason.topic_centrality = matched[0].centrality
+            reason.evidence = _topic_evidence(session, matched[0].id)
+        covered.append(reason)
+    return covered
 
 
 def _topic_evidence(session: Session, topic_id: str) -> list[EvidenceRead]:
@@ -1405,7 +1483,7 @@ def _store_gaps(
         if stale in produced:
             continue
         # A dismissal made under another template outlives the switch away from
-        # it: it is threshold tuning's input (ADR 0006), and S20's picker makes
+        # it: it is threshold tuning's input (docs/modules/gap.md, Storage), and S20's picker makes
         # trying a template one click. Kept, it is also still there when the
         # meeting is switched back. It never reaches a reader in the meantime —
         # the report leaves dismissed rows out and the rail reads only the

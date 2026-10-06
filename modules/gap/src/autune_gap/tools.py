@@ -1,9 +1,9 @@
 """Module C as tools an agent can call (agent-layer.md section 4).
 
 Two reads for the Follow-up subagent
-(``agent/docs/specs/2026-09-30-followup-subagent-design.md``), and a third for
-the approvals card that shows what a Follow-up proposal cited (#644). Each
-returns a
+(``agent/docs/specs/2026-09-30-followup-subagent-design.md``), a third for
+the approvals card that shows what a Follow-up proposal cited (#644), and a
+fourth for what the team sent on to its next meeting (#824). Each returns a
 dict in the shape agent-layer.md calls ``ToolResult``::
 
     {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
@@ -12,7 +12,7 @@ dict in the shape agent-layer.md calls ``ToolResult``::
 E's ``tools.py``. ADR 0010 forbids a module importing the agent layer, so the
 registry validates these dicts when it collects them.
 
-What holds for all three:
+What holds for all four:
 
 - **Topics, never people or roles.** No result carries participation, a
   participant id or a ``silent_share``. In a small team a role is a person, and
@@ -284,7 +284,43 @@ def gaps_by_id(
     )
 
 
-TOOLS = [open_gaps, recurring_open_gaps, gaps_by_id]
+def carried_gaps(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this to find what the team sent on to its next meeting: gaps
+    somebody marked "다음 회의 어젠다로" on a meeting's gap report and nobody
+    has dismissed since, most recently sent first. Do not use it for what one
+    meeting left open -- ``open_gaps`` answers that.
+
+    Each item names the meeting it came from (``meeting_id``). A mark stays
+    until somebody takes it back or dismisses the gap, so a gap the next
+    meeting settled is still listed until then; the reader says "sent on", not
+    "still open". Nothing about who spoke or who pressed the button (#824).
+    """
+    gaps = list(
+        session.scalars(
+            select(GapGap)
+            .join(Meeting, Meeting.id == GapGap.meeting_id)
+            .where(
+                Meeting.team_id == team_id,
+                GapGap.carried_at.is_not(None),
+                GapGap.dismissed_at.is_(None),
+            )
+            .order_by(GapGap.carried_at.desc(), GapGap.id)
+        )
+    )
+    shown = gaps[:MAX_ITEMS]
+    labels = _topic_labels(session, [gap.id for gap in shown])
+    return _result(
+        summary=(
+            f"다음 회의로 넘긴 갭이 {len(gaps)}건 있습니다."
+            if gaps
+            else "다음 회의로 넘긴 갭이 없습니다."
+        ),
+        items=[{**_gap_item(gap, labels), "meeting_id": gap.meeting_id} for gap in gaps],
+        evidence=[gap.id for gap in shown],
+    )
+
+
+TOOLS = [open_gaps, recurring_open_gaps, gaps_by_id, carried_gaps]
 
 RUN_SCOPE = ("team_id",)
 """Parameters the agent fills from the run's authenticated scope, never from a model."""

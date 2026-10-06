@@ -61,6 +61,19 @@ class GapDismissal(BaseModel):
     dismissed: bool
 
 
+class GapCarry(BaseModel):
+    """Whether somebody sent one gap on to the next meeting (#824).
+
+    What ``POST`` and ``DELETE /gaps/{gap_id}/carry`` both return, the same
+    shape as ``GapDismissal`` and for the same reasons: the flag the server
+    settled on, no timestamp and nobody's id.
+    """
+
+    gap_id: str
+    meeting_id: str
+    carried: bool
+
+
 class TemplateItemRead(BaseModel):
     """One checklist item beside what the meeting did with it.
 
@@ -81,7 +94,7 @@ class TemplateItemRead(BaseModel):
     gap_id: str | None = None
     dismissed: bool = False
     """Somebody called this gap a false positive. The item is still not covered
-    — the row stays and threshold tuning reads it (ADR 0006) — so the rail says
+    — the row stays and threshold tuning reads it (docs/modules/gap.md, Storage) — so the rail says
     both rather than quietly promoting the item to covered."""
 
 
@@ -220,6 +233,27 @@ class GapExplanationRead(BaseModel):
     matched_keywords: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRead] = Field(default_factory=list)
     breakdown: ScoreBreakdownRead | None = None
+    carried: bool = False
+    """Whether somebody sent this gap on to the next meeting (#824). Here rather
+    than on ``GapReport``: the contract is E's business, and E has no use for it."""
+
+
+class CoveredExplanationRead(BaseModel):
+    """Why one checklist item was read as covered: the topic that settled it.
+
+    A covered item has no ``gap_gaps`` row, so nothing was stored about it. The
+    topic is found again over the stored graph with the rule the pipeline used
+    (``detect.match``): the item's most central matching topic, at or above
+    ``partial_centrality``. When today's rule no longer reaches that -- the
+    template or the threshold moved since the meeting was analysed --
+    ``topic_label`` is null and the screen says it cannot show the reason,
+    rather than offering one the verdict was not reached on.
+    """
+
+    item_key: str
+    topic_label: str | None = None
+    topic_centrality: float | None = None
+    evidence: list[EvidenceRead] = Field(default_factory=list)
 
 
 class GapExplanations(BaseModel):
@@ -242,6 +276,9 @@ class GapExplanations(BaseModel):
     high_threshold: float
     medium_threshold: float
     gaps: list[GapExplanationRead] = Field(default_factory=list)
+    covered: list[CoveredExplanationRead] = Field(default_factory=list)
+    """One per item the rail reads as covered, in template order. Empty for a
+    meeting not analysed, where nothing is covered."""
 
 
 class TeamGapRead(BaseModel):

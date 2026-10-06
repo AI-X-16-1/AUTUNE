@@ -442,7 +442,8 @@ other module's tables.
   credentials (`autune.extraction.periodic.refresh_public_holidays`;
   `AUTUNE_EXTRACTION_PUBLIC_HOLIDAY_CALENDAR=false` stops the call), and the
   `holidays` package answers when there is no read from the last two weeks.
-  A Monday that is a holiday has no digest that week. Due-date reminders are
+  When Monday is a holiday the week's digest goes on the week's first
+  working day instead, and that day has no morning DM. Due-date reminders are
   not held back
 - With `AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR=true` (off by default), a person
   whose own connected Google Calendar marks them out of office at that moment

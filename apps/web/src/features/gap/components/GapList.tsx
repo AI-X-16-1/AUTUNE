@@ -39,6 +39,7 @@ export function GapList({
   showLow = false,
   onToggleLow,
   onDismiss,
+  onCarry,
   pendingGapId = null,
 }: {
   gaps: readonly Gap[];
@@ -49,6 +50,11 @@ export function GapList({
   onToggleLow?: () => void;
   /** "해당 없음". Without it the button is drawn disabled. */
   onDismiss?: (gapId: string) => void;
+  /**
+   * "다음 회의 어젠다로" and taking it back: `carried` is the state asked for.
+   * Without it the button is drawn disabled.
+   */
+  onCarry?: (gapId: string, carried: boolean) => void;
   /** The gap whose write is in flight, so only its button shows it. */
   pendingGapId?: string | null;
 }) {
@@ -78,6 +84,7 @@ export function GapList({
       meetingId={meetingId}
       defaultOpen={open}
       onDismiss={onDismiss}
+      onCarry={onCarry}
       pending={pendingGapId === gap.id}
     />
   );
@@ -118,8 +125,9 @@ export function GapList({
       ) : null}
 
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        &quot;다음 회의 어젠다로&quot;와 &quot;담당자 지정해 질문&quot;은 아직 준비 중이라 누를 수
-        없습니다. 지금 할 수 있는 동작은 &quot;해당 없음&quot;(오탐 표시)입니다.
+        &quot;담당자 지정해 질문&quot;은 아직 준비 중이라 누를 수 없습니다. &quot;다음 회의
+        어젠다로&quot;는 이 갭을 다음 회의로 넘겼다고 표시하고, &quot;해당 없음&quot;은 오탐으로
+        표시합니다.
       </p>
     </div>
   );
@@ -181,9 +189,16 @@ function ListSummary({
  *
  * "해당 없음" is a real write: `POST /gaps/{id}/dismiss` marks the gap a false
  * positive, it leaves the report, and the rail keeps the item marked — which is
- * where it can be taken back. The other two stay drawn and disabled: carrying a
- * question to the next agenda or to one person needs surfaces this module has
- * not built (#36), and the list says so once under the cards.
+ * where it can be taken back.
+ *
+ * "다음 회의 어젠다로" is one too: `POST /gaps/{id}/carry` marks the gap as sent
+ * on to the next meeting (#824). The gap stays on the report, the card says it
+ * was sent, and the same button takes it back. Nothing is scheduled and nobody
+ * is invited — whoever composes the next meeting reads the marks. Its state
+ * comes from the explanation, so until that loads the button is disabled.
+ *
+ * "담당자 지정해 질문" stays drawn and disabled: asking one person needs a
+ * decision about who and how (#824), and the list says so under the cards.
  */
 function GapCard({
   gap,
@@ -192,6 +207,7 @@ function GapCard({
   meetingId,
   defaultOpen,
   onDismiss,
+  onCarry,
   pending,
 }: {
   gap: Gap;
@@ -200,10 +216,12 @@ function GapCard({
   meetingId?: string;
   defaultOpen: boolean;
   onDismiss?: (gapId: string) => void;
+  onCarry?: (gapId: string, carried: boolean) => void;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const coverage = explanation?.coverage ?? null;
+  const carried = explanation?.carried ?? false;
 
   return (
     <article className="border-b border-[var(--color-hairline)]" style={{ padding: "14px 0" }}>
@@ -252,6 +270,15 @@ function GapCard({
         </span>
       </button>
 
+      {carried ? (
+        <p
+          className="text-[var(--color-accent-hover)]"
+          style={{ fontSize: "var(--text-metaSmall)", padding: "4px 0 0 20px" }}
+        >
+          다음 회의로 넘김
+        </p>
+      ) : null}
+
       {open ? (
         <div className="flex flex-col" style={{ gap: "var(--space-12)", padding: "12px 0 0 20px" }}>
           <Block label="판정 근거">
@@ -283,8 +310,16 @@ function GapCard({
           />
 
           <div className="-ml-2 flex flex-wrap" style={{ gap: "var(--space-4)" }}>
-            <Button tone="text" size="compact" disabled title={PENDING}>
-              다음 회의 어젠다로
+            <Button
+              tone="text"
+              size="compact"
+              disabled={!onCarry || !explanation || pending}
+              aria-pressed={carried}
+              aria-busy={pending || undefined}
+              title={onCarry ? (carried ? UNCARRY_HINT : CARRY_HINT) : PENDING}
+              onClick={() => onCarry?.(gap.id, !carried)}
+            >
+              {carried ? "다음 회의에서 빼기" : "다음 회의 어젠다로"}
             </Button>
             <Button tone="text" size="compact" disabled title={PENDING}>
               담당자 지정해 질문
@@ -309,6 +344,11 @@ function GapCard({
 const PENDING = "아직 준비 중인 동작입니다";
 
 const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
+
+const CARRY_HINT =
+  "이 갭을 다음 회의로 넘겼다고 표시합니다. 일정을 잡거나 사람을 초대하지는 않습니다.";
+
+const UNCARRY_HINT = "다음 회의로 넘긴 표시를 지웁니다.";
 
 const DOT = { high: "critical", medium: "attention", low: "idle" } as const;
 
@@ -387,7 +427,7 @@ function Reason({
 }
 
 /** One quote, its time first. The time links to the transcript tab. */
-function EvidenceQuote({ quote, meetingId }: { quote: GapEvidence; meetingId?: string }) {
+export function EvidenceQuote({ quote, meetingId }: { quote: GapEvidence; meetingId?: string }) {
   const time = clock(quote.start_sec);
   return (
     <Quote>

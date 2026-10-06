@@ -2,7 +2,8 @@
 
 One meeting holds one gap of each basis: ``risk`` rests on a thin topic,
 ``dependency`` on a keyword said without becoming a topic, ``next_step`` on
-nothing. What these pin is what S20 shows beside a verdict: the quote it rests
+nothing. ``success_criteria`` and ``ownership`` are covered by central topics.
+What these pin is what S20 shows beside a verdict: the quote it rests
 on, only from consenting speech, and a score breakdown that adds up to the
 stored score.
 """
@@ -62,12 +63,13 @@ def seed(team_id: str) -> dict[str, str]:
 
         # The declined speaker says a dependency keyword first; it must not be quoted.
         say("utt_declined", no, 5.0, "선행 작업이 필요해요")
+        metric = say("utt_metric", yes, 12.0, "핵심 지표는 전환율로 봐요")
         risky = say("utt_risk", yes, 30.0, "리스크는 나중에 봐요")
         blocker = say("utt_blocker", yes, 62.5, "블로커는 없겠죠")
         s.flush()
 
         for label, centrality, utterances in (
-            ("핵심 지표", 1.0, ()),
+            ("핵심 지표", 1.0, (metric,)),
             ("담당자", 0.9, ()),
             ("리스크", 0.2, (risky,)),
         ):
@@ -86,7 +88,7 @@ def seed(team_id: str) -> dict[str, str]:
         meeting_id = meeting.id
 
     service.detect_gaps(meeting_id)
-    return {"meeting": meeting_id, "risk": risky, "blocker": blocker}
+    return {"meeting": meeting_id, "risk": risky, "blocker": blocker, "metric": metric}
 
 
 def rows(meeting_id: str) -> dict[str, GapGap]:
@@ -204,3 +206,70 @@ def test_a_refresh_after_detection_changes_no_question(team_id: str) -> None:
     ids = seed(team_id)
 
     assert service.refresh_questions(ids["meeting"]) == 0
+
+
+# --- why a covered item was covered ------------------------------------------
+
+
+def test_a_covered_item_names_the_topic_that_settled_it_and_quotes_it(team_id: str) -> None:
+    ids = seed(team_id)
+    result = explained(ids["meeting"])["result"]
+    covered = {c.item_key: c for c in result.covered}  # type: ignore[attr-defined]
+
+    assert set(covered) == {"success_criteria", "ownership"}
+    success = covered["success_criteria"]
+    assert (success.topic_label, success.topic_centrality) == ("핵심 지표", pytest.approx(1.0))
+    assert [(e.utterance_id, e.text) for e in success.evidence] == [
+        (ids["metric"], "핵심 지표는 전환율로 봐요")
+    ]
+    assert covered["ownership"].topic_label == "담당자"
+    assert covered["ownership"].evidence == []
+
+
+def test_covered_items_are_the_rails_covered_items(team_id: str) -> None:
+    """The reasons line up with the rail, item for item: a dismissed gap is
+    still a gap, not a covered item."""
+    ids = seed(team_id)
+    with session_scope() as s:
+        gap = s.scalar(
+            select(GapGap).where(
+                GapGap.meeting_id == ids["meeting"], GapGap.template_item_key == "risk"
+            )
+        )
+        assert gap is not None
+        gap.dismissed_at = datetime.now(UTC)
+
+    with session_scope() as s:
+        rail = service.template_comparison(s, ids["meeting"])
+        result = service.explain(s, ids["meeting"])
+
+    assert [c.item_key for c in result.covered] == [
+        item.key for item in rail.items if item.coverage == "covered"
+    ]
+
+
+def test_a_covered_item_today_s_rule_cannot_reach_has_no_reason(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The threshold moved after analysis: the verdict stays, the reason is
+    not invented to fit it."""
+    ids = seed(team_id)
+    monkeypatch.setattr(service.get_settings(), "partial_centrality", 0.95)
+
+    result = explained(ids["meeting"])["result"]
+    covered = {c.item_key: c for c in result.covered}  # type: ignore[attr-defined]
+
+    assert covered["success_criteria"].topic_label == "핵심 지표"
+    assert covered["ownership"].topic_label is None
+    assert covered["ownership"].evidence == []
+
+
+def test_a_meeting_not_analysed_has_no_covered_items(team_id: str) -> None:
+    with session_scope() as s:
+        meeting = Meeting(team_id=team_id, title="분석 전 회의", status="analyzing")
+        s.add(meeting)
+        s.flush()
+        meeting_id = meeting.id
+
+    with session_scope() as s:
+        assert service.explain(s, meeting_id).covered == []

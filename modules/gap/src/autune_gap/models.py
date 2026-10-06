@@ -221,7 +221,7 @@ class GapGap(Base, TimestampMixin):
 
     ``dismissed_at`` records that somebody called this a false positive. It is
     a real timestamp rather than a soft-delete flag — the row is not hidden,
-    it is marked, and ADR 0006's threshold tuning reads the mark. Nobody's id
+    it is marked, and threshold tuning reads the mark (docs/modules/gap.md, Storage). Nobody's id
     is stored with it: which member of a team pressed dismiss is not something
     the feature needs, and storing it would be a per-person record of conduct
     that ADR 0003 refuses.
@@ -295,6 +295,16 @@ class GapGap(Base, TimestampMixin):
     an item."""
 
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    carried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When somebody sent this gap on to the next meeting -- "다음 회의 어젠다로"
+    on S20 (#824). Null while nobody has.
+
+    A mark and nothing more: no meeting is named, because a team's next meeting
+    has no agenda to hold it yet (#756), so whoever composes the next meeting's
+    picture reads the marks (``tools.carried_gaps``). Nobody's id is stored,
+    for the reason ``dismissed_at`` gives. A re-run keeps it, as it keeps
+    ``dismissed_at``; a gap the re-run no longer raises goes, mark and all."""
 
 
 class GapMeetingTemplate(Base, TimestampMixin):

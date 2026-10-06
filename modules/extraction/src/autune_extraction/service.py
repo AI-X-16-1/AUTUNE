@@ -3588,24 +3588,32 @@ def _open_items_of(
     return [(item, team, title) for item, team, title in session.execute(query).tuples()]
 
 
+def _weekly_digest_week(session: Session, *, now: datetime) -> date | None:
+    """The Monday whose weekly digest goes at ``now``, or ``None``: the pure
+    rule (``reminders.digest_week``) with Korea's public holidays as this
+    deployment knows them (``days_off.is_public_holiday``)."""
+    return reminders.digest_week(now, lambda day: days_off.is_public_holiday(session, day, now=now))
+
+
 def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDigest]:
     """The digests owed at ``now`` and not yet sent (the user, 2026-10-04):
     one per person and team that has an open item assigned to that person on
-    that team, on a Monday's sending hours in Korea (``reminders.digest_week``).
+    that team, in the sending hours of the week's first working day in Korea
+    -- Monday, or the next day that is not a public holiday when Monday is one
+    (``reminders.digest_week``; the user, 2026-10-05).
     Who counts is who ``due_reminders_to_send`` would remind: an account on the
     meeting's team -- a typed name has nobody to tell -- that has not turned
     its own reminders off. "마감 알림 받기" is the one switch a person has
     for Autune's DMs about their items; off means this one too (follow-up to
     #771, the user's call 2026-10-05)."""
-    week = reminders.digest_week(now)
-    # A Monday that is a public holiday has no digest: nobody is at work to
-    # read the week's list, and that week goes without one (``days_off``).
-    if week is None or days_off.is_public_holiday(session, week, now=now):
+    week = _weekly_digest_week(session, now=now)
+    if week is None:
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id)))
-    # And anyone who asked for no digest on that day -- their own leave dates
-    # (``ExtNotificationPause``, the user 2026-10-05).
-    off |= _paused_users(session, week)
+    # And anyone who asked for no digest on the day it goes -- their own leave
+    # dates (``ExtNotificationPause``, the user 2026-10-05). The day it goes,
+    # not the week's Monday: after a holiday Monday those are different days.
+    off |= _paused_users(session, reminders.korean_day(now))
     owners = {
         (item.assignee_id, team)
         for item, team, _ in _open_items_of(session, user_id=None, team_id=None, now=now)
@@ -3625,6 +3633,31 @@ def weekly_digests_to_send(session: Session, *, now: datetime) -> list[WeeklyDig
     ]
 
 
+def _weekly_rows_to_send(
+    session: Session, digest: WeeklyDigest, *, now: datetime
+) -> list[tuple[ExtActionItem, str, str | None]] | None:
+    """The person's open items for this digest -- or ``None`` when no digest is
+    to go: they turned their reminders off, paused the day, or have none left.
+    Read as things are now, by the send and by ``weekly_digest_would_go``, so
+    the two cannot come to mean different things."""
+    if not due_reminders_on(session, digest.user_id) or notifications_paused(
+        session, digest.user_id, reminders.korean_day(now)
+    ):
+        return None
+    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
+    return list(rows) or None
+
+
+def weekly_digest_would_go(session: Session, digest: WeeklyDigest, *, now: datetime) -> bool:
+    """Whether this digest would be sent if it were tried now -- every reason
+    not to that Autune can see in its own tables. The task asks this BEFORE it
+    reads the person's calendar (``tasks._out_of_office``), in a transaction
+    of its own, so the calendar is read only for a message that would
+    otherwise go and never while a transaction of the send's is open (review
+    of #838 and of #841)."""
+    return _weekly_rows_to_send(session, digest, now=now) is not None
+
+
 def send_weekly_digest(
     session: Session, slack: SlackApi, digest: WeeklyDigest, *, now: datetime
 ) -> bool:
@@ -3641,12 +3674,8 @@ def send_weekly_digest(
     their reminders off after the list was made is sent nothing and claims
     nothing, as ``send_due_reminder`` treats them.
     """
-    if not due_reminders_on(session, digest.user_id) or notifications_paused(
-        session, digest.user_id, digest.week_start
-    ):
-        return False
-    rows = _open_items_of(session, user_id=digest.user_id, team_id=digest.team_id, now=now)
-    if not rows:
+    rows = _weekly_rows_to_send(session, digest, now=now)
+    if rows is None:
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtWeeklyDigest)
@@ -3668,7 +3697,7 @@ def send_weekly_digest(
                 reminders.DigestLine(item.description, item.due_date, title)
                 for item, _, title in rows
             ],
-            today=digest.week_start,
+            today=reminders.korean_day(now),
             board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
         ),
     )
@@ -3797,6 +3826,12 @@ def daily_digests_to_send(session: Session, *, now: datetime) -> list[DailyDiges
     a public holiday (``days_off.is_public_holiday``)."""
     day = reminders.daily_day(now)
     if day is None or days_off.is_public_holiday(session, day, now=now):
+        return []
+    # The day the week's digest goes has that digest and no morning DM, as a
+    # Monday has: after a holiday Monday that is the Tuesday. Only where the
+    # weekly digest is sent at all -- a deployment without it would otherwise
+    # send nothing that morning.
+    if get_settings().weekly_digest and _weekly_digest_week(session, now=now) is not None:
         return []
     off = set(session.scalars(select(ExtDueReminderOptOut.user_id))) | _paused_users(session, day)
     owners = {
@@ -3947,6 +3982,30 @@ def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: dateti
     return set(item_ids) - earlier
 
 
+def _daily_content_to_send(
+    session: Session, owed: DailyDigestOwed, *, now: datetime
+) -> reminders.DailyDigest | None:
+    """What this person's morning DM would say -- or ``None`` when none is to
+    go: they turned their reminders off, paused the day, or nothing changed
+    and nothing is open. Read as things are now, by the send and by
+    ``daily_digest_would_go``."""
+    if not due_reminders_on(session, owed.user_id) or notifications_paused(
+        session, owed.user_id, owed.day
+    ):
+        return None
+    content = daily_digest_content(
+        session, owed, since=_daily_since(session, owed, now=now), now=now
+    )
+    return None if content.empty else content
+
+
+def daily_digest_would_go(session: Session, owed: DailyDigestOwed, *, now: datetime) -> bool:
+    """Whether this morning DM would be sent if it were tried now
+    (``weekly_digest_would_go``'s reason): asked before the person's calendar
+    is read, in a transaction of its own."""
+    return _daily_content_to_send(session, owed, now=now) is not None
+
+
 def send_daily_digest(
     session: Session, slack: SlackApi, owed: DailyDigestOwed, *, now: datetime
 ) -> bool:
@@ -3960,14 +4019,8 @@ def send_daily_digest(
     with the send, so two runs cannot both send and a failed send takes the
     claim back. It goes to ``owed.user_id`` and nobody else.
     """
-    if not due_reminders_on(session, owed.user_id) or notifications_paused(
-        session, owed.user_id, owed.day
-    ):
-        return False
-    content = daily_digest_content(
-        session, owed, since=_daily_since(session, owed, now=now), now=now
-    )
-    if content.empty:
+    content = _daily_content_to_send(session, owed, now=now)
+    if content is None:
         return False
     claimed = session.execute(
         _insert_if_absent_into(session, ExtDailyDigest)

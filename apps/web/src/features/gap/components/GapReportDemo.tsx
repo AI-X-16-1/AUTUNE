@@ -65,6 +65,10 @@ function demoBody(url: string, method: string): unknown {
   if (dismissal) {
     return { gap_id: dismissal[1], meeting_id: DEMO_MEETING_ID, dismissed: method === "POST" };
   }
+  const carry = /\/api\/gap\/gaps\/([^/]+)\/carry$/.exec(url);
+  if (carry) {
+    return { gap_id: carry[1], meeting_id: DEMO_MEETING_ID, carried: method === "POST" };
+  }
   if (method === "PUT" && url.includes(`/api/gap/templates/${DEMO_MEETING_ID}`)) {
     return { template_key: DEMO_COMPARISON.template_key };
   }
