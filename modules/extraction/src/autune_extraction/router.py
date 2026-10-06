@@ -656,13 +656,23 @@ def answer_confirmation(
     return response
 
 
+def _reminder_setting(on: bool) -> DueReminderSetting:
+    """The person's choice, and which of the three messages it governs this
+    deployment sends at all."""
+    settings = get_settings()
+    return DueReminderSetting(
+        on=on,
+        sent_here=settings.due_reminders,
+        weekly_here=settings.weekly_digest,
+        daily_here=settings.daily_digest,
+    )
+
+
 @router.get("/me/due-reminders", response_model=DueReminderSetting)
 def my_due_reminders(session: SessionDep, reader: CurrentUser) -> DueReminderSetting:
     """Whether the caller gets due-date reminders by Slack DM. Their own only:
     there is no parameter naming anybody else."""
-    return DueReminderSetting(
-        on=service.due_reminders_on(session, reader.id), sent_here=get_settings().due_reminders
-    )
+    return _reminder_setting(service.due_reminders_on(session, reader.id))
 
 
 @router.put("/me/due-reminders", response_model=DueReminderSetting)
@@ -672,7 +682,7 @@ def set_my_due_reminders(
     """Turn the caller's own due-date reminders on or off (review of #751)."""
     on = service.set_due_reminders(session, reader.id, on=payload.on, now=datetime.now(tz=UTC))
     session.commit()
-    return DueReminderSetting(on=on, sent_here=get_settings().due_reminders)
+    return _reminder_setting(on)
 
 
 def _pause_read(session: Session, user_id: str) -> NotificationPauseRead:

@@ -431,13 +431,19 @@ class ExtractionState(BaseModel):
 class DueReminderSetting(BaseModel):
     """The caller's own due-date reminders (review of #751).
 
-    ``on`` is their choice: on unless they turned it off. ``sent_here`` says
-    whether this deployment sends reminders at all
-    (``AUTUNE_EXTRACTION_DUE_REMINDERS``), so the screen can say so rather
-    than show a switch that does nothing."""
+    ``on`` is their choice: on unless they turned it off. It is one switch
+    for three messages -- the due-date reminder, the Monday digest and the
+    morning DM -- and a deployment turns each of the three on by itself, so
+    the screen is told which of them this one sends: ``sent_here`` for the
+    reminder (``AUTUNE_EXTRACTION_DUE_REMINDERS``), ``weekly_here`` for the
+    Monday digest (``..._WEEKLY_DIGEST``), ``daily_here`` for the morning DM
+    (``..._DAILY_DIGEST``). ``sent_here`` alone had the screen say "this
+    server sends none yet" on a deployment that sent the two digests."""
 
     on: bool
     sent_here: bool
+    weekly_here: bool = False
+    daily_here: bool = False
 
 
 class DueReminderSettingIn(BaseModel):

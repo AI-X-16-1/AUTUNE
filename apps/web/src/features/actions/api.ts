@@ -251,8 +251,12 @@ export const assignSummaryProjects = (meetingId: string) =>
 export interface DueReminderSetting {
   /** On unless the caller turned them off. */
   on: boolean;
-  /** Whether this server sends reminders at all; when not, the switch changes nothing yet. */
+  /** Whether this server sends the due-date reminder at all. */
   sent_here: boolean;
+  /** Whether it sends the Monday digest, which the same switch governs. */
+  weekly_here: boolean;
+  /** Whether it sends the morning DM, which the same switch governs. */
+  daily_here: boolean;
 }
 
 export const getDueReminders = () => api.extraction<DueReminderSetting>("/me/due-reminders");
