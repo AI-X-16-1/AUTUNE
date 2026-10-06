@@ -286,6 +286,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
+| `ext_extraction_attempts` | One row per meeting whose extraction failed or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
 | `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
@@ -332,6 +333,21 @@ again. A meeting extracted before the table existed has no row and is left
 alone. Speech that loses consent drops out of the model's rows the same way;
 what a person already edited or sent out from it waits on per-person
 withdrawal (S10/S11), the second half of #518.
+
+**A run that fails.** A run that raises is counted in
+`ext_extraction_attempts` before the error goes on, and every ten minutes
+`retry_failed_extractions` tries the meeting again from the stored transcript:
+three attempts in all, the event's being the first. A run that goes through
+ends the count. After the third failure the sweep stops and the team's Slack
+channel gets one message -- the meeting's title, the count and a link to its
+액션 tab -- when the team has a channel connected; the 액션 tab says it either
+way, and offers "다시 추출" there, on any meeting. That request is a
+row the worker takes within a minute (`run_requested_extractions`), because
+the API process has no broker to queue on; it is the same run, so an item list
+a person has edited is kept. A meeting with a transcript and no extraction on
+record at all -- a run that failed before failures were counted, or one lost
+with a worker -- is counted as failed once, half an hour after its last line
+was stored and for a week, and tried the same way.
 
 **A speaker identified after the run (#360).** A commitment by an unidentified
 speaker keeps only the label ("Speaker 2"). When A later fills
