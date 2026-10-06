@@ -371,18 +371,31 @@ BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
 recall@1, recall@3 and MRR.
 
 Measured 2026-10-06 on 37 questions (13 `definition`, 11 `paraphrase`, 13
-`why`; spread over all six files). BM25: recall@1 0.62, recall@3 0.86,
-MRR 0.72. It misses five questions at recall@3, four of them paraphrases whose
-words do not appear in the passage. "완료율은 어떻게 계산돼?" ranks the right
-passage third, not first. Dense and hybrid were not measured, because the
-shared environment lacks the `local-models` extra. To measure them:
+`why`; spread over all six files), dense model
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (the gap
+classifier's backbone):
+
+| | recall@1 | recall@3 | MRR |
+| --- | --- | --- | --- |
+| BM25 | 0.62 | 0.86 | 0.72 |
+| dense | 0.62 | 0.81 | 0.74 |
+| hybrid (RRF) | 0.70 | 0.86 | 0.79 |
+
+BM25 misses five questions at recall@3, four of them paraphrases whose words do
+not appear in the passage. "완료율은 어떻게 계산돼?" ranks the right passage
+third, not first.
+
+`retriever_impl` stays `bm25`. `explain_metric` returns three passages, so
+recall@3 is the number that decides, and hybrid only ties BM25 there; its gain
+is in ordering (recall@1, MRR). Hybrid would also need the `local-models` extra
+and a 0.5 GB model wherever the API and worker run, and a deployment without
+them would answer no passage at all. `nlpai-lab/KURE-v1` was not run (not
+cached). To measure again:
 
 ```bash
 uv run --package autune-intelligence --extra local-models python -m autune_intelligence.retrieval_eval
 # optionally: --dense-model nlpai-lab/KURE-v1
 ```
-
-`retriever_impl` stays `bm25` until that comparison is run.
 
 ## Metric
 
