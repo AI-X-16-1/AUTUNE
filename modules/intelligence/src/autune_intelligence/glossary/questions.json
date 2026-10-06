@@ -10,7 +10,7 @@
     "kind": "paraphrase"
   },
   {
-    "question": "몇 점부터 B등급이야?",
+    "question": "B를 받으려면 몇 점이 있어야 해?",
     "expected": "quality.grades",
     "kind": "paraphrase"
   },
@@ -100,12 +100,12 @@
     "kind": "definition"
   },
   {
-    "question": "갭은 어떤 기준으로 종류를 나눠?",
+    "question": "회의에서 놓친 주제들은 무슨 기준으로 구분해?",
     "expected": "gaps.classification",
     "kind": "paraphrase"
   },
   {
-    "question": "마감을 안 정했으면 어떤 유형이야?",
+    "question": "날짜를 안 정하고 끝났으면 어디로 들어가?",
     "expected": "gaps.schedule",
     "kind": "paraphrase"
   },
@@ -115,7 +115,7 @@
     "kind": "paraphrase"
   },
   {
-    "question": "비용 얘기를 안 했으면 무슨 유형이야?",
+    "question": "돈 얘기를 안 하고 끝났으면 어디로 들어가?",
     "expected": "gaps.budget",
     "kind": "paraphrase"
   },
@@ -165,7 +165,7 @@
     "kind": "why"
   },
   {
-    "question": "이미 올라간 리포트가 틀렸으면 어떻게 해?",
+    "question": "슬랙에 올라간 글이 틀렸으면 어떻게 해?",
     "expected": "reports.meeting_correction",
     "kind": "paraphrase"
   },

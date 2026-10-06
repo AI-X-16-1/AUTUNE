@@ -42,9 +42,15 @@ def main(argv: list[str] | None = None) -> int:
     rows: dict[str, Any] = {}
     bm25 = retrieval.BM25Retriever(corpus)
     rows["bm25"] = score([bm25.ranking(q["question"]) for q in qs], expected)
+    skipped: str | None = None
     try:
         dense = retrieval.DenseRetriever(corpus, args.dense_model)
-    except ImportError:
+    except (ImportError, OSError) as exc:
+        skipped = (
+            "no local-models extra"
+            if isinstance(exc, ImportError)
+            else f"model unavailable: {type(exc).__name__}"
+        )
         rows["dense"] = rows["hybrid"] = None
     else:
         dense_ranked = [dense.ranking(q["question"]) for q in qs]
@@ -55,12 +61,15 @@ def main(argv: list[str] | None = None) -> int:
         ]
         rows["hybrid"] = score(fused, expected)
     if args.json:
-        print(json.dumps({"questions": len(qs), "dense_model": args.dense_model, **rows}))
+        payload: dict[str, Any] = {"questions": len(qs), "dense_model": args.dense_model, **rows}
+        if skipped:
+            payload["skipped"] = skipped
+        print(json.dumps(payload))
     else:
         print(f"questions: {len(qs)}  dense model: {args.dense_model}")
         for name, s in rows.items():
             line = (
-                "skipped (no local-models extra)"
+                f"skipped ({skipped})"
                 if s is None
                 else "  ".join(f"{k} {v:.2f}" for k, v in s.items())
             )

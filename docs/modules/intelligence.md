@@ -371,8 +371,8 @@ BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
 recall@1, recall@3 and MRR.
 
 Measured 2026-10-06 on 37 questions (13 `definition`, 11 `paraphrase`, 13
-`why`; spread over all six files). BM25: recall@1 0.68, recall@3 0.89,
-MRR 0.77. It misses four questions at recall@3, three of them paraphrases whose
+`why`; spread over all six files). BM25: recall@1 0.62, recall@3 0.86,
+MRR 0.72. It misses five questions at recall@3, four of them paraphrases whose
 words do not appear in the passage. "완료율은 어떻게 계산돼?" ranks the right
 passage third, not first. Dense and hybrid were not measured, because the
 shared environment lacks the `local-models` extra. To measure them:
