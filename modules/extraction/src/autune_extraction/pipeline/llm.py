@@ -49,6 +49,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any
 
@@ -261,32 +262,95 @@ def substitute_names_mapped(
     return [pattern.sub(placeholder, text) for text in texts], surface
 
 
-def windows(texts: list[str], budget: int) -> list[tuple[int, int]]:
-    """``[start, end)`` ranges of ``texts`` whose own text plus up to
-    ``CONTEXT_LINES`` of context fits ``budget`` characters.
+_LINE_OVERHEAD = 12
+"""A line's number, its ``[대상]`` or ``[문맥]`` marker and the newline."""
 
-    A single utterance longer than the budget still gets a window of its own;
-    ``check_outbound`` then refuses it by name rather than this silently
-    truncating what the classifier sees.
+
+def _cost(text: str) -> int:
+    """What one line takes of the budget."""
+    return len(text) + _LINE_OVERHEAD
+
+
+_SENTENCE_END = re.compile(r"(?<=[.?!])\s+")
+_SPACE = re.compile(r"\s+")
+
+
+def pieces(text: str, limit: int) -> list[str]:
+    """``text`` in spoken order as pieces of at most ``limit`` characters.
+
+    One person talking for minutes is one utterance, and longer than a request
+    may be. It is asked about in pieces rather than left out: the promise at
+    the end of a long turn is the reason to read the turn at all. A piece ends
+    after a sentence when one ends in its second half, else at a space, else
+    at the limit; no character is dropped but the whitespace at a cut.
     """
-    out: list[tuple[int, int]] = []
+    out: list[str] = []
+    rest = text
+    while len(rest) > limit:
+        cut = limit
+        for boundary in (_SENTENCE_END, _SPACE):
+            ends = [m.start() for m in boundary.finditer(rest, limit // 2, limit + 1)]
+            if ends:
+                cut = ends[-1]
+                break
+        out.append(rest[:cut])
+        rest = rest[cut:].lstrip()
+    if rest or not out:
+        out.append(rest)
+    return out
+
+
+def strongest(kinds: Sequence[UtteranceKind | None]) -> UtteranceKind | None:
+    """The one kind of an utterance whose pieces were labelled apart: the first
+    of ``UtteranceKind``'s own order that any piece got -- a commitment before a
+    decision, either before a question, a concern or an ambiguous agreement.
+    An utterance has one kind here as everywhere, and of a long turn the
+    promise or the decision is what the meeting's record is made from."""
+    got = {kind for kind in kinds if kind is not None}
+    return next((kind for kind in UtteranceKind if kind in got), None)
+
+
+def windows(texts: list[str], budget: int) -> list[tuple[int, int, int]]:
+    """``(context, start, end)``: the targets ``[start, end)`` and the context
+    lines ``[context, start)`` sent before them, together within ``budget``.
+
+    Context gives way first, the line farthest from the target first: up to
+    ``CONTEXT_LINES`` are sent, fewer when the turns are long, none when the
+    first target leaves no room. Admitting the first target whatever its
+    context had already cost put every request of a long-turned meeting over
+    the outbound limit, and ``check_outbound`` then failed the meeting.
+
+    A line longer than the budget on its own is in no window, so that no
+    request can be over it. ``classify`` cuts such an utterance into
+    ``pieces`` first and never passes one.
+    """
+    out: list[tuple[int, int, int]] = []
     start = 0
     while start < len(texts):
-        context = sum(len(t) + 12 for t in texts[max(0, start - CONTEXT_LINES) : start])
-        size, end = context, start
-        while end < len(texts) and (end == start or size + len(texts[end]) + 12 <= budget):
-            size += len(texts[end]) + 12
+        size = _cost(texts[start])
+        if size > budget:
+            start += 1
+            continue
+        context = start
+        while (
+            context > max(0, start - CONTEXT_LINES) and size + _cost(texts[context - 1]) <= budget
+        ):
+            context -= 1
+            size += _cost(texts[context])
+        end = start + 1
+        while end < len(texts) and size + _cost(texts[end]) <= budget:
+            size += _cost(texts[end])
             end += 1
-        out.append((start, end))
+        out.append((context, start, end))
         start = end
     return out
 
 
-def render(texts: list[str], start: int, end: int) -> tuple[str, dict[int, int]]:
+def render(texts: list[str], context: int, start: int, end: int) -> tuple[str, dict[int, int]]:
     """The request's lines, numbered 1..n, and line number -> index into ``texts``."""
     lines: list[str] = []
     targets: dict[int, int] = {}
-    for n, i in enumerate(range(max(0, start - CONTEXT_LINES), end), start=1):
+    for n, i in enumerate(range(context, end), start=1):
         tag = "대상" if i >= start else "문맥"
         lines.append(f"{n} [{tag}] {texts[i]}")
         if i >= start:
@@ -417,9 +481,11 @@ class LlmClassifier(GeminiClient):
             return []
         # Before windowing: the budget is counted on what is actually sent.
         texts = substitute_names(texts, self._roster)
-        kinds: list[UtteranceKind | None] = [None] * len(texts)
-        for index, (start, end) in enumerate(windows(texts, MAX_OUTBOUND_CHARS - _BODY_OVERHEAD)):
-            text, targets = render(texts, start, end)
+        budget = MAX_OUTBOUND_CHARS - _BODY_OVERHEAD
+        owners, lines = _in_pieces(texts, budget)
+        answers: list[list[UtteranceKind | None]] = [[] for _ in texts]
+        for index, (context, start, end) in enumerate(windows(lines, budget)):
+            text, targets = render(lines, context, start, end)
             body = {
                 "systemInstruction": {"parts": [{"text": INSTRUCTIONS}]},
                 "contents": [{"role": "user", "parts": [{"text": text}]}],
@@ -428,13 +494,31 @@ class LlmClassifier(GeminiClient):
             answer = _answer_text(self._post(body, index=index))
             for line, kind in parse(answer).items():
                 if line in targets:
-                    kinds[targets[line]] = kind
+                    answers[owners[targets[line]]].append(kind)
+        kinds = [strongest(got) for got in answers]
+        # Counts only: the lines are utterances.
         log.info(
             "extraction_llm_classified",
             utterances=len(texts),
             labelled=sum(k is not None for k in kinds),
+            in_pieces=sum(count > 1 for count in Counter(owners).values()),
         )
         return [_prediction(kind) for kind in kinds]
+
+
+def _in_pieces(texts: list[str], budget: int) -> tuple[list[int], list[str]]:
+    """The lines to ask about, and for each the index of the utterance it is
+    (a piece of). An utterance one request can carry is one line, unchanged;
+    a longer one is cut to half a request a piece, so that each piece goes out
+    with the one before it as its context."""
+    half = budget // 2 - _LINE_OVERHEAD
+    owners: list[int] = []
+    lines: list[str] = []
+    for index, text in enumerate(texts):
+        for piece in pieces(text, half) if _cost(text) > budget else [text]:
+            owners.append(index)
+            lines.append(piece)
+    return owners, lines
 
 
 def _answer_text(body: Any) -> str:
