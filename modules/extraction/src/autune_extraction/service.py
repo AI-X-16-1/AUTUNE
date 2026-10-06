@@ -4538,6 +4538,7 @@ def meeting_summary(
 def project_read(row: ExtProject) -> ProjectRead:
     return ProjectRead(
         id=row.id,
+        team_id=row.team_id,
         name=row.name,
         aliases=[a for a in row.aliases.split("\n") if a],
         jira_project_key=row.jira_project_key,
