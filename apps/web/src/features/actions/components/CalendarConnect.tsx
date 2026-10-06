@@ -36,7 +36,12 @@ import { getNotificationPause } from "../api";
  * reads the titles of the person's coming events and writes into the one
  * they pick. It is said on every server, connected or not, as what happens
  * when that button is pressed -- so it claims nothing where the button is
- * absent -- and each sentence about what is *not* read is about one read
+ * absent. It includes that Google then sends its change notice to the people
+ * already invited to that event, in the presser's name (#872's
+ * `sendUpdates=all`): something done to other people with this grant is said
+ * where the grant is asked for. C's notice on the team's Slack channel is not
+ * said here -- it is not a use of the calendar connection. Each sentence
+ * about what is *not* read is about one read
  * only: "no title, no other event" is true of the out-of-office read and
  * false of the picker.
  */
@@ -152,8 +157,9 @@ export function CalendarConnect() {
       >
         갭 화면의 &lsquo;다음 회의 잡기&rsquo;를 직접 누를 때에만, 내 캘린더의 앞으로 2주
         일정(제목과 시간)을 읽어 고를 수 있게 보여 주고, 고른 일정의 설명과 참석자 주소를 읽어
-        그 설명에 갭 질문을 적습니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느 일정에
-        적었는지만 나중에 지울 수 있도록 기록합니다.
+        그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
+        이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느
+        일정에 적었는지만 나중에 지울 수 있도록 기록합니다.
       </span>
       {note ? (
         <span

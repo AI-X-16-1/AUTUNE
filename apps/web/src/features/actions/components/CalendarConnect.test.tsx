@@ -88,6 +88,9 @@ describe("CalendarConnect", () => {
     expect(line).toContain("앞으로 2주 일정(제목과 시간)");
     expect(line).toContain("설명과 참석자 주소를 읽어");
     expect(line).toContain("갭 질문을 적습니다");
+    // Done to other people with this grant, so said before it is given (#872).
+    expect(line).toContain("이미 초대된 사람들에게 Google이 내");
+    expect(line).toContain("일정 변경 알림을 보냅니다");
     // What is kept is said, and not folded into "nothing is stored".
     expect(line).toContain("어느 일정에 적었는지만");
   });
