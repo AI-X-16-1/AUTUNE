@@ -306,8 +306,7 @@ paraphrases and "why" questions. The command prints recall@1, recall@3 and MRR
 for BM25 only, dense only and hybrid. The results decide the default
 implementation and are recorded in `docs/modules/intelligence.md`.
 *(Changed: the command is `python -m autune_intelligence.retrieval_eval`, and
-only BM25 has been measured so far; see "Changes during implementation", 4
-and 7.)*
+the measurement kept BM25; see "Changes during implementation", 4 and 7.)*
 
 ## 6. Testing
 
@@ -420,11 +419,13 @@ The sections above are left as designed; each affected one points here.
    in the latest turn, mid-sentence, glossary passages included. It cuts only
    the loop model's view of the turns; the reply is built from the untrimmed
    results. The loop ends only if the request still does not fit `SIZE_LIMIT`.
-7. **Evaluation results (section 5).** Only BM25 was measured, on 2026-10-06.
-   Dense and hybrid were not, because the shared environment lacks the
-   `local-models` extra. `retriever_impl` stays `bm25` until they are
-   measured. The numbers are in `docs/modules/intelligence.md`, not copied
-   here.
+7. **Evaluation results (section 5).** BM25, dense (the gap classifier's
+   MiniLM) and hybrid were measured on 2026-10-06. Hybrid ties BM25 at
+   recall@3, the number that matters for a three-passage answer, and gains
+   only in ordering, so `retriever_impl` stays `bm25`: hybrid would also need
+   the `local-models` extra and the model wherever the API and worker run.
+   KURE was not run. The numbers are in `docs/modules/intelligence.md`, not
+   copied here.
 8. **Glossary placeholders (section 5).** They are written `{area.name}` and
    filled by `glossary.fill()`, not `str.format`, because the dotted names
    break `str.format`.
