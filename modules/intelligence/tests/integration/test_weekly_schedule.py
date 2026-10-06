@@ -13,6 +13,7 @@ import contextlib
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -161,6 +162,33 @@ def use_test_session(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(tasks, "session_scope", _scope)
 
 
+MONDAY_MORNING = _kst(2026, 10, 5, 9, 30)
+"""Half an hour after the default slot. The hourly task's tests pin the clock
+here: a slot read off the real clock is only inside ``WEEKLY_REPORT_CATCH_UP``
+for the day after it, so they failed the rest of the week (#860)."""
+
+
+def _clock(now: datetime) -> Any:
+    """``datetime`` with ``now`` fixed, everything else the real class."""
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            return now if tz is None else now.astimezone(tz)
+
+    return Clock
+
+
+@pytest.fixture
+def monday_morning(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Every clock the hourly task reads, ``tasks`` and ``service``, at
+    ``MONDAY_MORNING``."""
+    clock = _clock(MONDAY_MORNING)
+    monkeypatch.setattr(tasks, "datetime", clock)
+    monkeypatch.setattr(service, "datetime", clock)
+    return MONDAY_MORNING
+
+
 @pytest.fixture
 def slack(db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
     from cryptography.fernet import Fernet
@@ -182,11 +210,10 @@ def slack(db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch) -> It
 
 @pytest.mark.usefixtures("use_test_session")
 def test_the_hourly_task_writes_and_posts_a_due_report_once(
-    db_session: Session, team: str, slack: object
+    db_session: Session, team: str, slack: object, monday_morning: datetime
 ) -> None:
     _active(db_session, team)
-    now = datetime.now(UTC)
-    slot = service.latest_weekly_slot(weekday=0, hour=9, now=now)
+    slot = service.latest_weekly_slot(weekday=0, hour=9, now=monday_morning)
     service.set_weekly_report_schedule(
         db_session,
         team,
@@ -207,11 +234,10 @@ def test_the_hourly_task_writes_and_posts_a_due_report_once(
 
 @pytest.mark.usefixtures("use_test_session")
 def test_a_post_that_failed_is_tried_again_and_the_report_not_rewritten(
-    db_session: Session, team: str, slack: object
+    db_session: Session, team: str, slack: object, monday_morning: datetime
 ) -> None:
     _active(db_session, team)
-    now = datetime.now(UTC)
-    slot = service.latest_weekly_slot(weekday=0, hour=9, now=now)
+    slot = service.latest_weekly_slot(weekday=0, hour=9, now=monday_morning)
     service.set_weekly_report_schedule(
         db_session,
         team,
