@@ -728,8 +728,12 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
       ``due_text`` -- a fragment of the line -- is cleared; a summary or a
       person's text is the team's record and stays;
     - a decision loses ``original_statement`` (what B would send D next is
-      then ``statement``), and a model statement that is the line tidied (no
-      cited lines, so not a write-up) reads ``SPEECH_DELETED_TEXT`` too.
+      then ``statement``), and a model statement that is the line tidied
+      reads ``SPEECH_DELETED_TEXT`` too. A sentence a model wrote about the
+      decision -- the classifier's one line, the resolver's write-up -- is the
+      team's record, as an item's summary is, and stays
+      (``statement_resolved``; the user, 2026-10-06). Whether it cites a line
+      has no part in it.
 
     Nothing is republished here: copies C, D and E already received through
     ``ExtractionResult`` are theirs, and stay until they act on the same signal
@@ -823,7 +827,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
             touched = True
         if (
             decision.origin == "model"
-            and not decision.related
+            and not decision.statement_resolved
             and decision.statement != SPEECH_DELETED_TEXT
         ):
             decision.statement = SPEECH_DELETED_TEXT
@@ -2125,12 +2129,17 @@ def build_decisions(
     }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
+    # Which statements are a model's sentence and not the line tidied: said
+    # here, where the choice is made, and stored (``statement_resolved``).
+    written_up: set[str] = set()
     for id_, group in fresh.items():
         summary = summaries.get(id_)
         line = group.statement
         if summary is not None and summary.text.strip() and summary.text != group.core_text:
             head = tidy(summary.text.strip())
             line = f"{head} ({group.suffix})" if group.suffix else head
+            if line != group.statement:
+                written_up.add(id_)
             cited[id_] = list(
                 dict.fromkeys(
                     real[u] for u in summary.used if u in real and real[u] not in sources[id_]
@@ -2163,6 +2172,7 @@ def build_decisions(
                     "meeting_id": meeting_id,
                     "statement": shown[id_],
                     "original_statement": group.original_statement or group.statement,
+                    "statement_resolved": id_ in written_up,
                     "confidence": group.confidence,
                     "origin": "model",
                 }
@@ -2175,6 +2185,7 @@ def build_decisions(
                 set_={
                     "statement": upsert.excluded.statement,
                     "original_statement": upsert.excluded.original_statement,
+                    "statement_resolved": upsert.excluded.statement_resolved,
                     "confidence": upsert.excluded.confidence,
                 },
             )
@@ -2879,11 +2890,19 @@ def resolve_commitment_references(
 
 def _written(classified: Sequence[ClassifiedUtterance], index: int) -> Resolution:
     """The line the classifier wrote for ``classified[index]``, with the lines
-    it took a word from: those among the ``CONTEXT_LINES`` said just before --
-    the lines its summary was checked against -- that hold a word the summary
-    has and the line itself does not (``related.drawn_on``)."""
+    it took a word from: those among the ``CONTEXT_LINES`` lines with text said
+    just before it that hold a word the summary has and the line itself does
+    not (``related.drawn_on``).
+
+    Lines with no text -- a speaker who did not consent -- are left out before
+    the count, as they are from what the classifier is sent, so they do not
+    use up one of the three (PARKJAEKYUNG0525, review of #894). These are the
+    lines ``llm.usable_summary`` checked the summary against, with one
+    difference this cannot see: that check also stops at the start of its
+    request, so for a line among the first three of a request this can reach
+    one or two lines further back than the model was shown."""
     entry = classified[index]
-    before = [(u.id, u.text) for u in classified[max(0, index - CONTEXT_LINES) : index] if u.text]
+    before = [(u.id, u.text) for u in classified[:index] if u.text][-CONTEXT_LINES:]
     return Resolution(entry.summary, tuple(drawn_on(entry.summary, entry.text, before)))
 
 

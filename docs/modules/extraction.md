@@ -84,8 +84,9 @@ agreement, and sync the result to Notion and Jira.
    as the name it stood for; no number or name that is not in the line or the
    three said before it) is the description, and the resolver is asked only
    about a commitment that has none. The classifier does not say what it
-   drew on, so that is read off the line: of the three lines said just before
-   -- the ones the summary was checked against -- those that hold a word the
+   drew on, so that is read off the line: of the three lines with text said
+   just before -- the ones the summary was checked against, except that the
+   check also stops at the start of its request -- those that hold a word the
    summary has and the commitment itself does not (`related.drawn_on`) are
    stored in `ext_action_item_related` and shown as "요약에 쓴 발화". A summary
    that added nothing from them cites none, and the drawer shows the quotation
@@ -255,8 +256,10 @@ is treated as a confirmed item, so the words do not stay there with no row left
 to find them by (#657); a confirmed item whose
 description is the line itself reads "삭제된 발화에서 만든 항목" and its
 `due_text` is cleared; a decision loses `original_statement`, and a model
-statement with no cited lines reads the same placeholder; a model summary or a
-person's text stays. Changes to a row that has copies outside — a confirmed one,
+statement that is the settling line tidied reads the same placeholder; a model
+summary or a person's text stays -- for a decision that is the classifier's
+one line or the resolver's write-up, marked when it is stored
+(`ext_decisions.statement_resolved`) and not by whether it cites a line. Changes to a row that has copies outside — a confirmed one,
 or an item moved back to 확인 필요 that kept them (`service.copies_follow`) — are
 queued to Notion, Jira (summary and description) and the calendar. Nothing is
 republished: what C, D and E already
