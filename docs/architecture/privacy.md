@@ -442,7 +442,10 @@ the feature needs.
     carries the same things about each item and goes to nobody else either.
   - **Slack, an extraction that failed:** one message to the channel of
     the team that held the meeting, once, when B's extraction of a meeting
-    has failed three times in a row (`ext_extraction_attempts`). It carries
+    has failed three times in a row (`ext_extraction_attempts`) -- or when
+    the extraction was stored and its result could not be passed on to the
+    other analyses three times in a row (#887), in which case the message
+    says that and not that nothing was extracted. Either way it carries
     the meeting's title, the number of attempts and a link to the meeting's
     액션 tab; no utterance, no name, and not the error -- only the error's
     class is kept, in B's own table and log. A team with no channel
