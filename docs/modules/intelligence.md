@@ -370,27 +370,44 @@ BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
 `python -m autune_intelligence.retrieval_eval` over `glossary/questions.json`:
 recall@1, recall@3 and MRR.
 
-Measured 2026-10-06 on 37 questions (13 `definition`, 11 `paraphrase`, 13
-`why`; spread over all six files), dense model
-`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (the gap
-classifier's backbone):
+Two question sets: `questions.json` (dev, 37: 13 `definition`, 11
+`paraphrase`, 13 `why`) and `questions_holdout.json` (24, 8 of each kind),
+written from the glossary alone by someone who had seen neither the retriever
+nor the dev set. Tune on dev; a change counts only if it also helps on holdout.
+Dense model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (the
+gap classifier's backbone). Measured 2026-10-06, recall@1 / recall@3 / MRR:
 
-| | recall@1 | recall@3 | MRR |
-| --- | --- | --- | --- |
-| BM25 | 0.62 | 0.86 | 0.72 |
-| dense | 0.62 | 0.81 | 0.74 |
-| hybrid (RRF) | 0.70 | 0.86 | 0.79 |
+| | dev | holdout |
+| --- | --- | --- |
+| BM25, first version | 0.62 / 0.86 / 0.72 | 0.38 / 0.75 / 0.55 |
+| BM25 (current) | 0.68 / 0.89 / 0.77 | 0.42 / 0.83 / 0.61 |
+| dense | 0.62 / 0.81 / 0.74 | 0.38 / 0.67 / 0.57 |
+| hybrid (current BM25 + dense, RRF) | 0.73 / 0.86 / 0.81 | 0.62 / 0.79 / 0.74 |
 
-BM25 misses five questions at recall@3, four of them paraphrases whose words do
-not appear in the passage. "완료율은 어떻게 계산돼?" ranks the right passage
-third, not first.
+The current BM25 differs from the first in three ways, each kept because it
+helped on holdout too:
+- Pronouns, bound nouns, auxiliary verbs, the copula and a few light verbs
+  (하다, 있다, 어떻다) are left out of the tokens; they matched passages by
+  accident.
+- A noun with its suffix is also kept whole (완료 + 율 -> 완료율), so a question
+  about 완료율 is told apart from every passage that mentions 완료.
+- A passage's title counts twice.
+
+The holdout was looked at while choosing among these, including weight 2 over 3
+(both 0.83 at recall@3 on holdout; 2 led on dev). For this version its numbers
+are therefore slightly optimistic. The next change should be judged on questions
+written after it.
+
+A synonym list (책임자 -> 담당, 돈 -> 예산, ...) was tried and dropped: it raised
+dev to 0.73 / 0.92 / 0.83 and left holdout at 0.46 / 0.83 / 0.63, the words
+having been picked from dev's misses.
 
 `retriever_impl` stays `bm25`. `explain_metric` returns three passages, so
-recall@3 is the number that decides, and hybrid only ties BM25 there; its gain
-is in ordering (recall@1, MRR). Hybrid would also need the `local-models` extra
-and a 0.5 GB model wherever the API and worker run, and a deployment without
-them would answer no passage at all. `nlpai-lab/KURE-v1` was not run (not
-cached). To measure again:
+recall@3 decides, and BM25 leads hybrid there on both sets; hybrid's gain is in
+ordering (recall@1, MRR). Hybrid would also need the `local-models` extra and a
+0.5 GB model wherever the API and worker run, and a deployment without them
+would answer no passage at all. `nlpai-lab/KURE-v1` was not run (not cached).
+To measure again:
 
 ```bash
 uv run --package autune-intelligence --extra local-models python -m autune_intelligence.retrieval_eval

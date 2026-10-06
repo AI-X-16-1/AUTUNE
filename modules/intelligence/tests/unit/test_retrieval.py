@@ -14,6 +14,17 @@ def test_a_definition_question_finds_its_passage() -> None:
     assert "quality.weights" in [p.key for p in top]
 
 
+def test_tokens_leave_out_words_that_match_every_passage() -> None:
+    kept = retrieval.tokens("완료율은 어떻게 계산돼? 그건 뭐야?")
+    assert "완료율" in kept and "완료" in kept and "계산" in kept
+    assert not {"어떻", "되", "뭐", "거", "이"} & set(kept)
+
+
+def test_a_rate_question_finds_the_rate_not_every_completion_passage() -> None:
+    top = [p.key for p in _bm25().search("완료율은 어떻게 계산돼?", k=3)]
+    assert "actions.confirmation_vs_completion" in top
+
+
 def test_rrf_rewards_agreement_between_rankings() -> None:
     # "b" is second in both lists (2 / 62); "a" and "c" are first in one each (1 / 61).
     assert retrieval.rrf([["a", "b"], ["c", "b"]]) == ["b", "a", "c"]
