@@ -229,7 +229,9 @@ def approve(
             action,
             row.arguments,
             session=session,
-            scope=RunScope(team_id=row.team_id, meeting_id=row.meeting_id),
+            # The approver answers for the decision, so a write that records
+            # who made it records them, not the requester (#862).
+            scope=RunScope(team_id=row.team_id, meeting_id=row.meeting_id, user_id=user_id),
         )
         row.result_ok = result.ok
         row.status = "approved" if result.ok else "failed"

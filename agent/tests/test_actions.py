@@ -21,6 +21,7 @@ from autune_agent.main import (
     collect_actions,
     execute_l1,
 )
+from autune_agent.main.actions import NO_ASKER, run_action
 from autune_agent.main.store import run_and_record
 from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
@@ -353,3 +354,71 @@ def test_a_run_whose_action_leaks_is_failed_and_keeps_what_ran(
         ("fake.leaks", False),
         ("fake.draft_note", True),
     ]
+
+
+def _scheduler(calls: list[dict[str, Any]]) -> Action:
+    """A write that records who changed it, as E's ``set_weekly_report_schedule`` will (#862)."""
+
+    def set_schedule(team_id: str, user_id: str, weekday: int) -> dict[str, Any]:
+        calls.append({"team_id": team_id, "user_id": user_id, "weekday": weekday})
+        return DONE
+
+    return Action("fake.set_schedule", set_schedule, "L1")
+
+
+def test_an_action_records_the_person_asking_not_the_one_the_model_named() -> None:
+    calls: list[dict[str, Any]] = []
+    actions = {"fake.set_schedule": _scheduler(calls)}
+
+    done = execute_l1(
+        [_proposal("fake.set_schedule", user_id="usr_someone_else", weekday=4)],
+        actions=actions,
+        session=SESSION,
+        scope=RunScope(team_id="team_a", user_id="usr_asker"),
+    )
+
+    assert done[0]["ok"] is True
+    assert calls == [{"team_id": "team_a", "user_id": "usr_asker", "weekday": 4}]
+
+
+def test_an_action_left_without_the_person_gets_the_one_asking() -> None:
+    calls: list[dict[str, Any]] = []
+
+    run_action(
+        _scheduler(calls),
+        {"weekday": 4},
+        session=SESSION,
+        scope=RunScope(team_id="team_a", user_id="usr_asker"),
+    )
+
+    assert calls[0]["user_id"] == "usr_asker"
+
+
+def test_an_action_that_records_the_asker_is_refused_when_no_one_asked() -> None:
+    """An event-woken run has no person in its scope."""
+    calls: list[dict[str, Any]] = []
+
+    done = execute_l1(
+        [_proposal("fake.set_schedule", user_id="usr_someone_else", weekday=4)],
+        actions={"fake.set_schedule": _scheduler(calls)},
+        session=SESSION,
+        scope=SCOPE,
+    )
+
+    assert calls == []
+    assert done[0]["ok"] is False
+    assert done[0]["reason"] == NO_ASKER
+
+
+def test_an_action_without_the_parameter_is_not_given_one() -> None:
+    calls: list[dict[str, Any]] = []
+    actions = {"fake.draft_note": Action("fake.draft_note", _recorder(calls), "L1")}
+
+    execute_l1(
+        [_proposal("fake.draft_note", body="x")],
+        actions=actions,
+        session=SESSION,
+        scope=RunScope(team_id="team_a", user_id="usr_asker"),
+    )
+
+    assert calls == [{"team_id": "team_a", "body": "x"}]
