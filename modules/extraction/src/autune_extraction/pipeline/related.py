@@ -58,6 +58,34 @@ def _pieces(text: str) -> Counter[str]:
     return pieces
 
 
+def _stems(text: str) -> set[str]:
+    """The first two letters of each word of a line: what the word is, without
+    the particle or the ending Korean puts after it ("견적은", "견적을")."""
+    return {word[:2] for word in _WORD.findall(text.lower()) if len(word) >= 2}
+
+
+def drawn_on(summary: str, target: str, before: Sequence[tuple[str, str]]) -> list[str]:
+    """Which of the lines said just before ``target`` a summary of it took a
+    word from: the ids of those ``(id, text)`` lines that hold a word the
+    summary has and the target does not.
+
+    A summary written with the label (``llm.usable_summary``) does not say
+    what it drew on, and without that nothing was stored for the screen's
+    "요약에 쓴 발화". This says it without asking a model anything: the summary
+    of "그건 제가 수요일까지 받아서 올릴게요" that reads "서버 비용 견적을
+    수요일까지 받아서 올린다" took 서버, 비용 and 견적 from the line before,
+    and that line is the one a person checking the summary needs to see.
+
+    Not ``related_ids``'s wide net: a word the target already has cites
+    nothing, so a line that merely shares "제가" with the summary is not here.
+    What it can still do is cite a line for a word the model would have
+    written anyway; the lines are few (the summary's own context) and each is
+    one the summary was allowed to draw on.
+    """
+    added = _stems(summary) - _stems(target)
+    return [line_id for line_id, text in before if added & _stems(text)]
+
+
 def related_ids(
     target_id: str,
     lines: Sequence[tuple[str, str]],

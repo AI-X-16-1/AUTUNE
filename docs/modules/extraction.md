@@ -83,9 +83,13 @@ agreement, and sync the result to Notion and Jira.
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
    three said before it) is the description, and the resolver is asked only
-   about a commitment that has none. **Such a line cites nothing**: the
-   classifier does not say what it drew on, so no row is written to
-   `ext_action_item_related` and the drawer shows the quotation alone.
+   about a commitment that has none. The classifier does not say what it
+   drew on, so that is read off the line: of the three lines said just before
+   -- the ones the summary was checked against -- those that hold a word the
+   summary has and the commitment itself does not (`related.drawn_on`) are
+   stored in `ext_action_item_related` and shown as "요약에 쓴 발화". A summary
+   that added nothing from them cites none, and the drawer shows the quotation
+   alone.
    A decision is written up the same way (`ext_decision_related`, "요약에 쓴
    발화" on S15) -- but only when its settling turn does not say what was decided:
    short, or pointing at something said before ("그렇게 하죠"). Asked about every
@@ -93,8 +97,9 @@ agreement, and sync the result to Notion and Jira.
    the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
    a model. That limit is the resolver's. With `classifier_impl=llm` **every
    decision the classifier wrote a line for shows that line**, whether or not
-   its settling turn already said what was decided, and cites no lines
-   (`ext_decision_related` stays empty for it): the owner asked for each
+   its settling turn already said what was decided, and cites the lines it
+   took a word from, found the same way (`ext_decision_related`): the owner
+   asked for each
    action item and decision as one line (2026-10-06), and the line came with
    the label at no further request. A decision with no such line goes the
    resolver's way as before.

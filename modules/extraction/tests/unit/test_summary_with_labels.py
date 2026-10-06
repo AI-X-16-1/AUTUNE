@@ -43,6 +43,7 @@ from autune_extraction.pipeline.llm import (
     parse_summaries,
     usable_summary,
 )
+from autune_extraction.pipeline.related import drawn_on
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -376,8 +377,63 @@ def test_a_decision_that_already_says_everything_still_shows_the_line_written_fo
     (decision,) = wired.query(ExtDecision).all()
     assert decision.statement == "결제 화면은 A안으로 진행"
     assert decision.original_statement == complete
-    assert wired.query(ExtDecisionRelated).count() == 0  # a line from the classifier cites none
+    # It says nothing the line itself did not: nothing was drawn on, nothing is cited.
+    assert wired.query(ExtDecisionRelated).count() == 0
     assert Asked.targets == []
+
+
+def test_a_line_written_with_the_label_cites_the_lines_it_took_a_word_from(
+    wired: Session,
+) -> None:
+    """The classifier does not say what it drew on, so an item summarised by it
+    stored no related lines and the drawer had nothing under "요약에 쓴 발화"
+    (found in review of #880). The summary says it itself: 서버, 비용 and 견적
+    are in the line before and not in the promise."""
+    asked = "민호 님, 서버 비용 견적은 언제까지 받아 볼 수 있을까요"
+    promise = "네, 그건 제가 수요일까지 받아서 올리겠습니다"
+    Written.lines = {promise: "서버 비용 견적을 수요일까지 받아서 올림"}
+
+    tasks.on_transcript_ready(meeting(wired, CHAT, asked, promise))
+
+    (item,) = wired.query(ExtActionItem).all()
+    assert item.description == "서버 비용 견적을 수요일까지 받아서 올림"
+    assert [r.utterance_id for r in item.related] == ["utt_2"]  # not the chat before it
+    assert [s.utterance_id for s in item.sources] == ["utt_3"]
+
+
+def test_a_decision_written_with_the_label_cites_them_too(wired: Session) -> None:
+    proposed = "결제 화면은 버튼을 위로 올린 시안으로 가면 어떨까요"
+    Written.lines = {SAID_DECISION: "결제 화면은 버튼을 위로 올린 시안으로 진행"}
+
+    tasks.on_transcript_ready(meeting(wired, proposed, SAID_DECISION))
+
+    (decision,) = wired.query(ExtDecision).all()
+    assert [
+        r.utterance_id for r in wired.query(ExtDecisionRelated).filter_by(decision_id=decision.id)
+    ] == ["utt_1"]
+
+
+def test_a_word_the_line_already_has_cites_nothing() -> None:
+    """Not the wide net: sharing "제가" or the promise's own words is not
+    having been drawn on."""
+    before = [
+        ("utt_1", "제가 지난주에 금요일까지 보고서를 냈어요"),
+        ("utt_2", "서버 비용 견적은 언제 나오나요"),
+        ("utt_3", ""),
+    ]
+
+    assert drawn_on("제가 금요일까지 정리", "제가 금요일까지 정리할게요", before) == []
+    assert drawn_on("서버 견적을 금요일까지 정리", "그건 제가 금요일까지 정리할게요", before) == [
+        "utt_2"
+    ]
+    # A particle or an ending does not make a different word: 견적은 in the
+    # line is the 견적을 of the summary, both ways.
+    assert drawn_on("견적을 정리", "견적은 제가 정리할게요", [("utt_9", "견적이 늦네요")]) == []
+    assert drawn_on(
+        "견적을 금요일까지 정리",
+        "그건 제가 금요일까지 정리할게요",
+        [("utt_9", "견적은 언제 나오나요")],
+    ) == ["utt_9"]
 
 
 def test_with_no_line_written_everything_is_as_it_was(wired: Session) -> None:
@@ -406,3 +462,15 @@ def test_a_piece_read_as_a_line_carries_the_summary_written_for_it() -> None:
         ("utt_1#2", "시안을 금요일까지 정리"),
     ]
     assert all(u.piece_summaries == () for u in read)
+
+
+def test_a_line_further_back_than_the_summarys_own_context_is_not_cited(wired: Session) -> None:
+    """Only the lines the summary was checked against can be what it drew on."""
+    asked = "민호 님, 서버 비용 견적은 언제까지 받아 볼 수 있을까요"
+    promise = "네, 그건 제가 수요일까지 받아서 올리겠습니다"
+    Written.lines = {promise: "서버 비용 견적을 수요일까지 받아서 올림"}
+
+    tasks.on_transcript_ready(meeting(wired, asked, CHAT, CHAT, CHAT, promise))
+
+    (item,) = wired.query(ExtActionItem).all()
+    assert [r.utterance_id for r in item.related] == []
