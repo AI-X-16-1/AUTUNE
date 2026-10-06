@@ -185,8 +185,11 @@ confirmation:
 3. a name typed before the assignment is not restored (step 5 above deleted it).
 
 A label nobody is put to → 204, so a retried press does not fail. An unknown
-label → 404, a caller outside the team → 403. Nothing is sent to other modules:
-assignments are not sent either.
+label → 404, a caller outside the team → 403. No event goes out, as none goes
+out for an assignment; modules that read `Participant.user_id` again (C's
+participation, E's own speaking ratio) follow the change. B fills an action
+item's assignee once from an identified label and does not take it back when
+the label is undone or reassigned — #929, B's to fix.
 
 ### `PUT /meetings/{meeting_id}/speakers/{speaker_label}/name`
 

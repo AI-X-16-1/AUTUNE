@@ -1415,8 +1415,11 @@ def unassign_speaker(
     assign. Unassigning a label nobody is put to is a no-op, not an error, so
     a second press after a lost response does not fail.
 
-    No event goes out. Assignments are not sent to the other modules either;
-    they read ``speaker_id`` from the transcript they were sent.
+    No event goes out, as none goes out for an assignment. What follows the
+    change is whatever reads ``Participant.user_id`` again: C's participation
+    and E's own speaking ratio recompute from it. B does not follow it: it
+    fills an action item's assignee once from an identified label and keeps
+    it after the label is undone or reassigned (#929, B's to fix).
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:
