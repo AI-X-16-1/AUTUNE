@@ -2,7 +2,16 @@
 
 import { useCallback, useState } from "react";
 
-import { askGap, carryMeeting, chooseTemplate, dismissGap, undoDismissGap } from "../api";
+import { ApiError } from "@/shared/api/client";
+
+import {
+  askGap,
+  carryMeeting,
+  chooseTemplate,
+  dismissGap,
+  editQuestion,
+  undoDismissGap,
+} from "../api";
 import type { AgendaOutcome, GapAsk, GapMeetingCarry, SlackOutcome } from "../types";
 
 /** The second half of what "다음 회의 잡기" says, by what the calendar did. */
@@ -135,6 +144,31 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
+  /**
+   * Save a rewritten question. Answers with what went wrong, or `null`, so the
+   * editor can stay open on a refusal rather than lose what was typed.
+   */
+  const saveQuestion = useCallback(
+    async (gapId: string, question: string): Promise<string | null> => {
+      setPending(gapId);
+      setFailure(null);
+      setNotice(null);
+      try {
+        await editQuestion(gapId, question);
+        setNotice("해소용 질문을 고쳤습니다.");
+        reload();
+        return null;
+      } catch (error) {
+        return error instanceof ApiError && error.status === 422
+          ? "개인정보로 보이는 내용이 있거나 길이가 맞지 않아 저장하지 않았습니다. 고쳐서 다시 저장해 주세요."
+          : "질문을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+      } finally {
+        setPending(null);
+      }
+    },
+    [reload],
+  );
+
   const choose = useCallback(
     (meetingId: string, templateKey: string) =>
       run(
@@ -145,5 +179,15 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
-  return { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, choose };
+  return {
+    pending,
+    failure,
+    notice,
+    dismiss,
+    undoDismiss,
+    scheduleNext,
+    ask,
+    saveQuestion,
+    choose,
+  };
 }

@@ -6,6 +6,7 @@ import type {
   GapAsk,
   GapAskTargets,
   GapMeetingCarry,
+  GapQuestion,
   GapDismissal,
   GapExplanations,
   GapReport,
@@ -90,6 +91,16 @@ export const dismissGap = (gapId: string) =>
 /** Take a dismissal back; the gap returns to the report as it was raised. */
 export const undoDismissGap = (gapId: string) =>
   api.gap<GapDismissal>(`/gaps/${gapId}/dismiss`, { method: "DELETE" });
+
+/**
+ * Rewrite a gap's 해소용 질문 in the member's own words (#824). Text that reads
+ * as personal data is refused with a 422 and nothing changes.
+ */
+export const editQuestion = (gapId: string, question: string) =>
+  api.gap<GapQuestion>(`/gaps/${gapId}/question`, {
+    method: "PUT",
+    body: JSON.stringify({ question }),
+  });
 
 /** The meeting's team, for "담당자 지정해 질문" to pick the member from. */
 export const getAskTargets = (gapId: string) => api.gap<GapAskTargets>(`/gaps/${gapId}/ask`);

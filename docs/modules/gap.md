@@ -942,6 +942,15 @@ undismissed gaps, most recently sent first. Nothing is scheduled and nobody is
 invited; that is S25 (P2). A mark stays until somebody takes it back or
 dismisses the gap.
 
+`gap_gaps.question_edited_at` marks a 해소용 질문 a member rewrote by hand
+("편집" on S20, `PUT /gaps/{gap_id}/question`, #824), with the same rules: no
+actor column. A re-run and `refresh_questions` keep an edited question rather
+than recompute it; deleted speech still wins, and a question naming a label
+that is gone is reset to the item's general one with the mark cleared (#587).
+What a member types goes where C's own question goes — the team's Slack
+question, the next meeting's line, E's report — so text that reads as personal
+data (`find_unmasked`) is refused with a 422 and nothing changes.
+
 ### A speaker confirmed after scoring — `gap_scorings`
 
 A gap's risk reads how much of the room was silent on a topic, and who is one

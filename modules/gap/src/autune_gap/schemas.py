@@ -95,6 +95,26 @@ class GapMeetingCarry(BaseModel):
     slack: str = "not_tried"
 
 
+QUESTION_MAX = 500
+"""The longest question a member can write -- a question, not a memo."""
+
+
+class GapQuestionEdit(BaseModel):
+    """``PUT /gaps/{gap_id}/question``: the question in the member's words."""
+
+    question: str = Field(min_length=1, max_length=QUESTION_MAX)
+
+
+class GapQuestion(BaseModel):
+    """What ``PUT /gaps/{gap_id}/question`` settled on: the question as stored,
+    and that it is a person's rather than C's. No timestamp and nobody's id."""
+
+    gap_id: str
+    meeting_id: str
+    suggested_question: str
+    edited: bool
+
+
 class GapAskTarget(BaseModel):
     """A member of the meeting's team "담당자 지정해 질문" can ask. A name and
     an id, which every member already sees on the team; nothing about what the
@@ -315,6 +335,9 @@ class GapExplanationRead(BaseModel):
     carried: bool = False
     """Whether somebody sent this gap on to the next meeting (#824). Here rather
     than on ``GapReport``: the contract is E's business, and E has no use for it."""
+    question_edited: bool = False
+    """Whether a member rewrote the gap's question by hand (#824), so S20 can
+    say the question is not C's own."""
 
 
 class CoveredExplanationRead(BaseModel):

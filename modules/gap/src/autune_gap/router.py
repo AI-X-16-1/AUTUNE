@@ -38,6 +38,8 @@ from .schemas import (
     GapDismissal,
     GapExplanations,
     GapMeetingCarry,
+    GapQuestion,
+    GapQuestionEdit,
     TeamGapRead,
     TemplateComparison,
     TemplateRead,
@@ -189,6 +191,22 @@ def _carry(session: Session, gap_id: str, reader: User, *, carried: bool) -> Gap
     session.commit()
     outcome = service.carry_on_calendar(session, gap_id, reader, carried=carried)
     return result.model_copy(update={"calendar": outcome})
+
+
+@router.put("/gaps/{gap_id}/question", response_model=GapQuestion)
+def edit_question(
+    gap_id: str, body: GapQuestionEdit, session: SessionDep, reader: CurrentUser
+) -> GapQuestion:
+    """Rewrite the gap's 해소용 질문 -- "편집" on S20 (#824).
+
+    Committed here, then E is sent the report again: ``GapReport`` carries the
+    question, and a worker that picked the task up first would publish the
+    old one. Text that reads as personal data is a 422 and nothing changes.
+    """
+    result = service.edit_question(session, gap_id, reader, question=body.question)
+    session.commit()
+    enqueue_publish_report(result.meeting_id)
+    return result
 
 
 @router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)

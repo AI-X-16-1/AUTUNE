@@ -272,6 +272,19 @@ export interface GapExplanation {
   breakdown: ScoreBreakdown | null;
   /** Somebody sent this gap on to the next meeting — "다음 회의 어젠다로" (#824). */
   carried: boolean;
+  /** A member rewrote the gap's question by hand (#824). */
+  question_edited: boolean;
+}
+
+/** The longest question a member can write (`schemas.QUESTION_MAX`). */
+export const QUESTION_MAX = 500;
+
+/** What `PUT /api/gap/gaps/{gap_id}/question` settled on (`GapQuestion`). */
+export interface GapQuestion {
+  gap_id: string;
+  meeting_id: string;
+  suggested_question: string;
+  edited: boolean;
 }
 
 /** `GET /api/gap/explanations/{meeting_id}` — `GapExplanations`. */

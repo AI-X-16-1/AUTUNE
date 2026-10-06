@@ -281,6 +281,16 @@ class GapGap(Base, TimestampMixin):
     one from the moment it is raised. #35 makes it specific to the topics the
     gap was inferred from; until then it is the item's own wording."""
 
+    question_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When a member rewrote ``suggested_question`` by hand on S20 (#824). Null
+    while the question is C's own.
+
+    A re-run and ``refresh_questions`` leave an edited question alone -- a
+    person's wording is not C's to recompute. Deleted speech still wins: a
+    question naming a label that is gone is reset to the item's general one
+    and this mark cleared (#587). Nobody's id is stored, as for
+    ``dismissed_at``."""
+
     coverage: Mapped[str | None] = mapped_column(String(16))
     """How far the meeting got with the item — ``partial`` or ``missing``.
 

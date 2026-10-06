@@ -16,6 +16,7 @@ import type {
   GapExplanations,
   ScoreBreakdown,
 } from "../types";
+import { QUESTION_MAX } from "../types";
 
 /**
  * The gap list on S20: HIGH opened, MEDIUM and LOW closed, LOW behind a toggle.
@@ -48,6 +49,7 @@ export function GapList({
   onDismiss,
   loadAskTargets,
   onAsk,
+  onSaveQuestion,
   pendingGapId = null,
 }: {
   gaps: readonly Gap[];
@@ -61,6 +63,8 @@ export function GapList({
   /** "담당자 지정해 질문": the team to pick from, and the pick. Without both the button is drawn disabled. */
   loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
   onAsk?: (gapId: string, userId: string) => void;
+  /** "편집" on 해소용 질문: answers with what went wrong, or `null`. Without it no button is drawn. */
+  onSaveQuestion?: (gapId: string, question: string) => Promise<string | null>;
   /** The gap whose write is in flight, so only its button shows it. */
   pendingGapId?: string | null;
 }) {
@@ -92,6 +96,7 @@ export function GapList({
       onDismiss={onDismiss}
       loadAskTargets={loadAskTargets}
       onAsk={onAsk}
+      onSaveQuestion={onSaveQuestion}
       pending={pendingGapId === gap.id}
     />
   );
@@ -216,6 +221,7 @@ function GapCard({
   onDismiss,
   loadAskTargets,
   onAsk,
+  onSaveQuestion,
   pending,
 }: {
   gap: Gap;
@@ -226,6 +232,7 @@ function GapCard({
   onDismiss?: (gapId: string) => void;
   loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
   onAsk?: (gapId: string, userId: string) => void;
+  onSaveQuestion?: (gapId: string, question: string) => Promise<string | null>;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -300,18 +307,14 @@ function GapCard({
             )}
           </Block>
 
-          {gap.suggested_question ? (
-            <Block label="해소용 질문" sunken>
-              <p
-                className="text-[var(--color-ink-strong)]"
-                style={{
-                  fontSize: "var(--text-rowBody)",
-                  lineHeight: "var(--text-rowBody-leading)",
-                }}
-              >
-                <MaskedText>{gap.suggested_question}</MaskedText>
-              </p>
-            </Block>
+          {gap.suggested_question || onSaveQuestion ? (
+            <QuestionBlock
+              gapId={gap.id}
+              question={gap.suggested_question ?? ""}
+              edited={explanation?.question_edited ?? false}
+              pending={pending}
+              onSave={onSaveQuestion}
+            />
           ) : null}
 
           <ScoreExplain
@@ -358,6 +361,122 @@ function GapCard({
         </div>
       ) : null}
     </article>
+  );
+}
+
+/**
+ * 해소용 질문, and "편집" to put it in the member's own words (#824). Saving
+ * replaces the question everywhere it goes — the Slack question, the next
+ * meeting's line, E's report — and a re-run keeps it. A refusal (text that
+ * reads as personal data) keeps the editor open with what was typed.
+ */
+function QuestionBlock({
+  gapId,
+  question,
+  edited,
+  pending,
+  onSave,
+}: {
+  gapId: string;
+  question: string;
+  edited: boolean;
+  pending: boolean;
+  onSave?: (gapId: string, question: string) => Promise<string | null>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(question);
+  const [error, setError] = useState<string | null>(null);
+  const trimmed = draft.trim();
+
+  const save = async () => {
+    if (!onSave) return;
+    const problem = await onSave(gapId, trimmed);
+    setError(problem);
+    if (problem === null) setEditing(false);
+  };
+
+  return (
+    <Block label={edited ? "해소용 질문 · 수정됨" : "해소용 질문"} sunken>
+      {editing ? (
+        <div className="flex flex-col" style={{ gap: "var(--space-8)" }}>
+          <label className="sr-only" htmlFor={`question-${gapId}`}>
+            해소용 질문 편집
+          </label>
+          <textarea
+            id={`question-${gapId}`}
+            value={draft}
+            maxLength={QUESTION_MAX}
+            rows={3}
+            onChange={(event) => setDraft(event.target.value)}
+            className="w-full resize-y rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)]"
+            style={{
+              fontSize: "var(--text-rowBody)",
+              lineHeight: "var(--text-rowBody-leading)",
+              padding: "6px 8px",
+            }}
+          />
+          {error ? (
+            <p
+              role="alert"
+              className="text-[var(--color-signal-critical)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {error}
+            </p>
+          ) : null}
+          <div className="-ml-2 flex flex-wrap" style={{ gap: "var(--space-4)" }}>
+            <Button
+              tone="text"
+              size="compact"
+              disabled={!trimmed || trimmed === question || pending}
+              aria-busy={pending || undefined}
+              onClick={() => void save()}
+            >
+              {pending ? "저장 중" : "저장"}
+            </Button>
+            <Button
+              tone="text"
+              size="compact"
+              disabled={pending}
+              onClick={() => {
+                setDraft(question);
+                setError(null);
+                setEditing(false);
+              }}
+            >
+              취소
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start justify-between" style={{ gap: "var(--space-8)" }}>
+          <p
+            className="min-w-0 text-[var(--color-ink-strong)]"
+            style={{
+              fontSize: "var(--text-rowBody)",
+              lineHeight: "var(--text-rowBody-leading)",
+            }}
+          >
+            {question ? <MaskedText>{question}</MaskedText> : <Muted>질문이 없습니다.</Muted>}
+          </p>
+          {onSave ? (
+            <Button
+              tone="text"
+              size="compact"
+              disabled={pending}
+              title="이 갭의 해소용 질문을 직접 고칩니다. Slack 질문과 다음 회의 안건에 고친 질문이 쓰입니다."
+              onClick={() => {
+                setDraft(question);
+                setError(null);
+                setEditing(true);
+              }}
+            >
+              편집
+            </Button>
+          ) : null}
+        </div>
+      )}
+    </Block>
   );
 }
 
