@@ -106,7 +106,7 @@ export function NotificationPauseSetting() {
       <span className="text-[var(--color-ink-muted)]" style={meta}>
         공휴일에는 보내지 않습니다.
         {saved.calendar_leave
-          ? " 연결한 Google 캘린더에 '부재중' 일정이 있는 시간에도 보내지 않습니다. 부재중 일정의 시간만 읽고, 다른 일정은 읽지 않습니다."
+          ? " 연결한 Google 캘린더에 '부재중' 일정이 있는 시간에도 보내지 않습니다. 이를 위해서는 부재중 일정의 시간만 읽습니다."
           : ""}
       </span>
       {backwards && (
