@@ -1020,13 +1020,15 @@ def run_requested_extractions() -> list[str]:
 @periodic(timedelta(minutes=10))
 def fill_identified_assignees() -> list[str]:
     """Items whose speaker was identified after extraction get that person as
-    their assignee (#360; ``service.fill_identified_assignees``). Returns the
-    items' ids.
+    their assignee (#360), and an item whose speaker was since corrected to
+    somebody else, or put back to nobody, goes with the correction (#929;
+    ``service.fill_identified_assignees``). Returns the items' ids.
 
     Then, after the commit, an item already confirmed goes through
     ``sync_after_confirmation`` -- the same call the router makes after a board
-    edit -- so its Notion page and Jira issue name the person, and a due date
-    goes on their own calendar.
+    edit -- so its Notion page and Jira issue name the person the item is now
+    for, and a due date goes on their own calendar and comes off the calendar
+    of whoever held it before.
 
     ``ExtractionResult`` is **not** published again, the way a board edit does
     not publish it: D and E read the assignee on the meeting's next run. A
@@ -1034,7 +1036,8 @@ def fill_identified_assignees() -> list[str]:
     later, and for no other kind of correction (lsh2217's review of #536).
 
     Every ten minutes because identifying a speaker is a person on a screen,
-    and a run that finds nothing is one query. Safe to overlap: the update is
+    and a run that finds nothing is one query, over the model's open items of
+    the last month. Safe to overlap: the update is
     conditional on the assignee and label as read, so a second run changes
     nothing the first did.
     """
