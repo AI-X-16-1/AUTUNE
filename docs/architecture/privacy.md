@@ -564,8 +564,13 @@ the feature needs.
     the grant is revoked at Google (#763), and the row goes with the account
     (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
     unreachable Google leaves the events on the calendar and the grant listed
-    under the person's third-party access, and the deletion goes on. Each event is only the item's
+    under the person's third-party access, and the deletion goes on. Each of those events is only the item's
     description and date, with no attendees and nothing from the transcript.
+    B writes two other kinds of event on a person's own calendar, each only
+    by that person's own act and each removed by the same user hook: a
+    project's minutes they chose to send (#788, `ext_minutes_events`) and
+    their own leave dates ("Those dates on the person's own calendar",
+    above).
   - **Google Calendar, S20's 다음 회의 잡기 (module C, #824):** the presser's
     own calendar only, with their own grant (`user_integrations`). A line
     carries a gap's title and suggested question -- both stored masked, or
