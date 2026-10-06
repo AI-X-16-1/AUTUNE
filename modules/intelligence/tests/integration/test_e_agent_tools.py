@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Team
 from autune_intelligence import service, tools
-from autune_intelligence.models import IntelMeetingReport
+from autune_intelligence.models import (
+    IntelAlignment,
+    IntelMeetingReport,
+    IntelReport,
+)
 
 KST = timezone(timedelta(hours=9))
 BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
@@ -141,3 +145,54 @@ def test_meeting_reports_returns_at_most_limit_and_says_when_more_exist(
     result = tools.meeting_reports(db_session, team, limit=2)
 
     assert len(result["items"]) == 2 and result["truncated"] is True
+
+
+def test_role_alignment_keeps_the_heatmaps_three_meeting_floor(
+    db_session: Session, team: str
+) -> None:
+    for i in range(3):
+        m = Meeting(team_id=team, title=f"m{i}")
+        db_session.add(m)
+        db_session.flush()
+        db_session.add(
+            IntelAlignment(meeting_id=m.id, team_id=team, role_a="PM", role_b="Dev", score=0.6)
+        )
+    one = Meeting(team_id=team, title="one")
+    db_session.add(one)
+    db_session.flush()
+    db_session.add(
+        IntelAlignment(meeting_id=one.id, team_id=team, role_a="PM", role_b="Design", score=0.9)
+    )
+    db_session.flush()
+
+    result = tools.role_alignment(db_session, team)
+
+    assert [i["title"] for i in result["items"]] == ["PM · Dev"]
+
+
+def test_weekly_reports_reads_the_week_holding_a_date(db_session: Session, team: str) -> None:
+    for start in (date(2026, 9, 28), date(2026, 10, 5)):
+        db_session.add(
+            IntelReport(
+                team_id=team,
+                period_start=start,
+                period_end=start + timedelta(days=7),
+                body_markdown=f"*{start} 주간 리포트*",
+                metrics_json={},
+                source_meeting_ids=[],
+            )
+        )
+    db_session.flush()
+
+    latest = tools.weekly_reports(db_session, team)
+    asked = tools.weekly_reports(db_session, team, on="2026-09-30")
+
+    assert latest["items"][0]["title"].startswith("2026-10-05")
+    assert asked["items"][0]["title"].startswith("2026-09-28")
+    assert "went_out" in asked["items"][0]
+
+
+def test_weekly_report_schedule_says_the_day_and_hour(db_session: Session, team: str) -> None:
+    result = tools.weekly_report_schedule(db_session, team)
+
+    assert "월요일 09:00" in result["summary"]
