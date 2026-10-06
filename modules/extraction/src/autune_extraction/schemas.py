@@ -414,12 +414,16 @@ class ExtractionState(BaseModel):
     ``will_retry`` says the worker tries again by itself, so the screen does
     not ask a person to. ``requested`` is a "다시 추출" the worker has not
     started yet. Counts and times only: why a run failed is in the server's
-    log, by the error's class."""
+    log, by the error's class -- with one distinction the screen needs:
+    ``not_published`` says the last failure was passing a stored result on to
+    the other modules, so the items and decisions on the board are this run's
+    and "could not extract" would be false."""
 
     extracted_at: datetime | None
     failures: int
     failed_at: datetime | None
     will_retry: bool
+    not_published: bool = False
     requested: bool
     requested_at: datetime | None
 

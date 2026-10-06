@@ -22,6 +22,7 @@ const FINE: ExtractionState = {
   failures: 0,
   failed_at: null,
   will_retry: false,
+  not_published: false,
   requested: false,
   requested_at: null,
 };
@@ -83,6 +84,27 @@ describe("ReExtract", () => {
     const alert = screen.getByRole("alert").textContent;
     expect(alert).toContain("추출하지 못했습니다(3번 시도)");
     expect(alert).toContain("자동으로는 더 시도하지 않습니다");
+  });
+
+  it("does not say 'could not extract' of a result that was stored and not passed on", async () => {
+    // PARK, review of #868: the tab showed this run's rows under "추출하지 못해
+    // 다시 시도 중", because a failed publish was counted as a failed extraction.
+    await open({ ...RETRYING, extracted_at: "2026-10-06T01:00:00Z", not_published: true });
+
+    const line = screen.getByRole("status").textContent;
+    expect(line).toContain("아래 액션 아이템과 결정은 추출되었습니다");
+    expect(line).toContain("전달하지 못해 자동으로 다시 시도하고 있습니다(1번 실패)");
+    expect(line).not.toContain("추출하지 못해");
+  });
+
+  it("says the same of one that is out of tries, with the button", async () => {
+    await open({ ...SPENT, extracted_at: "2026-10-06T01:00:00Z", not_published: true });
+
+    const alert = screen.getByRole("alert").textContent;
+    expect(alert).toContain("추출되었지만");
+    expect(alert).toContain("전달하지");
+    expect(alert).not.toContain("추출하지 못했습니다");
+    expect(button().disabled).toBe(false);
   });
 
   it("asks, waits for the worker, and has the board read again when the run is in", async () => {

@@ -554,6 +554,95 @@ def test_a_persons_request_runs_whatever_the_count_and_the_sweeps_come_back_afte
     assert tasks.reextract_consent_changes() == [MEETING]
 
 
+# --- stored, and not passed on ---------------------------------------------------------
+
+
+def broker_down(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """``publish`` raises, as with no broker to reach; returns what it was asked."""
+    asked: list[str] = []
+
+    def publish(event: str, payload: dict) -> list[str]:
+        asked.append(event)
+        raise ConnectionError(f"the broker refused: {SAID}")
+
+    monkeypatch.setattr(tasks, "publish", publish)
+    return asked
+
+
+def broker_up(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    sent: list[dict] = []
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: sent.append(payload) or [])
+    return sent
+
+
+def test_a_result_that_was_stored_and_not_passed_on_is_not_a_failed_extraction(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PARK, review of #868: the rows were on the board and the tab said "추출하지
+    못해 다시 시도 중", because a publish that failed after the commit was
+    counted as the extraction failing."""
+    broker_down(monkeypatch)
+
+    with capture_logs() as logs, pytest.raises(attempts.ResultNotPublishedError):
+        tasks.on_transcript_ready(event())
+
+    assert wired.query(ExtActionItem).count() == 1  # stored
+    kept = row(wired)
+    assert kept is not None and kept.failures == 1
+    assert kept.reason == attempts.NOT_PUBLISHED
+    state = attempts.state(wired, MEETING)
+    assert state.not_published is True and state.extracted_at is not None
+    # The class of what the broker raised, never what it said.
+    assert SAID not in repr(logs) and SAID not in repr(vars(kept))
+
+
+def test_the_retry_of_one_passes_the_stored_result_on_and_asks_no_model(
+    wired: Session, channel: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broker_down(monkeypatch)
+    with pytest.raises(attempts.ResultNotPublishedError):
+        tasks.on_transcript_ready(event())
+    assert Classifier.calls == 1
+    sent = broker_up(monkeypatch)
+
+    assert tasks.retry_failed_extractions() == [MEETING]
+
+    assert Classifier.calls == 1  # the rows are what the run wrote; nothing is asked again
+    (payload,) = sent
+    assert payload["meeting_id"] == MEETING and len(payload["action_items"]) == 1
+    assert row(wired).failures == 0  # type: ignore[union-attr]
+    assert attempts.state(wired, MEETING).not_published is False
+
+
+def test_three_times_not_passed_on_and_the_channel_is_told_that_and_not_that_nothing_was_extracted(
+    wired: Session, channel: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broker_down(monkeypatch)
+    with pytest.raises(attempts.ResultNotPublishedError):
+        tasks.on_transcript_ready(event())
+    tasks.retry_failed_extractions()
+    tasks.retry_failed_extractions()
+
+    assert row(wired).failures == 3 and Classifier.calls == 1  # type: ignore[union-attr]
+    ((_where, text),) = Slack.posts
+    assert "추출했지만" in text and "전달하지 못했습니다" in text
+    assert "추출하지 못했습니다" not in text
+    assert TITLE in text and text.endswith(f"/meetings/{MEETING}/actions")
+
+
+def test_a_meeting_that_fails_to_extract_after_one_that_did_not_publish_is_extracted_again(
+    wired: Session, channel: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The kind is the last failure's: a real extraction failure is retried as one."""
+    fails()
+    assert row(wired).reason == "RuntimeError"  # type: ignore[union-attr]
+    assert attempts.state(wired, MEETING).not_published is False
+    mends()
+
+    assert tasks.retry_failed_extractions() == [MEETING]
+    assert Classifier.calls == 2
+
+
 # --- the team is told ---------------------------------------------------------------
 
 
@@ -780,6 +869,7 @@ def test_the_state_says_whether_the_worker_will_try_again(client: TestClient) ->
         "failures": 0,
         "failed_at": None,
         "will_retry": False,
+        "not_published": False,
         "requested": False,
         "requested_at": None,
     }
