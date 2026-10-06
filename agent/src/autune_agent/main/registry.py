@@ -246,7 +246,8 @@ class Toolbox:
 
 ASKER_PARAMETER = "user_id"
 """The parameter that names one person. A read left without it gets the person
-asking; an action always gets the person asking (``run_action``, #862)."""
+asking; an action always gets the person asking, or at a plan-mode approval
+the approver (``run_action``, #862)."""
 
 NO_MEETING = "this run is about no meeting; pass meeting_id"
 UNEXPECTED_ARGUMENT = "unexpected argument"

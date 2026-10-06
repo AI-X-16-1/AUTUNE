@@ -63,7 +63,7 @@ NOT_DECLARED = "not a declared action"
 KEPT_FOR_APPROVAL = "its module declares it L2; it waits for approval"
 FAILED = "the action failed"
 ARGUMENT_REFUSED = "arguments hold more than ids and short values"
-NO_ASKER = "this action records who asked, and no one asked in this run"
+NO_ASKER = "this action records who did it, and no one is behind this run"
 OUT_OF_SCOPE = ("team_id is outside this run's team", "meeting not found")
 OWN_REASONS = frozenset(
     {
@@ -214,9 +214,9 @@ def run_action(
 
     An action that takes ``user_id`` records who did it, so the person is the
     one asking, never whoever the proposal names (#862): the model writes the
-    proposal's arguments. A run with no asker -- woken by an event, or a
-    plan-mode approval, whose scope carries no person -- is refused rather than
-    recorded under someone.
+    proposal's arguments. At a plan-mode approval the scope's person is the
+    approver, who answers for the decision. A run with no one -- woken by an
+    event -- is refused rather than recorded under someone.
     """
     if ASKER_PARAMETER in action.parameters:
         if scope.user_id is None:

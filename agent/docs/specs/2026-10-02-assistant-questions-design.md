@@ -96,8 +96,9 @@ meetings, which section 8 rule 1 does not allow a step to do.
 asker (`RunScope.user_id`), a read called without `user_id` is about them,
 and the declaration marks `user_id` optional — "Leave out for the person
 asking." An action does not get this default: since #862, `run_action` sets
-an action's `user_id` to the asker whatever the proposal says, and refuses the
-action when the run has no asker (an event-woken run, a plan-mode approval).
+an action's `user_id` to the asker whatever the proposal says -- at a plan-mode
+approval, to the approver, who answers for the decision -- and refuses the
+action when the run has no person (an event-woken run).
 
 A name not registered (a module that has not shipped it) is dropped with the
 existing warning. Personal-only tools are never registered, so never offered.

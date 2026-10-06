@@ -395,7 +395,7 @@ def test_an_action_left_without_the_person_gets_the_one_asking() -> None:
 
 
 def test_an_action_that_records_the_asker_is_refused_when_no_one_asked() -> None:
-    """An event-woken run, or a plan-mode approval, has no asker in its scope."""
+    """An event-woken run has no person in its scope."""
     calls: list[dict[str, Any]] = []
 
     done = execute_l1(
