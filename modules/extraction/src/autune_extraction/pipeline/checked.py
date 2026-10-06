@@ -92,9 +92,16 @@ def combine(proposed: Prediction, checked: Prediction) -> Prediction:
     )
     scores = dict.fromkeys(UtteranceKind, 0.0)
     scores[UtteranceKind.COMMITMENT] = confidence
+    # The checker settles how sure the label is, nothing else: the pieces a
+    # long turn was read in and the line written for it are the proposer's and
+    # go on with it (PARK, review of #880 -- without them a commitment under
+    # ``llm_checked`` was read whole again and sent to the resolver).
     return Prediction(
         kind=UtteranceKind.COMMITMENT,
         confidence=confidence,
         scores=scores,
         none_score=1.0 - confidence,
+        pieces=proposed.pieces,
+        summary=proposed.summary,
+        piece_summaries=proposed.piece_summaries,
     )
