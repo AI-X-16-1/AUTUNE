@@ -135,8 +135,11 @@ agreement, and sync the result to Notion and Jira.
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
    minutes `ask_confirmations` asks each one recorded within the 72-hour window
-   whose speaker is identified and consented, through the team's Slack bot to
-   the account that person linked (#255, #478), and to nobody else. A team
+   whose speaker is identified, consented and is on the meeting's team now,
+   through the team's Slack bot to the account that person linked (#255,
+   #478), and to nobody else. A speaker who has left the team is not asked,
+   and a button pressed on a DM they were sent before leaving is not recorded
+   -- the web refuses them the same answer. A team
    without Slack, or a speaker who has not linked, is looked at again on the
    next run until the window closes.
    **Where the speaker answers** (decided with the user, 2026-10-01; #585). The

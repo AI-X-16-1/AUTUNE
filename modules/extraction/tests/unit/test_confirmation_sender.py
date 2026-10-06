@@ -19,7 +19,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
-from autune_core import Base, Meeting, Participant, PrivacyViolationError, User, Utterance
+from autune_core import (
+    Base,
+    Meeting,
+    Participant,
+    PrivacyViolationError,
+    TeamMember,
+    User,
+    Utterance,
+)
 from autune_extraction import tasks
 from autune_extraction.models import ExtConfirmation
 from autune_integrations.errors import SlackRecipientNotLinkedError
@@ -31,7 +39,7 @@ MEETING = "mtg_1"
 @pytest.fixture
 def session() -> Iterator[Session]:
     engine = create_engine("sqlite://", poolclass=StaticPool)
-    shared = {m.__tablename__ for m in (Meeting, User, Participant, Utterance)}
+    shared = {m.__tablename__ for m in (Meeting, User, TeamMember, Participant, Utterance)}
     tables = [
         t for name, t in Base.metadata.tables.items() if name in shared or name.startswith("ext_")
     ]
@@ -39,6 +47,10 @@ def session() -> Iterator[Session]:
     with Session(engine) as s:
         s.add(Meeting(id=MEETING, team_id="team_1", title="주간 회의"))
         s.add(User(id="user_kim", email="kim@example.com", display_name="김민경"))
+        s.add(TeamMember(team_id="team_1", user_id="user_kim"))
+        # Spoke in the meeting, identified and consenting, and has since left:
+        # the participant row still names them, no membership does.
+        s.add(User(id="user_gone", email="gone@example.com", display_name="한서윤"))
         s.add_all(
             [
                 Participant(
@@ -49,6 +61,13 @@ def session() -> Iterator[Session]:
                     user_id="user_kim",
                 ),
                 Participant(id="par_anon", meeting_id=MEETING, speaker_label="S2", consented=True),
+                Participant(
+                    id="par_gone",
+                    meeting_id=MEETING,
+                    speaker_label="한서윤",
+                    consented=True,
+                    user_id="user_gone",
+                ),
                 Participant(
                     id="par_no",
                     meeting_id=MEETING,
@@ -145,6 +164,33 @@ def test_nobody_but_an_identified_consenting_speaker_is_asked(
 
     assert tasks.ask_confirmations() == []
     assert slack.sent == []
+
+
+def test_a_speaker_who_left_the_team_is_not_asked_and_the_question_stays_unasked(
+    session: Session, slack: FakeSlack
+) -> None:
+    """The team's bot sends nothing to somebody who is off the team, and the
+    member whose question is next to theirs is still asked."""
+    agreement(session, "utt_gone", "par_gone")
+    agreement(session, "utt_kim")
+
+    assert tasks.ask_confirmations() == ["utt_kim"]
+
+    assert [message.channel for message in slack.sent] == ["user_kim"]
+    assert sent_at(session, "utt_gone") is None
+
+
+def test_a_speaker_who_comes_back_inside_the_window_is_asked(
+    session: Session, slack: FakeSlack
+) -> None:
+    agreement(session, "utt_gone", "par_gone")
+    assert tasks.ask_confirmations() == []
+
+    session.add(TeamMember(team_id="team_1", user_id="user_gone"))
+    session.commit()
+
+    assert tasks.ask_confirmations() == ["utt_gone"]
+    assert [message.channel for message in slack.sent] == ["user_gone"]
 
 
 def test_a_question_older_than_its_window_is_not_put(session: Session, slack: FakeSlack) -> None:
