@@ -506,6 +506,27 @@ def weekly_report_schedule(session: Session, team_id: str) -> dict[str, Any]:
     return _result(summary=f"{when}에 팀 채널로 보냅니다. {empty}{by}", items=[])
 
 
+def explain_metric(session: Session, team_id: str, question: str) -> dict[str, Any]:
+    """Use this to say what one of E's numbers means or how it is computed --
+    the quality grade, a gap pattern, alignment, the prediction, completion or
+    the reports. Do not use it for the team's own numbers -- fetch those with
+    the other tools and use this for their meaning.
+
+    Returns up to three glossary passages, each 400 characters at most. No
+    passage when nothing matches: say you do not know rather than guess.
+    """
+    del session, team_id  # the glossary is the same for every team
+    from .retrieval import get_retriever
+
+    found = get_retriever().search(question, k=3)
+    if not found:
+        return _result(summary="설명 문서에서 찾지 못했습니다.", items=[], confidence=0.0)
+    return _result(
+        summary="E 지표 설명입니다.",
+        items=[{"title": p.title, "body": p.text[:400], "score": 1.0, "id": p.key} for p in found],
+    )
+
+
 TOOLS = [
     meeting_quality,
     team_trend,
@@ -519,6 +540,7 @@ TOOLS = [
     role_alignment,
     weekly_reports,
     weekly_report_schedule,
+    explain_metric,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 

@@ -64,6 +64,7 @@ def test_the_tool_list_is_exactly_these_reads() -> None:
         "role_alignment",
         "weekly_reports",
         "weekly_report_schedule",
+        "explain_metric",
     ]
     for fn in tools.TOOLS:
         assert fn.__doc__ and fn.__doc__.strip().startswith("Use this")
