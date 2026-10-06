@@ -447,8 +447,14 @@ the feature needs.
     other analyses three times in a row (#887), in which case the message
     says that and not that nothing was extracted. Either way it carries
     the meeting's title, the number of attempts and a link to the meeting's
-    액션 tab; no utterance, no name, and not the error -- only the error's
-    class is kept, in B's own table and log. A team with no channel
+    액션 tab; no utterance, no name that B adds, and not the error -- only
+    the error's class is kept, in B's own table and log. The title is a
+    value a person typed and is sent as it is stored, so it can hold a
+    name: "no name" is true of what B puts in the message and not of the
+    title. A title in which the outbound check finds personal data -- a
+    phone number, an e-mail address and the like; it does not find names
+    -- is refused, and then no message goes and it is not tried again. A
+    team with no channel
     connected gets no message. A message already posted stays in the
     channel when the meeting is deleted.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
