@@ -222,15 +222,17 @@ def _followup(
     evidence: list[str],
     *,
     chat: bool = False,
+    due_date: str | None = None,
 ) -> AgentPendingAction:
     """The two shapes Follow-up leaves (subagents/followup/graph.py).
 
     Woken by an event: the run's meeting is the row's, arguments are empty.
     Asked in chat: the run has no meeting, the proposal names it.
     """
-    row = _row(
-        team, "extraction.add_followup_item", {"meeting_id": team["meeting"]} if chat else {}
-    )
+    arguments: dict[str, Any] = {"meeting_id": team["meeting"]} if chat else {}
+    if due_date is not None:
+        arguments["due_date"] = due_date
+    row = _row(team, "extraction.add_followup_item", arguments)
     if chat:
         row.meeting_id = None
     row.evidence = evidence
@@ -297,3 +299,49 @@ def test_a_followup_without_c_falls_back_to_gone(session: Session, team: dict[st
 
     assert unread["body"] == GONE
     assert absent["body"] == GONE
+
+
+def test_a_followup_shows_its_suggested_date_above_the_gaps(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#854: the date Follow-up suggests (#852) becomes the item's due date on approval."""
+    gaps, _ = _gaps_by_id(("gap_a", "리스크 — 논의되지 않았습니다"))
+
+    shown = preview(
+        session,
+        _followup(team, ["gap_a"], due_date="2026-10-08"),
+        tools={"gap.gaps_by_id": gaps},
+    )
+
+    assert shown["body"] == "추천 날짜: 10월 8일(목)\n· 리스크 — 논의되지 않았습니다"
+
+
+def test_a_suggested_date_stays_when_the_gaps_have_closed(
+    session: Session, team: dict[str, str]
+) -> None:
+    gaps, _ = _gaps_by_id(("gap_b", "담당자 · 결제"))
+
+    shown = preview(
+        session,
+        _followup(team, ["gap_a"], due_date="2026-10-08"),
+        tools={"gap.gaps_by_id": gaps},
+    )
+
+    assert shown["body"] == f"추천 날짜: 10월 8일(목)\n{FOLLOWUP_GAPS_CLOSED}"
+
+
+def test_a_gone_followup_shows_no_date(session: Session, team: dict[str, str]) -> None:
+    shown = preview(session, _followup(team, ["gap_a"], due_date="2026-10-08"), tools={})
+
+    assert shown["body"] == GONE
+
+
+def test_an_unreadable_date_is_left_off(session: Session, team: dict[str, str]) -> None:
+    """A proposal from before #852, or a value that is not a date, shows the gaps alone."""
+    gaps, _ = _gaps_by_id(("gap_a", "일정"))
+
+    for bad in ("다음 주", "2026-13-01", ""):
+        shown = preview(
+            session, _followup(team, ["gap_a"], due_date=bad), tools={"gap.gaps_by_id": gaps}
+        )
+        assert shown["body"] == "· 일정"
