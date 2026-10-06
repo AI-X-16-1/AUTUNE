@@ -86,8 +86,8 @@ class GapMeetingCarry(BaseModel):
     no gap to send).
 
     ``slack`` is the one notice on the team's channel
-    (``team_notice.SlackOutcome``): ``posted``, ``no_slack``, ``failed``, or
-    ``not_tried`` when the calendar took no new line."""
+    (``team_notice.SlackOutcome``): ``posted``, ``no_slack``, ``failed``,
+    ``refused``, or ``not_tried`` when the calendar took no new line."""
 
     meeting_id: str
     carried: int

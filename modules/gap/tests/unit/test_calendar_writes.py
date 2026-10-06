@@ -25,6 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from autune_core import Meeting, TeamMember, User
 from autune_core.errors import PrivacyViolationError
@@ -719,6 +720,31 @@ def test_a_slack_that_fails_leaves_the_calendar_written(
     assert google.descriptions["evt_picked"].endswith("(gap_1)")
 
 
+def test_a_notice_the_outbound_check_refuses_is_told_apart_and_logged_by_id(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """Everything in the notice is stored by Autune, so a refusal is a finding
+    about the store, not Slack being down (#872 review): not ``failed``, an
+    error with ids only, and the calendar keeps the line it took."""
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    slack.connect(fail_with=PrivacyViolationError("unmasked 010-1234-5678"))
+
+    with capture_logs() as logs:
+        response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["calendar"] == "added"
+    assert response.json()["slack"] == "refused"
+    assert google.descriptions["evt_picked"].endswith("(gap_1)")
+    assert recorded(session) == {("gap_1", MEMBER, "evt_picked")}
+    (refused,) = [e for e in logs if e["event"] == "gap_slack_refused"]
+    assert refused["log_level"] == "error"
+    assert refused["meeting_id"] == MEETING
+    assert refused["gap_ids"] == "gap_1"
+    assert "010-1234-5678" not in json.dumps(logs, ensure_ascii=False, default=str)
+    assert not [e for e in logs if e["event"] == "gap_slack_failed"]
+
+
 # --- "담당자 지정해 질문" (mkkim68 on #824) ---------------------------------------
 
 
@@ -784,6 +810,23 @@ def test_a_title_cannot_mention_the_whole_channel(
     card = slack.card()
     assert "<!channel>" not in card
     assert "&lt;!channel&gt;" in card
+
+
+def test_an_ask_the_outbound_check_refuses_is_not_a_failure(
+    client: TestClient, session: Session, slack: TeamSlack, teammate: str
+) -> None:
+    gap(session, "gap_1")
+    channel = slack.connect(fail_with=PrivacyViolationError("unmasked 010-1234-5678"))
+
+    with capture_logs() as logs:
+        response = client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    assert response.json()["slack"] == "refused"
+    assert channel.posted == []
+    (refused,) = [e for e in logs if e["event"] == "gap_slack_refused"]
+    assert refused["log_level"] == "error"
+    assert (refused["meeting_id"], refused["gap_id"]) == (MEETING, "gap_1")
+    assert "010-1234-5678" not in json.dumps(logs, ensure_ascii=False, default=str)
 
 
 def test_asking_without_team_slack_says_so(

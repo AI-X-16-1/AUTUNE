@@ -24,6 +24,7 @@ export const AGENDA_SLACK_NOTICE: Record<SlackOutcome, string | null> = {
   posted: "팀 Slack 채널에 공지했습니다.",
   no_slack: "팀 Slack 채널이 연결되어 있지 않아 공지하지 못했습니다.",
   failed: "팀 Slack 채널에 공지하지 못했습니다.",
+  refused: "개인정보로 보이는 내용이 있어 팀 Slack 채널에 공지하지 않았습니다.",
   not_tried: null,
 };
 
@@ -41,6 +42,7 @@ export const ASK_NOTICE: Record<SlackOutcome, string> = {
   posted: "팀 Slack 채널에 담당자를 멘션해 질문을 올렸습니다.",
   no_slack: "팀 Slack 채널이 연결되어 있지 않아 질문을 보내지 못했습니다.",
   failed: "팀 Slack 채널에 질문을 올리지 못했습니다. 잠시 후 다시 시도해 주세요.",
+  refused: "개인정보로 보이는 내용이 있어 팀 Slack 채널에 질문을 올리지 않았습니다.",
   not_tried: "질문을 보내지 않았습니다.",
 };
 
