@@ -95,11 +95,15 @@
  *   digest and the morning DM; a confirmation DM's quotation is rewritten when
  *   the line it quotes is corrected (#586). Privacy 제4조 ⑤, terms 제13조 ③.
  *   D's Slack messages are not worded there: their owner has to say.
- * - D keeps, with each version of a decision, the team members who were not at
- *   the meeting where it changed (`ctx_decision_versions`, deleted with that
- *   meeting), sends each of them a DM when it changes, and puts only their
- *   number in the channel's notice (mminjae97, review of #689): 제2조, 제3조
- *   and the Slack row. D's judge is sent a pair of topic excerpts and a pair
+ * - D keeps, with each version of a decision, the team members who spoke in
+ *   the decision's earlier meetings and did not speak in the one where it
+ *   changed (`ctx_decision_versions`, deleted with that meeting), sends each
+ *   of them a DM when it changes, and puts only their number in the channel's
+ *   notice (mminjae97, review of #689): 제2조, 제3조 and the Slack row. It is
+ *   a list of speakers, not a roll call -- somebody who was there and said
+ *   nothing is on it (PARK, same review; `context/service.py` `_absent_for`)
+ *   -- so the page says "did not speak" and never "absent", whatever the DM's
+ *   own text says. D's judge is sent a pair of topic excerpts and a pair
  *   of decision statements, and the assistant's model also writes Research's
  *   document after a meeting (제6조 ①; mminjae97, mkkim68).
  * - the application stores no IP address. What a server's own access log
@@ -255,7 +259,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "분석 결과",
-            "액션 아이템(담당자 및 기한 포함), 결정 사항, 논의되지 않은 항목, 회의에서 추출한 주제의 명칭(발화에서 추출하므로 성명이 포함될 수 있음), 참석자별 주제 발언 여부, 회의 간 연결 정보, 결정이 바뀐 회의에 참석하지 않은 팀 구성원(결정의 이력에 기록되며, 해당 회의가 삭제되면 함께 삭제됩니다), 팀 단위 지표",
+            "액션 아이템(담당자 및 기한 포함), 결정 사항, 논의되지 않은 항목, 회의에서 추출한 주제의 명칭(발화에서 추출하므로 성명이 포함될 수 있음), 참석자별 주제 발언 여부, 회의 간 연결 정보, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 팀 구성원(회의에 참석하였더라도 발언하지 않은 경우를 포함하며, 결정의 이력에 기록되고 결정이 바뀐 회의가 삭제되면 함께 삭제됩니다), 팀 단위 지표",
             "서비스 이용 과정에서 생성",
           ],
           ["동의 확인 기록", "회의별 동의 확인자, 확인 일시", "이용자의 입력"],
@@ -329,7 +333,7 @@ const PRIVACY: LegalDocument = {
           ],
           ["회의별 음성 특징정보", "해당 회의의 보유 기간과 같습니다."],
           [
-            "결정의 이력에 기록된, 결정이 바뀐 회의에 참석하지 않은 팀 구성원",
+            "결정의 이력에 기록된, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 팀 구성원(회의에 참석하였더라도 발언하지 않은 경우를 포함합니다)",
             "결정이 바뀐 해당 회의의 보유 기간과 같습니다. 그 회의가 삭제되면 함께 삭제됩니다.",
           ],
           [
@@ -417,7 +421,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정이 바뀔 때 회의에 불참한 본인에게 보내는 알림(결정 문장의 일부와 주제의 명칭). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에 불참한 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",
