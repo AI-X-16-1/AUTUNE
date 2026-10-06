@@ -217,7 +217,12 @@ agreement, and sync the result to Notion and Jira.
    calendar. Every ten minutes `pull_calendar_changes` reads back Autune's own
    tagged events on each connected calendar, and a date the person moved there
    becomes the due date through the board's edit path (`ext_calendar_events`,
-   `ext_calendar_polls`).
+   `ext_calendar_polls`). An event on the calendar of somebody who has since
+   left the meeting's team is taken off by a sweep every ten minutes
+   (`take_back_departed_calendar_events`): leaving a team starts no sync of
+   its own, and the event's title is the item's text. The sweep deletes and
+   never writes an event -- an item that has a new assignee gets theirs from
+   its own sync.
    A confirmed item is also one issue in the team's Jira project (#82, #458),
    and every ten minutes `pull_jira_changes` reads back the status people moved
    their issues to: an issue dragged to Done makes its item done, through the
