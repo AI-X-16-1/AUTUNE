@@ -15,11 +15,13 @@ from autune_agent.main import SubagentState, Toolbox
 from autune_agent.main.subagents import CompiledSubagent
 from autune_agent.results import SubagentResult, ToolResult
 
+from . import chat
 from .template import *  # noqa: F403 - the names tests and __init__ import from here
 from .template import (
     CHANGED_TRIGGER,
     MEETING_ID,
     POSTED,
+    TRIGGERS,
     already_posted,
     compose_report,
     failed,
@@ -44,7 +46,13 @@ def template_run(toolbox: Toolbox, request: str) -> SubagentState:
 
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def report(state: SubagentState) -> SubagentState:
-        return template_run(toolbox, state.get("request", ""))
+        request = state.get("request", "")
+        if request in TRIGGERS:
+            return template_run(toolbox, request)
+        model = chat.MODEL_FACTORY()
+        if model is None:
+            return template_run(toolbox, request)
+        return chat.chat_run(toolbox, request, model)
 
     # One node: the steps are a straight line with nothing to branch on. Split
     # when an LLM summary step (option C of the design) is added.
