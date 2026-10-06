@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
 from autune_core import Base, Meeting, PrivacyViolationError, TeamMember, User, Utterance
 from autune_core.settings import Settings as CoreSettings
@@ -686,6 +687,78 @@ def test_without_the_google_client_nothing_is_taken_back_or_forgotten(
 
     assert tasks.take_back_departed_calendar_events() == 0
     assert wired.get(ExtCalendarEvent, mine.id) is not None, "the event's id is still known"
+
+
+def test_the_sweep_only_deletes_and_writes_no_event_for_the_next_assignee(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The item went to a member, and the sync that edit starts never ran, so
+    the row still names the person who then left. The sweep takes their event
+    off and puts nothing on the member's calendar: that is the item's own
+    sync's to write, and it does, when it next runs."""
+    calendars = _own_calendars(monkeypatch, ME, YOU)
+    mine = item(wired)
+    tasks.sync_action_item_calendar(mine.id)
+    mine.assignee_id = YOU
+    wired.commit()
+    _leave(wired, ME)
+
+    assert tasks.take_back_departed_calendar_events() == 1
+
+    assert calendars[ME].events == {}
+    assert calendars[YOU].events == {}, "nothing appears on a member's calendar from the sweep"
+    assert wired.get(ExtCalendarEvent, mine.id) is None
+
+    tasks.sync_action_item_calendar(mine.id)
+    assert len(calendars[YOU].events) == 1
+
+
+def test_somebody_who_came_back_before_their_turn_keeps_the_event(session: Session) -> None:
+    """The membership is read again under the row's lock, not taken from the list."""
+    calendars = Calendars(ME)
+    mine = item(session)
+    sync(session, calendars, mine)
+
+    took = calendar_sync.take_back_from_departed_owner(session, calendars, action_item_id=mine.id)
+
+    assert took is False
+    assert len(calendars.events(ME)) == 1
+    assert session.get(ExtCalendarEvent, mine.id) is not None
+
+
+class _DeleteBlocked(ClosableCalendar):
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        raise PrivacyViolationError("refused by the outbound check")
+
+
+def test_a_privacy_block_is_logged_as_a_block_and_the_next_item_is_still_taken_back(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A delete sends no text, so the guard has nothing to refuse here -- and
+    if it ever does, that is not a flaky calendar. Its row stays and is found
+    again; the item after it is not held up."""
+    calendars = _own_calendars(monkeypatch, ME, YOU)
+    mine, yours = item(wired), item(wired, assignee_id=YOU, description="배포 점검")
+    tasks.sync_action_item_calendar(mine.id)
+    tasks.sync_action_item_calendar(yours.id)
+    first, second = sorted([mine.id, yours.id])
+    owner_of = {mine.id: ME, yours.id: YOU}
+    blocked = _DeleteBlocked()
+    blocked.events = calendars[owner_of[first]].events
+    calendars[owner_of[first]] = blocked
+    _leave(wired, ME)
+    _leave(wired, YOU)
+
+    with capture_logs() as logs:
+        assert tasks.take_back_departed_calendar_events() == 1
+
+    events = [(entry["event"], entry.get("action_item_id")) for entry in logs]
+    assert ("extraction_calendar_take_back_blocked_by_privacy_guard", first) in events
+    assert not any(name == "extraction_calendar_take_back_failed" for name, _ in events)
+    assert "refused by the outbound check" not in str(logs), "ids only"
+    assert wired.get(ExtCalendarEvent, first) is not None, "found again on the next run"
+    assert wired.get(ExtCalendarEvent, second) is None
+    assert calendars[owner_of[second]].events == {}
 
 
 def test_the_take_back_is_a_periodic_task() -> None:

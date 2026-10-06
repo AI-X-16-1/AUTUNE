@@ -2571,20 +2571,30 @@ def drain_calendar_cleanup() -> int:
 @periodic(timedelta(minutes=10))
 def take_back_departed_calendar_events() -> int:
     """Take a due-date event off the calendar of somebody who has left the
-    meeting's team (#552). Returns how many items were looked at.
+    meeting's team (#552). Returns how many events were taken off.
 
     Leaving a team is module A's act and publishes nothing, so the event a
     person was given while they were on the team would stay on their own
     calendar -- the item's text in its title -- until somebody happened to edit
     the item. Every ten minutes this finds those events
-    (``calendar_sync.events_of_departed_owners``) and runs each item's own
-    calendar sync, which is what removes one: deleted with the person's grant,
-    or queued for ``drain_calendar_cleanup`` when the grant cannot be used,
-    and the row dropped either way -- so an item is looked at once.
+    (``calendar_sync.events_of_departed_owners``) and takes each one off
+    (``take_back_from_departed_owner``): deleted with the person's grant, or
+    queued for ``drain_calendar_cleanup`` when the grant cannot be used, and
+    the row dropped either way -- so an item is looked at once.
 
-    A run with nothing to take back is one query. One item's failure is
-    logged by its id and the error's type and does not stop the rest; it is
-    found again next time.
+    **It deletes and never writes.** This is not the item's sync: an item
+    reassigned to a member in the meantime gets no event from here, and no
+    text of any item is sent -- a delete has no body. So the outbound check
+    has nothing to refuse on this path. It is still caught by name, before the
+    broad clause, and logged as a block and not as a failure
+    (``pull_calendar_changes`` does the same): a refusal read as a flaky
+    calendar is how one gets ignored. Such an item's row stays and is found
+    again on every run -- loudly, which is right for something that should not
+    be possible.
+
+    A run with nothing to take back is one query. Each item has its own
+    transaction; one item's failure is logged by its id and the error's type
+    and does not stop the rest, and it is found again next time.
 
     Nothing at all on a deployment without the Google client, for the reason
     ``drain_calendar_cleanup`` gives: no grant could be used, every person
@@ -2595,9 +2605,19 @@ def take_back_departed_calendar_events() -> int:
         return 0
     with session_scope() as session:
         owed = calendar_sync.events_of_departed_owners(session)
+    taken = 0
     for action_item_id in owed:
         try:
-            sync_action_item_calendar(action_item_id)
+            with session_scope() as session, _calendars(session) as calendar_for:
+                taken += calendar_sync.take_back_from_departed_owner(
+                    session, calendar_for, action_item_id=action_item_id
+                )
+        except PrivacyViolationError:
+            # Blocked, not failed. Ids only: what was refused is not logged.
+            log.warning(
+                "extraction_calendar_take_back_blocked_by_privacy_guard",
+                action_item_id=action_item_id,
+            )
         except Exception as exc:  # noqa: BLE001 -- one item must not stop the others
             log.warning(
                 "extraction_calendar_take_back_failed",
@@ -2605,8 +2625,8 @@ def take_back_departed_calendar_events() -> int:
                 error=type(exc).__name__,
             )
     if owed:
-        log.info("extraction_calendar_departed_events_taken_back", items=len(owed))
-    return len(owed)
+        log.info("extraction_calendar_departed_events_taken_back", listed=len(owed), taken=taken)
+    return taken
 
 
 @shared_task(name="autune.extraction.periodic.drain_external_cleanup")

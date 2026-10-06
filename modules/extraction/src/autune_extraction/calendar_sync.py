@@ -31,8 +31,10 @@ Rules, each tested:
 - Reassigning takes the event off the old calendar at the item's next sync,
   which the reassigning edit itself starts. An assignee leaving the team
   starts no sync -- nothing tells this module -- so a sweep looks for their
-  events every ten minutes and runs it (``events_of_departed_owners``,
-  ``tasks.take_back_departed_calendar_events``).
+  events every ten minutes and takes them off (``events_of_departed_owners``,
+  ``take_back_from_departed_owner``,
+  ``tasks.take_back_departed_calendar_events``). The sweep deletes and never
+  writes an event.
   That cleanup is best effort: a previous assignee whose grant is gone (revoked,
   expired, or they left and never reconnect) must not keep the item off its new
   assignee's calendar (PARKJAEKYUNG0525, mminjae97, review of #441).
@@ -133,9 +135,9 @@ def events_of_departed_owners(session: Session) -> list[str]:
     ``sync_due_date_to_calendar`` already takes such an event off -- at the
     item's next sync, which may never come: nothing tells this module that a
     person left a team (#552), and an item nobody edits is not synced again.
-    This is what a sweep reads to run that sync itself. The title of the event
-    is the item's description, on the calendar of a person who can no longer
-    open the item.
+    This is what a sweep reads, to take each one off itself
+    (``take_back_from_departed_owner``). The title of the event is the item's
+    description, on the calendar of a person who can no longer open the item.
 
     The test is the one ``_calendar_owner`` makes, read the other way: a
     membership of **the meeting's own team**. Somebody on another team of the
@@ -177,6 +179,54 @@ def _queue_for_cleanup(session: Session, row: ExtCalendarEvent) -> None:
     )
 
 
+def _take_off(session: Session, calendar_for: CalendarFor, row: ExtCalendarEvent) -> None:
+    """Take ``row``'s event off the calendar it is on, if that calendar can be
+    reached now -- and queue it for another try if not (#672). Either way the
+    row goes and the item moves on. A delete only: nothing of the item is sent."""
+    action_item_id = row.action_item_id
+    try:
+        previous = calendar_for(row.user_id)
+        if previous is not None and row.event_id:
+            client, calendar_id = previous
+            client.delete_event(calendar_id, row.event_id)
+    except IntegrationError:
+        log.warning("extraction_calendar_previous_unreachable", action_item_id=action_item_id)
+        _queue_for_cleanup(session, row)
+    session.delete(row)
+    session.flush()
+    log.info("extraction_calendar_removed", action_item_id=action_item_id)
+
+
+def take_back_from_departed_owner(
+    session: Session, calendar_for: CalendarFor, *, action_item_id: str
+) -> bool:
+    """Take the item's event off the calendar of an owner who is no longer on
+    the meeting's team. Whether one was taken.
+
+    **This only ever deletes.** It is not the item's sync: an item that was
+    given to somebody else in the meantime gets no event on their calendar
+    from here -- that is its own sync's to write, when the item is next edited
+    or synced, as it would have been had nobody left. A sweep that also wrote
+    would put an event on a member's calendar minutes after somebody else left
+    the team, with nothing the member did to cause it.
+
+    The membership is read again under the row's lock: a person who came back
+    between the sweep's list and this call keeps their event.
+    """
+    row = session.get(ExtCalendarEvent, action_item_id, with_for_update=True)
+    if row is None:
+        return False
+    still_on_the_team = session.scalar(
+        select(TeamMember.id)
+        .join(Meeting, Meeting.team_id == TeamMember.team_id)
+        .where(Meeting.id == row.meeting_id, TeamMember.user_id == row.user_id)
+    )
+    if still_on_the_team is not None:
+        return False
+    _take_off(session, calendar_for, row)
+    return True
+
+
 def sync_due_date_to_calendar(
     session: Session, calendar_for: CalendarFor, *, action_item_id: str
 ) -> ExtCalendarEvent | None:
@@ -193,20 +243,8 @@ def sync_due_date_to_calendar(
     owner = _calendar_owner(session, item)
 
     if row is not None and row.user_id != owner:
-        # Reassigned, undated, moved back, or its assignee left: off the old
-        # calendar, if it can be reached now -- and queued for another try if
-        # not (#672). Either way the row goes and the item moves on.
-        try:
-            previous = calendar_for(row.user_id)
-            if previous is not None and row.event_id:
-                client, calendar_id = previous
-                client.delete_event(calendar_id, row.event_id)
-        except IntegrationError:
-            log.warning("extraction_calendar_previous_unreachable", action_item_id=action_item_id)
-            _queue_for_cleanup(session, row)
-        session.delete(row)
-        session.flush()
-        log.info("extraction_calendar_removed", action_item_id=action_item_id)
+        # Reassigned, undated, moved back, or its assignee left.
+        _take_off(session, calendar_for, row)
         row = None
 
     if owner is None or item is None or item.due_date is None:
