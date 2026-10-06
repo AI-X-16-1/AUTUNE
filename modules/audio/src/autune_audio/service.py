@@ -272,6 +272,46 @@ def pin_team(session: Session, *, team_id: str, member: User, now: datetime | No
     log.info("team_pinned", team_id=team_id, user_id=member.id)
 
 
+class LastTeamMemberError(ConflictError):
+    """The only member of a team asked to leave it. Its own code, so the
+    screen can say why instead of "try again"."""
+
+    code = "last_team_member"
+
+
+def leave_team(session: Session, *, team_id: str, member: User) -> None:
+    """Take ``member`` off ``team_id``, by their own act (#552).
+
+    Only a person's own membership: there is no argument for anybody else's,
+    so nobody is removed from a team by somebody else here. The row is what
+    every module checks before it lets a person read the team's data, so that
+    stops with this commit; their pin goes with the row.
+
+    **What they said and what they hold stays.** Their utterances, the items
+    assigned to them and the decisions they took part in are the team's
+    record (ADR 0007), exactly as when an account is on a team it no longer
+    reads. Taking their own words out is a different act with its own route
+    (``account.delete_my_speech``), and still open to them afterwards.
+
+    **The last member cannot leave.** A team with nobody on it has meetings
+    nobody can read or delete and nothing that would ever remove them.
+    Deleting a team is a decision of its own and is not made by this button.
+    Every membership of the team is locked first, so the last two members
+    leaving at once are counted one after the other and cannot both go.
+    """
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.team_id == team_id).with_for_update()
+        )
+    )
+    if len(rows) <= 1:
+        raise LastTeamMemberError("the last member of a team cannot leave it")
+    session.delete(next(row for row in rows if row.user_id == member.id))
+    session.flush()
+    log.info("team_left", team_id=team_id, user_id=member.id)
+
+
 def unpin_team(session: Session, *, team_id: str, member: User) -> None:
     """Take the pin off. The team goes back to where the order of joining puts
     it. Unpinning a team that is not pinned is not an error."""

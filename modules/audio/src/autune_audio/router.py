@@ -48,6 +48,7 @@ from .schemas import (
     MeetingState,
     MeetingSummary,
     MyData,
+    PendingInvitation,
     PiiReport,
     PiiReported,
     SpeakerAssignment,
@@ -198,6 +199,48 @@ def invite_to_team(
     # The token is a credential and this is its only appearance.
     response.headers["Cache-Control"] = "no-store"
     return InvitationIssued(token=token, expires_at=expires_at, emailed=emailed)
+
+
+def _pending(session: Session, team_id: str, user: User) -> list[PendingInvitation]:
+    return [
+        PendingInvitation(
+            id=row.id, email=row.email, expires_at=row.expires_at, invited_by_name=name
+        )
+        for row, name in invitations.pending(session, team_id=team_id, reader=user)
+    ]
+
+
+@router.get("/teams/{team_id}/invitations", response_model=list[PendingInvitation])
+def list_pending_invitations(
+    team_id: str, user: CurrentUser, session: SessionDep, response: Response
+) -> list[PendingInvitation]:
+    """The team's invitations nobody has accepted yet (#552). Members of the
+    team only. Addresses of people who are not on the team: not to be kept by
+    a cache on the way."""
+    response.headers["Cache-Control"] = "no-store"
+    return _pending(session, team_id, user)
+
+
+@router.delete(
+    "/teams/{team_id}/invitations/{invitation_id}", response_model=list[PendingInvitation]
+)
+def cancel_invitation(
+    team_id: str, invitation_id: int, user: CurrentUser, session: SessionDep, response: Response
+) -> list[PendingInvitation]:
+    """Take a pending invitation back, and answer with the list as it now
+    stands. One that is already gone is not an error (``invitations.cancel``)."""
+    invitations.cancel(session, team_id=team_id, invitation_id=invitation_id, by=user)
+    response.headers["Cache-Control"] = "no-store"
+    return _pending(session, team_id, user)
+
+
+@router.delete("/teams/{team_id}/members/me", response_model=list[TeamSummary])
+def leave_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """Leave a team, by the caller's own act, and answer with the teams they
+    are still on. The last member is refused with 409 ``last_team_member``.
+    See ``service.leave_team`` for what stays."""
+    service.leave_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
 
 
 @router.post("/invitations/accept", response_model=TeamSummary)

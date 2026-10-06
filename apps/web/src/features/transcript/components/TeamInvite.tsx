@@ -74,9 +74,12 @@ async function toClipboard(text: string): Promise<boolean> {
 export function TeamInvite({
   teamId,
   canConnectMail = false,
+  onInvited,
 }: {
   teamId: string;
   canConnectMail?: boolean;
+  /** Called after an invitation was made, so a list of pending ones can read again. */
+  onInvited?: () => void;
 }) {
   const [gmail, setGmail] = useState<Gmail | null>(null);
   const [mailNote, setMailNote] = useState<string | null>(null);
@@ -160,6 +163,7 @@ export function TeamInvite({
       // A new link for an address replaces its old one, here as on the server.
       setMade((before) => [entry, ...before.filter((m) => m.email !== entry.email)]);
       setCopied(wrote === null ? null : { email: entry.email, ok: wrote });
+      onInvited?.();
       return true;
     } catch {
       setError("초대하지 못했습니다. 잠시 후 다시 시도해 주세요.");

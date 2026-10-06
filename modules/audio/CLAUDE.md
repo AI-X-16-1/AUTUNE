@@ -43,7 +43,9 @@ Contract: `/docs/architecture/contracts.md`.
   not a member. `invitations.accept` is the only place one becomes a
   `team_members` row. The address is a third party's; what removes it is
   listed in `invitations.py`. The link may also be mailed from the inviter's
-  own Gmail (`invitation_mail.py`), inside the request that made it.
+  own Gmail (`invitation_mail.py`), inside the request that made it. The
+  team's members can list what is pending and cancel it; a member leaves a
+  team only by their own act (`service.leave_team`), and the last one cannot.
 - `aud_speaker_names` — a name typed for a speaker with no account on the
   team, for that one meeting. No user id and no voice; it never reaches the
   published transcript. Cascades with the meeting.

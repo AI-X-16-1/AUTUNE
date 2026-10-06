@@ -114,6 +114,9 @@ Plus the shared entities in `packages/core`, which A writes.
 | GET / PATCH | `/teams/{team_id}/privacy` | S29 retention window, 30/90/180/365 days. Any member may change it (no admin role exists); applies to meetings held afterwards |
 | GET | `/teams/{team_id}/members` | Id and display name of each team member, for the confirmation picker |
 | POST | `/teams/{team_id}/invitations` | A member invites an address (#552). Answers with the link's token once and its expiry — the same shape whatever the address; nobody is looked up and nobody is added. With `send_email`, the link is also mailed from the member's own Gmail (`invitation_mail`), and `emailed` says whether Gmail took it |
+| GET | `/teams/{team_id}/invitations` | The team's invitations nobody has accepted yet, for its members: the address, when the link lapses, who invited. Never the token or its hash; a lapsed one is not listed. `Cache-Control: no-store` |
+| DELETE | `/teams/{team_id}/invitations/{invitation_id}` | A member takes a pending invitation back; its link stops working. Answers with the list as it now stands. One that is already gone, or is another team's, is not an error and changes nothing |
+| DELETE | `/teams/{team_id}/members/me` | The caller leaves the team, by their own act; nobody removes anybody else. Answers with the teams they are still on. The last member is refused, 409 `last_team_member` -- a team with nobody on it could be neither read nor deleted. What they said and the items they hold stay with the team (ADR 0007); reading stops at once, because every module checks `team_members` at the request |
 | POST | `/invitations/accept` | The signed-in owner of the invited address joins the team. Every refusal — unknown, used, expired, another account — is the same 404 |
 
 ### Live transcription runs in the API process
