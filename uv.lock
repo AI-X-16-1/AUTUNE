@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -611,6 +611,8 @@ dependencies = [
     { name = "autune-integrations" },
     { name = "celery" },
     { name = "fastapi" },
+    { name = "kiwipiepy" },
+    { name = "rank-bm25" },
 ]
 
 [package.optional-dependencies]
@@ -630,6 +632,8 @@ requires-dist = [
     { name = "celery", specifier = ">=5.4" },
     { name = "datasets", marker = "extra == 'local-models'", specifier = ">=2.14" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "kiwipiepy", specifier = ">=0.18" },
+    { name = "rank-bm25", specifier = ">=0.2" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "setfit", marker = "extra == 'local-models'", specifier = ">=1.1" },
     { name = "xgboost", marker = "sys_platform == 'darwin' and extra == 'local-models'", specifier = ">=2.1" },

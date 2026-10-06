@@ -362,6 +362,41 @@ admin override and no team-level variant of this endpoint.
 | Label efficiency | Active learning |
 | Report generation | LLM, from computed numbers only |
 
+## Metric glossary and explain_metric
+
+`explain_metric` answers "what does this number mean" from a glossary of 37
+passages (`autune_intelligence/glossary/`, six files) and retrieves them with
+BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
+`python -m autune_intelligence.retrieval_eval` over `glossary/questions.json`:
+recall@1, recall@3 and MRR.
+
+Measured 2026-10-06 on 37 questions (13 `definition`, 11 `paraphrase`, 13
+`why`; spread over all six files), dense model
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (the gap
+classifier's backbone):
+
+| | recall@1 | recall@3 | MRR |
+| --- | --- | --- | --- |
+| BM25 | 0.62 | 0.86 | 0.72 |
+| dense | 0.62 | 0.81 | 0.74 |
+| hybrid (RRF) | 0.70 | 0.86 | 0.79 |
+
+BM25 misses five questions at recall@3, four of them paraphrases whose words do
+not appear in the passage. "완료율은 어떻게 계산돼?" ranks the right passage
+third, not first.
+
+`retriever_impl` stays `bm25`. `explain_metric` returns three passages, so
+recall@3 is the number that decides, and hybrid only ties BM25 there; its gain
+is in ordering (recall@1, MRR). Hybrid would also need the `local-models` extra
+and a 0.5 GB model wherever the API and worker run, and a deployment without
+them would answer no passage at all. `nlpai-lab/KURE-v1` was not run (not
+cached). To measure again:
+
+```bash
+uv run --package autune-intelligence --extra local-models python -m autune_intelligence.retrieval_eval
+# optionally: --dense-model nlpai-lab/KURE-v1
+```
+
 ## Metric
 
 Prediction calibration, reported by the owner. Dashboard metrics are descriptive
