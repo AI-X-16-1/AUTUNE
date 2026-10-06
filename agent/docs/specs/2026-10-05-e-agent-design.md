@@ -1,7 +1,8 @@
 # E agent — the Report subagent answers for all of module E
 
 **Owner:** 이승환 (@lsh2217) · **Date:** 2026-10-05 · **Status:** Design, agreed
-with the owner in chat and revised after a first review (same day); not built
+with the owner in chat and revised after a first review (same day); built
+2026-10-06 (see "Changes during implementation" at the end)
 
 ## 1. What it is for
 
@@ -108,13 +109,15 @@ name (`subagents.py`); anything else is chat.
 
 - **Model:** `GeminiTools` from `main/gemini.py` (`gemini_tools_from_settings`),
   so every request goes through `check_outbound`. No model configured: the agent
-  answers that chat is unavailable and links the dashboard.
+  answers that chat is unavailable and links the dashboard. *(Changed: it runs
+  the template path instead. See "Changes during implementation", 1.)*
 - **Budget:** the same discipline as the ask loop (`main/ask.py`):
   - one-sentence tool declarations
   - compacted tool results
   - at most three rounds
   - a stop before a request passes the size limit (`SIZE_LIMIT`, 3800 of the
-    4000 characters `check_outbound` allows)
+    4000 characters `check_outbound` allows). The request is fitted by `_fit`;
+    see "Changes during implementation", 5 and 6.
 
   The loop is E's own rather than `ask.ask`, because `ask` is read-only and
   `main/`'s.
@@ -129,7 +132,8 @@ name (`subagents.py`); anything else is chat.
   for an approver (`store.run_and_record`, `pending.queue_l2`), as today.
 - **Re-draft:**
   - The model calls `redraft(meeting_id)`, never `draft_meeting_report` with a
-    body. `redraft` reads `meeting_reports` first.
+    body. `redraft` reads `meeting_reports` first. *(Changed: it reads
+    `meeting_report_body`. See "Changes during implementation", 2.)*
   - **Posted:** no proposal. The answer points to a correction on the dashboard.
   - **Edited by a member:** no proposal. The answer names the editor and links
     the dashboard, so a person's text is not overwritten from chat.
@@ -192,7 +196,7 @@ the instructions: today's date in KST (`ACTION_PROGRESS_TODAY_ZONE`).
 
 | Tool | Parameters | Returns per item | Budget |
 | --- | --- | --- | --- |
-| `meeting_reports` | `since`, `until` (KST dates, optional), `title_contains` (optional), `limit` ≤ 5 | meeting id, title, date, status (draft / waiting / posted), editor, correction state | 5 items, 120 chars each; no body |
+| `meeting_reports` | `since`, `until` (KST dates, optional), `title_contains` (optional), `limit` ≤ 5 | meeting id, title, date, status (draft / waiting / posted), editor, correction state | 5 items, 120 chars each; no body. *(Changed: status is draft / posted, and the correction state is the dashboard's; see "Changes during implementation", 3.)* |
 | `meeting_report_body` (new) | `meeting_id` | the stored body | one body, ≤ 1500 chars |
 | `weekly_reports` | `on` (a KST date inside the week, optional; default latest) | period, whether it went out, body | one report, ≤ 1200 chars |
 | `explain_metric` | `question` | passage title and text | 3 passages, ≤ 400 chars each |
@@ -237,7 +241,7 @@ About 20 to 40 passages, one per `##` section of Markdown files under
 
 Rules for the corpus:
 
-- **Numbers come from code.** A passage writes `{weight.decision_density}`,
+- **Numbers come from code.** (Placeholders are filled by `glossary.fill()`; see "Changes during implementation", 8.) A passage writes `{weight.decision_density}`,
   not "30%". The loader fills it from `WEIGHTS`, `GRADE_CUTOFFS`,
   `ACTION_COMPLETION_WINDOW`, `ACTION_PROGRESS_MIN_MEETINGS`, and similar
   constants, so the glossary cannot drift from the code.
@@ -300,6 +304,9 @@ questions, each paired with its expected passage. The set mixes definitions,
 paraphrases and "why" questions. The command prints recall@1, recall@3 and MRR
 for BM25 only, dense only and hybrid. The results decide the default
 implementation and are recorded in `docs/modules/intelligence.md`.
+*(Changed: the command is `python -m autune_intelligence.retrieval_eval`, and
+only BM25 has been measured so far; see "Changes during implementation", 4
+and 7.)*
 
 ## 6. Testing
 
@@ -348,9 +355,10 @@ implementation and are recorded in `docs/modules/intelligence.md`.
    meeting-scope check before a post is proposed. Lifting them once #862
    lands is a few lines and their tests.
 1. **E's tools and the glossary** (module E, plus `agent-layer.md` section 4),
-   with `expected_draft_id`. #821, which this needed, is merged.
+   with `expected_draft_id`. #821, which this needed, is merged. *(Built as
+   the plan's Tasks 1 to 7; see "Changes during implementation", 9.)*
 2. **The chat path** (`subagents/report/`, plus `agent-layer.md` section 3.1).
-   It uses the tools from step 1.
+   It uses the tools from step 1. *(Plan Tasks 8 and 9.)*
 3. **The retrieval evaluation**, with its numbers in the docs.
 
 ## 8. Later, and related gaps
@@ -382,3 +390,46 @@ a rejection, the card goes on saying "승인 대기" for an edited draft
 `draft_meeting_report` replaces any unposted draft, a person's edit included.
 Chat is guarded here (section 4). Whether a late `intelligence.completed`
 should also keep a member's edit is a separate decision for the owner.
+
+## Changes during implementation (2026-10-06)
+
+Where the build departed from the text above, or fixed something it left open.
+The sections above are left as designed; each affected one points here.
+
+1. **No model configured (section 4, "The chat loop").** The agent runs
+   today's template path for the request instead of saying chat is
+   unavailable. "리포트 써줘" keeps working where Gemini is off.
+2. **Re-draft (section 4).** `redraft` reads `meeting_report_body`, not
+   `meeting_reports`. The same read without a meeting is the meeting-scope
+   probe (`NO_MEETING`).
+3. **`meeting_reports` (section 4, "Tool contracts").** It gives `draft` /
+   `posted`, not "waiting": approvals live in `main/`'s table, which E cannot
+   read. Its correction state is the dashboard's: `pending` / `sending` /
+   `sent` / `failed`.
+4. **Evaluation (section 5).** The command is
+   `python -m autune_intelligence.retrieval_eval`.
+5. **Chat: one action each per run (section 4, an addition).** Within one
+   run, `redraft` and `request_post` each act once. A second call answers
+   "이미 요청했습니다." The run keeps at most one post proposal, and
+   `redraft`'s post replaces an earlier one. Two approval cards for one post
+   are noise, and one of them would point at a replaced draft.
+6. **Chat: fitting the request (section 4, "Budget").** Not a deviation:
+   `_fit` in `chat.py` implements the spec's rule. It drops bodies from older
+   turns first, then halves the longest body in the latest turn. The loop ends
+   only if the request still does not fit `SIZE_LIMIT`.
+7. **Evaluation results (section 5).** Only BM25 was measured, on 2026-10-06.
+   Dense and hybrid were not, because the shared environment lacks the
+   `local-models` extra. `retriever_impl` stays `bm25` until they are
+   measured. The numbers are in `docs/modules/intelligence.md`, not copied
+   here.
+8. **Glossary placeholders (section 5).** They are written `{area.name}` and
+   filled by `glossary.fill()`, not `str.format`, because the dotted names
+   break `str.format`.
+9. **Delivery (section 7).** Steps 1 to 3 map to the plan's Tasks 1 to 7
+   (module E: the tools, the glossary, the retrieval evaluation) and Tasks 8
+   and 9 (the chat path).
+10. **Known v1 limit.** `redraft` of meeting X from the team view, or from
+    another meeting's view, proposes X's new draft but no post. A post card
+    the pipeline already queued for X then points at a replaced draft, and is
+    refused as "draft not current" if approved. This follows the rule that a
+    post is proposed only from a meeting-scoped run; #862 lifts it.
