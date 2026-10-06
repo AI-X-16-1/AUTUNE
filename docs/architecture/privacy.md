@@ -517,8 +517,9 @@ the feature needs.
     description and date, with no attendees and nothing from the transcript.
   - **Google Calendar, S20's 다음 회의 잡기 (module C, #824):** the presser's
     own calendar only, with their own grant (`user_integrations`). A line
-    carries a gap's title and suggested question -- both stored masked -- and
-    the gap's id; never an utterance, a score, or anything from the
+    carries a gap's title and suggested question -- both stored masked, or
+    for a question a member rewrote, pattern-checked (see the note on edited
+    questions below) -- and the gap's id; never an utterance, a score, or anything from the
     participation matrix (section 3). Settled with mkkim68 on #824:
     - *Nobody else's calendar.* S20's "담당자 지정해 질문" does not write to the
       teammate's calendar: one person's grant is for their own work only
@@ -579,7 +580,8 @@ the feature needs.
     "다음 회의 잡기" posts, once the calendar took them, the titles and
     questions of the gaps whose line is new on the event, the meeting's
     title and the presser's display name; pressing again posts nothing.
-    Titles and questions are stored masked, every value is escaped so it
+    Titles and C's own questions are stored masked, and a question a
+    member rewrote is pattern-checked (below); every value is escaped so it
     cannot become a mention or a link, and no utterance, score or
     participation figure is sent. Every value is one Autune stored, so a
     message the outbound check refuses is not sent and is logged as an
@@ -595,6 +597,20 @@ the feature needs.
     never whether a member linked Slack or a calendar. A team with no channel connected gets no message
     and the screen says so. A message already posted stays in the channel
     when the meeting is deleted.
+  - **A 해소용 질문 a member rewrote (module C, #824):** S20's "편집" stores
+    text a person typed, and it goes where C's own question goes -- the
+    team's Slack channel, the next meeting's event, E's report. It is
+    checked before it is stored, not masked: `find_unmasked` refuses text
+    holding a pattern it knows (a phone number, an address, an id number)
+    with a 422 that names no value, and nothing changes. The check is
+    pattern-based, so a name a person writes, or someone's words a person
+    copies in, passes it -- the same standing as a meeting's title (#889)
+    and B's hand-edited items, and reaching only the team's own channel,
+    events whose guests are all on the team, and E. Deleting speech resets
+    an edited question only when it names a topic label that is gone
+    (#587); words copied in by hand stay, as anything a person wrote does.
+    Whether hand-written text should follow another rule is open with
+    mkkim68 for B and C alike (#872 review).
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
