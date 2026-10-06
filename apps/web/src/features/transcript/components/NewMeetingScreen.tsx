@@ -13,6 +13,7 @@ import {
   uploadRecording,
 } from "../api";
 import { ACCEPTED_EXTENSIONS, acceptsRecording } from "../recordingFile";
+import { teamToOpen } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
 type Source = "live" | "file";
@@ -131,8 +132,9 @@ export function NewMeetingScreen({
       .then((list) => {
         if (!current) return;
         setTeams(list);
-        const first = list[0];
-        if (first) setTeamId(first.team_id);
+        // The team they were last looking at, when they chose one.
+        const open = teamToOpen(list);
+        if (open !== null) setTeamId(open);
       })
       .catch((e: unknown) => {
         if (current)
