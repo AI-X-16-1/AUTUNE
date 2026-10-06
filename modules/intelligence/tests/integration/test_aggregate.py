@@ -126,6 +126,44 @@ def test_partial_pass_still_scores_and_names_the_missing_source(
     assert db_session.get(IntelScore, meeting).grade == snapshot.quality_score.grade
 
 
+def test_a_meeting_c_could_not_read_scores_without_gap_burden(
+    db_session: Session, meeting: str
+) -> None:
+    """#248: empty gaps with ``measured: false`` are not a gap-free meeting.
+
+    The gap component is left out and the rest renormalised, so the score is the
+    same as with no GapReport at all -- and the meeting is not reported as
+    missing C either."""
+    # Unconfirmed items keep the other components below 1.0, so leaving the gap
+    # component out and scoring it 1.0 give different values.
+    extraction = ExtractionResult(
+        meeting_id=meeting,
+        decisions=[{"id": "dec_0", "statement": "s", "confidence": 0.9}],
+        action_items=[
+            {"id": "act_0", "description": "d", "status": "needs_confirmation", "confidence": 0.9}
+        ],
+    ).model_dump(mode="json")
+    _stage(db_session, meeting, "extraction", extraction)
+    _stage(db_session, meeting, "context", _context(meeting))
+    unmeasured = GapReport(meeting_id=meeting, measured=False).model_dump(mode="json")
+    _stage(db_session, meeting, "gap", unmeasured)
+
+    snapshot = service.aggregate_meeting(db_session, meeting)
+
+    assert snapshot is not None and snapshot.missing_sources == []
+    score = db_session.get(IntelScore, meeting)
+    assert score.gap_count is None
+    rest = {
+        "decision_density": score.decision_density,
+        "action_item_completion_rate": score.action_item_completion_rate,
+        "participation_balance": None,
+    }
+    unscored = service._quality_score({**rest, "gap_burden": None})
+    gap_free = service._quality_score({**rest, "gap_burden": 1.0})
+    assert snapshot.quality_score.value == unscored.value
+    assert unscored.value != gap_free.value
+
+
 def test_only_context_present_scores_neutral(db_session: Session, meeting: str) -> None:
     _stage(db_session, meeting, "context", _context(meeting))
     row = db_session.get(IntelCompletion, meeting)

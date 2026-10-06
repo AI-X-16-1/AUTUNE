@@ -21,9 +21,11 @@ from celery import shared_task
 from autune_contracts import (
     INTELLIGENCE_COMPLETED,
     INTELLIGENCE_MEETING_REPORT_CHANGED,
+    INTELLIGENCE_MEETING_REPORT_POSTED,
     ContextLinks,
     ExtractionResult,
     GapReport,
+    MeetingReportPosted,
     Payload,
     TeamActionProgress,
     validate_major_version,
@@ -393,4 +395,8 @@ def deliver_meeting_report(meeting_id: str, draft_id: str | None = None) -> None
     slack_ts = service.post_meeting_report(SlackClient(secret), channel, claimed)
     with session_scope() as session:
         service.record_meeting_report_post(session, meeting_id, channel, slack_ts)
+    # Where it went, so C's question cards can reply in its thread (#824).
+    # After the record commits: a lost publish leaves the post recorded.
+    posted = MeetingReportPosted(meeting_id=meeting_id, channel=channel, thread_ts=slack_ts)
+    publish(INTELLIGENCE_MEETING_REPORT_POSTED, posted.model_dump(mode="json"))
     log.info("intelligence_meeting_report_posted", meeting_id=meeting_id)

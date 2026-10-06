@@ -52,6 +52,15 @@ def test_missing_sources_leave_their_features_unmeasured() -> None:
     assert f.missing_source_count == 3
 
 
+def test_a_meeting_c_could_not_read_has_its_gap_features_unmeasured() -> None:
+    """#248: no consented speech is not "no gaps"."""
+    unmeasured = _features(gap=GapReport(meeting_id="mtg_1", measured=False))
+    measured = _features(gap=GapReport(meeting_id="mtg_1", measured=None))
+
+    assert unmeasured.high_gap_count is None and unmeasured.gap_count is None
+    assert (measured.high_gap_count, measured.gap_count) == (0, 0)
+
+
 def test_lineage_features_count_moved_decisions_but_not_new_ones() -> None:
     context = ContextLinks(
         meeting_id="mtg_1",

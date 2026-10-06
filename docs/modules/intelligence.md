@@ -38,6 +38,7 @@ report, and deliver each participant their own speaking ratio.
 | --- | --- | --- |
 | `apps/web`, `apps/bot` | `IntelligenceSnapshot` | `autune.intelligence.completed` |
 | agent layer (Report subagent) | `Payload` (the meeting id only) | `autune.intelligence.meeting_report_changed` -- a person edited a report's draft (#674) |
+| C | `MeetingReportPosted` (channel and the report's ts) | `autune.intelligence.meeting_report_posted` -- a meeting's report went out, once, so C's question cards can reply in its thread (#824) |
 | Slack DM | Personal speaking ratio, to that person only | — |
 | Slack channel | Weekly report, prediction warnings | — |
 
@@ -61,7 +62,10 @@ See `../architecture/async-pipeline.md`.
 2. **Quality score** — grade A–F from decision density, gap count, action-item
    confirmation rate (the share of the meeting's items that got confirmed,
    fixed when the meeting is scored; stored as `action_item_completion_rate`),
-   and participation balance.
+   and participation balance. A `GapReport` with `measured: false` (no
+   consented speech reached C, #248) leaves the gap component unscored and out
+   of the weights, never "no gaps"; `null`, from a producer before contract
+   2.5, reads as measured.
 3. **Gap classification** — SetFit classifies each gap's `Gap.title` (not
    `Gap.category` — C's category is free text whose vocabulary is not stable
    across meetings, the reason this step exists at all, and mixing it into the
