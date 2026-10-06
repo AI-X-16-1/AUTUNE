@@ -221,7 +221,8 @@ class Toolbox:
                 and ASKER_PARAMETER not in arguments
                 and self._scope.user_id is not None
             ):
-                # Reads only: actions bind through bind_scope, which never does this.
+                # A read's omitted person is the asker. An action's is pinned to
+                # the asker whatever was passed, in run_action (#862).
                 arguments = {**arguments, ASKER_PARAMETER: self._scope.user_id}
             scoped = bind_scope(
                 tool.parameters,
@@ -244,7 +245,9 @@ class Toolbox:
 
 
 ASKER_PARAMETER = "user_id"
-"""A read's parameter that names one person; left out, it is the person asking."""
+"""The parameter that names one person. A read left without it gets the person
+asking; an action always gets the person asking, or at a plan-mode approval
+the approver (``run_action``, #862)."""
 
 NO_MEETING = "this run is about no meeting; pass meeting_id"
 UNEXPECTED_ARGUMENT = "unexpected argument"

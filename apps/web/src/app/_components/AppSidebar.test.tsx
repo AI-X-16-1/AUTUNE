@@ -26,6 +26,10 @@ vi.mock("next/link", () => ({
 vi.mock("@/shared/api/auth", () => ({ logout: () => logout() }));
 vi.mock("@/shared/api/client", () => ({ setSignedIn: (value: boolean) => setSignedIn(value) }));
 vi.mock("./SessionGate", () => ({ useSessionUser: () => sessionUser() }));
+// Module A's menu, which reads the person's teams; its own tests are beside it.
+vi.mock("@/features/transcript", () => ({
+  TeamMenu: () => <div data-testid="team-menu" />,
+}));
 
 const ME = { id: "user_me", email: "me@example.com", display_name: "Me", teams: [] };
 
@@ -35,6 +39,33 @@ afterEach(() => {
 });
 
 const signOutButton = () => screen.queryByRole("button", { name: "로그아웃" });
+
+describe("AppSidebar, the team", () => {
+  it("carries the team menu above the screens' own menu", () => {
+    sessionUser.mockReturnValue(ME);
+    render(<AppSidebar />);
+
+    const menu = screen.getByTestId("team-menu");
+    const nav = screen.getByRole("navigation", { name: "주요 메뉴" });
+    expect(menu.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("AppSidebar, the documents", () => {
+  it.each([true, false])("links to the three documents of /legal (signed in: %s)", (signedIn) => {
+    sessionUser.mockReturnValue(signedIn ? ME : null);
+    render(<AppSidebar />);
+
+    const links = [
+      ...screen.getByRole("navigation", { name: "약관 및 정책" }).querySelectorAll("a"),
+    ].map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("target")]);
+    expect(links).toEqual([
+      ["이용약관", "/legal#terms", "_blank"],
+      ["개인정보 처리방침", "/legal#privacy", "_blank"],
+      ["정보보호 정책", "/legal#security", "_blank"],
+    ]);
+  });
+});
 
 describe("AppSidebar, signing out", () => {
   it("offers 로그아웃 under the signed-in person's name", () => {

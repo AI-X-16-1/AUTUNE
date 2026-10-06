@@ -107,7 +107,8 @@ from .pipeline.base import (
     Resolution,
     ResolutionRequest,
 )
-from .pipeline.related import related_ids
+from .pipeline.llm import CONTEXT_LINES
+from .pipeline.related import drawn_on, related_ids
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
@@ -2648,6 +2649,8 @@ def classify_utterances(
             text=utterance.text,
             speaker=utterance.speaker,
             pieces=prediction.pieces,
+            summary=prediction.summary,
+            piece_summaries=prediction.piece_summaries,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -2874,6 +2877,16 @@ def resolve_commitment_references(
     }
 
 
+def _written(classified: Sequence[ClassifiedUtterance], index: int) -> Resolution:
+    """The line the classifier wrote for ``classified[index]``, with the lines
+    it took a word from: those among the ``CONTEXT_LINES`` said just before --
+    the lines its summary was checked against -- that hold a word the summary
+    has and the line itself does not (``related.drawn_on``)."""
+    entry = classified[index]
+    before = [(u.id, u.text) for u in classified[max(0, index - CONTEXT_LINES) : index] if u.text]
+    return Resolution(entry.summary, tuple(drawn_on(entry.summary, entry.text, before)))
+
+
 def resolve_commitment_summaries(
     resolver: ReferenceResolver,
     classified: Sequence[ClassifiedUtterance],
@@ -2898,9 +2911,19 @@ def resolve_commitment_summaries(
     ``kind`` names which utterances are summarised; ``confirmed_summaries`` marks
     the agreements their speakers confirmed and passes that mark.
     """
-    commitments = [u for u in classified if u.kind is kind]
+    # A commitment the classifier already wrote a line for is not asked about
+    # again: the line came with the label, in the request that read the turn
+    # (``Prediction.summary``, the user, 2026-10-06). The classifier does not
+    # say which lines it drew on, so that is read off the line itself
+    # (``_written``).
+    written = {
+        u.id: _written(classified, index)
+        for index, u in enumerate(classified)
+        if u.kind is kind and u.summary
+    }
+    commitments = [u for u in classified if u.kind is kind and u.id not in written]
     if not commitments:
-        return {}
+        return written
 
     cites = callable(getattr(resolver, "resolve_with_evidence", None))
     lines = [(u.id, u.text) for u in classified if u.text]
@@ -2934,7 +2957,7 @@ def resolve_commitment_summaries(
         resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
     else:
         resolved = [Resolution(text) for text in resolver.resolve(requests)]
-    return dict(zip((u.id for u in commitments), resolved, strict=True))
+    return written | dict(zip((u.id for u in commitments), resolved, strict=True))
 
 
 def decision_day(session: Session, meeting_id: str) -> date | None:
@@ -2954,10 +2977,19 @@ def resolve_decision_summaries(
 ) -> dict[str, Resolution]:
     """A model's write-up of each decision, keyed by its ``dec_`` id.
 
-    Only a resolver that can cite (``resolve_with_evidence``) writes one, and only
-    for a decision whose settling turn does not say what was decided
-    (``decisions.needs_write_up``); for any other this is empty and the decision
-    keeps the assembled, tidied line. Like
+    Two sources. **A line the classifier wrote with the label**
+    (``Prediction.summary``, 2026-10-06) is the write-up of every decision whose
+    substance has one -- whether or not its settling turn already said what was
+    decided, and whatever the resolver is: the owner asked for each decision as
+    one line. The lines it took a word from are its citations
+    (``related.drawn_on``). **Otherwise a resolver that can cite**
+    (``resolve_with_evidence``) writes one, and only for a decision whose
+    settling turn does not say what was decided (``decisions.needs_write_up``);
+    for any other this has no entry and the decision keeps the assembled,
+    tidied line. That limit is still the resolver's alone: asked about every
+    decision it rewrote all of them for nothing (the measurement in
+    ``needs_write_up``), which is a reason not to ask it, not a reason to hide
+    a line that came with the label at no further request. Like
     ``resolve_commitment_summaries`` it runs before any session -- it is model
     inference -- and reads only ``classified``: ordered, and with a non-consenting
     speaker's turn already blank.
@@ -2969,17 +3001,22 @@ def resolve_decision_summaries(
     to ``related.MAX_RELATED`` more from elsewhere in the meeting. It writes what
     was decided and says which numbered lines it used.
     """
+    found = identified(
+        meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
+    )
+    # A decision whose substance the classifier already wrote a line for has
+    # its write-up: no request, whatever the resolver is (``Prediction.summary``).
+    line_of = {u.id: index for index, u in enumerate(classified) if u.summary}
+    written = {
+        id_: _written(classified, line_of[group.substance_id])
+        for id_, group in found
+        if group.substance_id in line_of
+    }
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
-        return {}
-    groups = [
-        (id_, group)
-        for id_, group in identified(
-            meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
-        )
-        if needs_write_up(group)
-    ]
+        return written
+    groups = [(id_, group) for id_, group in found if id_ not in written and needs_write_up(group)]
     if not groups:
-        return {}
+        return written
 
     lines = [(u.id, u.text) for u in classified if u.text]
     said = dict(lines)
@@ -3007,7 +3044,7 @@ def resolve_decision_summaries(
         )
         keys.append(id_)
     resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
-    return dict(zip(keys, resolved, strict=True))
+    return written | dict(zip(keys, resolved, strict=True))
 
 
 def source_digest(texts: Sequence[str]) -> str:

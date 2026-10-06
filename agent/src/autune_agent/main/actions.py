@@ -44,6 +44,7 @@ from autune_contracts import MODULES
 from autune_core.errors import PrivacyViolationError
 
 from .registry import (
+    ASKER_PARAMETER,
     MISSING_ARGUMENT,
     NO_MEETING,
     UNEXPECTED_ARGUMENT,
@@ -62,6 +63,7 @@ NOT_DECLARED = "not a declared action"
 KEPT_FOR_APPROVAL = "its module declares it L2; it waits for approval"
 FAILED = "the action failed"
 ARGUMENT_REFUSED = "arguments hold more than ids and short values"
+NO_ASKER = "this action records who did it, and no one is behind this run"
 OUT_OF_SCOPE = ("team_id is outside this run's team", "meeting not found")
 OWN_REASONS = frozenset(
     {
@@ -69,6 +71,7 @@ OWN_REASONS = frozenset(
         KEPT_FOR_APPROVAL,
         FAILED,
         ARGUMENT_REFUSED,
+        NO_ASKER,
         NO_MEETING,
         UNEXPECTED_ARGUMENT,
         *OUT_OF_SCOPE,
@@ -207,7 +210,18 @@ def own_reason(reason: str | None) -> str | None:
 def run_action(
     action: Action, arguments: Mapping[str, Any], *, session: Session, scope: RunScope
 ) -> ToolResult:
-    """Run one declared action under ``scope`` -- the L1 path and plan mode's approval."""
+    """Run one declared action under ``scope`` -- the L1 path and plan mode's approval.
+
+    An action that takes ``user_id`` records who did it, so the person is the
+    one asking, never whoever the proposal names (#862): the model writes the
+    proposal's arguments. At a plan-mode approval the scope's person is the
+    approver, who answers for the decision. A run with no one -- woken by an
+    event -- is refused rather than recorded under someone.
+    """
+    if ASKER_PARAMETER in action.parameters:
+        if scope.user_id is None:
+            return ToolResult.failure(NO_ASKER)
+        arguments = {**arguments, ASKER_PARAMETER: scope.user_id}
     bound = bind_scope(
         action.parameters,
         arguments,
