@@ -40,6 +40,7 @@ from autune_core import Meeting, get_logger, session_scope
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
+    PermissionDeniedError,
     PrivacyViolationError,
     ValidationError,
 )
@@ -690,10 +691,41 @@ def publish_meeting_report_correction(
     return _acted("리포트 수정본 게시를 예약했습니다.", meeting_id)
 
 
-ACTIONS = [draft_meeting_report, publish_meeting_report, publish_meeting_report_correction]
+def set_weekly_report_schedule(
+    team_id: str, user_id: str, weekday: int, hour: int, send_empty: bool = False
+) -> dict[str, Any]:
+    """Change when the team's weekly report goes out -- a weekday (0 is Monday),
+    an hour in Korean time, and whether a week with nothing to say is posted.
+
+    L1 -- any member may change it on the dashboard without approval (#821).
+    ``user_id`` is the person who asked; it must come from the run, never a
+    model (#862). Refused for a non-member or a day or hour out of range.
+    """
+    with session_scope() as session:
+        try:
+            schedule = service.set_weekly_report_schedule(
+                session, team_id, weekday=weekday, hour=hour, send_empty=send_empty, user_id=user_id
+            )
+        except PermissionDeniedError:
+            return _refused("not a member", "팀원만 바꿀 수 있습니다.")
+        except ValidationError:
+            return _refused("out of range", "요일은 0~6, 시각은 0~23이어야 합니다.")
+    when = f"{_WEEKDAYS[schedule.weekday]}요일 {schedule.hour:02d}:00"
+    return _result(
+        summary=f"주간 리포트를 매주 {when}(한국 시간)에 보내도록 바꿨습니다.",
+        items=[{"title": when, "body": "", "score": 1.0, "id": team_id}],
+    )
+
+
+ACTIONS = [
+    draft_meeting_report,
+    publish_meeting_report,
+    publish_meeting_report_correction,
+    set_weekly_report_schedule,
+]
 """E's writes. Kept out of ``TOOLS`` on purpose: the registry offers ``TOOLS`` to
 models, and the main agent's executor alone runs these."""
 
-L1_ACTIONS = [draft_meeting_report]
+L1_ACTIONS = [draft_meeting_report, set_weekly_report_schedule]
 """The reversible ones (#509): a draft is not seen by anyone until it is posted,
 and is replaced by the next draft. Everything else in ``ACTIONS`` is L2."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Team
@@ -196,3 +197,54 @@ def test_weekly_report_schedule_says_the_day_and_hour(db_session: Session, team:
     result = tools.weekly_report_schedule(db_session, team)
 
     assert "월요일 09:00" in result["summary"]
+
+
+def test_the_schedule_action_records_the_asker(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+    import uuid
+
+    from autune_core import TeamMember, User
+
+    @contextlib.contextmanager
+    def scope():
+        yield db_session
+
+    monkeypatch.setattr(tools, "session_scope", scope)
+    user = User(email=f"a-{uuid.uuid4().hex}@example.com", display_name="요청한 사람")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=team, user_id=user.id))
+    db_session.flush()
+
+    result = tools.set_weekly_report_schedule(team, user.id, weekday=4, hour=18)
+
+    assert result["ok"] is True
+    assert service.weekly_report_schedule(db_session, team).updated_by_name == "요청한 사람"
+
+
+def test_the_schedule_action_refuses_a_non_member_and_a_bad_hour(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+    import uuid
+
+    from autune_core import User
+
+    @contextlib.contextmanager
+    def scope():
+        yield db_session
+
+    monkeypatch.setattr(tools, "session_scope", scope)
+    outsider = User(email=f"o-{uuid.uuid4().hex}@example.com", display_name="밖")
+    db_session.add(outsider)
+    db_session.flush()
+
+    assert tools.set_weekly_report_schedule(team, outsider.id, weekday=1, hour=9)["ok"] is False
+    assert tools.set_weekly_report_schedule(team, outsider.id, weekday=1, hour=24)["ok"] is False
+
+
+def test_the_schedule_action_is_l1() -> None:
+    assert tools.set_weekly_report_schedule in tools.L1_ACTIONS
+    assert tools.set_weekly_report_schedule in tools.ACTIONS
