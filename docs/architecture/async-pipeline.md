@@ -102,6 +102,7 @@ agrees on.
 | `autune.intelligence.periodic.announce_report_changes` | task | E (every 5 minutes, a change whose announcement was lost, #698) |
 | `autune.intelligence.periodic.weekly_reports` | task | E (hourly; each team's weekly report once its chosen weekday and hour pass, #227) |
 | `autune.intelligence.meeting_report_changed` | event | E (from the report card, #674) |
+| `autune.intelligence.meeting_report_posted` | event | E (when a report is posted, for C's thread replies, #824) |
 
 Register tasks in your module's `tasks.py`. `apps/worker` discovers them by
 iterating the module list — never add your module to a registration block by

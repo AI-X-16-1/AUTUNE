@@ -178,10 +178,32 @@ issued; the cookie is what proves to whom.
 send an S256 `code_challenge`; the verifier waits in the same Redis entry as
 the `state` and goes out only with the code exchange, so a code lifted off the
 redirect is worthless elsewhere, even with the client secret. Nothing to
-configure: Google accepts PKCE from a web client as it is. Atlassian, Notion
-and Slack are sent no challenge yet: whether each accepts one from a
-confidential client has to be checked against a real app per provider first,
-and until then `state` with the cookie above binds their callbacks.
+configure: Google accepts PKCE from a web client as it is.
+
+**Atlassian, Notion and Slack are sent no challenge, and are not going to be**
+(#767). Each reason below is from the provider's own documentation as read
+on 2026-10-06; none was probed with a real app, so what a provider does with
+a challenge it was not asked to accept is not known. `state` with the cookie
+above binds their callbacks, as before.
+
+- **Slack** has PKCE, as an app setting, for apps that cannot keep a secret:
+  turning it on "marks your app as a public client, which is a one-way
+  operation", the exchange then goes without `client_secret`, and every
+  refresh token issued to the app expires in 30 days. Autune's Slack app is
+  a server that keeps its secret, so the setting would weaken it and change
+  token lifetimes for every team's installation. It stays off.
+- **Atlassian** (Cloud, OAuth 2.0 3LO at `auth.atlassian.com`) documents no
+  PKCE parameter: the authorization request takes `audience`, `client_id`,
+  `scope`, `redirect_uri`, `state`, `response_type` and `prompt`, and the
+  exchange takes `client_secret`. Atlassian's Data Center products do
+  document `code_challenge`; that is another product and endpoint.
+- **Notion** (public integration) documents none either: the authorization
+  request takes `client_id`, `redirect_uri`, `response_type`, `owner` and
+  `state`, and the exchange is HTTP Basic with the client's id and secret.
+  Notion documents PKCE for its MCP server's OAuth, which is not this flow.
+
+A challenge sent where it is not documented would at best be ignored, and
+the code would then claim a protection that is not there.
 
 **A connect that stores a token checks the encryption key before it spends
 the code** (#593, #704). Calendar, Jira, Notion and Slack callbacks all fail

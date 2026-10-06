@@ -1172,6 +1172,13 @@ MEETING_REPORT_REVIEW_ACTION: Final = "intel_meeting_report_review"
 """The review button's ``action_id``, acknowledged in slack.py like the other."""
 
 
+class DraftChangedError(ConflictError):
+    """The draft a re-draft was proposed against is no longer the one stored."""
+
+    def __init__(self, meeting_id: str) -> None:
+        super().__init__("meeting report draft changed", meeting_id=meeting_id)
+
+
 def save_meeting_report(
     session: Session,
     meeting_id: str,
@@ -1179,6 +1186,7 @@ def save_meeting_report(
     *,
     pending_review: bool = False,
     draft_id: str | None = None,
+    expected_draft_id: str | None = None,
 ) -> IntelMeetingReport:
     """Store the meeting's report body, replacing an unsent one.
 
@@ -1191,6 +1199,11 @@ def save_meeting_report(
     one also ends every pending approval of the draft it replaced, since that
     approval names an id the row no longer holds. Intended -- the approver did
     not see this text.
+
+    ``expected_draft_id`` is a re-draft's guard (the E agent, spec section 4):
+    under the row lock the save refuses with ``DraftChangedError`` unless the
+    stored draft still carries that id and no member has edited it. Without it
+    an unposted draft is replaced, a person's edit included.
 
     **The body holds this meeting's content only.** The row is deleted with this
     meeting and nothing else, so a sentence quoted from another meeting -- a past
@@ -1222,6 +1235,10 @@ def save_meeting_report(
         session.add(row)
     elif row.sent_at is not None:
         raise ConflictError("meeting report was already posted", meeting_id=meeting_id)
+    elif expected_draft_id is not None and (
+        row.draft_id != expected_draft_id or row.edited_by is not None
+    ):
+        raise DraftChangedError(meeting_id)
     else:
         row.body_markdown = body_markdown
         row.pending_review = pending_review
@@ -1917,24 +1934,75 @@ def _report_read(
     )
 
 
+def _team_reports_query(team_id: str) -> tuple[Any, Any]:
+    """The select behind the team's report reads, and the expression for when each
+    meeting was held. Both ``team_meeting_reports`` and ``team_meeting_report``
+    start from it, so a row reads the same either way."""
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    editor_user = aliased(User)
+    corrector_user = aliased(User)
+    query = (
+        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name, held)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
+        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
+        .where(IntelMeetingReport.team_id == team_id)
+    )
+    return query, held
+
+
+def team_meeting_reports(
+    session: Session,
+    team_id: str,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+    title_contains: str | None = None,
+    limit: int = MEETING_REPORTS_SHOWN,
+) -> list[tuple[MeetingReportRead, str | None, datetime]]:
+    """The team's reports, newest meeting first, each with its ``draft_id`` and
+    when its meeting was held. No membership check: the dashboard route checks
+    the person, the agent's Toolbox binds the team (``RUN_SCOPE``).
+
+    ``since`` and ``until`` are Korean dates, both inclusive, as a person says
+    "yesterday" (``_KST``). ``title_contains`` matches the meeting's title.
+    """
+    query, held = _team_reports_query(team_id)
+    if since is not None:
+        query = query.where(held >= datetime.combine(since, datetime.min.time(), tzinfo=_KST))
+    if until is not None:
+        end = datetime.combine(until + timedelta(days=1), datetime.min.time(), tzinfo=_KST)
+        query = query.where(held < end)
+    if title_contains:
+        query = query.where(Meeting.title.contains(title_contains, autoescape=True))
+    rows = session.execute(
+        query.order_by(held.desc(), IntelMeetingReport.meeting_id.desc()).limit(limit)
+    ).all()
+    return [
+        (_report_read(row, editor, corrector), row.draft_id, at)
+        for row, editor, corrector, at in rows
+    ]
+
+
+def team_meeting_report(
+    session: Session, team_id: str, meeting_id: str
+) -> tuple[MeetingReportRead, str | None, datetime] | None:
+    """One meeting's report with its ``draft_id`` and when the meeting was held,
+    or ``None`` when the team has none for it. No membership check, as above."""
+    query, _ = _team_reports_query(team_id)
+    found = session.execute(query.where(IntelMeetingReport.meeting_id == meeting_id)).first()
+    if found is None:
+        return None
+    row, editor, corrector, at = found
+    return _report_read(row, editor, corrector), row.draft_id, at
+
+
 def list_meeting_reports(
     session: Session, team_id: str, *, user_id: str
 ) -> list[MeetingReportRead]:
     """The team's latest reports, newest meeting first, for one of its members."""
     require_team_member(session, user_id=user_id, team_id=team_id)
-    held = func.coalesce(Meeting.started_at, Meeting.created_at)
-    editor_user = aliased(User)
-    corrector_user = aliased(User)
-    rows = session.execute(
-        sa.select(IntelMeetingReport, editor_user.display_name, corrector_user.display_name)
-        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
-        .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
-        .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
-        .where(IntelMeetingReport.team_id == team_id)
-        .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
-        .limit(MEETING_REPORTS_SHOWN)
-    ).all()
-    return [_report_read(row, editor, corrector) for row, editor, corrector in rows]
+    return [read for read, _, _ in team_meeting_reports(session, team_id)]
 
 
 def edit_meeting_report(

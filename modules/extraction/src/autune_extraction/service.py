@@ -39,6 +39,7 @@ from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import (
     Meeting,
     Participant,
+    Team,
     TeamMember,
     User,
     Utterance,
@@ -107,7 +108,8 @@ from .pipeline.base import (
     Resolution,
     ResolutionRequest,
 )
-from .pipeline.related import related_ids
+from .pipeline.llm import CONTEXT_LINES
+from .pipeline.related import drawn_on, related_ids
 from .pipeline.resolver import MAX_CONTEXT_AFTER, MAX_CONTEXT_UTTERANCES
 from .schemas import (
     ActionItemCreate,
@@ -135,6 +137,7 @@ from .schemas import (
     SourceUtterance,
     SummaryDecision,
     SyncFailureRead,
+    TeamRead,
 )
 from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
 
@@ -727,8 +730,12 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
       ``due_text`` -- a fragment of the line -- is cleared; a summary or a
       person's text is the team's record and stays;
     - a decision loses ``original_statement`` (what B would send D next is
-      then ``statement``), and a model statement that is the line tidied (no
-      cited lines, so not a write-up) reads ``SPEECH_DELETED_TEXT`` too.
+      then ``statement``), and a model statement that is the line tidied
+      reads ``SPEECH_DELETED_TEXT`` too. A sentence a model wrote about the
+      decision -- the classifier's one line, the resolver's write-up -- is the
+      team's record, as an item's summary is, and stays
+      (``statement_resolved``; the user, 2026-10-06). Whether it cites a line
+      has no part in it.
 
     Nothing is republished here: copies C, D and E already received through
     ``ExtractionResult`` are theirs, and stay until they act on the same signal
@@ -822,7 +829,7 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
             touched = True
         if (
             decision.origin == "model"
-            and not decision.related
+            and not decision.statement_resolved
             and decision.statement != SPEECH_DELETED_TEXT
         ):
             decision.statement = SPEECH_DELETED_TEXT
@@ -1096,12 +1103,14 @@ def read_model(
     sync_failures: list[SyncFailureRead] | None = None,
     assignee_departed: bool = False,
     meeting_title: str | None = None,
+    team_id: str | None = None,
     carried_meetings: int = 0,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
     ``assignee_departed`` comes from ``departed_assignees``; see
-    ``ActionItemRead.needs_reassignment`` for what it changes.
+    ``ActionItemRead.needs_reassignment`` for what it changes. ``team_id`` is
+    the item's meeting's team, from ``meeting_teams``.
 
     Built here rather than by ``from_attributes`` on the schema because five of
     its fields are not columns: the source ids live in the link table, whether
@@ -1144,6 +1153,7 @@ def read_model(
         id=item.id,
         meeting_id=item.meeting_id,
         meeting_title=meeting_title,
+        team_id=team_id,
         description=item.description,
         description_resolved=item.description_resolved,
         assignee_id=None if assignee_departed else item.assignee_id,
@@ -1230,6 +1240,7 @@ def read_one(
         ),
         assignee_departed=item.id in departed_assignees(session, [item]),
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
+        team_id=meeting_teams(session, [item]).get(item.meeting_id),
         carried_meetings=meetings_since(session, [item]).get(item.id, 0),
     )
 
@@ -1242,6 +1253,31 @@ def meeting_titles(session: Session, items: Sequence[ExtActionItem]) -> dict[str
         return {}
     rows = session.execute(select(Meeting.id, Meeting.title).where(Meeting.id.in_(ids)))
     return dict(rows.tuples().all())
+
+
+def meeting_teams(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
+    """The team of each meeting ``items`` came from, in one query -- an item has
+    no team of its own, only a meeting. Reads the shared ``meetings`` table and
+    never writes it (invariant 4). The team's name is not read here: see
+    ``reader_teams``."""
+    ids = {item.meeting_id for item in items}
+    if not ids:
+        return {}
+    rows = session.execute(select(Meeting.id, Meeting.team_id).where(Meeting.id.in_(ids)))
+    return dict(rows.tuples().all())
+
+
+def reader_teams(session: Session, reader_id: str) -> list[TeamRead]:
+    """Every team ``reader_id`` is on, by name -- what the board across meetings
+    heads each team's items with (``ActionItemRead.team_id``). Reads the shared
+    ``teams`` and ``team_members`` tables and never writes them (invariant 4)."""
+    rows = session.execute(
+        select(Team.id, Team.name)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .where(TeamMember.user_id == reader_id)
+        .order_by(Team.name, Team.id)
+    )
+    return [TeamRead(id=team_id, name=name) for team_id, name in rows.tuples().all()]
 
 
 def assignee_names(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
@@ -1444,6 +1480,7 @@ def list_action_items(
     # so get no calendar failure, which is one person's to see.
     failures = sync_state.failures_for(session, items, reader_id=visible_to)
     titles = meeting_titles(session, items)
+    teams = meeting_teams(session, items)
     carried = meetings_since(session, items)
     return [
         read_model(
@@ -1454,6 +1491,7 @@ def list_action_items(
             sync_failures=failures.get(item.id, []),
             assignee_departed=item.id in departed,
             meeting_title=titles.get(item.meeting_id),
+            team_id=teams.get(item.meeting_id),
             carried_meetings=carried.get(item.id, 0),
         )
         for item in items
@@ -1602,6 +1640,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     departed = departed_assignees(session, shown)
     summaries = action_item_summaries(session, shown)
     refs = action_item_external_refs(session, [item.id for item in shown])
+    teams = meeting_teams(session, shown)
     return CarriedOver(
         open=len(rows),
         overdue=sum(1 for item in rows if late(item)),
@@ -1615,6 +1654,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
                     sync_refs=refs.get(item.id, []),
                     assignee_departed=item.id in departed,
                     meeting_title=earlier[item.meeting_id].title,
+                    team_id=teams.get(item.meeting_id),
                     carried_meetings=carried.get(item.id, 0),
                 ).model_dump(),
                 meeting_started_at=earlier[item.meeting_id].started_at,
@@ -1720,6 +1760,7 @@ def read_detail(
             sync_failures=failures,
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
+            team_id=meeting_teams(session, [item]).get(item.meeting_id),
         ).model_dump(),
         # Why there is no calendar event, where there is none (#680). What is
         # missing from the item is said to any reader; anything about the
@@ -2124,12 +2165,17 @@ def build_decisions(
     }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
+    # Which statements are a model's sentence and not the line tidied: said
+    # here, where the choice is made, and stored (``statement_resolved``).
+    written_up: set[str] = set()
     for id_, group in fresh.items():
         summary = summaries.get(id_)
         line = group.statement
         if summary is not None and summary.text.strip() and summary.text != group.core_text:
             head = tidy(summary.text.strip())
             line = f"{head} ({group.suffix})" if group.suffix else head
+            if line != group.statement:
+                written_up.add(id_)
             cited[id_] = list(
                 dict.fromkeys(
                     real[u] for u in summary.used if u in real and real[u] not in sources[id_]
@@ -2162,6 +2208,7 @@ def build_decisions(
                     "meeting_id": meeting_id,
                     "statement": shown[id_],
                     "original_statement": group.original_statement or group.statement,
+                    "statement_resolved": id_ in written_up,
                     "confidence": group.confidence,
                     "origin": "model",
                 }
@@ -2174,6 +2221,7 @@ def build_decisions(
                 set_={
                     "statement": upsert.excluded.statement,
                     "original_statement": upsert.excluded.original_statement,
+                    "statement_resolved": upsert.excluded.statement_resolved,
                     "confidence": upsert.excluded.confidence,
                 },
             )
@@ -2876,6 +2924,24 @@ def resolve_commitment_references(
     }
 
 
+def _written(classified: Sequence[ClassifiedUtterance], index: int) -> Resolution:
+    """The line the classifier wrote for ``classified[index]``, with the lines
+    it took a word from: those among the ``CONTEXT_LINES`` lines with text said
+    just before it that hold a word the summary has and the line itself does
+    not (``related.drawn_on``).
+
+    Lines with no text -- a speaker who did not consent -- are left out before
+    the count, as they are from what the classifier is sent, so they do not
+    use up one of the three (PARKJAEKYUNG0525, review of #894). These are the
+    lines ``llm.usable_summary`` checked the summary against, with one
+    difference this cannot see: that check also stops at the start of its
+    request, so for a line among the first three of a request this can reach
+    one or two lines further back than the model was shown."""
+    entry = classified[index]
+    before = [(u.id, u.text) for u in classified[:index] if u.text][-CONTEXT_LINES:]
+    return Resolution(entry.summary, tuple(drawn_on(entry.summary, entry.text, before)))
+
+
 def resolve_commitment_summaries(
     resolver: ReferenceResolver,
     classified: Sequence[ClassifiedUtterance],
@@ -2902,9 +2968,14 @@ def resolve_commitment_summaries(
     """
     # A commitment the classifier already wrote a line for is not asked about
     # again: the line came with the label, in the request that read the turn
-    # (``Prediction.summary``, the user, 2026-10-06). It cites nothing -- the
-    # classifier does not say which lines it drew on.
-    written = {u.id: Resolution(u.summary) for u in classified if u.kind is kind and u.summary}
+    # (``Prediction.summary``, the user, 2026-10-06). The classifier does not
+    # say which lines it drew on, so that is read off the line itself
+    # (``_written``).
+    written = {
+        u.id: _written(classified, index)
+        for index, u in enumerate(classified)
+        if u.kind is kind and u.summary
+    }
     commitments = [u for u in classified if u.kind is kind and u.id not in written]
     if not commitments:
         return written
@@ -2965,7 +3036,8 @@ def resolve_decision_summaries(
     (``Prediction.summary``, 2026-10-06) is the write-up of every decision whose
     substance has one -- whether or not its settling turn already said what was
     decided, and whatever the resolver is: the owner asked for each decision as
-    one line. It cites no lines. **Otherwise a resolver that can cite**
+    one line. The lines it took a word from are its citations
+    (``related.drawn_on``). **Otherwise a resolver that can cite**
     (``resolve_with_evidence``) writes one, and only for a decision whose
     settling turn does not say what was decided (``decisions.needs_write_up``);
     for any other this has no entry and the decision keeps the assembled,
@@ -2989,9 +3061,9 @@ def resolve_decision_summaries(
     )
     # A decision whose substance the classifier already wrote a line for has
     # its write-up: no request, whatever the resolver is (``Prediction.summary``).
-    line_of = {u.id: u.summary for u in classified if u.summary}
+    line_of = {u.id: index for index, u in enumerate(classified) if u.summary}
     written = {
-        id_: Resolution(line_of[group.substance_id])
+        id_: _written(classified, line_of[group.substance_id])
         for id_, group in found
         if group.substance_id in line_of
     }

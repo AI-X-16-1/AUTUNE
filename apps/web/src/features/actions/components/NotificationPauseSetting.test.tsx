@@ -63,7 +63,9 @@ describe("NotificationPauseSetting", () => {
     get.mockResolvedValue({ ...NONE, calendar_leave: true });
     render(<NotificationPauseSetting />);
     await first();
-    expect(screen.getByText(/부재중 일정의 시간만 읽고/)).toBeTruthy();
+    // Of this read only: the same grant reads more for C's picker (#872).
+    expect(screen.queryByText(/다른 일정은 읽지 않습니다/)).toBeNull();
+    expect(screen.getByText(/이를 위해서는 부재중 일정의 시간만 읽습니다/)).toBeTruthy();
   });
 
   it("saves both days and nothing else", async () => {

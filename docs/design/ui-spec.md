@@ -32,9 +32,19 @@ Design source: `AUTUNE Spec 00~05 *.dc.html`, `AUTUNE 실시간 전사.dc.html`.
 | Privacy | Per-person speech volume and ranking appear nowhere except the subject's own DM (S23) |
 
 **App shell:** sidebar 200 (paper) — logo · "Start meeting" accent button · Home /
-Meetings / Action items / Gap reports / Decision lineage / Materials (P2) /
-Dashboard · Settings · user. Content panel top bar 56, hairline only. Top-bar
+Action items / Gap reports / Decision lineage / Materials (P2) /
+Dashboard · Settings · user. There is no Meetings entry: the meeting list is
+Home, which is the lit entry inside a meeting too. Content panel top bar 56, hairline only. Top-bar
 action order, left to right: quiet → text → secondary → primary.
+
+**Logo:** the lowercase stroke wordmark in `docs/design/brand/` (chosen
+2026-10-06). `autune-wordmark.svg` is canonical — ink `#16191F` (ink.strong)
+with the "un" wave in `#3B4A9E` (accent); `autune-wordmark-dark.svg` swaps the
+ink for the dark theme's ink.strong `#EDEEF0`. The wave stays accent in both
+themes. `autune-icon.svg` is the square mark — the "un" wave alone, in accent,
+so it needs no dark variant — used as the favicon. In the web app the wordmark is `Wordmark` in `shared/ui`, 18px tall in
+the sidebar and the live top bar, 20px in the signed-out headers. Never set the
+name as text in its place.
 
 **Canvas widths:** 1280 for standard screens, 1440 for S13 (live transcript),
 380 for S33 (desktop mini window).
@@ -71,8 +81,8 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 |---|---|---|---|
 | S15 | Review · edit summary | MVP | Tabs (summary / actions / gaps / context / transcript) · inline summary editing · 3 decisions (ambiguous ones ochre + confirm as decision / resend DM / delete) · 4 actions (unassigned = accent "담당 지정") · right rail "needs confirmation" ×3 (speaker / ambiguous / low-confidence span) · PII count + report · delivery targets (Slack · Notion · personal DM) · editable for 24h after confirmation |
 | S16 | Speaker confirmation DM | MVP | Quoted candidate utterance · similarity · "제 발화입니다" (accent) / "아닙니다" / "다른 발화 듣기" · yes → store the embedding |
-| S17 | Action board | MVP | 4 columns (Needs confirmation = Autune-only · To Do · In Progress · Done) · card (title → reason → assignee and due date → Jira, Notion) · selected card 1.5px accent · a status change also moves the Jira issue · broken link in red text |
-| S18 | Action detail drawer | MVP | Assignee / due date / status · source utterance quotation + confidence + the raw text the due date was parsed from · integration rows (Jira issue / Notion page, checkbox / Slack thread) · history · completion chain |
+| S17 | Action board | MVP | 4 columns (Needs confirmation = Autune-only · To Do · In Progress · Done) · card (title → reason → assignee and due date → Jira, Notion) · selected card 1.5px accent · a status change also moves the Jira issue · a card is dragged to another column: the same change as the drawer's status select, applied at once; a drop out of Needs confirmation confirms the item and one line says so afterwards; a drop on the card's own column does nothing; a candidate and a card whose drawer is open cannot be dragged; there is no keyboard or touch drag, the status select is that path · broken link in red text |
+| S18 | Action detail drawer | MVP | Assignee / due date / status · source utterance quotation + confidence + the raw text the due date was parsed from · integration rows (Jira issue / Notion page, checkbox / Slack thread) · history |
 | S19 | Ambiguous agreement DM | MVP | Quoted utterance + context · a link to the meeting's 액션 tab, where the speaker's own open questions show the 3 choices (confirm = accent / decision / deny) — in-Slack buttons wait for a click receiver (#585) · no response in 72h = undecided |
 | S20 | Gap report | MVP | HIGH expanded (title · level as text + score + 2px bar · description · resolving-question block · 3 buttons) · MEDIUM collapsed · LOW listed separately · right rail template comparison (covered / partial / missing) · topic × role density (never per person) |
 | S21 | Gap question thread | MVP | Slack thread · answer → classified by B → decision recorded automatically + confirmation reply · "결정 아님" reverts it |

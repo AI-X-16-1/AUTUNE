@@ -35,6 +35,8 @@ class MainState(TypedDict, total=False):
     route: str | None
     outcome: SubagentResult
     answer: str
+    unfinished: list[dict[str, str]]
+    """L1s that did not go through, told to the asker in chat; never stored (#862)."""
 
 
 def build_main_graph(

@@ -616,3 +616,26 @@ def test_a_model_out_of_quota_reads_as_busy_not_broken(
     assert reply.json()["error"]["code"] == "agent_busy"
     run = session.query(AgentRun).one()
     assert run.outcome == "failed"
+
+
+def test_a_chat_reply_says_what_did_not_go_through(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#862: the subagent answered before L1 ran, so the reply carries the rest."""
+    real = routes.run_and_record
+
+    def refusing(*args: Any, **kwargs: Any) -> Any:
+        row, state = real(*args, **kwargs)
+        state["unfinished"] = [
+            {"title": "리포트 초안 다시 만들기", "reason": "초안이 바뀌었습니다"}
+        ]
+        return row, state
+
+    monkeypatch.setattr(routes, "run_and_record", refusing)
+    client = _client(session, team["member"], chat_router=FakeRouter())
+
+    body = client.post("/api/agent/chat", json={"team_id": team["team"], "message": "x"}).json()
+
+    assert body["unfinished"] == [
+        {"title": "리포트 초안 다시 만들기", "reason": "초안이 바뀌었습니다"}
+    ]

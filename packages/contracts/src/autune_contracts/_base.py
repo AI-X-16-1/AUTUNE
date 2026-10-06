@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "2.4"
+CONTRACT_VERSION = "2.5"
 """Bump the minor for an additive change, the major for a breaking one.
 
 A breaking change needs a Slack announcement and approval from every affected

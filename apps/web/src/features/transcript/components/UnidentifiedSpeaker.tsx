@@ -4,6 +4,10 @@ import { Button } from "@/shared/ui";
 
 import type { SpeakerCandidate, TeamMember } from "../types";
 
+/** A team member as the picker offers them: `assignedTo` is the label they
+ * are already put to in this meeting, if any. */
+export type PickableMember = TeamMember & { assignedTo?: string };
+
 /**
  * Putting a name to a voice the pipeline separated but could not identify.
  *
@@ -39,6 +43,15 @@ import type { SpeakerCandidate, TeamMember } from "../types";
  * a distribution identifies everyone." The count was not doing any work either:
  * the prompt asks who a voice belongs to, and how much it said does not help
  * answer that.
+ *
+ * **Someone already put to another speaker stays pickable, last and marked,
+ * behind one confirmation.** Diarization sometimes splits one voice into two
+ * labels, and the second label has to reach the same account: "내 발화 삭제"
+ * finds a person's lines through that link, so a label left unassigned keeps
+ * lines its speaker can no longer delete (privacy invariant 11, #912 review).
+ * The confirmation is there because a wrong assignment has no undo yet. The
+ * caller orders the list and sets `assignedTo` (`unassigned` in
+ * `StoredTranscript`).
  */
 export function UnidentifiedSpeaker({
   speaker,
@@ -54,7 +67,7 @@ export function UnidentifiedSpeaker({
   candidate?: SpeakerCandidate | null;
   /** A name already typed for this speaker, for this meeting only. */
   displayName?: string | null;
-  members?: TeamMember[];
+  members?: PickableMember[];
   /** Set when `GET /teams/{id}/members` failed. An empty `members` with no
    * error reads as "nobody else on this team"; an empty `members` *with*
    * one means the picker has nothing to offer only because the request
@@ -79,6 +92,12 @@ export function UnidentifiedSpeaker({
   useEffect(() => {
     if (!pending) setPicked("");
   }, [pending]);
+  // Set while the question "같은 사람의 목소리가 둘로 나뉜 경우에만" is open
+  // for a pick who is already another speaker. Any new pick closes it.
+  const [confirming, setConfirming] = useState<PickableMember | null>(null);
+  useEffect(() => {
+    setConfirming(null);
+  }, [picked]);
   // `null` while the text field is closed. Closed again once a save lands
   // (`displayName` changes); a failure leaves it open with what was typed.
   const [typed, setTyped] = useState<string | null>(null);
@@ -143,20 +162,41 @@ export function UnidentifiedSpeaker({
         <option value="">참석자 중에서 지정</option>
         {(members ?? []).map((member) => (
           <option key={member.user_id} value={member.user_id}>
-            {member.name}
+            {member.assignedTo ? `${member.name} (${member.assignedTo}로 지정됨)` : member.name}
           </option>
         ))}
       </select>
       <Button
         tone="text"
         size="compact"
-        disabled={pending || !picked}
+        disabled={pending || !picked || confirming !== null}
         onClick={() => {
-          if (picked) onAssign?.(picked);
+          const member = members?.find((entry) => entry.user_id === picked);
+          if (member?.assignedTo) setConfirming(member);
+          else if (picked) onAssign?.(picked);
         }}
       >
         지정
       </Button>
+      {confirming && (
+        <>
+          <span style={{ color: "var(--color-ink-strong)" }}>
+            {confirming.name}은(는) 이미 {confirming.assignedTo}로 지정되어 있습니다. 같은 사람의
+            목소리가 둘로 나뉜 경우에만 지정하세요.
+          </span>
+          <Button
+            tone="text"
+            size="compact"
+            disabled={pending}
+            onClick={() => onAssign?.(confirming.user_id)}
+          >
+            그래도 지정
+          </Button>
+          <Button tone="quiet" size="compact" disabled={pending} onClick={() => setConfirming(null)}>
+            다시 고르기
+          </Button>
+        </>
+      )}
       {typed === null ? (
         <Button
           tone="quiet"

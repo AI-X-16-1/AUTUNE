@@ -314,10 +314,16 @@ address of somebody who has agreed to nothing yet. It is kept in
 has not signed up -- and it does not wait for the analysis window: the row
 is deleted when the invitation is accepted, when it lapses (seven days; the
 retention sweep, and the next invitation made for that team), when a new
-invitation to the same address replaces it, when the team or the inviter's
-account is deleted, and when the invited person deletes their own account.
+invitation to the same address replaces it, when a member of the team
+cancels it, when the team or the inviter's account is deleted, and when the
+invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
 ids, never the address.
+While it is pending the address is shown to the members of that team, and
+to nobody else, with when the link lapses and who invited
+(`GET /api/audio/teams/{team_id}/invitations`): the list looks nobody up, so
+it reads the same for an address with an account and one without, and it
+never carries the token or its hash. Any member of the team may cancel one.
 
 The inviter may have the link **mailed from their own Gmail** (#552), when
 they ask and only through their own `gmail.send` grant -- Autune runs no mail

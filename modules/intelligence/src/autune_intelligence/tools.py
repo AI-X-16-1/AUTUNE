@@ -31,6 +31,7 @@ authenticated route and is not offered to any agent.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -39,12 +40,14 @@ from autune_core import Meeting, get_logger, session_scope
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
+    PermissionDeniedError,
     PrivacyViolationError,
     ValidationError,
 )
 
 from . import service, tasks
 from .models import IntelMeetingReport
+from .schemas import MeetingReportRead
 from .service import _gap_burden
 
 log = get_logger(__name__)
@@ -207,9 +210,9 @@ def recurring_gaps(session: Session, team_id: str) -> dict[str, Any]:
 
 
 def misalignment_risk(session: Session, team_id: str) -> dict[str, Any]:
-    """Use this only when a report or briefing needs a forward-looking warning
-    about the team drifting out of agreement. Do not present it as a fact; it is
-    a model's probability.
+    """Use this when asked whether the team's decisions risk being reversed, or
+    when a report needs a forward-looking warning. Do not present it as a fact;
+    it is a model's probability.
 
     Returns the team's latest misalignment probability over its horizon. Before
     the team has enough history (#27's gate), or with no prediction yet, it is
@@ -336,6 +339,194 @@ def meeting_report_correction(
     )
 
 
+_LIST_BODY_CHARS = 120
+_REPORT_BODY_CHARS = 1500
+"""Per-tool budgets (spec section 4, "Tool contracts"): the ask loop's 80-character
+cut would halve a report, so E's tools cut their own."""
+
+
+def _report_item(
+    read: MeetingReportRead, draft_id: str | None, held: datetime, body: str
+) -> dict[str, Any]:
+    status = "posted" if read.status == "posted" else "draft"
+    return {
+        "title": read.title,
+        "body": body,
+        "score": 1.0,
+        "id": read.meeting_id,
+        "meeting_id": read.meeting_id,
+        "status": status,
+        "draft_id": draft_id,
+        "editor": read.edited_by_name,
+        "date": held.astimezone(service._KST).date().isoformat(),
+        "correction": read.correction_status,
+    }
+
+
+def meeting_reports(
+    session: Session,
+    team_id: str,
+    since: str | None = None,
+    until: str | None = None,
+    title_contains: str | None = None,
+    limit: int = MAX_ITEMS,
+) -> dict[str, Any]:
+    """Use this to find a team's meeting reports by date or title, or to say
+    whether one is posted. Do not use it for a report's text -- that is
+    ``meeting_report_body``.
+
+    ``since`` and ``until`` are Korean dates (YYYY-MM-DD), both inclusive.
+    Returns up to five, newest first, each with its meeting id, date, status
+    (draft or posted), the member who edited it and the correction state.
+    """
+    try:
+        start = date.fromisoformat(since) if since else None
+        end = date.fromisoformat(until) if until else None
+    except ValueError:
+        return _refused("bad date", "날짜는 YYYY-MM-DD로 주세요.")
+    rows = service.team_meeting_reports(
+        session,
+        team_id,
+        since=start,
+        until=end,
+        title_contains=title_contains,
+        limit=max(1, min(limit, MAX_ITEMS)) + 1,
+    )
+    items = [
+        _report_item(
+            read,
+            draft_id,
+            held,
+            f"{held.astimezone(service._KST):%m/%d} · "
+            + ("게시됨" if read.status == "posted" else "초안")
+            + (f" · {read.edited_by_name} 수정" if read.edited_by_name else ""),
+        )
+        for read, draft_id, held in rows
+    ]
+    for item in items:
+        item["body"] = item["body"][:_LIST_BODY_CHARS]
+    if not items:
+        return _result(summary="조건에 맞는 회의 리포트가 없습니다.", items=[])
+    shown = max(1, min(limit, MAX_ITEMS))
+    result = _result(summary=f"회의 리포트 {min(len(items), shown)}건입니다.", items=items[:shown])
+    result["truncated"] = len(items) > shown
+    return result
+
+
+def meeting_report_body(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Use this to show one meeting's report text. Do not use it to find a
+    meeting -- that is ``meeting_reports``.
+
+    Returns the report as one item: its header, its body cut to 1,500
+    characters, its status, its ``draft_id`` and the member who edited it.
+    No item when the meeting has no report yet.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None or meeting.team_id != team_id:
+        return _refused("meeting not found", "회의를 찾을 수 없습니다.")
+    found = service.team_meeting_report(session, team_id, meeting_id)
+    if found is not None:
+        read, draft_id, held = found
+        body = f"{read.body}\n{read.footer}".strip()[:_REPORT_BODY_CHARS]
+        return _result(
+            summary="회의 리포트입니다.", items=[_report_item(read, draft_id, held, body)]
+        )
+    return _result(summary="이 회의에는 아직 리포트가 없습니다.", items=[])
+
+
+_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
+
+
+def role_alignment(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this when asked how two roles in the team line up, such as PM and
+    developers. Do not use it for one meeting -- it averages the team's meetings.
+
+    Returns role pairs with their alignment score (0 to 1, higher is closer),
+    lowest first. A pair scored in fewer than three meetings is left out.
+    """
+    cells = sorted(service.get_heatmap(session, team_id), key=lambda c: c.score)
+    if not cells:
+        return _result(summary="역할 간 정렬도를 보여줄 만큼 회의가 쌓이지 않았습니다.", items=[])
+    return _result(
+        summary=f"역할 쌍 {len(cells)}개의 정렬도입니다.",
+        items=[
+            {
+                "title": f"{c.role_a} · {c.role_b}",
+                "body": f"{c.score:.2f} · 회의 {c.meeting_count}건",
+                "score": c.score,
+            }
+            for c in cells
+        ],
+    )
+
+
+def weekly_reports(session: Session, team_id: str, on: str | None = None) -> dict[str, Any]:
+    """Use this to show a team's weekly report. Do not use it for one meeting's
+    report -- that is ``meeting_report_body``.
+
+    ``on`` is any Korean date (YYYY-MM-DD) inside the week asked for; without
+    it, the latest week. Returns that week's report as one item, its body cut
+    to 1,200 characters, and whether it went out to the channel.
+    """
+    rows = service.list_reports(session, team_id)
+    if on:
+        try:
+            day = date.fromisoformat(on)
+        except ValueError:
+            return _refused("bad date", "날짜는 YYYY-MM-DD로 주세요.")
+        rows = [r for r in rows if r.period_start <= day < r.period_end]
+    if not rows:
+        return _result(summary="해당하는 주간 리포트가 없습니다.", items=[])
+    row = rows[0]
+    went_out = row.posted_at is not None
+    return _result(
+        summary="주간 리포트입니다." + ("" if went_out else " 아직 채널에 나가지 않았습니다."),
+        items=[
+            {
+                "title": f"{row.period_start} ~ {row.period_end}",
+                "body": row.body_markdown[:1200],
+                "score": 1.0,
+                "went_out": went_out,
+            }
+        ],
+    )
+
+
+def weekly_report_schedule(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this when asked when the weekly report goes out. Do not use it to
+    change the schedule.
+
+    Returns the weekday and hour (Korean time), whether a week with nothing to
+    say is posted, and who changed it last.
+    """
+    s = service.weekly_report_schedule(session, team_id)
+    when = f"매주 {_WEEKDAYS[s.weekday]}요일 {s.hour:02d}:00(한국 시간)"
+    empty = "내용 없는 주에도 보냅니다." if s.send_empty else "내용 없는 주에는 보내지 않습니다."
+    by = f" 마지막 변경: {s.updated_by_name}." if s.updated_by_name else ""
+    return _result(summary=f"{when}에 팀 채널로 보냅니다. {empty}{by}", items=[])
+
+
+def explain_metric(session: Session, team_id: str, question: str) -> dict[str, Any]:
+    """Use this to say what one of E's numbers means or how it is computed --
+    the quality grade, a gap pattern, alignment, the prediction, completion or
+    the reports. Do not use it for the team's own numbers -- fetch those with
+    the other tools and use this for their meaning.
+
+    Returns up to three glossary passages, each 400 characters at most. No
+    passage when nothing matches: say you do not know rather than guess.
+    """
+    del session, team_id  # the glossary is the same for every team
+    from .retrieval import get_retriever
+
+    found = get_retriever().search(question, k=3)
+    if not found:
+        return _result(summary="설명 문서에서 찾지 못했습니다.", items=[], confidence=0.0)
+    return _result(
+        summary="E 지표 설명입니다.",
+        items=[{"title": p.title, "body": p.text[:400], "score": 1.0, "id": p.key} for p in found],
+    )
+
+
 TOOLS = [
     meeting_quality,
     team_trend,
@@ -344,6 +535,12 @@ TOOLS = [
     meeting_report_draft,
     meeting_report_awaiting_approval,
     meeting_report_correction,
+    meeting_reports,
+    meeting_report_body,
+    role_alignment,
+    weekly_reports,
+    weekly_report_schedule,
+    explain_metric,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
@@ -387,6 +584,7 @@ def draft_meeting_report(
     body_markdown: str,
     pending_review: bool = False,
     draft_id: str | None = None,
+    replaces_draft_id: str | None = None,
 ) -> dict[str, Any]:
     """Store a meeting's finished report as a draft -- what the Report subagent
     proposes after a meeting's analysis finishes. Nothing is posted.
@@ -397,6 +595,8 @@ def draft_meeting_report(
     when it holds personal data. ``pending_review`` adds a button to B's review
     board when the report is posted. ``draft_id`` names this draft, so a post
     approved for it is not made with a later one. Replaces an unposted draft.
+    ``replaces_draft_id`` is the draft a re-draft was proposed against; a changed
+    or member-edited draft is then left as it is (``draft changed``).
     Refused for another team's meeting, a report already posted, one over the
     length cap, or a body that still holds personal data (by category, never
     the text).
@@ -408,8 +608,15 @@ def draft_meeting_report(
         document = service.meeting_report_document(meeting, body_markdown)
         try:
             service.save_meeting_report(
-                session, meeting_id, document, pending_review=pending_review, draft_id=draft_id
+                session,
+                meeting_id,
+                document,
+                pending_review=pending_review,
+                draft_id=draft_id,
+                expected_draft_id=replaces_draft_id,
             )
+        except service.DraftChangedError:
+            return _refused("draft changed", "그사이 초안이 바뀌어 다시 만들지 않았습니다.")
         except ConflictError:
             return _refused("already posted", "이미 게시된 리포트입니다.")
         except ValidationError:
@@ -506,10 +713,45 @@ def publish_meeting_report_correction(
     return _acted("리포트 수정본 게시를 예약했습니다.", meeting_id)
 
 
-ACTIONS = [draft_meeting_report, publish_meeting_report, publish_meeting_report_correction]
+def set_weekly_report_schedule(
+    team_id: str, user_id: str, weekday: int, hour: int, send_empty: bool | None = None
+) -> dict[str, Any]:
+    """Change when the team's weekly report goes out -- a weekday (0 is Monday),
+    an hour in Korean time, and whether a week with nothing to say is posted.
+    Leave ``send_empty`` out to keep the team's current choice.
+
+    L1 -- runs without approval, as any member may change it on the dashboard (#821).
+    ``user_id`` is the person who asked; it must come from the run, never a
+    model (#862). Refused for a non-member or a day or hour out of range.
+    """
+    with session_scope() as session:
+        if send_empty is None:
+            send_empty = service.weekly_report_schedule(session, team_id).send_empty
+        try:
+            schedule = service.set_weekly_report_schedule(
+                session, team_id, weekday=weekday, hour=hour, send_empty=send_empty, user_id=user_id
+            )
+        except PermissionDeniedError:
+            return _refused("not a member", "팀원만 바꿀 수 있습니다.")
+        except ValidationError:
+            return _refused("out of range", "요일은 0~6, 시각은 0~23이어야 합니다.")
+    when = f"{_WEEKDAYS[schedule.weekday]}요일 {schedule.hour:02d}:00"
+    return _result(
+        summary=f"주간 리포트를 매주 {when}(한국 시간)에 보내도록 바꿨습니다.",
+        items=[{"title": when, "body": "", "score": 1.0, "id": team_id}],
+    )
+
+
+ACTIONS = [
+    draft_meeting_report,
+    publish_meeting_report,
+    publish_meeting_report_correction,
+    set_weekly_report_schedule,
+]
 """E's writes. Kept out of ``TOOLS`` on purpose: the registry offers ``TOOLS`` to
 models, and the main agent's executor alone runs these."""
 
-L1_ACTIONS = [draft_meeting_report]
+L1_ACTIONS = [draft_meeting_report, set_weekly_report_schedule]
 """The reversible ones (#509): a draft is not seen by anyone until it is posted,
-and is replaced by the next draft. Everything else in ``ACTIONS`` is L2."""
+and is replaced by the next draft; a schedule is changed back the same way it was
+changed. Everything else in ``ACTIONS`` is L2."""

@@ -81,6 +81,32 @@ OWN_REASONS = frozenset(
 ``MISSING_ARGUMENT`` reason is also ours: it names parameters from the code."""
 
 
+TOLD = {
+    NOT_DECLARED: "할 수 없는 작업입니다",
+    FAILED: "처리 중 오류가 났습니다",
+    NO_ASKER: "누가 요청했는지 알 수 없습니다",
+    NO_MEETING: "어느 회의인지 정해지지 않았습니다",
+    UNEXPECTED_ARGUMENT: "요청 내용이 맞지 않습니다",
+    OUT_OF_SCOPE[0]: "이 팀의 일이 아닙니다",
+    OUT_OF_SCOPE[1]: "회의를 찾을 수 없습니다",
+}
+"""This layer's reasons as the person reads them in chat (#862)."""
+TOLD_CHARS = 80
+
+
+def _told(reason: str | None) -> str:
+    """Why an L1 did not go through, for the person who asked -- never stored.
+
+    The layer's own reasons read in Korean; a module's reason is its own words
+    (E writes "초안이 바뀌었습니다"), cut short.
+    """
+    if reason is None:
+        return TOLD[FAILED]
+    if reason.startswith(MISSING_ARGUMENT):
+        return TOLD[UNEXPECTED_ARGUMENT]
+    return TOLD.get(reason, reason)[:TOLD_CHARS]
+
+
 def _own(reason: str | None) -> bool:
     return reason is not None and (reason in OWN_REASONS or reason.startswith(MISSING_ARGUMENT))
 
@@ -158,8 +184,14 @@ def execute_l1(
     actions: Mapping[str, Action],
     session: Session,
     scope: RunScope,
+    unfinished: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Run each L1 proposal once, in order, and return what ``agent_runs.actions`` keeps.
+
+    ``unfinished``, when given, gets the proposal's title and the reason, in
+    words, for each L1 that did not go through -- what the chat tells the
+    asker (#862). It is never stored: a module's reason and a proposal's title
+    are its own words. One kept for approval is not unfinished.
 
     One failure does not stop the rest: they are independent writes, and the
     record says which worked. An action that raises is a bug in its module; it
@@ -188,6 +220,8 @@ def execute_l1(
             except PrivacyViolationError:
                 violations.append(action.name)
                 result = ToolResult.failure(FAILED)
+        if unfinished is not None and not result.ok and result.reason != KEPT_FOR_APPROVAL:
+            unfinished.append({"title": proposal.title, "reason": _told(result.reason)})
         done.append(
             {
                 "tool": proposal.tool,

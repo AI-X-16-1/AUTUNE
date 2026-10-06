@@ -42,6 +42,10 @@ class IntelligenceSettings(BaseSettings):
     doesn't need a hub commit hash the way module B's checkpoint does, because
     nothing here is fine-tuned and redistributed; the head is refit from
     ``pipeline.classifier._SEED_EXAMPLES`` every process start."""
+    retriever_impl: str = "bm25"
+    """How ``explain_metric`` searches the glossary: ``bm25`` (no model, CI) or
+    ``hybrid`` (BM25 plus the gap classifier's backbone, fused by RRF; needs the
+    ``local-models`` extra). Chosen by the retrieval evaluation (spec section 5)."""
 
     misalignment_predictor_impl: str = "heuristic"
     """Which misalignment predictor to run: ``heuristic`` or ``local``.

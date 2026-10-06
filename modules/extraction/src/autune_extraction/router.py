@@ -64,6 +64,7 @@ from .schemas import (
     ProjectSendResult,
     ProjectWrite,
     ReviewDecision,
+    TeamRead,
 )
 
 router = APIRouter()
@@ -488,6 +489,13 @@ def my_projects(session: SessionDep, reader: CurrentUser) -> list[ProjectRead]:
     """Every project of every team the reader is on -- for the board across
     meetings, which filters by project without a meeting to name the team."""
     return [service.project_read(row) for row in projects.reader_projects(session, reader.id)]
+
+
+@router.get("/teams/mine", response_model=list[TeamRead])
+def my_teams(session: SessionDep, reader: CurrentUser) -> list[TeamRead]:
+    """The reader's own teams, by name -- for the board across meetings, which
+    shows the items team by team and has only each item's ``team_id``."""
+    return service.reader_teams(session, reader.id)
 
 
 @router.get("/projects", response_model=list[ProjectRead])

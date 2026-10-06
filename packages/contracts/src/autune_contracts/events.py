@@ -32,6 +32,10 @@ approval before it reaches the team channel (#674). The payload is a plain
 ``Payload``: the meeting id and nothing else. What waits to be posted is read
 through E's tools when the event is handled, because an id carried here could
 already be stale by then."""
+INTELLIGENCE_MEETING_REPORT_POSTED: Final = "autune.intelligence.meeting_report_posted"
+"""E -> C. A meeting's report went out to the team channel; the payload is a
+``MeetingReportPosted`` (channel and the message ts), so C's question cards can
+reply in that thread rather than post apart (#824). Sent once per report."""
 
 EVENTS: Final = (
     TRANSCRIPT_READY,
@@ -42,6 +46,7 @@ EVENTS: Final = (
     EXTRACTION_AGENDA_CHANGED,
     EXTRACTION_ACTION_PROGRESS,
     INTELLIGENCE_MEETING_REPORT_CHANGED,
+    INTELLIGENCE_MEETING_REPORT_POSTED,
 )
 """Every event the pipeline publishes.
 
@@ -54,7 +59,11 @@ Additive only, like everything in this package: appending an event is fine,
 renaming one changes a task name in somebody else's module.
 """
 
-TERMINAL_EVENTS: Final = (INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED)
+TERMINAL_EVENTS: Final = (
+    INTELLIGENCE_COMPLETED,
+    INTELLIGENCE_MEETING_REPORT_CHANGED,
+    INTELLIGENCE_MEETING_REPORT_POSTED,
+)
 """Events that may reach no task, on purpose.
 
 The module pipeline ends at E: no module consumes `autune.intelligence.completed`.
@@ -70,6 +79,10 @@ nobody reads, and it was the only signal the second case had.
 `autune.intelligence.meeting_report_changed` is the same case (#674). Only the
 agent layer consumes it, and E publishes it from the API process, where the
 layer's tasks may not be registered.
+
+`autune.intelligence.meeting_report_posted` is here until C's
+``on_intelligence_meeting_report_posted`` lands (#824); C may also keep posting
+apart from the thread. Take it out when C subscribes.
 
 Declared here rather than in the worker's tests, which is where it started: a
 list that decides a log level in production cannot live in a test.

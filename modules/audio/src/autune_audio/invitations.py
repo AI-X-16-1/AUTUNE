@@ -30,10 +30,19 @@ same status and the same words. The reason goes to the log, by id.
 **The address is somebody's personal data, held before they agreed to
 anything.** It goes when the invitation is accepted, when it lapses (the
 retention sweep, and the next invitation made for that team), when it is
-replaced by a new invitation to the same address, when the team or the
-inviter's account is deleted (``ON DELETE CASCADE``), and when the invited
-person deletes their own account (``forget_address``). Log lines carry ids
-only: never the address, the token or its hash.
+replaced by a new invitation to the same address, when a member of the team
+cancels it (``cancel``), when the team or the inviter's account is deleted
+(``ON DELETE CASCADE``), and when the invited person deletes their own
+account (``forget_address``). Log lines carry ids only: never the address,
+the token or its hash.
+
+**A team's members can see what is pending and take it back** (``pending``,
+``cancel``). The list is the address, when the link lapses and who invited:
+what the inviter typed and the team already holds. It still looks nobody up
+-- an address with an account and one without read the same -- and never
+carries the token or its hash, so a link cannot be rebuilt from it. Who may
+see the addresses and who may cancel is the module owner's to settle on
+#552; as built, any member of the team may do both.
 """
 
 from __future__ import annotations
@@ -182,6 +191,53 @@ def accept(session: Session, *, token: str, user: User, now: datetime | None = N
         already_member=already is not None,
     )
     return team
+
+
+def pending(
+    session: Session, *, team_id: str, reader: User, now: datetime | None = None
+) -> list[tuple[AudTeamInvitation, str | None]]:
+    """The team's invitations nobody has accepted yet, with the inviter's name:
+    the one lapsing soonest first. Members of the team only.
+
+    A lapsed one is not listed even before the sweep has removed it: its link
+    no longer works, and a list that showed it would say otherwise.
+    """
+    require_team_member(session, user_id=reader.id, team_id=team_id)
+    now = now or datetime.now(tz=UTC)
+    return [
+        (row, name)
+        for row, name in session.execute(
+            sa.select(AudTeamInvitation, User.display_name)
+            .outerjoin(User, User.id == AudTeamInvitation.invited_by)
+            .where(AudTeamInvitation.team_id == team_id, AudTeamInvitation.expires_at > now)
+            .order_by(AudTeamInvitation.expires_at, AudTeamInvitation.id)
+        )
+    ]
+
+
+def cancel(session: Session, *, team_id: str, invitation_id: int, by: User) -> bool:
+    """Take a pending invitation back: the row goes, and its link with it.
+
+    Members of the team only. One that is no longer there -- accepted, lapsed,
+    cancelled by somebody else a moment ago, or never this team's -- is not an
+    error and not a different answer: the caller wanted it gone and it is, and
+    an id that belongs to another team says nothing about that team.
+    """
+    require_team_member(session, user_id=by.id, team_id=team_id)
+    result = session.execute(
+        sa.delete(AudTeamInvitation).where(
+            AudTeamInvitation.id == invitation_id, AudTeamInvitation.team_id == team_id
+        )
+    )
+    gone = int(getattr(result, "rowcount", 0)) > 0
+    if gone:
+        log.info(
+            "team_invitation_cancelled",
+            team_id=team_id,
+            invitation_id=invitation_id,
+            cancelled_by=by.id,
+        )
+    return gone
 
 
 def forget_expired(session: Session, *, now: datetime) -> int:

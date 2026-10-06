@@ -21,12 +21,14 @@ from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from autune_context.config import get_settings
+from autune_context.constants import SPEECH_DELETED_TEXT
 from autune_context.dates import meeting_day
 from autune_context.models import (
     CtxDecision,
     CtxDecisionVersion,
     CtxEmbedding,
     CtxMeetingStatus,
+    CtxTeamAgenda,
     CtxTopicLink,
 )
 from autune_context.notify import (
@@ -50,6 +52,7 @@ from autune_core import (
     get_logger,
     session_scope,
 )
+from autune_core.deletion import on_speech_deleted
 from autune_core.errors import ConflictError, NotFoundError
 from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 
@@ -841,6 +844,7 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
                 CtxDecisionVersion(
                     thread_id=thread_id,
                     source_decision_id=decision.id,
+                    source_utterance_ids=list(decision.source_utterance_ids),
                     meeting_id=meeting.id,
                     current_statement=decision.statement,
                     previous_version_id=None,
@@ -961,6 +965,13 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
     head_by_thread: dict[str, CtxDecisionVersion] = {}
     for version in versions:
         head_by_thread[version.thread_id] = version  # last row per thread = its head
+    # A head whose words were deleted (#614) says nothing to match a decision
+    # against, and every such head reads alike, so it is no head at all.
+    head_by_thread = {
+        thread_id: version
+        for thread_id, version in head_by_thread.items()
+        if version.current_statement != SPEECH_DELETED_TEXT
+    }
     if not head_by_thread:
         return []
     ordered = sorted(head_by_thread.items())
@@ -2190,3 +2201,167 @@ def _upsert_status(session: Session, meeting_id: str, **fields: object) -> CtxMe
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+# --------------------------------------------------------------------------- #
+# Deletion -- a person deleted their own speech (#587, #614)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class SpeechForgotten:
+    """Counts only: what ``forget_speech`` changed, safe to log."""
+
+    topics_deleted: int = 0
+    links_deleted: int = 0
+    statements_cleared: int = 0
+    agendas_dropped: int = 0
+
+
+def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgotten:
+    """Drop the words D copied from utterances that are about to be deleted (#587).
+
+    Decided with the user (2026-10-01): the work stays, their words go. In D:
+
+    - **A topic goes only when every utterance it was cut from goes** -- its
+      embedding, which is a vector of that text, and the topic links carrying its
+      label. A topic somebody else also named is still the meeting's topic, said
+      in their words too, so it stays (as in C). A topic with no record of what it
+      was cut from (written before ``utterance_ids``) goes with the meeting's
+      first deletion: not knowing is not a reason to keep it.
+    - **A decision statement goes when any line it was drawn from goes**: it reads
+      ``SPEECH_DELETED_TEXT`` when one of the utterances B drew it from is deleted,
+      or when there is no record of them (written before ``source_utterance_ids``).
+      The rule differs from a topic's because the two hold different things: a
+      statement is B's assembled quote of those lines, word for word, so a
+      deleted line's words are still in it however many others sit beside them;
+      a topic label is a name several people gave, and is no one person's
+      sentence. The thread, its versions, how each changed and when stay -- that is
+      the team's work. Wherever the statement was copied -- a later version's
+      ``previous_statement``, the thread's label -- the copy reads the same.
+    - **The team's agenda snapshot is dropped**: it holds B's issue titles, which
+      B rewrites on the same signal, and B republishes it every few minutes. Until
+      then the brief says it has no agenda, which is better than quoting a title
+      the person has deleted.
+
+    A decision B cited no line for (``[]``) stays: nothing says it was theirs.
+
+    Runs before the utterances are deleted, because that is how it finds the
+    meetings. Safe to repeat: the second time there is nothing left to find.
+    """
+    gone = set(utterance_ids)
+    if not gone:
+        return SpeechForgotten()
+    meetings = {
+        meeting_id: team_id
+        for meeting_id, team_id in session.execute(
+            select(Meeting.id, Meeting.team_id)
+            .join(Utterance, Utterance.meeting_id == Meeting.id)
+            .where(Utterance.id.in_(gone))
+            .distinct()
+        )
+    }
+    if not meetings:
+        return SpeechForgotten()
+
+    # Topics: an embedding, and the links named after it.
+    topic_ids: list[int] = []
+    gone_labels: dict[str, set[str]] = {}
+    for embedding in session.scalars(
+        select(CtxEmbedding).where(
+            CtxEmbedding.meeting_id.in_(meetings), CtxEmbedding.kind == "topic"
+        )
+    ):
+        cut_from = embedding.utterance_ids
+        if cut_from is None or (cut_from and set(cut_from) <= gone):
+            topic_ids.append(embedding.id)
+            gone_labels.setdefault(embedding.meeting_id, set()).add(embedding.ref_label)
+    links_deleted = 0
+    if topic_ids:
+        session.execute(delete(CtxEmbedding).where(CtxEmbedding.id.in_(topic_ids)))
+        session.flush()
+        for meeting_id, labels in gone_labels.items():
+            still_named = set(
+                session.scalars(
+                    select(CtxEmbedding.ref_label).where(
+                        CtxEmbedding.meeting_id == meeting_id, CtxEmbedding.kind == "topic"
+                    )
+                )
+            )
+            links_deleted += len(
+                session.scalars(
+                    delete(CtxTopicLink)
+                    .where(
+                        CtxTopicLink.meeting_id == meeting_id,
+                        CtxTopicLink.topic_label.in_(labels - still_named),
+                    )
+                    .returning(CtxTopicLink.id)
+                ).all()
+            )
+
+    # Decisions: the statement, then every place it was copied to.
+    cleared = [
+        version
+        for version in session.scalars(
+            select(CtxDecisionVersion).where(CtxDecisionVersion.meeting_id.in_(meetings))
+        )
+        if version.current_statement != SPEECH_DELETED_TEXT
+        and (
+            version.source_utterance_ids is None
+            or (version.source_utterance_ids and set(version.source_utterance_ids) & gone)
+        )
+    ]
+    if cleared:
+        for version in session.scalars(
+            select(CtxDecisionVersion).where(
+                CtxDecisionVersion.previous_version_id.in_({v.id for v in cleared}),
+                CtxDecisionVersion.previous_statement.is_not(None),
+            )
+        ):
+            version.previous_statement = SPEECH_DELETED_TEXT
+        for thread in session.scalars(
+            select(CtxDecision).where(CtxDecision.id.in_({v.thread_id for v in cleared}))
+        ):
+            if any(thread.topic_label == v.current_statement[:400] for v in cleared):
+                thread.topic_label = SPEECH_DELETED_TEXT
+        for version in cleared:
+            version.current_statement = SPEECH_DELETED_TEXT
+        session.flush()
+
+    agendas_dropped = len(
+        session.scalars(
+            delete(CtxTeamAgenda)
+            .where(CtxTeamAgenda.team_id.in_(set(meetings.values())))
+            .returning(CtxTeamAgenda.team_id)
+        ).all()
+    )
+    return SpeechForgotten(
+        topics_deleted=len(topic_ids),
+        links_deleted=links_deleted,
+        statements_cleared=len(cleared),
+        agendas_dropped=agendas_dropped,
+    )
+
+
+@on_speech_deleted("context")
+def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
+    """Before a person's own speech is deleted (#587, #614): ``forget_speech``.
+
+    Registered from this file because ``router`` imports it: A's deletion runs in
+    the API process, which imports every router and no ``tasks`` module (as C's
+    and E's hooks are). Raises on failure, so A's deletion stops rather than
+    leaving the words behind in D; commits in its own transaction before A
+    deletes, erring toward deleting more. Nothing is republished: E clears its
+    own copy of D's links on the same signal. Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget_speech(session, utterance_ids)
+    log.info(
+        "context_speech_forgotten",
+        user_id=user_id,
+        utterances=len(utterance_ids),
+        topics_deleted=done.topics_deleted,
+        links_deleted=done.links_deleted,
+        statements_cleared=done.statements_cleared,
+        agendas_dropped=done.agendas_dropped,
+    )

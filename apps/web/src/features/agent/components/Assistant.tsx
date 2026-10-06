@@ -391,6 +391,7 @@ function AssistantReply({ reply }: { reply: ChatReply }) {
   const decidable = reply.pending ?? [];
   // Waiting for someone else: the server's count, less the ones drawn here.
   const queued = Math.max(reply.queued - decidable.length, 0);
+  const unfinished = reply.unfinished ?? [];
   return (
     <div>
       <p
@@ -402,32 +403,55 @@ function AssistantReply({ reply }: { reply: ChatReply }) {
       {!unrouted && reply.items.length > 0 && <Evidence items={reply.items} />}
       {!unrouted &&
         decidable.map((item) => <ChatProposal key={item.id} item={item} />)}
-      {!unrouted && (reply.executed > 0 || queued > 0) && (
-        <div
-          className="mt-3 rounded-[var(--radius)]"
-          style={{ padding: 12, background: "var(--color-surface-paper)" }}
-        >
-          {reply.executed > 0 && (
-            <p className="flex items-center gap-2" style={{ fontSize: 12.5 }}>
-              <StatusDot variant="confirmed" />
-              바로 처리한 것 {reply.executed}건
-            </p>
-          )}
-          {queued > 0 && (
-            <p className="flex items-center gap-2" style={{ fontSize: 12.5 }}>
-              <StatusDot variant="progress" />
-              승인이 필요한 제안 {queued}건을 올렸습니다 ·
-              <Link
-                href="/approvals"
-                className="text-[var(--color-accent-default)]"
-                style={{ fontWeight: 600 }}
-              >
-                승인 대기 열기
-              </Link>
-            </p>
-          )}
-        </div>
-      )}
+      {!unrouted &&
+        (reply.executed > 0 || queued > 0 || unfinished.length > 0) && (
+          <div
+            className="mt-3 rounded-[var(--radius)]"
+            style={{ padding: 12, background: "var(--color-surface-paper)" }}
+          >
+            {reply.executed > 0 && (
+              <p className="flex items-center gap-2" style={{ fontSize: 12.5 }}>
+                <StatusDot variant="confirmed" />
+                바로 처리한 것 {reply.executed}건
+              </p>
+            )}
+            {unfinished.length > 0 && (
+              <>
+                <p
+                  className="flex items-center gap-2"
+                  style={{ fontSize: 12.5 }}
+                >
+                  <StatusDot variant="attention" />
+                  처리하지 못한 것 {unfinished.length}건
+                </p>
+                <ul style={{ fontSize: 12, paddingLeft: 14 }}>
+                  {unfinished.map((item, i) => (
+                    <li
+                      key={i}
+                      className="text-[var(--color-ink-muted)]"
+                      style={{ lineHeight: 1.6 }}
+                    >
+                      <MaskedText>{`${item.title} — ${item.reason}`}</MaskedText>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {queued > 0 && (
+              <p className="flex items-center gap-2" style={{ fontSize: 12.5 }}>
+                <StatusDot variant="progress" />
+                승인이 필요한 제안 {queued}건을 올렸습니다 ·
+                <Link
+                  href="/approvals"
+                  className="text-[var(--color-accent-default)]"
+                  style={{ fontWeight: 600 }}
+                >
+                  승인 대기 열기
+                </Link>
+              </p>
+            )}
+          </div>
+        )}
     </div>
   );
 }

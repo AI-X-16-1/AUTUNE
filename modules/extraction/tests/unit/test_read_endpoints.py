@@ -28,6 +28,7 @@ from autune_core import (
     Base,
     Meeting,
     Participant,
+    Team,
     TeamMember,
     User,
     Utterance,
@@ -67,6 +68,8 @@ TABLES = [
     User.__table__,
     # Read on every list: an assignee who is not a member needs reassigning.
     TeamMember.__table__,
+    # Read by ``GET /teams/mine`` alone -- an item carries only its team's id.
+    Team.__table__,
     Participant.__table__,
     Utterance.__table__,
     ExtActionItem.__table__,
@@ -212,6 +215,51 @@ def test_each_item_names_its_meeting(client: TestClient, session: Session) -> No
 
     assert row["meeting_title"] == "주간 회의"
     assert detail["meeting_title"] == "주간 회의"
+
+
+@pytest.mark.usefixtures("no_sync")
+def test_each_item_carries_its_meetings_team(client: TestClient, session: Session) -> None:
+    """The board across meetings shows the items team by team (2026-10-06): the
+    list, the drawer and the answer to an edit -- which replaces the board's
+    copy -- all say which team the item's meeting belongs to."""
+    session.add(Meeting(id="mtg_b", team_id="team_2", title="디자인 회의"))
+    session.add(TeamMember(team_id="team_2", user_id=READER))
+    action_item(session, "act_1")
+    action_item(session, "act_2", meeting_id="mtg_b")
+
+    rows = {row["id"]: row for row in client.get(f"{PREFIX}/action-items").json()}
+    detail = client.get(f"{PREFIX}/action-items/act_2").json()
+    edited = client.patch(f"{PREFIX}/action-items/act_2", json={"status": "todo"})
+
+    assert rows["act_1"]["team_id"] == "team_1"
+    assert rows["act_2"]["team_id"] == "team_2"
+    assert detail["team_id"] == "team_2"
+    assert edited.status_code == 200
+    assert edited.json()["team_id"] == "team_2"
+
+
+def test_my_teams_are_the_readers_own_by_name(client: TestClient, session: Session) -> None:
+    """``GET /teams/mine`` names the teams the items' ``team_id`` point at -- the
+    reader's, in name order, and no team they are not on."""
+    session.add_all(
+        [
+            Team(id="team_1", name="플랫폼"),
+            Team(id="team_2", name="디자인"),
+            Team(id="team_3", name="영업"),
+        ]
+    )
+    session.add(TeamMember(team_id="team_2", user_id=READER))
+    session.add(User(id="user_other", email="other@example.com", display_name="다른 사람"))
+    session.add(TeamMember(team_id="team_3", user_id="user_other"))
+    session.flush()
+
+    response = client.get(f"{PREFIX}/teams/mine")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {"id": "team_2", "name": "디자인"},
+        {"id": "team_1", "name": "플랫폼"},
+    ]
 
 
 def test_filters_narrow_the_list_and_combine(client: TestClient, session: Session) -> None:

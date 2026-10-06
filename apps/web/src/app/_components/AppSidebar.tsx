@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { logout } from "@/shared/api/auth";
 import { setSignedIn } from "@/shared/api/client";
-import { Button } from "@/shared/ui";
+import { Button, Wordmark } from "@/shared/ui";
 
 import { TeamMenu } from "@/features/transcript";
 
@@ -47,10 +47,12 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { label: "홈", href: "/", isCurrent: (p) => p === "/" },
-  // The meeting list is the home screen for now, so both entries lead there;
-  // this one is current anywhere inside a meeting.
-  { label: "회의", href: "/", isCurrent: (p) => p.startsWith("/meetings") },
+  // The meeting list is the home screen, so there is no "회의" entry beside
+  // this one: it led to the same place and differed only in when it was lit
+  // (removed on the user's word, 2026-10-06). A meeting is opened from home,
+  // so home is the current entry anywhere inside one -- otherwise nothing in
+  // the sidebar would be lit on the screens people spend most time on.
+  { label: "홈", href: "/", isCurrent: (p) => p === "/" || p.startsWith("/meetings") },
   { label: "액션아이템", href: "/actions", isCurrent: (p) => p === "/actions" },
   { label: "갭 리포트", href: "/gaps", isCurrent: (p) => p === "/gaps" },
   { label: "결정 히스토리", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
@@ -99,12 +101,8 @@ export function AppSidebar() {
       className="sticky top-0 flex h-screen flex-col border-r border-[var(--color-hairline)] bg-[var(--color-surface-paper)]"
       style={{ padding: "22px 18px", gap: 20 }}
     >
-      <Link
-        href="/"
-        className="text-[var(--color-ink-strong)]"
-        style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.04em" }}
-      >
-        AUTUNE
+      <Link href="/" className="self-start text-[var(--color-ink-strong)]">
+        <Wordmark height={18} />
       </Link>
 
       <Link
