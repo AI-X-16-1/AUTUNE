@@ -68,8 +68,8 @@ from .confirmations import (
 from .decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
-    decision_id,
     group_decisions,
+    identified,
     needs_write_up,
 )
 from .edit_cost import EditCost
@@ -2110,12 +2110,18 @@ def build_decisions(
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
 
-    fresh = {
-        decision_id(meeting_id, group.source_utterance_ids): group
-        for group in group_decisions(utterances, max_gap=max_gap, day=day)
-    }
+    fresh = dict(
+        identified(meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances)
+    )
     summaries = summaries or {}
-    heard = {u.id for u in utterances}
+    # ``utterances`` may be the sequence read in pieces (``in_pieces``).
+    # Two decisions of one long turn are two rows (``identified``); what is
+    # stored as a source or a related line is always the utterance itself.
+    real = {u.id: u.source_id for u in utterances}
+    sources = {
+        id_: list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
+        for id_, group in fresh.items()
+    }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
     for id_, group in fresh.items():
@@ -2124,9 +2130,11 @@ def build_decisions(
         if summary is not None and summary.text.strip() and summary.text != group.core_text:
             head = tidy(summary.text.strip())
             line = f"{head} ({group.suffix})" if group.suffix else head
-            cited[id_] = [
-                u for u in summary.used if u in heard and u not in group.source_utterance_ids
-            ]
+            cited[id_] = list(
+                dict.fromkeys(
+                    real[u] for u in summary.used if u in real and real[u] not in sources[id_]
+                )
+            )
         shown[id_] = line
 
     # Only the model's decisions are rebuilt. One a person added is not derived
@@ -2185,7 +2193,7 @@ def build_decisions(
                     [
                         {"decision_id": id_, "utterance_id": utterance_id, "position": position}
                         for id_ in new_ids
-                        for position, utterance_id in enumerate(fresh[id_].source_utterance_ids)
+                        for position, utterance_id in enumerate(sources[id_])
                     ]
                 )
                 .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
@@ -2639,6 +2647,7 @@ def classify_utterances(
             confidence=prediction.confidence,
             text=utterance.text,
             speaker=utterance.speaker,
+            pieces=prediction.pieces,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -2962,7 +2971,13 @@ def resolve_decision_summaries(
     """
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
         return {}
-    groups = [g for g in group_decisions(classified, max_gap=max_gap, day=day) if needs_write_up(g)]
+    groups = [
+        (id_, group)
+        for id_, group in identified(
+            meeting_id, group_decisions(classified, max_gap=max_gap, day=day), classified
+        )
+        if needs_write_up(group)
+    ]
     if not groups:
         return {}
 
@@ -2971,7 +2986,7 @@ def resolve_decision_summaries(
     position = {u.id: index for index, u in enumerate(classified)}
     requests = []
     keys = []
-    for group in groups:
+    for id_, group in groups:
         here = position[group.substance_id]
         first = min(group.first_position, here)
         last = max(group.last_position, here)
@@ -2990,7 +3005,7 @@ def resolve_decision_summaries(
                 related=tuple((line_id, said[line_id]) for line_id in offered),
             )
         )
-        keys.append(decision_id(meeting_id, group.source_utterance_ids))
+        keys.append(id_)
     resolved = resolver.resolve_with_evidence(requests)  # type: ignore[attr-defined]
     return dict(zip(keys, resolved, strict=True))
 
@@ -3217,29 +3232,42 @@ def build_action_items(
     ):
         session.delete(stale)
 
+    # ``classified`` may be the sequence read in pieces (``in_pieces``): a
+    # commitment among a long turn's pieces is an item of its own, written from
+    # the piece and citing the turn.
+    real = {u.id: u.source_id for u in classified}
     items = []
     for utterance in classified:
         if utterance.kind is not UtteranceKind.COMMITMENT:
             continue
-        answer = answers.get(utterance.id)
+        answer = answers.get(utterance.source_id)
         if answer is not None and answer != UtteranceKind.COMMITMENT.value:
             # Its speaker said it was not a promise. ``withdraw_confirmed_draft``
             # took the item back; a rerun that still reads a commitment must not
             # bring it back (#529 review).
             continue
-        said = spoken[utterance.id]
+        said = spoken[utterance.source_id]
+        # A piece is read by its own words: the date in another part of the
+        # turn belongs to whatever was promised there.
+        own = utterance.text if utterance.part_of else said.text
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
-        due = parse_due(said.text, day)
+        due = parse_due(own, day)
         # ``description_resolved`` is about the resolver's rewrite alone; tidying
         # is a fixed rule, not a model's paraphrase, and the original is beside it.
-        rewritten = resolved.get(utterance.id, said.text)
+        rewritten = resolved.get(utterance.id, own)
         description = tidy(rewritten)
-        cited = [u for u in related.get(utterance.id, ()) if u in spoken and u != utterance.id]
+        cited = list(
+            dict.fromkeys(
+                line
+                for u in related.get(utterance.id, ())
+                if (line := real.get(u, u)) in spoken and line != utterance.source_id
+            )
+        )
         items.append(
             ExtActionItem(
                 meeting_id=meeting_id,
                 description=description,
-                description_resolved=rewritten != said.text,
+                description_resolved=rewritten != own,
                 assignee_id=assignee.user_id,
                 assignee_label=assignee.label,
                 due_date=due.date if due is not None else None,
@@ -3247,7 +3275,7 @@ def build_action_items(
                 status=ActionStatus.NEEDS_CONFIRMATION.value,
                 confidence=utterance.confidence,
                 origin="model",
-                sources=[ExtActionItemSource(utterance_id=utterance.id)],
+                sources=[ExtActionItemSource(utterance_id=utterance.source_id)],
                 related=[ExtActionItemRelated(utterance_id=u) for u in cited],
             )
         )

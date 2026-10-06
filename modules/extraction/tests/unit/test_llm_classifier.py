@@ -26,6 +26,7 @@ from autune_extraction.pipeline.llm import (
     LlmClassifier,
     parse,
     pieces,
+    sentences,
     strongest,
     windows,
 )
@@ -57,7 +58,7 @@ class Provider:
             m = re.match(r"(\d+) \[(대상|문맥)\] (.*)", line)
             if m and m[2] == "문맥":
                 labels[m[1]] = "decision"
-            elif m and m[3].endswith("할게요"):
+            elif m and m[3].rstrip(".").endswith("할게요"):
                 labels[m[1]] = "commitment"
         answer = "여기 결과입니다: " + _dumps({"labels": labels}, ensure_ascii=False)
         return {"candidates": [{"content": {"parts": [{"text": answer}]}}]}
@@ -159,6 +160,11 @@ def _lines(body: dict) -> list[tuple[str, str]]:
     return [(m[1], m[2]) for m in re.finditer(r"^\d+ \[(대상|문맥)\] (.*)$", text, re.M)]
 
 
+def _asked(provider: Provider) -> list[str]:
+    """Every line a request asked about, in order."""
+    return [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
+
+
 def test_a_meeting_of_long_turns_still_goes_out_in_requests_the_guard_accepts(slept) -> None:
     """dev, 2026-10-05: 82 utterances, and the second request was over the limit
     -- three long context lines and then a target that had to be admitted. The
@@ -169,57 +175,140 @@ def test_a_meeting_of_long_turns_still_goes_out_in_requests_the_guard_accepts(sl
 
     for body in provider.bodies:
         check_outbound(body, destination="test", addressing=frozenset({"role", "responseMimeType"}))
-    targets = [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
-    assert targets == texts  # each one asked about once, in order
+    # Every word of every turn asked about once, in order.
+    assert " ".join(_asked(provider)) == " ".join(texts)
     assert [p.kind for p in predictions] == [
         UtteranceKind.COMMITMENT if i % 5 == 0 else None for i in range(82)
     ]
 
 
-def test_context_gives_way_before_a_target_does_and_the_nearest_line_stays(slept) -> None:
-    provider = Provider()
-    texts = turns(12, 900)
-    classifier(provider).classify(texts)
+def test_context_gives_way_before_a_target_does_and_the_nearest_line_stays() -> None:
+    """Lines as long as the turns that failed on dev, given to ``windows``
+    itself: ``classify`` no longer passes any this long."""
+    lines = turns(12, 900)
+    budget = llm_module.MAX_OUTBOUND_CHARS - llm_module._BODY_OVERHEAD
 
-    for body in provider.bodies[1:]:
-        lines = _lines(body)
-        context = [text for tag, text in lines if tag == "문맥"]
-        first = next(text for tag, text in lines if tag == "대상")
-        at = texts.index(first)
-        assert 0 < len(context) < CONTEXT_LINES
-        assert context == texts[at - len(context) : at]
+    found = windows(lines, budget)
+
+    assert [(start, end) for _context, start, end in found][:2] == [(0, 3), (3, 4)]
+    for context, start, _end in found[1:]:
+        assert 0 < start - context < CONTEXT_LINES  # some context, never all three
+        assert sum(len(line) + 12 for line in lines[context : start + 1]) <= budget
+
+
+def test_a_turn_over_three_hundred_characters_is_read_sentence_by_sentence(slept) -> None:
+    """The instructions were measured on lines the length of a sentence, and
+    what is made from a labelled line is that line."""
+    provider = Provider()
+    talk = [
+        "지난주에 시안을 몇 개 돌려 봤는데 반응이 생각보다 갈렸어요.",
+        "네.",
+        "첫 화면에서 버튼이 너무 아래에 있다는 얘기가 여러 번 나왔고요.",
+        "그래서 결제 화면 시안은 제가 금요일까지 정리할게요.",
+    ]
+    long_turn = " ".join(talk * 3)
+    short_turn = " ".join(talk)
+
+    long_one, short_one = classifier(provider).classify([long_turn, short_turn])
+
+    assert len(long_turn) > llm_module.LONG_TURN_CHARS >= len(short_turn)
+    assert short_one.pieces == () and short_turn in _asked(provider)
+    # A sentence a line; "네." goes with the sentence after it.
+    assert [text for text, _kind in long_one.pieces] == [
+        talk[0],
+        f"{talk[1]} {talk[2]}",
+        talk[3],
+    ] * 3
+    assert [kind for _text, kind in long_one.pieces] == [None, None, UtteranceKind.COMMITMENT] * 3
+    assert long_one.kind is UtteranceKind.COMMITMENT and short_one.kind is UtteranceKind.COMMITMENT
+
+
+@pytest.mark.parametrize(
+    ("name", "said"),
+    [
+        # A cut at a space would fall between the two words of the name.
+        ("Min Kim", "가" * 196 + " Min Kim 님이 다음 주까지 보기로 했어요 " + "나" * 150),
+        # A cut at the limit, in text with no space at all, would fall inside it.
+        ("MinKim", "가" * 198 + "MinKim" + "나" * 250),
+    ],
+)
+def test_no_cut_falls_inside_a_name_so_none_leaves_unreplaced(slept, name: str, said: str) -> None:
+    """Names are replaced line by line after the cut (#411). A name on two
+    lines would match on neither and leave as it was said."""
+    provider = Provider()
+    c = classifier(provider)
+    c.use_roster([name])
+
+    (prediction,) = c.classify([said])
+
+    sent = "\n".join(body["contents"][0]["parts"][0]["text"] for body in provider.bodies)
+    assert "Min" not in sent and "Kim" not in sent
+    assert "[사람1]" in sent
+    assert len(prediction.pieces) > 1
+    assert any(name in text for text, _kind in prediction.pieces)  # whole, on one line
+    assert "".join(text for text, _kind in prediction.pieces).replace(" ", "") == said.replace(
+        " ", ""
+    )
+
+
+def test_sentences_lose_nothing_and_speech_without_a_full_stop_is_cut_at_a_space() -> None:
+    unpunctuated = turns(1, 900)[0]
+    cut = sentences(unpunctuated)
+
+    assert " ".join(cut) == unpunctuated
+    assert len(cut) > 1 and all(len(line) <= llm_module.SENTENCE_CHARS for line in cut)
+    assert sentences("그렇게 하죠. 네.") == ["그렇게 하죠. 네."]  # nothing to join a short one to
+    assert sentences("하나는 이렇게 충분히 긴 문장입니다. 네. 맞아요.") == [
+        "하나는 이렇게 충분히 긴 문장입니다. 네. 맞아요."
+    ]
 
 
 def test_a_turn_longer_than_a_request_is_asked_about_in_pieces(slept) -> None:
     """Its own request would be refused and, before, took the meeting with it.
     Left out, the promise it ends in would be lost; so it goes in pieces."""
     provider = Provider()
-    texts = turns(20, 300)
+    texts = turns(20, 200)
     texts[7] = turns(1, 3200)[0]  # ends in a promise, as turn 0 does
     with capture_logs() as logs:
         predictions = classifier(provider).classify(texts)
 
     for body in provider.bodies:
         check_outbound(body, destination="test", addressing=frozenset({"role", "responseMimeType"}))
-    targets = [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
+    targets = _asked(provider)
     parts = targets[7:-12]
     assert targets[:7] == texts[:7] and targets[-12:] == texts[8:]
     assert len(parts) > 1 and " ".join(parts) == texts[7]  # all of it, in order, once
     assert predictions[7].kind is UtteranceKind.COMMITMENT  # the last piece's
+    # The pieces come back with the answer each got, for an item or a decision
+    # to be made from one of them; a turn sent whole has none.
+    assert [text for text, _kind in predictions[7].pieces] == parts
+    assert [kind for _text, kind in predictions[7].pieces] == [
+        *[None] * (len(parts) - 1),
+        UtteranceKind.COMMITMENT,
+    ]
+    assert all(p.pieces == () for i, p in enumerate(predictions) if i != 7)
     assert [p.kind for p in predictions].count(UtteranceKind.COMMITMENT) == 5  # 0, 5, 7, 10, 15
     (entry,) = [e for e in logs if e["event"] == "extraction_llm_classified"]
     assert entry["in_pieces"] == 1 and entry["utterances"] == 20
     assert texts[7][:40] not in repr(logs)
 
 
-def test_a_turn_one_request_can_carry_is_sent_whole(slept) -> None:
+def test_a_piece_comes_back_as_it_was_said_though_it_went_out_with_names_replaced(
+    slept,
+) -> None:
+    """An item is written from the piece, in the database's own words; only the
+    request carries ``[사람N]`` (#411)."""
     provider = Provider()
-    texts = turns(3, 300)
-    texts[1] = turns(1, 2500)[0]
-    classifier(provider).classify(texts)
+    c = classifier(provider)
+    c.use_roster(["김민경"])
+    long_turn = turns(1, 1600)[0] + " 김민경 님이 보시고 " + turns(1, 1600)[0]
 
-    targets = [text for body in provider.bodies for tag, text in _lines(body) if tag == "대상"]
-    assert targets == texts
+    (prediction,) = c.classify([long_turn])
+
+    sent = " ".join(text for body in provider.bodies for tag, text in _lines(body) if tag == "대상")
+    assert "김민경" not in sent and "[사람1]" in sent
+    assert len(prediction.pieces) > 1
+    assert " ".join(text for text, _kind in prediction.pieces) == long_turn
 
 
 def test_pieces_end_after_a_sentence_and_lose_nothing() -> None:
