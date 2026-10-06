@@ -10,6 +10,7 @@ This is not the integration suite: no Postgres, no migrations, no broker.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -50,6 +51,9 @@ from autune_extraction.models import (
     ExtProject,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, NliScores, Prediction
+
+from .test_llm_classifier import Provider
+from .test_llm_classifier import classifier as llm_classifier
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -434,6 +438,46 @@ def test_the_task_hands_the_teams_names_to_the_classifier(
     tasks.on_transcript_ready(transcript())
 
     assert rosters == [["김민경"]]
+
+
+def test_the_name_of_a_speaker_who_left_the_team_is_not_sent_out(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real outbound classifier behind the task, its provider recording.
+    한서윤 spoke in this meeting and is no longer on the team: no membership
+    row, a participant row that still names them. A member who stayed says
+    their name. On a run made now -- a retry, "다시 추출" -- the name is
+    replaced like a member's, in every request."""
+    lines = [
+        ("utt_1", 0.0, "그 건은 한서윤 님이 지난주에 정리해 주셨어요"),
+        ("utt_2", 4.0, "네 그럼 서윤 님 자료 받아서 제가 금요일까지 할게요"),
+    ]
+    stored(wired, lines)
+    team_id = wired.get(Meeting, MEETING).team_id  # type: ignore[union-attr]
+    wired.add(User(id="user_stay", email="stay@example.com", display_name="김민경"))
+    wired.add(TeamMember(team_id=team_id, user_id="user_stay"))
+    wired.add(User(id="user_gone", email="gone@example.com", display_name="한서윤"))
+    wired.add(
+        Participant(
+            id="par_gone",
+            meeting_id=MEETING,
+            speaker_label="C",
+            consented=True,
+            user_id="user_gone",
+        )
+    )
+    wired.flush()
+    provider = Provider()
+    outbound = llm_classifier(provider)
+    monkeypatch.setattr(tasks, "get_classifier", lambda: outbound)
+
+    tasks.on_transcript_ready(transcript(lines=lines))
+
+    sent = json.dumps(provider.bodies, ensure_ascii=False)
+    assert provider.bodies, "nothing was sent, so nothing was checked"
+    assert "[사람1]" in sent
+    assert "서윤" not in sent
+    assert kinds(wired) == {"utt_2": "commitment"}, "the answer still lands on the utterance"
 
 
 def test_the_task_classifies_and_groups_a_meeting(wired: Session) -> None:
