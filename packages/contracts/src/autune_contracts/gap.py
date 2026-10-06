@@ -42,3 +42,11 @@ class GapReport(Payload):
     gaps: list[Gap] = Field(default_factory=list)
     topics: list[Topic] = Field(default_factory=list)
     participation: list[Participation] = Field(default_factory=list)
+    measured: bool | None = Field(
+        default=None,
+        description=(
+            "Whether C could read the meeting at all (#248). False: no consented speech "
+            "reached C, so empty gaps mean 'not measured', not 'no gaps'. None: a producer "
+            "before 2.5; read it as measured."
+        ),
+    )

@@ -28,6 +28,7 @@ from .events import (
     GAP_COMPLETED,
     INTELLIGENCE_COMPLETED,
     INTELLIGENCE_MEETING_REPORT_CHANGED,
+    INTELLIGENCE_MEETING_REPORT_POSTED,
     MODULES,
     TERMINAL_EVENTS,
     TRANSCRIPT_READY,
@@ -57,6 +58,7 @@ from .extraction import (
 from .gap import Gap, GapReport, Participation, Topic
 from .intelligence import (
     IntelligenceSnapshot,
+    MeetingReportPosted,
     Prediction,
     QualityScore,
     RoleAlignment,
@@ -81,6 +83,7 @@ __all__ = [
     "CONTEXT_COMPLETED",
     "INTELLIGENCE_COMPLETED",
     "INTELLIGENCE_MEETING_REPORT_CHANGED",
+    "INTELLIGENCE_MEETING_REPORT_POSTED",
     "MODULES",
     # enums
     "UtteranceKind",
@@ -129,6 +132,8 @@ __all__ = [
     "DecisionChange",
     # E -> apps
     "IntelligenceSnapshot",
+    # E -> C (#824)
+    "MeetingReportPosted",
     "QualityScore",
     "RoleAlignment",
     "Prediction",
