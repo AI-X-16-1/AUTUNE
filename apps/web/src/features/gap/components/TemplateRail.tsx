@@ -1,13 +1,19 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
 import { Button, StatusDot } from "@/shared/ui";
 import type { StatusVariant } from "@/shared/ui";
 
 import { COVERAGE_LABELS } from "../types";
 import type {
   Coverage,
+  GapAgendaEvents,
   TemplateChecklistItem,
   TemplateComparison,
   TemplateOption,
 } from "../types";
+import { SchedulePanel } from "./SchedulePanel";
 
 /**
  * The right rail of S20: the checklist the meeting was held to, and how far it
@@ -35,14 +41,15 @@ import type {
  * renders as a plain read.
  *
  * "다음 회의 잡기" sits beside the heading: it is about the whole meeting, not
- * one gap. It sends every open gap on to the next meeting and adds them to the
- * next scheduled meeting's event on the caller's own Google Calendar (#824).
+ * one gap. It opens the caller's own Google Calendar (`SchedulePanel`) — or the
+ * way to connect it — and the event they pick takes every open gap (#824).
  */
 export function TemplateRail({
   comparison,
   templates = [],
   onChoose,
   onUndoDismiss,
+  loadAgendaEvents,
   onScheduleNext,
   pending = null,
 }: {
@@ -51,12 +58,30 @@ export function TemplateRail({
   templates?: readonly TemplateOption[];
   onChoose?: (templateKey: string) => void;
   onUndoDismiss?: (gapId: string) => void;
-  /** "다음 회의 잡기". Without it no button is drawn. */
-  onScheduleNext?: () => void;
+  /** "다음 회의 잡기": the events to pick from, and the pick. Without both no button is drawn. */
+  loadAgendaEvents?: () => Promise<GapAgendaEvents>;
+  onScheduleNext?: (eventId: string) => void;
   /** What is in flight: a gap id, `"template"` or `"agenda"`. */
   pending?: string | null;
 }) {
   const picking = onChoose !== undefined && templates.length > 1;
+  const scheduling = Boolean(loadAgendaEvents && onScheduleNext);
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  // Back from connecting Google Calendar: open the panel again, and drop the
+  // flag so a reload does not.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("calendar") === null) return;
+    if (url.searchParams.get("calendar") === "connected") setPanelOpen(true);
+    url.searchParams.delete("calendar");
+    window.history.replaceState(null, "", url.toString());
+  }, []);
+
+  const load = useCallback(
+    () => (loadAgendaEvents ? loadAgendaEvents() : Promise.reject(new Error("no loader"))),
+    [loadAgendaEvents],
+  );
 
   return (
     <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
@@ -78,19 +103,29 @@ export function TemplateRail({
           >
             템플릿 대조 · {comparison.name}
           </h2>
-          {onScheduleNext ? (
+          {scheduling ? (
             <Button
               tone="secondary"
               size="compact"
-              disabled={!comparison.analysed || pending === "agenda"}
-              aria-busy={pending === "agenda" || undefined}
-              title="이 회의의 열린 갭을 다음 회의로 넘기고, 내 Google 캘린더의 다음 회의 일정 설명에 덧붙입니다."
-              onClick={onScheduleNext}
+              disabled={!comparison.analysed}
+              aria-expanded={panelOpen}
+              title="내 Google 캘린더에서 다음 회의 일정을 골라 이 회의의 열린 갭을 일정 설명에 넣습니다."
+              onClick={() => setPanelOpen((open) => !open)}
             >
-              {pending === "agenda" ? "처리 중" : "다음 회의 잡기"}
+              다음 회의 잡기
             </Button>
           ) : null}
         </div>
+        {scheduling && panelOpen && onScheduleNext ? (
+          <SchedulePanel
+            load={load}
+            pending={pending === "agenda"}
+            onPick={(eventId) => {
+              onScheduleNext(eventId);
+              setPanelOpen(false);
+            }}
+          />
+        ) : null}
         {picking ? (
           <label className="mt-2 block">
             <span className="sr-only">대조할 템플릿</span>

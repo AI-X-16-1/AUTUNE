@@ -306,6 +306,47 @@ def test_another_teams_meeting_cannot_be_scheduled_from(
     assert session.get(GapGap, "gap_foreign").carried_at is None
 
 
+def test_the_picker_lists_my_upcoming_events(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    calendars[MEMBER] = FakeCalendar(
+        [event("evt_soon", STARTS), event("evt_far", STARTS + timedelta(days=30))]
+    )
+
+    body = client.get(f"{PREFIX}/agenda/{MEETING}/events").json()
+
+    assert body["calendar"] == "ok"
+    assert [e["id"] for e in body["events"]] == ["evt_soon"]
+    assert body["events"][0]["summary"] == "주간 회의"
+
+
+def test_the_picker_says_when_no_calendar_is_connected(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    assert client.get(f"{PREFIX}/agenda/{MEETING}/events").json() == {
+        "calendar": "not_connected",
+        "events": [],
+    }
+
+
+def test_the_picker_is_for_members_of_the_meetings_team(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    assert client.get(f"{PREFIX}/agenda/mtg_elsewhere/events").status_code == 404
+
+
+def test_scheduling_onto_a_picked_event_needs_no_scheduled_meeting(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json() == {"meeting_id": MEETING, "carried": 1, "calendar": "added"}
+    assert google.descriptions["evt_picked"].endswith("(gap_1)")
+
+
 # --- "담당자 지정해 질문" ------------------------------------------------------
 
 

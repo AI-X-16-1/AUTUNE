@@ -3,24 +3,66 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TemplateRail } from "./TemplateRail";
 import { DEMO_COMPARISON } from "../fixtures/report-demo";
+import type { GapAgendaEvents } from "../types";
 
-// "다음 회의 잡기" (#824): beside the rail's heading, for the whole meeting.
+// "다음 회의 잡기" (#824): beside the rail's heading, for the whole meeting. It
+// opens the caller's own calendar, or the way to connect it.
 
 afterEach(cleanup);
 
-const button = () => screen.getByRole("button", { name: "다음 회의 잡기" }) as HTMLButtonElement;
+const open = () => fireEvent.click(screen.getByRole("button", { name: "다음 회의 잡기" }));
+
+const connected: GapAgendaEvents = {
+  calendar: "ok",
+  events: [
+    { id: "evt_1", summary: "주간 회의", start: "2026-10-08T05:00:00Z", end: null },
+    { id: "evt_2", summary: "1:1", start: "2026-10-09T01:00:00Z", end: null },
+  ],
+};
+
+function renderRail(events: GapAgendaEvents, onScheduleNext = vi.fn()) {
+  const load = vi.fn().mockResolvedValue(events);
+  render(
+    <TemplateRail
+      comparison={DEMO_COMPARISON}
+      loadAgendaEvents={load}
+      onScheduleNext={onScheduleNext}
+    />,
+  );
+  return { load, onScheduleNext };
+}
 
 describe("TemplateRail — 다음 회의 잡기", () => {
-  it("sends the meeting's gaps on when pressed", () => {
-    const onScheduleNext = vi.fn();
-    render(<TemplateRail comparison={DEMO_COMPARISON} onScheduleNext={onScheduleNext} />);
+  it("opens my calendar and puts the gaps on the event I pick", async () => {
+    const { load, onScheduleNext } = renderRail(connected);
 
-    fireEvent.click(button());
+    open();
+    fireEvent.click(await screen.findByRole("radio", { name: /주간 회의/ }));
+    fireEvent.click(screen.getByRole("button", { name: "이 일정에 갭 넣기" }));
 
-    expect(onScheduleNext).toHaveBeenCalledOnce();
+    expect(load).toHaveBeenCalledOnce();
+    expect(onScheduleNext).toHaveBeenCalledWith("evt_1");
   });
 
-  it("is not drawn without its handler", () => {
+  it("will not put them anywhere before an event is picked", async () => {
+    renderRail(connected);
+
+    open();
+    await screen.findByRole("radio", { name: /주간 회의/ });
+    const put = screen.getByRole("button", { name: "이 일정에 갭 넣기" }) as HTMLButtonElement;
+    expect(put.disabled).toBe(true);
+  });
+
+  it("offers to connect a calendar when none is connected", async () => {
+    const { onScheduleNext } = renderRail({ calendar: "not_connected", events: [] });
+
+    open();
+
+    expect(await screen.findByRole("button", { name: "Google 캘린더 연결" })).toBeTruthy();
+    expect(onScheduleNext).not.toHaveBeenCalled();
+  });
+
+  it("is not drawn without its handlers", () => {
     render(<TemplateRail comparison={DEMO_COMPARISON} />);
 
     expect(screen.queryByRole("button", { name: "다음 회의 잡기" })).toBeNull();
@@ -30,18 +72,12 @@ describe("TemplateRail — 다음 회의 잡기", () => {
     render(
       <TemplateRail
         comparison={{ ...DEMO_COMPARISON, analysed: false }}
+        loadAgendaEvents={vi.fn()}
         onScheduleNext={vi.fn()}
       />,
     );
 
-    expect(button().disabled).toBe(true);
-  });
-
-  it("says it is working while the write is in flight", () => {
-    render(
-      <TemplateRail comparison={DEMO_COMPARISON} onScheduleNext={vi.fn()} pending="agenda" />,
-    );
-
-    expect(screen.getByRole("button", { name: "처리 중" })).toBeTruthy();
+    const button = screen.getByRole("button", { name: "다음 회의 잡기" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
   });
 });

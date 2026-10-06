@@ -166,6 +166,23 @@ export interface GapMeetingCarry {
   calendar: AgendaOutcome;
 }
 
+/** One event on the caller's own calendar (`GapCalendarEvent`). */
+export interface GapCalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string | null;
+}
+
+/**
+ * `GET /api/gap/agenda/{meeting_id}/events` — the caller's own timed events
+ * over the next two weeks (`GapAgendaEvents`). Empty unless `calendar` is `ok`.
+ */
+export interface GapAgendaEvents {
+  calendar: "ok" | "not_connected" | "reconnect_required" | "failed";
+  events: GapCalendarEvent[];
+}
+
 /** `calendar_writes.AgendaOutcome`, plus `not_tried`. */
 export type AgendaOutcome =
   | "added"

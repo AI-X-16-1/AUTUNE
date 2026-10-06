@@ -19,9 +19,11 @@ from pathlib import Path
 from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
+    GapAgendaEvents,
     GapAsk,
     GapAskTarget,
     GapAskTargets,
+    GapCalendarEvent,
     GapCarry,
     GapDismissal,
     GapExplanationRead,
@@ -133,6 +135,8 @@ def test_the_web_calendar_write_mirrors_are_current() -> None:
     for interface, model in (
         ("GapCarry", GapCarry),
         ("GapMeetingCarry", GapMeetingCarry),
+        ("GapAgendaEvents", GapAgendaEvents),
+        ("GapCalendarEvent", GapCalendarEvent),
         ("GapAsk", GapAsk),
         ("GapAskTarget", GapAskTarget),
         ("GapAskTargets", GapAskTargets),

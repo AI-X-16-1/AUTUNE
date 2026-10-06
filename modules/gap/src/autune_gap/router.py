@@ -29,6 +29,8 @@ from autune_core import CurrentUser, User, get_session
 from . import service
 from .enqueue import enqueue_publish_report
 from .schemas import (
+    GapAgendaEvents,
+    GapAgendaRequest,
     GapAsk,
     GapAskRequest,
     GapAskTargets,
@@ -189,16 +191,31 @@ def _carry(session: Session, gap_id: str, reader: User, *, carried: bool) -> Gap
     return result.model_copy(update={"calendar": outcome})
 
 
+@router.get("/agenda/{meeting_id}/events", response_model=GapAgendaEvents)
+def agenda_events(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapAgendaEvents:
+    """The caller's own upcoming Google Calendar events, for "다음 회의 잡기" to
+    pick the next meeting from (#824). Read for the caller and never stored."""
+    return service.agenda_events(session, meeting_id, reader)
+
+
 @router.post("/agenda/{meeting_id}", response_model=GapMeetingCarry)
-def carry_meeting(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapMeetingCarry:
-    """ "다음 회의 잡기" beside S20's template rail (#824): send every open gap of
-    the meeting on to the next meeting, and add them to the next scheduled
-    meeting's event on the caller's own Google Calendar. The marks are
-    committed first, so a calendar that cannot take them leaves the marks set.
-    The membership check is the service's first line."""
+def carry_meeting(
+    meeting_id: str,
+    session: SessionDep,
+    reader: CurrentUser,
+    body: GapAgendaRequest | None = None,
+) -> GapMeetingCarry:
+    """Send every open gap of the meeting on to the next meeting -- "다음 회의
+    잡기" beside S20's template rail (#824) -- and add them to the event the
+    caller picked on their own Google Calendar, or the team's next scheduled
+    meeting's when they picked none. The marks are committed first, so a
+    calendar that cannot take them leaves the marks set. The membership check
+    is the service's first line."""
     gaps = service.carry_meeting(session, meeting_id, reader)
     session.commit()
-    return service.carry_meeting_on_calendar(session, meeting_id, reader, gaps)
+    return service.carry_meeting_on_calendar(
+        session, meeting_id, reader, gaps, event_id=body.event_id if body else None
+    )
 
 
 @router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)

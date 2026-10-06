@@ -58,9 +58,11 @@ from autune_gap.pipeline import (
 from autune_gap.schemas import (
     CoveredExplanationRead,
     EvidenceRead,
+    GapAgendaEvents,
     GapAsk,
     GapAskTarget,
     GapAskTargets,
+    GapCalendarEvent,
     GapCarry,
     GapDismissal,
     GapExplanationRead,
@@ -830,17 +832,44 @@ def carry_meeting(session: Session, meeting_id: str, reader: User) -> list[GapGa
     return gaps
 
 
+def agenda_events(session: Session, meeting_id: str, reader: User) -> GapAgendaEvents:
+    """The caller's own upcoming events, to pick the next meeting from for this
+    meeting's gaps. The membership check comes first, as on every route naming
+    a meeting."""
+    require_readable_meeting(session, meeting_id, reader)
+    outcome, events = calendar_writes.upcoming_events(session, reader.id)
+    return GapAgendaEvents(
+        calendar=outcome,
+        events=[
+            GapCalendarEvent(
+                id=e.id,
+                summary=e.summary,
+                start=e.start,
+                end=e.end if isinstance(e.end, datetime) else None,
+            )
+            for e in events
+            if isinstance(e.start, datetime)
+        ],
+    )
+
+
 def carry_meeting_on_calendar(
-    session: Session, meeting_id: str, reader: User, gaps: Sequence[GapGap]
+    session: Session,
+    meeting_id: str,
+    reader: User,
+    gaps: Sequence[GapGap],
+    *,
+    event_id: str | None = None,
 ) -> GapMeetingCarry:
-    """Write the gaps ``carry_meeting`` sent onto the next meeting's event on
-    the caller's own calendar. Called after the marks are committed."""
+    """Write the gaps ``carry_meeting`` sent onto the event the caller picked
+    on their own calendar, or the next meeting's when they picked none. Called
+    after the marks are committed."""
     if not gaps:
         return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
     meeting = session.get(Meeting, meeting_id)
     assert meeting is not None  # carry_meeting checked it
     outcome = calendar_writes.update_agenda(
-        session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True
+        session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True, event_id=event_id
     )
     return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome)
 

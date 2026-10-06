@@ -98,10 +98,10 @@ export function useGapActions(reload: () => void) {
   );
 
   const scheduleNext = useCallback(
-    (meetingId: string) =>
+    (meetingId: string, eventId: string) =>
       run(
         "agenda",
-        () => carryMeeting(meetingId),
+        () => carryMeeting(meetingId, eventId),
         "갭을 다음 회의로 넘기지 못했습니다. 잠시 후 다시 시도해 주세요.",
         meetingCarryNotice,
       ),

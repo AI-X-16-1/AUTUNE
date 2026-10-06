@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 import { Button, Tabs } from "@/shared/ui";
 
-import { getAskTargets } from "../api";
+import { getAgendaEvents, getAskTargets } from "../api";
 import { useGapActions } from "../hooks/useGapActions";
 import { useGapExplanations } from "../hooks/useGapExplanations";
 import { useGapReport } from "../hooks/useGapReport";
@@ -343,7 +343,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                 templates={templates}
                 onChoose={(templateKey) => void choose(meetingId, templateKey)}
                 onUndoDismiss={(gapId) => void undoDismiss(gapId)}
-                onScheduleNext={() => void scheduleNext(meetingId)}
+                loadAgendaEvents={() => getAgendaEvents(meetingId)}
+                onScheduleNext={(eventId) => void scheduleNext(meetingId, eventId)}
                 pending={pending}
               />
             )}

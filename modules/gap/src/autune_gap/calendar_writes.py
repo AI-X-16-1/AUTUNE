@@ -1,8 +1,9 @@
 """S20's two Google Calendar writes (#824).
 
-- **"다음 회의 잡기"** (beside the template rail's heading) adds one line per
-  open gap of the meeting to the description of the team's next meeting, on
-  the calendar of whoever pressed it. The per-gap carry route writes the same
+- **"다음 회의 잡기"** (beside the template rail's heading) lists the presser's
+  own upcoming events, and adds one line per open gap of the meeting to the
+  description of the one they pick. Without a pick it falls back to the team's
+  next meeting, found as below. The per-gap carry route writes the same
   line for one gap. The next meeting
   is the team's next ``scheduled`` meeting in Autune; its event is the one on
   that person's calendar that starts when the meeting does. Nothing links a
@@ -43,7 +44,9 @@ from autune_core.errors import PrivacyViolationError
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import (
     CalendarClient,
+    CalendarEvent,
     IntegrationError,
+    PermanentIntegrationError,
     ReconnectRequiredError,
     refresh_access_token,
 )
@@ -165,46 +168,90 @@ def update_agenda(
     team_id: str,
     user_id: str,
     carried: bool,
+    event_id: str | None = None,
     now: datetime | None = None,
 ) -> AgendaOutcome:
-    """Add the gaps' lines to the next meeting's event, or take them out."""
-    meeting = next_meeting(session, team_id, now=now or datetime.now(UTC))
-    if meeting is None or meeting.started_at is None:
-        return "no_next_meeting"
-    # SQLite hands back a naive datetime; PostgreSQL's is already UTC-aware.
-    starts = (
-        meeting.started_at if meeting.started_at.tzinfo else meeting.started_at.replace(tzinfo=UTC)
-    )
+    """Add the gaps' lines to an event on this person's calendar, or take them out.
+
+    ``event_id`` is the event the person picked ("다음 회의 잡기"). Without one,
+    the event is the team's next scheduled meeting's, found by its start time.
+    """
+    starts: datetime | None = None
+    if event_id is None:
+        meeting = next_meeting(session, team_id, now=now or datetime.now(UTC))
+        if meeting is None or meeting.started_at is None:
+            return "no_next_meeting"
+        # SQLite hands back a naive datetime; PostgreSQL's is already UTC-aware.
+        starts = meeting.started_at
+        if starts.tzinfo is None:
+            starts = starts.replace(tzinfo=UTC)
     try:
         with calendar_of(session, user_id) as calendar:
             if calendar is None:
                 return "not_connected"
             client, calendar_id = calendar
-            events = client.list_events(
-                calendar_id, starts - MATCH_WINDOW, starts + MATCH_WINDOW, limit=10
-            )
-            event = next(
-                (
-                    e
-                    for e in events
-                    if isinstance(e.start, datetime) and abs(e.start - starts) <= MATCH_WINDOW
-                ),
-                None,
-            )
-            if event is None:
+            if event_id is None and starts is not None:
+                event_id = _event_starting(client, calendar_id, starts)
+            if event_id is None:
                 return "no_event"
-            path = f"/calendars/{calendar_id}/events/{event.id}"
+            path = f"/calendars/{calendar_id}/events/{event_id}"
             current = str(client.request("GET", path).get("description") or "")
             updated = edited(current, gaps, carried=carried)
             if updated is not None:
                 client.request("PATCH", path, json={"description": updated})
     except ReconnectRequiredError:
         return "reconnect_required"
-    except (IntegrationError, PrivacyViolationError) as exc:
-        log.warning("gap_agenda_failed", meeting_id=meeting.id, error=type(exc).__name__)
+    except PermanentIntegrationError as exc:
+        if exc.details.get("upstream_status") in (404, 410):
+            return "no_event"
+        log.warning("gap_agenda_failed", error=type(exc).__name__)
         return "failed"
-    log.info("gap_agenda_set", meeting_id=meeting.id, gaps=len(gaps), carried=carried)
+    except (IntegrationError, PrivacyViolationError) as exc:
+        log.warning("gap_agenda_failed", error=type(exc).__name__)
+        return "failed"
+    log.info("gap_agenda_set", gaps=len(gaps), carried=carried, picked=starts is None)
     return "added" if carried else "removed"
+
+
+def _event_starting(client: CalendarClient, calendar_id: str, starts: datetime) -> str | None:
+    events = client.list_events(calendar_id, starts - MATCH_WINDOW, starts + MATCH_WINDOW, limit=10)
+    return next(
+        (
+            e.id
+            for e in events
+            if isinstance(e.start, datetime) and abs(e.start - starts) <= MATCH_WINDOW
+        ),
+        None,
+    )
+
+
+EventsOutcome = Literal["ok", "not_connected", "reconnect_required", "failed"]
+
+PICK_DAYS = 14
+"""How far ahead "다음 회의 잡기" lists the person's events."""
+
+
+def upcoming_events(
+    session: Session, user_id: str, *, now: datetime | None = None
+) -> tuple[EventsOutcome, list[CalendarEvent]]:
+    """This person's own timed events over the next ``PICK_DAYS``, for them to
+    pick the next meeting from. Read for the person asking and returned to
+    them only; nothing is stored or logged but the count."""
+    start = now or datetime.now(UTC)
+    try:
+        with calendar_of(session, user_id) as calendar:
+            if calendar is None:
+                return "not_connected", []
+            client, calendar_id = calendar
+            events = client.list_events(calendar_id, start, start + timedelta(days=PICK_DAYS))
+    except ReconnectRequiredError:
+        return "reconnect_required", []
+    except IntegrationError as exc:
+        log.warning("gap_agenda_events_failed", error=type(exc).__name__)
+        return "failed", []
+    timed = [e for e in events if isinstance(e.start, datetime) and not e.cancelled]
+    log.info("gap_agenda_events_read", events=len(timed))
+    return "ok", timed
 
 
 def ask_on_calendar(

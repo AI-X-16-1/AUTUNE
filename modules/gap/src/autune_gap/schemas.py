@@ -90,6 +90,32 @@ class GapMeetingCarry(BaseModel):
     calendar: str
 
 
+class GapAgendaRequest(BaseModel):
+    """``POST /agenda/{meeting_id}``: the event on the caller's own calendar the
+    gaps go onto. No event means the team's next scheduled meeting's."""
+
+    event_id: str | None = None
+
+
+class GapCalendarEvent(BaseModel):
+    """One event on the caller's own calendar, to pick the next meeting from.
+    Read from Google for that person and shown to them; never stored."""
+
+    id: str
+    summary: str
+    start: datetime
+    end: datetime | None
+
+
+class GapAgendaEvents(BaseModel):
+    """``GET /agenda/{meeting_id}/events``: the caller's own timed events over
+    the next two weeks. ``calendar`` is ``ok``, ``not_connected``,
+    ``reconnect_required`` or ``failed``; the list is empty unless ``ok``."""
+
+    calendar: str
+    events: list[GapCalendarEvent]
+
+
 class GapAskRequest(BaseModel):
     """``POST /gaps/{gap_id}/ask``: who to ask, chosen by hand, and on which
     day. No day means the next working day."""
