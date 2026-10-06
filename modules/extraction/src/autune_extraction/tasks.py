@@ -27,6 +27,7 @@ from autune_contracts import (
     validate_major_version,
 )
 from autune_contracts.enums import ActionStatus
+from autune_contracts.extraction import ExtractionResult
 from autune_contracts.transcript import Utterance as TranscriptUtterance
 from autune_core import (
     AutuneError,
@@ -304,9 +305,25 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # identified or links Slack a little later is still asked. Step 7 waits for
     # a person to confirm (#246).
 
-    # Step 8, after the writes have committed. The payload is never logged:
-    # decision statements and item descriptions are meeting content.
-    publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    _announce(meeting_id, result)
+
+
+def _announce(meeting_id: str, result: ExtractionResult) -> None:
+    """What a run does once its rows are committed (step 8 and after) -- and
+    all that is done again for a meeting whose result was stored and not
+    passed on (``_republish_counted``).
+
+    A publish that fails is raised as ``attempts.ResultNotPublishedError``:
+    the rows are on the board, so it must not be counted, shown or announced
+    as an extraction that failed. A privacy refusal is raised as itself."""
+    # The payload is never logged: decision statements and item descriptions
+    # are meeting content.
+    try:
+        publish(EXTRACTION_COMPLETED, result.model_dump(mode="json"))
+    except PrivacyViolationError:
+        raise
+    except Exception as exc:
+        raise attempts.ResultNotPublishedError(type(exc).__name__) from exc
     # Its own task, so a provider that is down costs the 요약 tab its paragraph
     # and never this run its rows (#421 v2). Only when a summarizer is on --
     # asked of the setting, not by building the summarizer: one switched on
@@ -789,7 +806,44 @@ def reextract_meeting(meeting_id: str) -> None:
     _extract_counted(meeting_id, utterances)
 
 
-def _failure_notice(title: str, board_url: str) -> str:
+def _republish_counted(meeting_id: str) -> None:
+    """The retry of a meeting whose result was stored and not passed on: read
+    the result back and announce it. No model is asked -- the rows are what
+    the run wrote -- and a failure is counted as the same kind again."""
+    try:
+        with session_scope() as session:
+            result = service.result_for_meeting(session, meeting_id)
+        _announce(meeting_id, result)
+    except Exception as exc:
+        try:
+            with session_scope() as session:
+                failures = attempts.note_failure(session, meeting_id, exc)
+        except Exception as unrecorded:  # noqa: BLE001 -- ``exc`` is raised below
+            log.warning(
+                "extraction_failure_not_counted",
+                meeting_id=meeting_id,
+                error=type(unrecorded).__name__,
+            )
+        else:
+            log.warning(
+                "extraction_failed",
+                meeting_id=meeting_id,
+                failures=failures,
+                reason=type(exc).__name__,
+            )
+        raise
+    with session_scope() as session:
+        attempts.note_success(session, meeting_id)
+
+
+def _failure_notice(title: str, board_url: str, *, not_published: bool = False) -> str:
+    if not_published:
+        return (
+            f"「{title}」 회의의 액션 아이템과 결정은 추출했지만, 그 결과를 회의 연결과 "
+            f"리포트 분석에 전달하지 못했습니다. {attempts.MAX_ATTEMPTS}번 시도했고, "
+            "자동으로는 더 시도하지 않습니다. 회의의 액션 화면에서 '다시 추출'을 눌러 "
+            f"다시 시도할 수 있습니다.\n{board_url}"
+        )
     return (
         f"「{title}」 회의에서 액션 아이템과 결정을 추출하지 못했습니다. "
         f"{attempts.MAX_ATTEMPTS}번 시도했고, 자동으로는 더 시도하지 않습니다. "
@@ -823,10 +877,12 @@ def _tell_teams() -> list[str]:
             if not attempts.claim_notice(session, meeting_id):
                 continue
             title, secret = meeting.title, slack.secret
+            stored = meeting_id in attempts.unpublished(session, [meeting_id])
         client = SlackClient(secret)
         try:
             client.post_message(
-                str(channel), _failure_notice(title, service.answer_url(meeting_id))
+                str(channel),
+                _failure_notice(title, service.answer_url(meeting_id), not_published=stored),
             )
         except PrivacyViolationError:
             refused.append(meeting_id)
@@ -880,6 +936,8 @@ def retry_failed_extractions() -> list[str]:
     with session_scope() as session:
         adopted = attempts.adopt_unextracted(session)
         due = attempts.due_for_retry(session)
+        # Stored and not passed on: only the publish is tried again.
+        stored = attempts.unpublished(session, due)
 
     done: list[str] = []
     violations: list[str] = []
@@ -891,11 +949,14 @@ def retry_failed_extractions() -> list[str]:
             if not attempts.claim_retry(session, meeting_id):
                 continue
         try:
-            reextract_meeting(meeting_id)
+            if meeting_id in stored:
+                _republish_counted(meeting_id)
+            else:
+                reextract_meeting(meeting_id)
         except PrivacyViolationError:
             violations.append(meeting_id)
             continue
-        except Exception:  # noqa: BLE001, S112 -- counted and logged by ``_extract_counted``
+        except Exception:  # noqa: BLE001, S112 -- counted and logged where it was raised
             continue
         done.append(meeting_id)
 

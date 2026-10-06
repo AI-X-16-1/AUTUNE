@@ -111,7 +111,22 @@ export function ReExtract({
   return (
     <div className="flex flex-col gap-1.5">
       {failed && !waiting ? (
-        state.will_retry ? (
+        state.not_published ? (
+          // The rows below are this run's: what failed is telling the other
+          // analyses, so "could not extract" would be false (PARK, #868).
+          state.will_retry ? (
+            <p role="status" style={muted}>
+              아래 액션 아이템과 결정은 추출되었습니다. 이 결과를 회의 연결과 리포트 분석에
+              전달하지 못해 자동으로 다시 시도하고 있습니다({state.failures}번 실패).
+            </p>
+          ) : (
+            <p role="alert" style={critical}>
+              아래 액션 아이템과 결정은 추출되었지만, 이 결과를 회의 연결과 리포트 분석에 전달하지
+              못했습니다({state.failures}번 시도). 자동으로는 더 시도하지 않습니다. 아래 버튼으로
+              다시 시도할 수 있습니다.
+            </p>
+          )
+        ) : state.will_retry ? (
           <p role="status" style={muted}>
             이 회의의 액션 아이템과 결정을 추출하지 못해 자동으로 다시 시도하고 있습니다
             ({state.failures}번 실패). 잠시 뒤 새로 고쳐 주세요.

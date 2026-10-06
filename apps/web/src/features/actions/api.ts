@@ -335,6 +335,12 @@ export interface ExtractionState {
   failures: number;
   failed_at: string | null;
   will_retry: boolean;
+  /**
+   * The last failure was passing a stored result on to the other analyses:
+   * the board's items and decisions are this run's, so "could not extract"
+   * would be false.
+   */
+  not_published: boolean;
   requested: boolean;
   requested_at: string | null;
 }
