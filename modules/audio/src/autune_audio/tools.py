@@ -112,6 +112,15 @@ def _when(value: datetime | None) -> str:
     return value.astimezone(KST).strftime("%Y-%m-%d %H:%M")
 
 
+def _iso(value: datetime | None) -> str | None:
+    """A start time a caller can compute with (#854); ``body`` is for reading."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.isoformat()
+
+
 def _clock(seconds: float) -> str:
     whole = int(seconds)
     hours, rest = divmod(whole, 3600)
@@ -223,7 +232,8 @@ def recent_meetings(session: Session, team_id: str, *, days: int = 30) -> dict[s
     to ``meeting_overview``.
 
     Returns the team's meetings from the last ``days`` days and every scheduled
-    one ahead, newest first, at most five, each with its ``meeting_id``.
+    one ahead, newest first, at most five, each with its ``meeting_id`` and its
+    ``started_at`` (ISO 8601, or null when no time is set).
     """
     days = max(1, min(days, 365))
     when = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
@@ -247,6 +257,7 @@ def recent_meetings(session: Session, team_id: str, *, days: int = 30) -> dict[s
             "score": 0.0,
             "meeting_id": m.id,
             "status": m.status,
+            "started_at": _iso(m.started_at),
         }
         for m in rows
     ]
