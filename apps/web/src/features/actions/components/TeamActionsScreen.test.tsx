@@ -162,3 +162,90 @@ describe("TeamActionsScreen, 보기", () => {
     expect(screen.queryByRole("region", { name: "디자인" })).toBeNull();
   });
 });
+
+describe("TeamActionsScreen, two teams' projects of one name", () => {
+  const TWINS: Project[] = [
+    {
+      id: "prj_web",
+      team_id: "team_p",
+      name: "웹",
+      aliases: [],
+      jira_project_key: null,
+    },
+    {
+      id: "prj_web_d",
+      team_id: "team_d",
+      name: "웹",
+      aliases: [],
+      jira_project_key: null,
+    },
+  ];
+  const options = () =>
+    within(screen.getByRole("combobox", { name: "프로젝트로 거르기" }))
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+
+  beforeEach(() => {
+    items = [
+      item("a", { team_id: "team_p", project_id: "prj_web" }),
+      item("b", { team_id: "team_d", project_id: "prj_web_d" }),
+      item("c", { team_id: "team_p", project_id: null }),
+    ];
+    projects.mockResolvedValue(TWINS);
+  });
+
+  it("says the team in the filter, and each choice is its own team's", async () => {
+    await open();
+    await waitFor(() =>
+      expect(options()).toEqual(["전체", "웹 · 플랫폼", "웹 · 디자인", "미분류"]),
+    );
+
+    fireEvent.change(
+      screen.getByRole("combobox", { name: "프로젝트로 거르기" }),
+      { target: { value: "prj_web_d" } },
+    );
+
+    expect(onScreen()).toEqual(["b"]);
+  });
+
+  it("says the team on each line of the progress strip", async () => {
+    await open();
+
+    const strip = await screen.findByRole("list", { name: "프로젝트 진행" });
+    await waitFor(() =>
+      expect(
+        within(strip)
+          .getAllByRole("button")
+          .map((button) => button.textContent),
+      ).toEqual(["웹 · 플랫폼완료 0/1", "웹 · 디자인완료 0/1"]),
+    );
+
+    fireEvent.click(within(strip).getByRole("button", { name: /디자인/ }));
+
+    expect(onScreen()).toEqual(["b"]);
+  });
+
+  it("says no team when the projects are all of one team", async () => {
+    projects.mockResolvedValue([
+      TWINS[0]!,
+      { ...TWINS[1]!, team_id: "team_p", name: "앱" },
+    ]);
+    await open();
+
+    await waitFor(() => expect(options()).toEqual(["전체", "웹", "앱", "미분류"]));
+    const strip = await screen.findByRole("list", { name: "프로젝트 진행" });
+    expect(
+      within(strip)
+        .getAllByRole("button")
+        .map((button) => button.textContent),
+    ).toEqual(["웹완료 0/1", "앱완료 0/1"]);
+  });
+
+  it("says no team when the teams' names could not be read", async () => {
+    teams.mockRejectedValue(new Error("down"));
+    render(<TeamActionsScreen me={null} />);
+    await screen.findByRole("combobox", { name: "프로젝트로 거르기" });
+
+    await waitFor(() => expect(options()).toEqual(["전체", "웹", "웹", "미분류"]));
+  });
+});

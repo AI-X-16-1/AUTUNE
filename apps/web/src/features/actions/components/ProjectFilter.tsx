@@ -7,13 +7,19 @@ import type { Project } from "../types";
  * The board's project filter (the user, 2026-10-04): everything, one of the
  * team's projects, or what no project took (미분류). Not drawn for a team
  * that lists no projects -- there is nothing to choose between.
+ *
+ * `teams` is the team to say beside a project's name (`projectTeams`): the
+ * board across meetings lists several teams' projects, and two of them can
+ * have one name.
  */
 export function ProjectFilter({
   projects,
+  teams,
   value,
   onChange,
 }: {
   projects: Project[];
+  teams?: Map<string, string>;
   value: ProjectChoice;
   onChange: (choice: ProjectChoice) => void;
 }) {
@@ -32,7 +38,9 @@ export function ProjectFilter({
         <option value={ALL_PROJECTS}>전체</option>
         {projects.map((project) => (
           <option key={project.id} value={project.id}>
-            {project.name}
+            {teams?.has(project.id)
+              ? `${project.name} · ${teams.get(project.id)}`
+              : project.name}
           </option>
         ))}
         <option value={UNSORTED}>미분류</option>
