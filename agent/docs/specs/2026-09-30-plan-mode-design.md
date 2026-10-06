@@ -58,7 +58,10 @@ not allow. Section 8 is updated to say this (PR C).
      (section 4).
    - Any earlier `pending` proposal with the same subagent and the same
      `meeting_id` becomes `superseded`. A proposal about no meeting supersedes
-     nothing.
+     nothing. A run about no meeting (a chat on the team screen) whose
+     proposal names a `meeting_id` is about that meeting: the row takes it,
+     supersedes by it, and is approved under it; a meeting outside the team
+     is refused with `meeting not found` (#862).
 2. **List.** `GET /api/agent/pending` returns the pending proposals
    the caller may approve, each with a preview (section 6), and, under the
    same rules, every `approved` row whose `result_ok` is unset -- an approval
