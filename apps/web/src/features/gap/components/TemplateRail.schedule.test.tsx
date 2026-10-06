@@ -1,12 +1,19 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getCalendarConnection } from "@/shared/api/auth";
+
 import { TemplateRail } from "./TemplateRail";
 import { DEMO_COMPARISON } from "../fixtures/report-demo";
 import type { GapAgendaEvents } from "../types";
 
 // "다음 회의 잡기" (#824): beside the rail's heading, for the whole meeting. It
 // opens the caller's own calendar, or the way to connect it.
+
+vi.mock("@/shared/api/auth", () => ({
+  getCalendarConnection: vi.fn(),
+  googleCalendarConnectUrl: (to: string) => `/api/auth/google/calendar/start?redirect_to=${to}`,
+}));
 
 afterEach(cleanup);
 
@@ -60,6 +67,24 @@ describe("TemplateRail — 다음 회의 잡기", () => {
 
     expect(await screen.findByRole("button", { name: "Google 캘린더 연결" })).toBeTruthy();
     expect(onScheduleNext).not.toHaveBeenCalled();
+  });
+
+  it("says why instead of leaving the page when there is no session to connect with", async () => {
+    vi.mocked(getCalendarConnection).mockResolvedValue(null);
+    renderRail({ calendar: "not_connected", events: [] });
+
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: "Google 캘린더 연결" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("로그인 세션이 없어");
+  });
+
+  it("reopens saying so when the connect came back failed", async () => {
+    window.history.replaceState(null, "", "/meetings/mtg_1/gap?calendar=failed");
+    renderRail({ calendar: "not_connected", events: [] });
+
+    expect((await screen.findByRole("alert")).textContent).toContain("연결하지 못했습니다");
+    expect(window.location.search).toBe("");
   });
 
   it("is not drawn without its handlers", () => {

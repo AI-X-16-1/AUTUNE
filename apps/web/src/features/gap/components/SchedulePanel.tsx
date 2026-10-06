@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { googleCalendarConnectUrl } from "@/shared/api/auth";
+import { getCalendarConnection, googleCalendarConnectUrl } from "@/shared/api/auth";
 import { Button } from "@/shared/ui";
 
 import type { GapAgendaEvents } from "../types";
@@ -18,19 +18,36 @@ const GOOGLE_CALENDAR = "https://calendar.google.com/calendar/";
  * and actions screens use, back to this page with `?calendar=connected`, where
  * the rail opens this panel again. The events are read for this person and
  * shown to them only; nothing about them is stored.
+ *
+ * **The connect flow is a full navigation, so it is checked first.** It is
+ * authenticated by the session cookie, not by a bearer token, and a browser
+ * without that session got the server's raw 403 page. The status read
+ * (`getCalendarConnection`) uses the same cookie, so when it cannot answer the
+ * panel says why instead of navigating. A connect that fails at Google comes
+ * back with `?calendar=failed`, and the rail reopens the panel saying so
+ * (`connectFailed`).
  */
 export function SchedulePanel({
   load,
   pending,
   onPick,
+  connectFailed = false,
 }: {
   load: () => Promise<GapAgendaEvents>;
   pending: boolean;
   onPick: (eventId: string) => void;
+  /** Back from a connect that did not finish. */
+  connectFailed?: boolean;
 }) {
   const [events, setEvents] = useState<GapAgendaEvents | null>(null);
   const [failed, setFailed] = useState(false);
   const [chosen, setChosen] = useState("");
+  const [connectNote, setConnectNote] = useState<string | null>(
+    connectFailed
+      ? "Google 캘린더를 연결하지 못했습니다. Google 화면에서 캘린더 권한에 체크한 채로 다시 시도해 주세요."
+      : null,
+  );
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -47,7 +64,17 @@ export function SchedulePanel({
     };
   }, [load]);
 
-  const connect = () => {
+  const connect = async () => {
+    setChecking(true);
+    setConnectNote(null);
+    const status = await getCalendarConnection();
+    setChecking(false);
+    if (status === null) {
+      setConnectNote(
+        "지금 브라우저에는 로그인 세션이 없어 캘린더를 연결할 수 없습니다. 로그인 화면에서 로그인한 뒤 다시 시도해 주세요.",
+      );
+      return;
+    }
     window.location.href = googleCalendarConnectUrl(
       window.location.pathname + window.location.search,
     );
@@ -67,10 +94,25 @@ export function SchedulePanel({
             : "Google 캘린더 연결이 끊겼습니다. 다시 연결해 주세요."}
         </Note>
         <div>
-          <Button tone="primary" size="compact" onClick={connect}>
+          <Button
+            tone="primary"
+            size="compact"
+            disabled={checking}
+            aria-busy={checking || undefined}
+            onClick={() => void connect()}
+          >
             Google 캘린더 연결
           </Button>
         </div>
+        {connectNote ? (
+          <p
+            role="alert"
+            className="text-[var(--color-signal-critical)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            {connectNote}
+          </p>
+        ) : null}
       </>
     );
   } else if (events.events.length === 0) {

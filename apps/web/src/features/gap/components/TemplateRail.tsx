@@ -67,13 +67,16 @@ export function TemplateRail({
   const picking = onChoose !== undefined && templates.length > 1;
   const scheduling = Boolean(loadAgendaEvents && onScheduleNext);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [connectFailed, setConnectFailed] = useState(false);
 
-  // Back from connecting Google Calendar: open the panel again, and drop the
-  // flag so a reload does not.
+  // Back from connecting Google Calendar, either way: open the panel again,
+  // and drop the flag so a reload does not.
   useEffect(() => {
     const url = new URL(window.location.href);
-    if (url.searchParams.get("calendar") === null) return;
-    if (url.searchParams.get("calendar") === "connected") setPanelOpen(true);
+    const result = url.searchParams.get("calendar");
+    if (result === null) return;
+    setPanelOpen(true);
+    setConnectFailed(result === "failed");
     url.searchParams.delete("calendar");
     window.history.replaceState(null, "", url.toString());
   }, []);
@@ -120,6 +123,7 @@ export function TemplateRail({
           <SchedulePanel
             load={load}
             pending={pending === "agenda"}
+            connectFailed={connectFailed}
             onPick={(eventId) => {
               onScheduleNext(eventId);
               setPanelOpen(false);
