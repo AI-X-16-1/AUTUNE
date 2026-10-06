@@ -29,6 +29,10 @@ from .router import Router
 from .subagents import CompiledSubagent, Subagent, collect_subagents
 from .toolcall import ToolModel
 
+LOOKUP_MARK = " [answers questions]"
+"""Added to a description the router reads when the subagent answers lookups
+(``Subagent.answers_lookups``); ``ROUTE_INSTRUCTIONS`` names it."""
+
 
 class MainState(TypedDict, total=False):
     request: str
@@ -55,7 +59,10 @@ def build_main_graph(
         name: sub.build(Toolbox(tools, session, budget, allowed=sub.tools, scope=scope))
         for name, sub in subagents.items()
     }
-    options = {name: sub.description for name, sub in subagents.items()}
+    options = {
+        name: sub.description + (LOOKUP_MARK if sub.answers_lookups else "")
+        for name, sub in subagents.items()
+    }
 
     def route(state: MainState) -> MainState:
         # A trigger names its subagent; only a chat message is routed by a model.

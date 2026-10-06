@@ -14,6 +14,7 @@ from autune_agent.main import (
     collect_subagents,
     run,
 )
+from autune_agent.main.graph import LOOKUP_MARK
 from autune_agent.main.toolcall import FunctionCall
 from autune_agent.testing import FakeRouter, ScriptedToolModel, example_subagent, mock_tool
 
@@ -159,3 +160,41 @@ def test_a_triggered_run_never_asks() -> None:
 
     assert model.sent == []
     assert state["route"] is None
+
+
+def test_a_subagent_that_answers_questions_is_marked_for_the_router() -> None:
+    """#879: a lookup reaches a subagent only when it declared it answers them."""
+    router = FakeRouter()
+    plain = example_subagent("workload", ())
+    asked = example_subagent("report", ())
+    asked = Subagent(
+        name=asked.name,
+        description=asked.description,
+        tools=asked.tools,
+        build=asked.build,
+        answers_lookups=True,
+    )
+
+    run(
+        "결정 밀도가 뭐야?",
+        session=SESSION,
+        scope=SCOPE,
+        router=router,
+        subagents={"workload": plain, "report": asked},
+        tools={},
+    )
+
+    assert router.seen == [
+        {
+            "workload": "Use this in tests. Example subagent workload.",
+            "report": f"Use this in tests. Example subagent report.{LOOKUP_MARK}",
+        }
+    ]
+
+
+def test_a_subagent_answers_no_lookups_unless_it_says_so() -> None:
+    assert example_subagent("research", ()).answers_lookups is False
+
+
+def test_the_report_subagent_answers_questions_about_module_e() -> None:
+    assert collect_subagents()["report"].answers_lookups is True

@@ -118,6 +118,15 @@ class Subagent:
     moving the same item to someone else, and approving both lets the later
     approval win."""
 
+    answers_lookups: bool = False
+    """Whether a request that only looks something up may come here (#879).
+
+    Off, the router sends a plain lookup to the ask loop, as before #879: a
+    subagent that writes or proposes (Research drafts a document, Workload
+    proposes moves) must not be woken by a question. On, a lookup its
+    description covers comes here -- for a subagent with reads the ask loop
+    does not hold (Report and module E)."""
+
     def __post_init__(self) -> None:
         # The registry never holds a declared personal-only tool; this refuses
         # the name as well, so the mistake surfaces where it was written.
