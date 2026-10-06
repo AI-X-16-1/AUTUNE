@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 
-from . import service, tasks
+from . import materials, service, tasks
 from .models import ExtActionItem, ExtDecision
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
@@ -760,7 +760,35 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
     )
 
 
+def meeting_materials(session: Session, meeting_id: str) -> dict[str, Any]:
+    """Use this when asked which documents a meeting has on record. Do not use
+    it to answer a question from a document's contents -- it returns titles,
+    not text, and there is no tool that searches inside them yet.
+
+    Returns the materials registered for the meeting, oldest first (at most
+    five): each one's title, how it came (Drive or upload) and how many pieces
+    of text are kept. Titles are masked like everything read from the database.
+    """
+    if service.live_meeting(session, meeting_id) is None:
+        return _missing(meeting_id)
+    found = materials.for_meeting(session, meeting_id)
+    how = {"drive": "Drive", "upload": "업로드"}
+    return _result(
+        summary=f"이 회의에 등록된 자료 {len(found)}건.",
+        items=[
+            {
+                "title": material.title,
+                "body": f"{how[material.source]}, 조각 {len(material.chunks)}개",
+                "score": 1.0,
+            }
+            for material in found
+        ],
+        evidence=[],
+    )
+
+
 TOOLS = [
+    meeting_materials,
     meeting_action_items,
     open_action_items,
     stalled_action_items,

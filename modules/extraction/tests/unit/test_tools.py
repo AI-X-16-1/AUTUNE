@@ -31,6 +31,8 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtMaterial,
+    ExtMaterialChunk,
     ExtNotionTarget,
     ExtSyncFailure,
 )
@@ -61,6 +63,9 @@ TABLES = [
     ExtCalendarEvent.__table__,
     ExtSyncFailure.__table__,
     ExtNotionTarget.__table__,
+    # ``meeting_materials`` reads these.
+    ExtMaterial.__table__,
+    ExtMaterialChunk.__table__,
 ]
 
 

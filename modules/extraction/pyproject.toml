@@ -18,6 +18,7 @@ dependencies = [
     # days_off.py: Korea's public holidays, lunar and substitute days included,
     # for the days Google's holiday calendar has not been read (MIT, no network).
     "holidays>=0.58",
+    "pgvector>=0.3",
 ]
 
 [project.optional-dependencies]

@@ -290,6 +290,8 @@ confirmation DM's quotation is #586's second part.
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
 | `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
+| `ext_materials` | A document a team brought to a meeting, kept as masked text: its masked title, how it came (`drive`, `upload`), where the original is (never the original), the embedder that made its vectors. Deleted with the meeting. **Nothing registers one yet** (#817) |
+| `ext_material_chunks` | A material's masked text in chunks of at most 500 characters, each with a `vector(1024)` (KURE-v1) under an HNSW index for cosine distance. No unmasked column |
 | `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
 | `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
 | `ext_daily_digests` | That a person was sent the morning DM for one day through one team's Slack. The primary key is the "once", and the latest row's time is where the next DM's "since the last one" starts; the message is not kept. Goes with the person and with the team |
@@ -333,6 +335,19 @@ again. A meeting extracted before the table existed has no row and is left
 alone. Speech that loses consent drops out of the model's rows the same way;
 what a person already edited or sent out from it waits on per-person
 withdrawal (S10/S11), the second half of #518.
+
+**A meeting's material (the store only).** `materials.py` keeps a document
+as masked chunks with a vector each and finds the chunks nearest a question by
+cosine distance -- `pgvector`, as module D does for topics (ADR 0004). The
+write takes its masker as a required argument and then checks the title and
+every chunk with the detector the outbound check uses; a value it still finds
+refuses the whole document. A search reads only the asking team's meetings
+that are within retention. **What is not here:** anything that registers a
+document (where it comes from and the rules a document is masked by are
+#817's to settle, and no package provides a document masker), a route, and a
+tool that searches -- an agent tool takes ids, and a question is not one
+(agent-layer.md, rules for a tool). `tools.meeting_materials` lists a
+meeting's materials by title and count.
 
 **A run that fails.** A run that raises is counted in
 `ext_extraction_attempts` before the error goes on, and every ten minutes

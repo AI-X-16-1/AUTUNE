@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
     Date,
@@ -1394,3 +1395,80 @@ class ExtExtractionAttempt(Base):
     told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requested: Mapped[bool] = mapped_column(nullable=False, default=False)
     requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+MATERIAL = "mat"
+"""The id prefix of ``ext_materials`` rows -- B's own, not a shared entity's."""
+
+EMBEDDING_DIM = 1024
+"""The width of ``ext_material_chunks.embedding``: KURE-v1's, the model
+``pipeline.embedder`` runs and module D chose for the same job. A model of
+another width needs a migration and every vector made again."""
+
+
+class ExtMaterial(Base):
+    """A document a team brought to a meeting, kept as masked text
+    (``materials``). The row is the document; its text is in
+    ``ext_material_chunks``.
+
+    ``title`` is masked like the text. ``source`` says how it came (``drive``,
+    ``upload``) and ``source_ref`` where the original is -- a file's id in the
+    team's own tool -- because the original itself is never kept here.
+    ``model_version`` is the embedder that made the chunks' vectors: vectors
+    of two models are not comparable, so a search has to be able to tell.
+
+    Its meeting's: deleted with it, and unread once the meeting is past
+    retention. ``registered_by`` is cleared, not the row deleted, when that
+    person's account goes -- the document was the team's.
+    """
+
+    __tablename__ = "ext_materials"
+    __table_args__ = (
+        CheckConstraint("source IN ('drive', 'upload')", name="ck_ext_materials_source"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(MATERIAL))
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(400), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(String(400))
+    registered_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    model_version: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+    chunks: Mapped[list[ExtMaterialChunk]] = relationship(
+        back_populates="material",
+        cascade="all, delete-orphan",
+        order_by="ExtMaterialChunk.position",
+    )
+
+
+class ExtMaterialChunk(Base):
+    """One piece of a material's masked text and its vector.
+
+    ``text`` was masked before it was written and checked again by the write
+    (``materials.register``); there is no unmasked column. ``embedding`` is
+    ``vector(1024)`` under an HNSW index for cosine distance, built in the
+    migration.
+    """
+
+    __tablename__ = "ext_material_chunks"
+    __table_args__ = (
+        UniqueConstraint("material_id", "position", name="uq_ext_material_chunks_position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    material_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_materials.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+
+    material: Mapped[ExtMaterial] = relationship(back_populates="chunks")
