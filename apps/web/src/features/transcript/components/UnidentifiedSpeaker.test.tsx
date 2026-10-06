@@ -92,7 +92,9 @@ describe("UnidentifiedSpeaker picking someone already assigned", () => {
 
     pick("usr_1");
     expect(onAssign).not.toHaveBeenCalled();
-    expect(screen.getByText(/같은 사람의 목소리가 둘로 나뉜 경우에만/)).toBeTruthy();
+    // Announced: it appears beside the button, where a screen reader is not
+    // reading (#912 review).
+    expect(screen.getByRole("status").textContent).toMatch(/같은 사람의 목소리가 둘로 나뉜 경우에만/);
 
     fireEvent.click(screen.getByRole("button", { name: "그래도 지정" }));
     expect(onAssign).toHaveBeenCalledWith("usr_1");

@@ -180,7 +180,7 @@ export function UnidentifiedSpeaker({
       </Button>
       {confirming && (
         <>
-          <span style={{ color: "var(--color-ink-strong)" }}>
+          <span role="status" style={{ color: "var(--color-ink-strong)" }}>
             {confirming.name}은(는) 이미 {confirming.assignedTo}로 지정되어 있습니다. 같은 사람의
             목소리가 둘로 나뉜 경우에만 지정하세요.
           </span>
