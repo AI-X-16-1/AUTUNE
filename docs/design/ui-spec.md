@@ -32,8 +32,9 @@ Design source: `AUTUNE Spec 00~05 *.dc.html`, `AUTUNE 실시간 전사.dc.html`.
 | Privacy | Per-person speech volume and ranking appear nowhere except the subject's own DM (S23) |
 
 **App shell:** sidebar 200 (paper) — logo · "Start meeting" accent button · Home /
-Meetings / Action items / Gap reports / Decision lineage / Materials (P2) /
-Dashboard · Settings · user. Content panel top bar 56, hairline only. Top-bar
+Action items / Gap reports / Decision lineage / Materials (P2) /
+Dashboard · Settings · user. There is no Meetings entry: the meeting list is
+Home, which is the lit entry inside a meeting too. Content panel top bar 56, hairline only. Top-bar
 action order, left to right: quiet → text → secondary → primary.
 
 **Canvas widths:** 1280 for standard screens, 1440 for S13 (live transcript),
