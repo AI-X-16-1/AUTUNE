@@ -538,8 +538,9 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     checking it but this. So: one line of at most ``SUMMARY_MAX_CHARS``; every
     placeholder put back as the name it stood for, and a placeholder that was
     never sent means an invented person; and every number and named person in
-    it also in ``window`` -- the lines of the request as they were said --
-    which is the resolver's own groundedness check (``resolver._grounded``),
+    it also in ``window`` -- the line and the few said just before it, as they
+    were said -- which is the resolver's own groundedness check
+    (``resolver._grounded``),
     for the same reason: a date or a name the meeting never said is worse on a
     card than a long sentence.
     """
@@ -691,11 +692,15 @@ class LlmClassifier(GeminiClient):
                 if line in targets:
                     labels[targets[line]] = kind
             # The summary of a line is kept only with a label that takes one,
-            # and only if nothing in it is new to the request's own lines.
-            window = " ".join(said[context:end])
+            # and only if nothing in it is new to that line and the
+            # ``CONTEXT_LINES`` said just before it -- what the instructions
+            # call its context. Not the whole request: that would let another
+            # item's date or name, from a target line further up or down the
+            # same request, pass as this one's (PARK, review of #880).
             for line, written in parse_summaries(answer).items():
                 at = targets.get(line)
                 if at is not None and labels[at] in SUMMARISED:
+                    window = " ".join(said[max(context, at - CONTEXT_LINES) : at + 1])
                     summaries[at] = usable_summary(written, surface, window)
         parts: list[list[int]] = [[] for _ in texts]
         for line, owner in enumerate(owners):

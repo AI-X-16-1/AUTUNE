@@ -2961,10 +2961,18 @@ def resolve_decision_summaries(
 ) -> dict[str, Resolution]:
     """A model's write-up of each decision, keyed by its ``dec_`` id.
 
-    Only a resolver that can cite (``resolve_with_evidence``) writes one, and only
-    for a decision whose settling turn does not say what was decided
-    (``decisions.needs_write_up``); for any other this is empty and the decision
-    keeps the assembled, tidied line. Like
+    Two sources. **A line the classifier wrote with the label**
+    (``Prediction.summary``, 2026-10-06) is the write-up of every decision whose
+    substance has one -- whether or not its settling turn already said what was
+    decided, and whatever the resolver is: the owner asked for each decision as
+    one line. It cites no lines. **Otherwise a resolver that can cite**
+    (``resolve_with_evidence``) writes one, and only for a decision whose
+    settling turn does not say what was decided (``decisions.needs_write_up``);
+    for any other this has no entry and the decision keeps the assembled,
+    tidied line. That limit is still the resolver's alone: asked about every
+    decision it rewrote all of them for nothing (the measurement in
+    ``needs_write_up``), which is a reason not to ask it, not a reason to hide
+    a line that came with the label at no further request. Like
     ``resolve_commitment_summaries`` it runs before any session -- it is model
     inference -- and reads only ``classified``: ordered, and with a non-consenting
     speaker's turn already blank.

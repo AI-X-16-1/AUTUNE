@@ -33,7 +33,7 @@ from autune_contracts.transcript import Utterance as SpokenLine
 from autune_core import Base, Meeting, Participant, TeamMember, User, Utterance
 from autune_extraction import tasks
 from autune_extraction.decisions import ClassifiedUtterance, decision_id, in_pieces
-from autune_extraction.models import ExtActionItem, ExtDecision
+from autune_extraction.models import ExtActionItem, ExtDecision, ExtDecisionRelated
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 from autune_extraction.pipeline import llm as llm_module
 from autune_extraction.pipeline.llm import (
@@ -179,6 +179,23 @@ def test_a_number_said_in_the_lines_before_may_be_in_the_summary() -> None:
     )
 
     assert promise.summary == "시안 3안을 금요일까지 정리"
+
+
+def test_a_date_from_another_item_of_the_same_request_is_not_this_ones() -> None:
+    """PARK, review of #880: checked against the whole request, an invented
+    fact was stopped but another target line's date passed as this line's."""
+    filler = ["잡담 하나입니다", "잡담 둘입니다", "잡담 셋입니다", "잡담 넷입니다"]
+    texts = ["보고서는 제가 12일까지 낼게요", *filler, "견적은 제가 받아 올게요"]
+
+    predictions, provider = classify(
+        texts,
+        {"낼게요": "commitment", "올게요": "commitment"},
+        {"낼게요": "보고서를 12일까지 제출", "올게요": "견적을 12일까지 받아 옴"},
+    )
+
+    assert len(provider.texts) == 1  # one request held both lines
+    assert predictions[0].summary == "보고서를 12일까지 제출"
+    assert predictions[-1].kind is K.COMMITMENT and predictions[-1].summary == ""
 
 
 def test_each_piece_of_a_long_turn_has_its_own_summary() -> None:
@@ -342,6 +359,24 @@ def test_a_decision_shows_the_line_written_with_its_label_and_keeps_its_id(
     # What module D is sent is still the sentence as said.
     assert decision.original_statement == SAID_DECISION
     assert decision.id == decision_id(MEETING, ["utt_2"])
+    assert Asked.targets == []
+
+
+def test_a_decision_that_already_says_everything_still_shows_the_line_written_for_it(
+    wired: Session,
+) -> None:
+    """The resolver is asked only about a decision whose settling turn leaves
+    something out. A line that came with the label is shown for every
+    decision: the owner asked for each as one line."""
+    complete = "그럼 결제 화면은 A안으로 진행하기로 했습니다"
+    Written.lines = {complete: "결제 화면은 A안으로 진행"}
+
+    tasks.on_transcript_ready(meeting(wired, CHAT, complete))
+
+    (decision,) = wired.query(ExtDecision).all()
+    assert decision.statement == "결제 화면은 A안으로 진행"
+    assert decision.original_statement == complete
+    assert wired.query(ExtDecisionRelated).count() == 0  # a line from the classifier cites none
     assert Asked.targets == []
 
 

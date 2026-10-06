@@ -77,12 +77,27 @@ agreement, and sync the result to Notion and Jira.
    description is editable like any other. The candidates are only offered: a
    line nobody cites is neither stored nor shown, and a citation the model
    invents (a number that is no line, the commitment itself) is dropped.
+   With `classifier_impl=llm` the sentence comes earlier and from the classifier
+   (2026-10-06): its answer carries, beside the label, one line for each
+   commitment and decision, in the request that read the line. A line that
+   passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
+   as the name it stood for; no number or name that is not in the line or the
+   three said before it) is the description, and the resolver is asked only
+   about a commitment that has none. **Such a line cites nothing**: the
+   classifier does not say what it drew on, so no row is written to
+   `ext_action_item_related` and the drawer shows the quotation alone.
    A decision is written up the same way (`ext_decision_related`, "요약에 쓴
    발화" on S15) -- but only when its settling turn does not say what was decided:
    short, or pointing at something said before ("그렇게 하죠"). Asked about every
    decision, the model rewrote all of them and cited a line for about a quarter;
    the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
-   a model.
+   a model. That limit is the resolver's. With `classifier_impl=llm` **every
+   decision the classifier wrote a line for shows that line**, whether or not
+   its settling turn already said what was decided, and cites no lines
+   (`ext_decision_related` stays empty for it): the owner asked for each
+   action item and decision as one line (2026-10-06), and the line came with
+   the label at no further request. A decision with no such line goes the
+   resolver's way as before.
 
    **What module D is sent is not what the screen shows.** `ext_decisions.statement`
    is the line a person sees and that leaves for Notion -- noun-ended, or the
@@ -95,8 +110,9 @@ agreement, and sync the result to Notion and Jira.
    `source_utterance_ids` as before. The contract is unchanged. A sentence that names nothing ("다음 주
    화요일까지 볼 예정") is read with up to three lines said just before it, shown
    apart from the sources as "앞선 발화 (맥락)"; nothing fills the missing object
-   into the line itself unless the reference resolver is switched on
-   (`resolver_impl`, off by default). The due date is still read from the original
+   into the line itself unless a model writes the line -- the reference resolver
+   (`resolver_impl`, off by default) or, with `classifier_impl=llm`, the
+   classifier's own one-line summary. The due date is still read from the original
    words, which carry the verb ending it depends on.
 4. **NLI verification** — check whether an apparent agreement entails an actual
    commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
