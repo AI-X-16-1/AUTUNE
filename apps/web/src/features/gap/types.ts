@@ -144,12 +144,84 @@ export interface GapDismissal {
  * Whether a gap was sent on to the next meeting — what `POST` and `DELETE
  * /api/gap/gaps/{id}/carry` return (`GapCarry`, #824). The flag the server
  * settled on, no timestamp and nobody's id, like `GapDismissal`.
+ *
+ * `calendar` is what happened to the next meeting's event on the caller's own
+ * Google Calendar. The mark is set whatever it says.
  */
 export interface GapCarry {
   gap_id: string;
   meeting_id: string;
   carried: boolean;
+  calendar: AgendaOutcome;
 }
+
+/**
+ * What "다음 회의 잡기" did — `POST /api/gap/agenda/{meeting_id}`
+ * (`GapMeetingCarry`, #824): how many open gaps were sent on, what
+ * happened to the next meeting's event on the caller's own calendar, and
+ * whether the team's Slack channel was told.
+ */
+export interface GapMeetingCarry {
+  meeting_id: string;
+  carried: number;
+  calendar: AgendaOutcome;
+  slack: SlackOutcome;
+}
+
+/** `team_notice.SlackOutcome`: what the team's Slack channel did. */
+export type SlackOutcome = "posted" | "no_slack" | "failed" | "refused" | "not_tried";
+
+/** A member "담당자 지정해 질문" can ask (`GapAskTarget`). */
+export interface GapAskTarget {
+  user_id: string;
+  name: string;
+}
+
+/** `GET /api/gap/gaps/{gap_id}/ask` — the meeting's team (`GapAskTargets`). */
+export interface GapAskTargets {
+  gap_id: string;
+  members: GapAskTarget[];
+}
+
+/**
+ * What "담당자 지정해 질문" did — `POST /api/gap/gaps/{gap_id}/ask` (`GapAsk`):
+ * the question posted on the team's Slack channel, mentioning the member.
+ */
+export interface GapAsk {
+  gap_id: string;
+  user_id: string;
+  slack: SlackOutcome;
+}
+
+/** One event on the caller's own calendar (`GapCalendarEvent`). */
+export interface GapCalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string | null;
+}
+
+/**
+ * `GET /api/gap/agenda/{meeting_id}/events` — the caller's own timed events
+ * over the next two weeks (`GapAgendaEvents`). Empty unless `calendar` is `ok`.
+ */
+export interface GapAgendaEvents {
+  calendar: "ok" | "not_connected" | "reconnect_required" | "failed";
+  events: GapCalendarEvent[];
+}
+
+/** `calendar_writes.AgendaOutcome`, plus `not_tried`. */
+export type AgendaOutcome =
+  | "added"
+  | "removed"
+  | "no_next_meeting"
+  | "no_event"
+  | "external_attendees"
+  | "hidden_attendees"
+  | "not_connected"
+  | "reconnect_required"
+  | "failed"
+  | "not_tried";
 
 /**
  * One utterance a verdict rests on — `EvidenceRead` in
@@ -200,6 +272,19 @@ export interface GapExplanation {
   breakdown: ScoreBreakdown | null;
   /** Somebody sent this gap on to the next meeting — "다음 회의 어젠다로" (#824). */
   carried: boolean;
+  /** A member rewrote the gap's question by hand (#824). */
+  question_edited: boolean;
+}
+
+/** The longest question a member can write (`schemas.QUESTION_MAX`). */
+export const QUESTION_MAX = 500;
+
+/** What `PUT /api/gap/gaps/{gap_id}/question` settled on (`GapQuestion`). */
+export interface GapQuestion {
+  gap_id: string;
+  meeting_id: string;
+  suggested_question: string;
+  edited: boolean;
 }
 
 /** `GET /api/gap/explanations/{meeting_id}` — `GapExplanations`. */

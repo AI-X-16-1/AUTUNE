@@ -29,9 +29,17 @@ from autune_core import CurrentUser, User, get_session
 from . import service
 from .enqueue import enqueue_publish_report
 from .schemas import (
+    GapAgendaEvents,
+    GapAgendaRequest,
+    GapAsk,
+    GapAskRequest,
+    GapAskTargets,
     GapCarry,
     GapDismissal,
     GapExplanations,
+    GapMeetingCarry,
+    GapQuestion,
+    GapQuestionEdit,
     TeamGapRead,
     TemplateComparison,
     TemplateRead,
@@ -158,10 +166,12 @@ def _dismiss(session: Session, gap_id: str, reader: User, *, dismissed: bool) ->
 def carry_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapCarry:
     """Send one gap on to the next meeting -- "다음 회의 어젠다로" on S20 (#824).
 
-    A mark on the gap and nothing else: no meeting is created or named, and
-    nobody is invited. The next meeting's picture reads the marks
-    (``tools.carried_gaps``). Named by the gap, so the membership check is the
-    service's, as for a dismissal.
+    A mark on the gap, which the next meeting's picture reads
+    (``tools.carried_gaps``), and a line on the next scheduled meeting's event
+    in the caller's own Google Calendar when there is one
+    (``calendar_writes.update_agenda``). No meeting is created and nobody is
+    invited. Named by the gap, so the membership check is the service's, as for
+    a dismissal.
     """
     return _carry(session, gap_id, reader, carried=True)
 
@@ -173,11 +183,72 @@ def undo_carry_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> Gap
 
 
 def _carry(session: Session, gap_id: str, reader: User, *, carried: bool) -> GapCarry:
-    """Set the mark and commit it. Nothing to republish: ``GapReport`` does not
+    """Set the mark and commit it, then write the next meeting's event on the
+    caller's own calendar. Committed first, so a calendar that fails or is not
+    connected leaves the mark set. Nothing to republish: ``GapReport`` does not
     carry it, so E's copy is unchanged."""
     result = service.set_carried(session, gap_id, reader, carried=carried)
     session.commit()
+    outcome = service.carry_on_calendar(session, gap_id, reader, carried=carried)
+    return result.model_copy(update={"calendar": outcome})
+
+
+@router.put("/gaps/{gap_id}/question", response_model=GapQuestion)
+def edit_question(
+    gap_id: str, body: GapQuestionEdit, session: SessionDep, reader: CurrentUser
+) -> GapQuestion:
+    """Rewrite the gap's 해소용 질문 -- "편집" on S20 (#824).
+
+    Committed here, then E is sent the report again: ``GapReport`` carries the
+    question, and a worker that picked the task up first would publish the
+    old one. Text that reads as personal data is a 422 and nothing changes.
+    """
+    result = service.edit_question(session, gap_id, reader, question=body.question)
+    session.commit()
+    enqueue_publish_report(result.meeting_id)
     return result
+
+
+@router.get("/gaps/{gap_id}/ask", response_model=GapAskTargets)
+def ask_targets(gap_id: str, session: SessionDep, reader: CurrentUser) -> GapAskTargets:
+    """The meeting's team, for "담당자 지정해 질문" to pick the member from."""
+    return service.ask_targets(session, gap_id, reader)
+
+
+@router.post("/gaps/{gap_id}/ask", response_model=GapAsk)
+def ask_gap(gap_id: str, body: GapAskRequest, session: SessionDep, reader: CurrentUser) -> GapAsk:
+    """ "담당자 지정해 질문" on S20 (#824): post the gap's question on the team's
+    Slack channel, mentioning the member picked. Nothing is stored and no
+    calendar is written."""
+    return service.ask(session, gap_id, reader, user_id=body.user_id)
+
+
+@router.get("/agenda/{meeting_id}/events", response_model=GapAgendaEvents)
+def agenda_events(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapAgendaEvents:
+    """The caller's own upcoming Google Calendar events, for "다음 회의 잡기" to
+    pick the next meeting from (#824). Read for the caller and never stored."""
+    return service.agenda_events(session, meeting_id, reader)
+
+
+@router.post("/agenda/{meeting_id}", response_model=GapMeetingCarry)
+def carry_meeting(
+    meeting_id: str,
+    session: SessionDep,
+    reader: CurrentUser,
+    body: GapAgendaRequest | None = None,
+) -> GapMeetingCarry:
+    """Send every open gap of the meeting on to the next meeting -- "다음 회의
+    잡기" beside S20's template rail (#824) -- and add them to the event the
+    caller picked on their own Google Calendar, or the team's next scheduled
+    meeting's when they picked none, and say so once on the team's Slack
+    channel. The marks are committed first, so a calendar that cannot take
+    them leaves the marks set. The membership check is the service's first
+    line."""
+    gaps = service.carry_meeting(session, meeting_id, reader)
+    session.commit()
+    return service.carry_meeting_on_calendar(
+        session, meeting_id, reader, gaps, event_id=body.event_id if body else None
+    )
 
 
 @router.get("/templates", response_model=list[TemplateRead])

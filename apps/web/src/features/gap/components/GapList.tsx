@@ -2,13 +2,21 @@
 
 import Link from "next/link";
 import type { Route } from "next";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Button, MaskedText, Quote, ScoreLabel, StatusDot } from "@/shared/ui";
 
 import { COVERAGE_LABELS, SEVERITY_LABELS, bySeverity } from "../types";
-import type { Gap, GapEvidence, GapExplanation, GapExplanations, ScoreBreakdown } from "../types";
+import type {
+  Gap,
+  GapAskTargets,
+  GapEvidence,
+  GapExplanation,
+  GapExplanations,
+  ScoreBreakdown,
+} from "../types";
+import { QUESTION_MAX } from "../types";
 
 /**
  * The gap list on S20: HIGH opened, MEDIUM and LOW closed, LOW behind a toggle.
@@ -39,7 +47,9 @@ export function GapList({
   showLow = false,
   onToggleLow,
   onDismiss,
-  onCarry,
+  loadAskTargets,
+  onAsk,
+  onSaveQuestion,
   pendingGapId = null,
 }: {
   gaps: readonly Gap[];
@@ -50,11 +60,11 @@ export function GapList({
   onToggleLow?: () => void;
   /** "해당 없음". Without it the button is drawn disabled. */
   onDismiss?: (gapId: string) => void;
-  /**
-   * "다음 회의 어젠다로" and taking it back: `carried` is the state asked for.
-   * Without it the button is drawn disabled.
-   */
-  onCarry?: (gapId: string, carried: boolean) => void;
+  /** "담당자 지정해 질문": the team to pick from, and the pick. Without both the button is drawn disabled. */
+  loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
+  onAsk?: (gapId: string, userId: string) => void;
+  /** "편집" on 해소용 질문: answers with what went wrong, or `null`. Without it no button is drawn. */
+  onSaveQuestion?: (gapId: string, question: string) => Promise<string | null>;
   /** The gap whose write is in flight, so only its button shows it. */
   pendingGapId?: string | null;
 }) {
@@ -84,7 +94,9 @@ export function GapList({
       meetingId={meetingId}
       defaultOpen={open}
       onDismiss={onDismiss}
-      onCarry={onCarry}
+      loadAskTargets={loadAskTargets}
+      onAsk={onAsk}
+      onSaveQuestion={onSaveQuestion}
       pending={pendingGapId === gap.id}
     />
   );
@@ -125,9 +137,9 @@ export function GapList({
       ) : null}
 
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-        &quot;담당자 지정해 질문&quot;은 아직 준비 중이라 누를 수 없습니다. &quot;다음 회의
-        어젠다로&quot;는 이 갭을 다음 회의로 넘겼다고 표시하고, &quot;해당 없음&quot;은 오탐으로
-        표시합니다.
+        &quot;담당자 지정해 질문&quot;은 고른 팀원을 멘션해 팀 Slack 채널에 질문을
+        올립니다. &quot;해당 없음&quot;은 오탐으로 표시합니다. 다음 회의로 넘기는 것은 템플릿 대조 옆의 &quot;다음
+        회의 잡기&quot;에서 이 회의의 열린 갭을 한꺼번에 합니다.
       </p>
     </div>
   );
@@ -191,14 +203,14 @@ function ListSummary({
  * positive, it leaves the report, and the rail keeps the item marked — which is
  * where it can be taken back.
  *
- * "다음 회의 어젠다로" is one too: `POST /gaps/{id}/carry` marks the gap as sent
- * on to the next meeting (#824). The gap stays on the report, the card says it
- * was sent, and the same button takes it back. Nothing is scheduled and nobody
- * is invited — whoever composes the next meeting reads the marks. Its state
- * comes from the explanation, so until that loads the button is disabled.
+ * Sending gaps on to the next meeting is not a card action: "다음 회의 잡기"
+ * beside the template rail does it for the whole meeting (#824). The card only
+ * says a gap was sent on, from the explanation.
  *
- * "담당자 지정해 질문" stays drawn and disabled: asking one person needs a
- * decision about who and how (#824), and the list says so under the cards.
+ * "담당자 지정해 질문" opens a picker of the meeting's team, and posts the
+ * question on the team's Slack channel mentioning the member picked. It writes
+ * nobody's calendar: one person's grant is for their own work only (mkkim68
+ * on #824).
  */
 function GapCard({
   gap,
@@ -207,7 +219,9 @@ function GapCard({
   meetingId,
   defaultOpen,
   onDismiss,
-  onCarry,
+  loadAskTargets,
+  onAsk,
+  onSaveQuestion,
   pending,
 }: {
   gap: Gap;
@@ -216,10 +230,14 @@ function GapCard({
   meetingId?: string;
   defaultOpen: boolean;
   onDismiss?: (gapId: string) => void;
-  onCarry?: (gapId: string, carried: boolean) => void;
+  loadAskTargets?: (gapId: string) => Promise<GapAskTargets>;
+  onAsk?: (gapId: string, userId: string) => void;
+  onSaveQuestion?: (gapId: string, question: string) => Promise<string | null>;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [asking, setAsking] = useState(false);
+  const canAsk = Boolean(loadAskTargets && onAsk);
   const coverage = explanation?.coverage ?? null;
   const carried = explanation?.carried ?? false;
 
@@ -289,18 +307,14 @@ function GapCard({
             )}
           </Block>
 
-          {gap.suggested_question ? (
-            <Block label="해소용 질문" sunken>
-              <p
-                className="text-[var(--color-ink-strong)]"
-                style={{
-                  fontSize: "var(--text-rowBody)",
-                  lineHeight: "var(--text-rowBody-leading)",
-                }}
-              >
-                <MaskedText>{gap.suggested_question}</MaskedText>
-              </p>
-            </Block>
+          {gap.suggested_question || onSaveQuestion ? (
+            <QuestionBlock
+              gapId={gap.id}
+              question={gap.suggested_question ?? ""}
+              edited={explanation?.question_edited ?? false}
+              pending={pending}
+              onSave={onSaveQuestion}
+            />
           ) : null}
 
           <ScoreExplain
@@ -313,15 +327,11 @@ function GapCard({
             <Button
               tone="text"
               size="compact"
-              disabled={!onCarry || !explanation || pending}
-              aria-pressed={carried}
-              aria-busy={pending || undefined}
-              title={onCarry ? (carried ? UNCARRY_HINT : CARRY_HINT) : PENDING}
-              onClick={() => onCarry?.(gap.id, !carried)}
+              disabled={!canAsk || pending}
+              aria-expanded={asking}
+              title={canAsk ? ASK_HINT : PENDING}
+              onClick={() => setAsking((value) => !value)}
             >
-              {carried ? "다음 회의에서 빼기" : "다음 회의 어젠다로"}
-            </Button>
-            <Button tone="text" size="compact" disabled title={PENDING}>
               담당자 지정해 질문
             </Button>
             <Button
@@ -335,20 +345,211 @@ function GapCard({
               {pending ? "처리 중" : "해당 없음"}
             </Button>
           </div>
+
+          {asking && loadAskTargets && onAsk ? (
+            <AskPicker
+              gapId={gap.id}
+              load={loadAskTargets}
+              pending={pending}
+              onSend={(userId) => {
+                onAsk(gap.id, userId);
+                setAsking(false);
+              }}
+            />
+          ) : null}
+
         </div>
       ) : null}
     </article>
   );
 }
 
+/**
+ * 해소용 질문, and "편집" to put it in the member's own words (#824). Saving
+ * replaces the question everywhere it goes — the Slack question, the next
+ * meeting's line, E's report — and a re-run keeps it. A refusal (text that
+ * reads as personal data) keeps the editor open with what was typed.
+ */
+function QuestionBlock({
+  gapId,
+  question,
+  edited,
+  pending,
+  onSave,
+}: {
+  gapId: string;
+  question: string;
+  edited: boolean;
+  pending: boolean;
+  onSave?: (gapId: string, question: string) => Promise<string | null>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(question);
+  const [error, setError] = useState<string | null>(null);
+  const trimmed = draft.trim();
+
+  const save = async () => {
+    if (!onSave) return;
+    const problem = await onSave(gapId, trimmed);
+    setError(problem);
+    if (problem === null) setEditing(false);
+  };
+
+  return (
+    <Block label={edited ? "해소용 질문 · 수정됨" : "해소용 질문"} sunken>
+      {editing ? (
+        <div className="flex flex-col" style={{ gap: "var(--space-8)" }}>
+          <label className="sr-only" htmlFor={`question-${gapId}`}>
+            해소용 질문 편집
+          </label>
+          <textarea
+            id={`question-${gapId}`}
+            value={draft}
+            maxLength={QUESTION_MAX}
+            rows={3}
+            onChange={(event) => setDraft(event.target.value)}
+            className="w-full resize-y rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)]"
+            style={{
+              fontSize: "var(--text-rowBody)",
+              lineHeight: "var(--text-rowBody-leading)",
+              padding: "6px 8px",
+            }}
+          />
+          {error ? (
+            <p
+              role="alert"
+              className="text-[var(--color-signal-critical)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {error}
+            </p>
+          ) : null}
+          <div className="-ml-2 flex flex-wrap" style={{ gap: "var(--space-4)" }}>
+            <Button
+              tone="text"
+              size="compact"
+              disabled={!trimmed || trimmed === question || pending}
+              aria-busy={pending || undefined}
+              onClick={() => void save()}
+            >
+              {pending ? "저장 중" : "저장"}
+            </Button>
+            <Button
+              tone="text"
+              size="compact"
+              disabled={pending}
+              onClick={() => {
+                setDraft(question);
+                setError(null);
+                setEditing(false);
+              }}
+            >
+              취소
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-start justify-between" style={{ gap: "var(--space-8)" }}>
+          <p
+            className="min-w-0 text-[var(--color-ink-strong)]"
+            style={{
+              fontSize: "var(--text-rowBody)",
+              lineHeight: "var(--text-rowBody-leading)",
+            }}
+          >
+            {question ? <MaskedText>{question}</MaskedText> : <Muted>질문이 없습니다.</Muted>}
+          </p>
+          {onSave ? (
+            <Button
+              tone="text"
+              size="compact"
+              disabled={pending}
+              title="이 갭의 해소용 질문을 직접 고칩니다. Slack 질문과 다음 회의 안건에 고친 질문이 쓰입니다."
+              onClick={() => {
+                setDraft(question);
+                setError(null);
+                setEditing(true);
+              }}
+            >
+              편집
+            </Button>
+          ) : null}
+        </div>
+      )}
+    </Block>
+  );
+}
+
+/** The member "담당자 지정해 질문" mentions, picked by hand from the meeting's team. */
+function AskPicker({
+  gapId,
+  load,
+  pending,
+  onSend,
+}: {
+  gapId: string;
+  load: (gapId: string) => Promise<GapAskTargets>;
+  pending: boolean;
+  onSend: (userId: string) => void;
+}) {
+  const [targets, setTargets] = useState<GapAskTargets | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [chosen, setChosen] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    load(gapId).then(
+      (loaded) => {
+        if (live) setTargets(loaded);
+      },
+      () => {
+        if (live) setFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [gapId, load]);
+
+  if (failed) return <Muted>팀원 목록을 불러오지 못했습니다.</Muted>;
+  if (!targets) return <Muted>팀원 목록을 불러오는 중입니다.</Muted>;
+
+  return (
+    <div className="flex flex-wrap items-center" style={{ gap: "var(--space-8)" }}>
+      <label className="sr-only" htmlFor={`ask-${gapId}`}>
+        질문할 담당자
+      </label>
+      <select
+        id={`ask-${gapId}`}
+        value={chosen}
+        onChange={(event) => setChosen(event.target.value)}
+        className="rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)]"
+        style={{ fontSize: "var(--text-metaSmall)", padding: "4px 8px" }}
+      >
+        <option value="">담당자 선택</option>
+        {targets.members.map((member) => (
+          <option key={member.user_id} value={member.user_id}>
+            {member.name}
+          </option>
+        ))}
+      </select>
+      <Button
+        tone="text"
+        size="compact"
+        disabled={!chosen || pending}
+        onClick={() => onSend(chosen)}
+      >
+        Slack으로 질문 보내기
+      </Button>
+    </div>
+  );
+}
+
 const PENDING = "아직 준비 중인 동작입니다";
 
+const ASK_HINT = "팀원 한 명을 골라, 그 사람을 멘션해 팀 Slack 채널에 해소용 질문을 올립니다.";
+
 const UNDO_HINT = "오탐으로 표시합니다. 오른쪽 템플릿 대조에서 되돌릴 수 있습니다.";
-
-const CARRY_HINT =
-  "이 갭을 다음 회의로 넘겼다고 표시합니다. 일정을 잡거나 사람을 초대하지는 않습니다.";
-
-const UNCARRY_HINT = "다음 회의로 넘긴 표시를 지웁니다.";
 
 const DOT = { high: "critical", medium: "attention", low: "idle" } as const;
 

@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { Button, Tabs } from "@/shared/ui";
 
+import { getAgendaEvents, getAskTargets } from "../api";
 import { useGapActions } from "../hooks/useGapActions";
 import { useGapExplanations } from "../hooks/useGapExplanations";
 import { useGapReport } from "../hooks/useGapReport";
@@ -131,7 +132,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadGraph, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, dismiss, undoDismiss, carry, undoCarry, choose } =
+  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, saveQuestion, choose } =
     useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
@@ -186,6 +187,19 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
           }}
         >
           {failure}
+        </p>
+      ) : null}
+
+      {notice ? (
+        <p
+          role="status"
+          className="text-[var(--color-ink-muted)]"
+          style={{
+            fontSize: "var(--text-metaSmall)",
+            padding: "var(--space-8) var(--space-page) 0",
+          }}
+        >
+          {notice}
         </p>
       ) : null}
 
@@ -264,9 +278,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                           showLow={showLow}
                           onToggleLow={() => setShowLow((on) => !on)}
                           onDismiss={(gapId) => void dismiss(gapId)}
-                          onCarry={(gapId, carried) =>
-                            void (carried ? carry(gapId) : undoCarry(gapId))
-                          }
+                          loadAskTargets={getAskTargets}
+                          onAsk={(gapId, userId) => void ask(gapId, userId)}
+                          onSaveQuestion={saveQuestion}
                           pendingGapId={pending}
                         />
                       );
@@ -292,9 +306,9 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                     showLow={showLow}
                     onToggleLow={() => setShowLow((on) => !on)}
                     onDismiss={(gapId) => void dismiss(gapId)}
-                    onCarry={(gapId, carried) =>
-                      void (carried ? carry(gapId) : undoCarry(gapId))
-                    }
+                    loadAskTargets={getAskTargets}
+                    onAsk={(gapId, userId) => void ask(gapId, userId)}
+                    onSaveQuestion={saveQuestion}
                     pendingGapId={pending}
                   />
                 )}
@@ -331,6 +345,8 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
                 templates={templates}
                 onChoose={(templateKey) => void choose(meetingId, templateKey)}
                 onUndoDismiss={(gapId) => void undoDismiss(gapId)}
+                loadAgendaEvents={() => getAgendaEvents(meetingId)}
+                onScheduleNext={(eventId) => void scheduleNext(meetingId, eventId)}
                 pending={pending}
               />
             )}

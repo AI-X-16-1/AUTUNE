@@ -281,6 +281,16 @@ class GapGap(Base, TimestampMixin):
     one from the moment it is raised. #35 makes it specific to the topics the
     gap was inferred from; until then it is the item's own wording."""
 
+    question_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When a member rewrote ``suggested_question`` by hand on S20 (#824). Null
+    while the question is C's own.
+
+    A re-run and ``refresh_questions`` leave an edited question alone -- a
+    person's wording is not C's to recompute. Deleted speech still wins: a
+    question naming a label that is gone is reset to the item's general one
+    and this mark cleared (#587). Nobody's id is stored, as for
+    ``dismissed_at``."""
+
     coverage: Mapped[str | None] = mapped_column(String(16))
     """How far the meeting got with the item — ``partial`` or ``missing``.
 
@@ -396,3 +406,69 @@ class GapScoring(Base, TimestampMixin):
     ``AUTUNE_GAP_RESCORE_MAX_ATTEMPTS`` the sweep stops trying that grouping, so
     one broken meeting cannot spend a hosted verifier's quota every ten minutes."""
     last_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GapAgendaEvent(Base):
+    """Which event on whose calendar holds a gap's line -- "다음 회의 잡기" on
+    S20 (#824, ``calendar_writes``).
+
+    Kept so the line can be taken out again: when the gap is taken back, when
+    the meeting goes (copied to ``GapAgendaCleanup`` first) and when the
+    account goes (taken out at once, with the owner's own grant). ``user_id``
+    is the calendar's owner, who is also who pressed the button -- the line can
+    only be removed with their grant, as module B keeps an item's assignee on
+    ``ext_calendar_events``. It is read by nothing but the cleanup: no screen,
+    route or tool says who sent a gap on (``GapGap.carried_at`` names nobody).
+
+    ``gap_id`` is not a foreign key: a gap a rescore drops leaves its line on
+    the calendar, and the record has to outlive it until the meeting goes.
+    Goes with the meeting and with the owner. Nothing from the event is here.
+    """
+
+    __tablename__ = "gap_agenda_events"
+    __table_args__ = (
+        UniqueConstraint("gap_id", "user_id", "event_id", name="uq_gap_agenda_events"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    gap_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    calendar_id: Mapped[str] = mapped_column(String(320), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GapAgendaCleanup(Base):
+    """A gap's line still to take off a person's calendar after its meeting was
+    deleted or expired (privacy.md section 4).
+
+    ``GapAgendaEvent`` goes with the meeting, so the meeting hook copies its
+    rows here first and ``tasks.drain_agenda_cleanup`` takes the lines out with
+    each owner's own grant. No meeting key: the row has to outlive the meeting.
+    ``user_id`` cascades -- an account deletion takes its own lines out in its
+    hook, and nothing could after.
+    """
+
+    __tablename__ = "gap_agenda_cleanup"
+    __table_args__ = (
+        UniqueConstraint("user_id", "event_id", "gap_id", name="uq_gap_agenda_cleanup"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    calendar_id: Mapped[str] = mapped_column(String(320), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    gap_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
