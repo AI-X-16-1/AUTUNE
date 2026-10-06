@@ -61,7 +61,10 @@ export function NotificationPauseSetting() {
         className="flex flex-wrap items-center gap-2 text-[var(--color-ink-body)]"
         style={meta}
       >
-        <span>휴가 기간 (아침 요약과 월요일 요약을 받지 않음)</span>
+        <span>
+          휴가 기간 (아침 요약과 월요일 요약을 받지 않음. 월요일이 공휴일이라 다른 날
+          오는 월요일 요약도 같습니다)
+        </span>
         <input
           type="date"
           aria-label="휴가 시작일"

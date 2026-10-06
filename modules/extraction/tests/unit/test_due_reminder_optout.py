@@ -54,7 +54,14 @@ def session() -> Iterator[Session]:
         yield s
 
 
-def client_for(session: Session, monkeypatch: pytest.MonkeyPatch, *, sent: bool) -> TestClient:
+def client_for(
+    session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    sent: bool,
+    weekly: bool = False,
+    daily: bool = False,
+) -> TestClient:
     app = FastAPI()
 
     @app.exception_handler(AutuneError)
@@ -67,7 +74,9 @@ def client_for(session: Session, monkeypatch: pytest.MonkeyPatch, *, sent: bool)
     monkeypatch.setattr(
         router_module,
         "get_settings",
-        lambda: ExtractionSettings(_env_file=None, due_reminders=sent),  # type: ignore[call-arg]
+        lambda: ExtractionSettings(  # type: ignore[call-arg]
+            _env_file=None, due_reminders=sent, weekly_digest=weekly, daily_digest=daily
+        ),
     )
     return TestClient(app)
 
@@ -76,14 +85,24 @@ def test_they_are_on_unless_the_person_turned_them_off(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = client_for(session, monkeypatch, sent=True)
-    assert client.get(f"{PREFIX}/me/due-reminders").json() == {"on": True, "sent_here": True}
+    assert client.get(f"{PREFIX}/me/due-reminders").json() == {
+        "on": True,
+        "sent_here": True,
+        "weekly_here": False,
+        "daily_here": False,
+    }
 
 
 def test_turning_them_off_and_on_again(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
     client = client_for(session, monkeypatch, sent=True)
 
     off = client.put(f"{PREFIX}/me/due-reminders", json={"on": False})
-    assert off.json() == {"on": False, "sent_here": True}
+    assert off.json() == {
+        "on": False,
+        "sent_here": True,
+        "weekly_here": False,
+        "daily_here": False,
+    }
     assert session.get(ExtDueReminderOptOut, READER) is not None
     assert client.get(f"{PREFIX}/me/due-reminders").json()["on"] is False
 
@@ -97,7 +116,29 @@ def test_the_screen_is_told_when_this_deployment_sends_none(
     session: Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = client_for(session, monkeypatch, sent=False)
-    assert client.get(f"{PREFIX}/me/due-reminders").json() == {"on": True, "sent_here": False}
+    assert client.get(f"{PREFIX}/me/due-reminders").json() == {
+        "on": True,
+        "sent_here": False,
+        "weekly_here": False,
+        "daily_here": False,
+    }
+
+
+def test_the_screen_is_told_which_of_the_three_this_deployment_sends(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """dev, 2026-10-05: reminders off, both digests on -- and the one flag
+    had the screen say the server sent none."""
+    client = client_for(session, monkeypatch, sent=False, weekly=True, daily=True)
+
+    assert client.get(f"{PREFIX}/me/due-reminders").json() == {
+        "on": True,
+        "sent_here": False,
+        "weekly_here": True,
+        "daily_here": True,
+    }
+    answer = client.put(f"{PREFIX}/me/due-reminders", json={"on": False}).json()
+    assert (answer["weekly_here"], answer["daily_here"]) == (True, True)
 
 
 def test_nobody_else_can_be_named(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
