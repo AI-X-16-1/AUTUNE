@@ -422,3 +422,108 @@ def test_an_action_without_the_parameter_is_not_given_one() -> None:
     )
 
     assert calls == [{"team_id": "team_a", "body": "x"}]
+
+
+def _refusing(reason: str) -> Action:
+    def redraft(team_id: str) -> dict[str, Any]:
+        return {"ok": False, "summary": reason, "reason": reason}
+
+    return Action("fake.redraft", redraft, "L1")
+
+
+def test_a_failed_l1_is_told_to_the_asker_with_its_reason() -> None:
+    """#862: the chat says what did not go through and why; the row keeps no text."""
+    unfinished: list[dict[str, str]] = []
+    proposal = ProposedAction(
+        kind="redraft",
+        title="리포트 초안 다시 만들기",
+        tool="fake.redraft",
+        level="L1",
+        rationale="r",
+    )
+
+    done = execute_l1(
+        [proposal],
+        actions={"fake.redraft": _refusing("초안이 바뀌었습니다")},
+        session=SESSION,
+        scope=SCOPE,
+        unfinished=unfinished,
+    )
+
+    assert unfinished == [{"title": "리포트 초안 다시 만들기", "reason": "초안이 바뀌었습니다"}]
+    assert done[0]["reason"] is None  # a module's own words are not stored
+
+
+def test_this_layers_reason_is_told_in_korean() -> None:
+    unfinished: list[dict[str, str]] = []
+
+    execute_l1(
+        [_proposal("fake.unknown")],
+        actions={},
+        session=SESSION,
+        scope=SCOPE,
+        unfinished=unfinished,
+    )
+
+    assert unfinished == [{"title": "t", "reason": "할 수 없는 작업입니다"}]
+
+
+def test_what_ran_or_waits_for_approval_is_not_unfinished() -> None:
+    unfinished: list[dict[str, str]] = []
+    calls: list[dict[str, Any]] = []
+
+    execute_l1(
+        [_proposal("fake.draft_note", body="x"), _proposal("fake.post", body="x")],
+        actions={
+            "fake.draft_note": Action("fake.draft_note", _recorder(calls), "L1"),
+            "fake.post": Action("fake.post", _recorder(calls), "L2"),
+        },
+        session=SESSION,
+        scope=SCOPE,
+        unfinished=unfinished,
+    )
+
+    assert unfinished == []
+
+
+def test_a_long_module_reason_is_cut() -> None:
+    unfinished: list[dict[str, str]] = []
+
+    execute_l1(
+        [_proposal("fake.redraft")],
+        actions={"fake.redraft": _refusing("가" * 200)},
+        session=SESSION,
+        scope=SCOPE,
+        unfinished=unfinished,
+    )
+
+    assert len(unfinished[0]["reason"]) <= 80
+
+
+def test_a_run_hands_the_chat_what_did_not_go_through_and_stores_none_of_it(
+    session: Session, team: dict[str, str]
+) -> None:
+    proposal = ProposedAction(
+        kind="redraft",
+        title="리포트 초안 다시 만들기",
+        tool="fake.redraft",
+        level="L1",
+        rationale="r",
+    )
+
+    row, state = run_and_record(
+        "다시",
+        session=session,
+        router=FakeRouter({"다시": "report"}),
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        trigger={"kind": "chat"},
+        subagents={"report": _proposing("report", [proposal])},
+        tools={},
+        actions={"fake.redraft": _refusing("초안이 바뀌었습니다")},
+    )
+
+    assert state["unfinished"] == [
+        {"title": "리포트 초안 다시 만들기", "reason": "초안이 바뀌었습니다"}
+    ]
+    assert "초안" not in str(row.actions)

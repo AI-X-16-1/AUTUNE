@@ -57,4 +57,12 @@ export type ChatReply = {
   queued: number;
   /** L2 proposals this run queued that the caller may decide (plan mode's rule). */
   pending: PendingAction[];
+  /** L1 actions that did not go through, each with why (#862). */
+  unfinished?: ChatUnfinished[];
+};
+
+/** An L1 action that did not go through: its title and the reason in words. */
+export type ChatUnfinished = {
+  title: string;
+  reason: string;
 };
