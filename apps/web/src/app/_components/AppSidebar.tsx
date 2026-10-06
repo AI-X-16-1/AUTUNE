@@ -60,6 +60,13 @@ const NAV: NavItem[] = [
   { label: "승인 대기", href: "/approvals", isCurrent: (p) => p.startsWith("/approvals") },
 ];
 
+/** The documents on `/legal`, by the anchors that page gives them. */
+const LEGAL: { label: string; href: Route }[] = [
+  { label: "이용약관", href: "/legal#terms" as Route },
+  { label: "개인정보 처리방침", href: "/legal#privacy" as Route },
+  { label: "정보보호 정책", href: "/legal#security" as Route },
+];
+
 const itemText = {
   fontSize: "var(--control-text-default)",
   fontWeight: 500,
@@ -162,6 +169,25 @@ export function AppSidebar() {
             ) : null}
           </>
         )}
+        {/* The three documents of /legal, reachable from every screen; until
+            now only the sign-in screen linked to them. */}
+        <nav
+          aria-label="약관 및 정책"
+          className="mt-2 flex flex-wrap gap-x-2 gap-y-0.5 text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {LEGAL.map((doc) => (
+            <Link
+              key={doc.href}
+              href={doc.href}
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-[var(--color-ink-strong)] hover:underline"
+            >
+              {doc.label}
+            </Link>
+          ))}
+        </nav>
       </div>
     </aside>
   );

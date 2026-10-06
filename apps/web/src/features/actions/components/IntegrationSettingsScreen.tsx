@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { getSession, type SessionUser } from "@/shared/api/auth";
@@ -138,6 +140,21 @@ export function IntegrationSettingsScreen({
         <p className="text-[var(--color-ink-muted)]" style={meta}>
           Notion·Jira로 내보낸 항목은 팀의 기록으로 남습니다. 내 캘린더에 넣은
           기한 일정은 계정을 지우거나 회의 보관 기간이 끝나면 함께 지워집니다.
+        </p>
+        {/* Where a connection starts sending is where what it sends is said
+            (the user, 2026-10-06). The page has one anchor a document, so the
+            articles are named in the words. A new tab: this screen is mid-task. */}
+        <p className="text-[var(--color-ink-muted)]" style={meta}>
+          연결하면 Slack, Notion, Jira, Google로 전달되는 항목과 국외 이전에 관한 내용은{" "}
+          <Link
+            href={"/legal#privacy" as Route}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            개인정보 처리방침
+          </Link>{" "}
+          제5조(제3자 제공)와 제7조(국외 이전)에서 볼 수 있습니다.
         </p>
       </section>
     </main>

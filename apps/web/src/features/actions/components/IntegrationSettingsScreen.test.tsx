@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { IntegrationSettingsScreen } from "./IntegrationSettingsScreen";
@@ -10,6 +10,13 @@ import { IntegrationSettingsScreen } from "./IntegrationSettingsScreen";
 // choice; here that is two props.
 
 const session = vi.fn();
+vi.mock("next/link", () => ({
+  default: ({ href, children, ...rest }: { href: string; children: ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock("@/shared/api/auth", () => ({ getSession: () => session() }));
 vi.mock("./CalendarConnect", () => ({ CalendarConnect: () => null }));
 vi.mock("./DueReminderSetting", () => ({ DueReminderSetting: () => null }));
@@ -114,6 +121,17 @@ describe("IntegrationSettingsScreen, the team it is about", () => {
 
     expect(team()).toBe("team_a");
     expect(picker().value).toBe("team_a");
+  });
+
+  it("says under the connections where what they send is written down", async () => {
+    session.mockResolvedValue(me());
+    render(<IntegrationSettingsScreen />);
+    await found();
+
+    const link = screen.getByRole("link", { name: "개인정보 처리방침" });
+    expect(link.getAttribute("href")).toBe("/legal#privacy");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.parentElement?.textContent).toContain("제5조(제3자 제공)와 제7조(국외 이전)");
   });
 
   it("holds its own pick when no route is listening", async () => {

@@ -51,6 +51,22 @@ describe("AppSidebar, the team", () => {
   });
 });
 
+describe("AppSidebar, the documents", () => {
+  it.each([true, false])("links to the three documents of /legal (signed in: %s)", (signedIn) => {
+    sessionUser.mockReturnValue(signedIn ? ME : null);
+    render(<AppSidebar />);
+
+    const links = [
+      ...screen.getByRole("navigation", { name: "약관 및 정책" }).querySelectorAll("a"),
+    ].map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("target")]);
+    expect(links).toEqual([
+      ["이용약관", "/legal#terms", "_blank"],
+      ["개인정보 처리방침", "/legal#privacy", "_blank"],
+      ["정보보호 정책", "/legal#security", "_blank"],
+    ]);
+  });
+});
+
 describe("AppSidebar, signing out", () => {
   it("offers 로그아웃 under the signed-in person's name", () => {
     sessionUser.mockReturnValue(ME);
