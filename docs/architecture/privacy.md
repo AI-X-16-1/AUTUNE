@@ -339,7 +339,9 @@ has not signed up -- and it does not wait for the analysis window: the row
 is deleted when the invitation is accepted, when it lapses (seven days; the
 retention sweep, and the next invitation made for that team), when a new
 invitation to the same address replaces it, when a member of the team
-cancels it, when the team or the inviter's account is deleted, and when the
+cancels it, when the inviter leaves the team (somebody who is no longer on a
+team brings nobody onto it, so their pending invitations to it go with
+them), when the team or the inviter's account is deleted, and when the
 invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
 ids, never the address.

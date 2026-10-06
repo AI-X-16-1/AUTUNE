@@ -230,7 +230,8 @@ function Members({ teamId }: { teamId: string }) {
               담당한 항목은 팀의 기록으로 남습니다. 내가 한 말은 나간 뒤에도 설정의
               &lsquo;개인정보 · 보관&rsquo;에서 직접 삭제할 수 있습니다. 다만 그 삭제는 이 팀만
               골라서 할 수 없고 모든 팀에서 내가 한 말이 한꺼번에 삭제되며, 나간 뒤에는 이 팀의
-              회의를 열어 확인할 수 없습니다. 다시 들어오려면 팀원의 초대가 필요합니다.
+              회의를 열어 확인할 수 없습니다. 내가 이 팀에 보낸 초대 중 아직 수락되지 않은 것은
+              함께 취소됩니다. 다시 들어오려면 팀원의 초대가 필요합니다.
             </p>
             <div className="mt-2 flex gap-2">
               <Button tone="quiet" size="compact" loading={leaving} onClick={leave}>

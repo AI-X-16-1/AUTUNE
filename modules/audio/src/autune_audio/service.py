@@ -28,7 +28,13 @@ from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedErr
 from . import identification, storage
 from .config import AudioSettings, get_settings
 from .job_guard import JobStopped
-from .models import AudConsentAttestation, AudSpeakerEmbedding, AudSpeakerName, TranscriptionJob
+from .models import (
+    AudConsentAttestation,
+    AudSpeakerEmbedding,
+    AudSpeakerName,
+    AudTeamInvitation,
+    TranscriptionJob,
+)
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
 from .speakers import UNIDENTIFIED
@@ -299,6 +305,11 @@ def leave_team(session: Session, *, team_id: str, member: User) -> None:
     it comes back wanting the link cleared, this is the place, and deletion
     has to be offered before the link goes.
 
+    **The invitations they sent to this team go with them** (the module
+    owner, on #552): a link made by somebody who is no longer on the team
+    must not bring anybody onto it. Only the pending ones they made, for this
+    team; another member's invitation, and theirs to another team, stay.
+
     **The last member cannot leave.** A team with nobody on it has meetings
     nobody can read or delete and nothing that would ever remove them.
     Deleting a team is a decision of its own and is not made by this button.
@@ -319,8 +330,15 @@ def leave_team(session: Session, *, team_id: str, member: User) -> None:
     if len(rows) <= 1:
         raise LastTeamMemberError("the last member of a team cannot leave it")
     session.delete(own)
+    result = session.execute(
+        sa.delete(AudTeamInvitation).where(
+            AudTeamInvitation.team_id == team_id, AudTeamInvitation.invited_by == member.id
+        )
+    )
+    withdrawn = int(getattr(result, "rowcount", 0))
     session.flush()
-    log.info("team_left", team_id=team_id, user_id=member.id)
+    # Ids and a count: an invitation's address is never logged.
+    log.info("team_left", team_id=team_id, user_id=member.id, invitations_withdrawn=withdrawn)
 
 
 def unpin_team(session: Session, *, team_id: str, member: User) -> None:

@@ -145,6 +145,55 @@ def test_someone_who_left_can_no_longer_read_the_team_or_invite_to_it(
     assert rows(db_session, team) == []
 
 
+def test_someone_who_left_can_no_longer_read_the_teams_meetings(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    """The meeting, its transcript and the team's list of meetings: each asks
+    ``team_members`` at the request, so each stops with the row."""
+    meeting = Meeting(team_id=team, title="주간 회의")
+    db_session.add(meeting)
+    db_session.flush()
+    reads = (
+        f"/api/audio/meetings/{meeting.id}",
+        f"/api/audio/transcripts/{meeting.id}",
+        f"/api/audio/meetings/{meeting.id}/speakers",
+        f"/api/audio/meetings?team_id={team}",
+    )
+    before = [client_for(mate).get(path).status_code for path in reads]
+    assert [m["meeting_id"] for m in client_for(mate).get("/api/audio/meetings").json()] == [
+        meeting.id
+    ]
+
+    leave(client_for, mate, team)
+
+    after = [client_for(mate).get(path).status_code for path in reads]
+    # Readable before, or the refusal below would prove nothing.
+    assert all(status != 403 for status in before), before
+    assert after == [403, 403, 403, 403]
+    # With no team named the list is theirs, and the team's meeting is not on it.
+    assert client_for(mate).get("/api/audio/meetings").json() == []
+    assert [client_for(host).get(path).status_code for path in reads] == before
+
+
+def test_the_teams_left_to_them_come_back_in_the_order_they_joined(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    """The screen goes to the first of these: the default team after leaving
+    is the earliest joined of the rest (``teams_for``; a pinned one first)."""
+    later = []
+    for name in ("Zeta", "Alpha"):  # joined in this order; names sort the other way
+        joined = Team(name=name)
+        db_session.add(joined)
+        db_session.flush()
+        db_session.add(TeamMember(team_id=joined.id, user_id=mate.id))
+        db_session.flush()
+        later.append(joined.id)
+
+    response = leave(client_for, mate, team)
+
+    assert [t["team_id"] for t in response.json()] == later
+
+
 def test_the_last_member_cannot_leave(
     db_session: Session, client_for, host: User, team: str
 ) -> None:
@@ -382,18 +431,35 @@ def test_the_log_of_a_cancellation_carries_ids_and_never_the_address(
 # --- the two together ---------------------------------------------------------
 
 
-def test_an_invitation_sent_by_somebody_who_then_left_is_still_listed_and_still_works(
+def test_an_invitation_sent_by_somebody_who_then_left_is_gone_and_its_link_stops_working(
     db_session: Session, client_for, host: User, mate: User, team: str
 ) -> None:
-    """As built, and for the module owner to settle on #552: the invitation was
-    the team's when it was made, and the members who remain can see it and
-    take it back."""
+    """Settled by the module owner on #552: somebody who is not on the team
+    brings nobody onto it. The address goes with the row."""
     token = invite(client_for, mate, team).json()["token"]
     invitee = person(db_session, "newcomer@example.com", "받은 사람")
     leave(client_for, mate, team)
 
-    (entry,) = listed(client_for, host, team).json()
-    assert entry["invited_by_name"] == "같은 팀"
+    assert listed(client_for, host, team).json() == []
+    assert rows(db_session, team) == []
+    with pytest.raises(invitations.InvitationUnusableError):
+        invitations.accept(db_session, token=token, user=invitee)
+    assert members(db_session, team) == {host.id}
 
-    assert invitations.accept(db_session, token=token, user=invitee).id == team
-    assert members(db_session, team) == {host.id, invitee.id}
+
+def test_leaving_withdraws_only_their_own_invitations_to_that_team(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    other = Team(name="Other Team")
+    db_session.add(other)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=other.id, user_id=mate.id))
+    db_session.flush()
+    invite(client_for, host, team, "hosts-guest@example.com")
+    invite(client_for, mate, team, "mates-guest@example.com")
+    invite(client_for, mate, other.id, "elsewhere@example.com")
+
+    leave(client_for, mate, team)
+
+    assert [row.email for row in rows(db_session, team)] == ["hosts-guest@example.com"]
+    assert [row.email for row in rows(db_session, other.id)] == ["elsewhere@example.com"]
