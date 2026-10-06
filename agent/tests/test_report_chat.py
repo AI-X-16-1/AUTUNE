@@ -226,11 +226,55 @@ def test_redraft_with_no_stored_report_proposes_a_first_draft(monkeypatch) -> No
     assert any(p.tool == PUBLISH_ACTION for p in out.proposed)  # meeting-scoped run
 
 
-def test_the_schedule_change_is_held_back_until_862(monkeypatch) -> None:
-    model = Script([call("intelligence.set_weekly_report_schedule", weekday=4, hour=18)])
-    out = _run("금요일 6시로 바꿔줘", model, _tools(), monkeypatch=monkeypatch)
+def test_a_schedule_change_is_proposed_at_l1_without_a_person_or_team(monkeypatch) -> None:
+    """The asker is pinned by run_action (#874); the model has no slot for it."""
+    model = Script([call("set_schedule", weekday=4, hour=18, user_id="usr_other", team_id="t")])
+    out = _run("금요일 6시로 바꿔줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    (change,) = out.proposed
+    assert (change.tool, change.level) == (chat.SCHEDULE_ACTION, "L1")
+    assert change.arguments == {"weekday": 4, "hour": 18}
+    assert "매주 금요일 오후 6시" in out.result.summary and "요청했습니다" in out.result.summary
+    assert all("user_id" not in str(d) and "team_id" not in str(d) for d in chat.declarations())
+
+
+def test_a_schedule_change_names_send_empty_only_when_asked(monkeypatch) -> None:
+    model = Script([call("set_schedule", weekday=0, hour=9.0, send_empty=True)])
+    out = _run("빈 주도 월요일 9시에 보내줘", model, _tools(), monkeypatch=monkeypatch)
+    (change,) = out.proposed
+    assert change.arguments == {"weekday": 0, "hour": 9, "send_empty": True}
+    assert (
+        "매주 월요일 오전 9시" in out.result.summary and "할 말이 없는 주에도" in out.result.summary
+    )
+
+
+@pytest.mark.parametrize(
+    ("hour", "said"), [(0, "오전 0시"), (11, "오전 11시"), (12, "오후 12시"), (23, "오후 11시")]
+)
+def test_a_schedule_change_says_morning_or_afternoon(monkeypatch, hour: int, said: str) -> None:
+    model = Script([call("set_schedule", weekday=2, hour=hour)])
+    out = _run("수요일로 바꿔줘", model, _tools(), monkeypatch=monkeypatch)
+    assert f"매주 수요일 {said}." in out.result.summary
+
+
+def test_a_schedule_out_of_range_goes_back_to_the_model(monkeypatch) -> None:
+    """Not a missing part; the corrected call still proposes once."""
+    model = Script(
+        [call("set_schedule", weekday=7, hour=25)],
+        [call("set_schedule", weekday=6, hour=23)],
+        [call("set_schedule", weekday=5, hour=10)],
+    )
+    out = _run("일요일 밤 11시로 바꿔줘", model, _tools(), monkeypatch=monkeypatch)
+    (change,) = out.proposed
+    assert change.arguments == {"weekday": 6, "hour": 23}
+    assert "가져오지 못한" not in out.result.summary
+    assert "0시부터 23시" not in out.result.summary
+
+
+def test_a_schedule_never_in_range_asks_for_valid_values(monkeypatch) -> None:
+    model = Script([call("set_schedule", weekday="금", hour=True)])
+    out = _run("금요일 저녁으로 바꿔줘", model, _tools(), monkeypatch=monkeypatch)
     assert out.proposed == []
-    assert all("user_id" not in str(d) for d in chat.declarations())
+    assert "0시부터 23시" in out.result.summary
 
 
 def test_a_model_that_calls_nothing_or_an_unknown_tool_still_answers(monkeypatch) -> None:
@@ -474,12 +518,16 @@ def test_the_glossary_passages_survive_the_five_item_cap(monkeypatch) -> None:
     ]
 
 
-def test_explain_metric_requires_its_question() -> None:
+def test_only_what_the_run_cannot_fill_is_required() -> None:
     by_name = {d.name: d for d in chat.declarations()}
     assert by_name["intelligence__explain_metric"].parameters["required"] == ["question"]
-    assert all(
-        "required" not in d.parameters for n, d in by_name.items() if "explain_metric" not in n
-    )
+    assert by_name["set_schedule"].parameters["required"] == ["weekday", "hour"]
+    rest = {
+        n: d
+        for n, d in by_name.items()
+        if n not in {"intelligence__explain_metric", "set_schedule"}
+    }
+    assert all("required" not in d.parameters for d in rest.values())
 
 
 def test_the_instructions_carry_todays_korean_date(monkeypatch) -> None:
