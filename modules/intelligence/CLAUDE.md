@@ -32,6 +32,9 @@ missing. Never block a user-visible result on a failed module.
 `IntelligenceSnapshot` on `autune.intelligence.completed`. A plain `Payload`
 (the meeting id) on `autune.intelligence.meeting_report_changed` when a person
 edits a report's draft, for the Report subagent to propose its post (#674).
+A `MeetingReportPosted` (channel and the report's ts) on
+`autune.intelligence.meeting_report_posted` once a meeting's report is posted,
+so C's question cards can reply in its thread (#824).
 
 ## Owns
 

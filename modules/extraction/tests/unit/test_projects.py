@@ -371,6 +371,34 @@ def test_team_members_and_people_addressed_are_never_suggested(
     assert words == {"결제"}, words
 
 
+def test_somebody_who_spoke_and_has_left_the_team_is_not_suggested_either(
+    client: TestClient, session: Session
+) -> None:
+    """No membership, and a participant row in each meeting that still names
+    them: the meeting's roster has them, the team's member list does not."""
+    session.add(User(id="usr_gone", email="gone@example.com", display_name="한서윤"))
+    for n in range(3):
+        _meeting_saying(
+            session, f"mtg_g{n}", ["서윤이 결제 맡아주세요", "서윤이 할게요", "서윤 자료 참고"]
+        )
+        session.add(
+            Participant(
+                id=f"par_mtg_g{n}_gone",
+                meeting_id=f"mtg_g{n}",
+                speaker_label="g",
+                consented=True,
+                user_id="usr_gone",
+            )
+        )
+    session.flush()
+
+    suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
+
+    words = {s["word"] for s in suggested}
+    assert not any(word.startswith("서윤") for word in words), words
+    assert "결제" in words
+
+
 def test_meetings_not_yet_held_or_failed_are_not_read(client: TestClient, session: Session) -> None:
     # Ten meetings booked ahead would otherwise fill the latest ten.
     for n in range(10):

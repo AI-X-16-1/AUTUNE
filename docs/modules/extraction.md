@@ -217,7 +217,12 @@ agreement, and sync the result to Notion and Jira.
    calendar. Every ten minutes `pull_calendar_changes` reads back Autune's own
    tagged events on each connected calendar, and a date the person moved there
    becomes the due date through the board's edit path (`ext_calendar_events`,
-   `ext_calendar_polls`).
+   `ext_calendar_polls`). An event on the calendar of somebody who has since
+   left the meeting's team is taken off by a sweep every ten minutes
+   (`take_back_departed_calendar_events`): leaving a team starts no sync of
+   its own, and the event's title is the item's text. The sweep deletes and
+   never writes an event -- an item that has a new assignee gets theirs from
+   its own sync.
    A confirmed item is also one issue in the team's Jira project (#82, #458),
    and every ten minutes `pull_jira_changes` reads back the status people moved
    their issues to: an issue dragged to Done makes its item done, through the
@@ -498,7 +503,12 @@ other module's tables.
 - A DM to each person on a Tuesday-to-Friday morning (09:00–12:00 Korea time):
   what changed on their own items since the last one and what is theirs to do
   today (`reminders.build_daily_digest`,
-  `autune.extraction.periodic.send_daily_digests`). Monday has the weekly
+  `autune.extraction.periodic.send_daily_digests`). Today's part names, after
+  what is late and what is due today, each item of theirs that is in progress
+  or has no due date and that nobody has touched for five days or more
+  ("6일째 그대로"), longest first -- `reminders.STALLED_AFTER_DAYS`, counted
+  from when the item was made or last edited. A not-started item whose date
+  is still ahead is not named. Monday has the weekly
   digest instead and a weekend has nothing. Not sent to a person who turned
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:

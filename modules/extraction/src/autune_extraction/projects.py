@@ -34,7 +34,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting, TeamMember, User, get_logger
+from autune_core import Meeting, TeamMember, get_logger
 from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from . import project_send, service
@@ -471,9 +471,11 @@ def suggest_names(
     an alias, with how many meetings each came up in.
 
     Only the words and their counts leave this function, never a sentence, and
-    only consented speakers' lines are read (privacy.md section 5). The team's
-    members' names are taken out first, the way an outbound line is scrubbed
-    (#411), and so is any word ending in 님 or 씨: a count next to a person's
+    only consented speakers' lines are read (privacy.md section 5). The names
+    on each meeting's roster are taken out first, the way an outbound line is
+    scrubbed (#411, ``service.team_roster``: the team's members and the people
+    identified in that meeting, so also somebody who has since left the team),
+    and so is any word ending in 님 or 씨: a count next to a person's
     name would say how often they were talked about. Only meetings that took
     place count -- not one still scheduled or ahead of ``now``, not one that
     failed.
@@ -501,13 +503,6 @@ def suggest_names(
     for row in team_projects(session, team_id):
         known.add(row.name.lower())
         known.update(a.lower() for a in row.aliases.split("\n") if a)
-    roster = list(
-        session.scalars(
-            select(User.display_name)
-            .join(TeamMember, TeamMember.user_id == User.id)
-            .where(TeamMember.team_id == team_id)
-        )
-    )
 
     # Each meeting's raw words, then which Korean stems stand on their own.
     said: list[list[str]] = []
@@ -519,7 +514,10 @@ def suggest_names(
             if line.id in consented and line.text
         ]
         words: list[str] = []
-        for text in substitute_names(lines, roster):
+        # The meeting's own roster, as an outbound line is scrubbed with: the
+        # team's members and the people identified in that meeting, so
+        # somebody who has left the team is not suggested by name either.
+        for text in substitute_names(lines, service.team_roster(session, meeting_id)):
             text = _NAME_MARK.sub(" ", text)
             words += [w for w in _LATIN.findall(text) if w.lower() not in _LATIN_COMMON]
             words += [

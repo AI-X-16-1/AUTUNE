@@ -259,6 +259,40 @@ def test_a_topic_somebody_else_also_named_stays(team_id: str) -> None:
     assert "결제 API" in labels(seeded.meeting, CtxTopicLink)
 
 
+def _delete_lines(ids: list[str]) -> None:
+    """What A does after the hook runs: the utterances themselves go."""
+    with session_scope() as s:
+        s.execute(delete(Utterance).where(Utterance.id.in_(ids)))
+
+
+def test_a_topic_whose_lines_were_deleted_in_two_rounds_goes_with_the_second(
+    team_id: str,
+) -> None:
+    seeded = seed(team_id)
+    forget([seeded.mine])
+    _delete_lines([seeded.mine])
+    assert "결제 API" in labels(seeded.meeting, CtxEmbedding)  # theirs is still there
+
+    done = forget([seeded.theirs])  # a is already gone and is not in this batch
+
+    assert labels(seeded.meeting, CtxEmbedding) == set()
+    assert labels(seeded.meeting, CtxTopicLink) == set()
+    assert done.topics_deleted == 2  # "결제 API" and "배포 일정", both cut from theirs only
+
+
+def test_a_topic_stays_while_a_line_outside_both_rounds_still_exists(team_id: str) -> None:
+    seeded = seed(team_id)
+    with session_scope() as s:
+        third = _line(s, seeded.meeting, "화자4", "세 번째 사람의 말")
+        s.add(_topic(seeded.meeting, "세 줄 주제", [seeded.mine, seeded.theirs, third]))
+    forget([seeded.mine])
+    _delete_lines([seeded.mine])
+
+    forget([seeded.theirs])
+
+    assert "세 줄 주제" in labels(seeded.meeting, CtxEmbedding)  # the third line still exists
+
+
 def test_another_meetings_link_to_this_one_stays(team_id: str) -> None:
     seeded = seed(team_id)
 
