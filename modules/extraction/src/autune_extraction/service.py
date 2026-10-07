@@ -2017,8 +2017,15 @@ def closed_unfinished(session: Session, item_ids: Collection[str]) -> set[str]:
     The caller asks about items that are ``done`` now: for those, this is
     "closed, not finished". An item closed and later re-opened and really
     finished has an ordinary status edit after its close, and is not here.
-    Events of one transaction share a timestamp, so the id breaks the tie, as
-    in ``edit_history``.
+
+    **Read in the order the rows were written -- by id, not by time**
+    (PARKJAEKYUNG0525, review of #979). On PostgreSQL ``created_at`` is when
+    the writing transaction began, so a board edit that began before a close
+    and landed after it carries the earlier time: by time the close would read
+    as the last word on an item a person has since marked done. Every writer
+    of a status holds the item's row when it adds its event (an edit by its
+    ``UPDATE``, a close by ``tools.close_action_item``'s lock), so the id
+    follows the order the statuses were written in.
     """
     if not item_ids:
         return set()
@@ -2029,7 +2036,7 @@ def closed_unfinished(session: Session, item_ids: Collection[str]) -> set[str]:
             ExtEditEvent.action_item_id.in_(item_ids),
             ExtEditEvent.kind.in_(("edited", "closed")),
         )
-        .order_by(ExtEditEvent.created_at, ExtEditEvent.id)
+        .order_by(ExtEditEvent.id)
     ).tuples():
         if item_id is not None and (kind == "closed" or "status" in (fields or "").split(",")):
             last[item_id] = kind
@@ -5204,6 +5211,9 @@ def trash_item_page(
     notion.trash_page(page_id)
 
 
+NOTION_TEXT_LIMIT = 2000
+"""Notion's limit on one text object; a longer line is cut, never sent whole."""
+
 NOTION_STATUS_LABELS: Mapping[str, str] = {
     ActionStatus.NEEDS_CONFIRMATION.value: "확인 필요",
     ActionStatus.TODO.value: "진행 전",
@@ -5418,10 +5428,12 @@ def notion_properties(
     """
 
     def text(value: str) -> dict[str, Any]:
-        return {"rich_text": [{"type": "text", "text": {"content": value[:2000]}}]}
+        return {"rich_text": [{"type": "text", "text": {"content": value[:NOTION_TEXT_LIMIT]}}]}
 
     fields: dict[str, Any] = {
-        "title": {"title": [{"type": "text", "text": {"content": item.description[:2000]}}]},
+        "title": {
+            "title": [{"type": "text", "text": {"content": item.description[:NOTION_TEXT_LIMIT]}}]
+        },
         "status": {"select": {"name": NOTION_STATUS_LABELS.get(item.status, item.status)}},
         "confidence": {"number": round(item.confidence, 3)},
     }
@@ -5787,13 +5799,13 @@ def decision_notion_properties(
     Autune; the page carries only how many there were.
     """
     fields: dict[str, Any] = {
-        "title": {"title": [{"type": "text", "text": {"content": statement[:2000]}}]},
+        "title": {"title": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]},
         "confidence": {"number": round(decision.confidence, 3)},
         "sources": {"number": len(decision.sources)},
     }
     if meeting_title:
         fields["meeting"] = {
-            "rich_text": [{"type": "text", "text": {"content": meeting_title[:2000]}}]
+            "rich_text": [{"type": "text", "text": {"content": meeting_title[:NOTION_TEXT_LIMIT]}}]
         }
     return {names[key]: value for key, value in fields.items() if key in names}
 

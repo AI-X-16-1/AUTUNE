@@ -100,7 +100,7 @@ def test_a_delegation_spends_the_same_budget() -> None:
 def test_only_built_subagents_are_collected() -> None:
     # Each owner's package exists and exports nothing until they build it.
     assert set(collect_subagents()) <= set(SUBAGENT_NAMES)
-    assert SUBAGENT_NAMES == ("research", "briefing", "followup", "workload", "report")
+    assert SUBAGENT_NAMES == ("research", "briefing", "followup", "workload", "report", "tracker")
 
 
 @pytest.mark.parametrize(

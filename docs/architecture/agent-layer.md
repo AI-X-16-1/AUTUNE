@@ -2,7 +2,8 @@
 
 > **Status: Decided.** The direction was decided on #260 (closed 2026-09-29)
 > and the layer's location is ADR 0010, `Accepted`. Much of it is built since:
-> the skeleton (#432), the five subagents, plan mode (#556) and the approver
+> the skeleton (#432), the five subagents and a sixth since (Tracker, #856;
+> section 3.1), plan mode (#556) and the approver
 > settings (#592); sections marked "as built" say what landed. The two questions that blocked the first line
 > of code are answered: the layer lives in a top-level `agent/` (13.1) and a
 > periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
@@ -121,6 +122,7 @@ and keeps their module's `tools.py`.
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; lists the team's open Jira issues (B's `TeamAgenda`, #436) | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), the team's open Jira issues as B reported them (`brief_agenda`) | D's pre-meeting brief — D's own surface, rule 2 |
 | **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
+| **Tracker** ("할 일 챙김", #856) | 강민구 | Finds confirmed action items that are past their due date and proposes moving the date a week on — to the manager only (`any`; no approval scope of its own). Closing an item carried through three or more meetings is accepted on #856 and not built yet: it waits for B to mark a close apart from finished work | `@periodic`, weekly; `autune.intelligence.completed`; a chat request | B (`stalled_action_items`) | a proposal on the manager's approval screen; the due date changes only after approval — L2 |
 | **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them. A chat request is answered about all of E through a Gemini tool loop (`chat.py`); the template path (no LLM) is unchanged | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade. The chat path also reads E's own tools and `explain_metric` | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
 
 Three things in that table are decisions, not descriptions:
@@ -143,6 +145,21 @@ Three things in that table are decisions, not descriptions:
   meeting a share of one-half says a lot about one person, and Follow-up's rule
   does not need it (its spec, section 6). No speaking-ratio tool is registered
   at all (section 4, `PERSONAL_ONLY_TOOLS`).
+- **Tracker is about items, never people, and only confirmed ones.** It
+  reads which items have stopped moving and proposes one change for one
+  item; nothing counts or ranks what a person has left undone. An item still
+  waiting for a person's confirmation is never raised as an approval card:
+  the card would either hide what is approved or quote a model's draft
+  (section 8, rule 3; mkkim68 on #856). Those stay with B's morning DM and
+  the review screen. **It does not propose closing an item yet.** An item has
+  no cancelled state, so closing means marking it done, and B tells a person
+  what they finished from the item's status alone -- it keeps that an item
+  was edited and never who edited it (ADR 0003). An item the manager closed
+  would be told to its holder as work they finished. B first marks a close
+  apart from finished work; the proposal follows (the user, 2026-10-07).
+  And there is no notify-only path: the layer has "propose, then approve"
+  and "answer in chat", and telling a lead something without an approval
+  would be a new send policy in `main/notify.py`, put after the deadline.
 - **Research reads what we hold, not the open web.** The team's past meetings through A's tools and open questions through B; past meetings through D once D ships its `tools.py`. Uploaded material would belong here too, but there is no store for it yet. Open-web search is still out
   of scope (section 13.3); a subagent owner who wants it raises it there rather
   than adding a search tool.

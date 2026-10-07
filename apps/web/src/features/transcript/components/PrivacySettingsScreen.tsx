@@ -30,8 +30,9 @@ import { TeamScope } from "./TeamScope";
  * removable. Rows whose setting does not exist yet — consent on the first
  * meeting only — say "준비 중" instead of offering a choice that
  * would be stored nowhere. The design's "팀 탈퇴" row is replaced by account
- * deletion: there is no way to leave a team yet, and the row would promise a
- * deletion nothing performs.
+ * deletion: leaving a team is on the members screen and deletes nothing
+ * (privacy.md section 4), so the row here would promise a deletion nothing
+ * performs.
  *
  * Everything under "내 데이터" is the caller's own and is computed with
  * `user_id == caller` on the server. No speaking ratio appears: it goes to the

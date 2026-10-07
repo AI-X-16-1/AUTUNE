@@ -48,6 +48,7 @@ from autune_audio.pipeline import transcribe_file
 from autune_audio.storage import RecordingTooLargeError, recording_on_disk
 from autune_core import Team, TeamMember, User, get_session
 from autune_core.auth import issue_token
+from autune_core.entities import team_order
 from autune_core.errors import PrivacyViolationError
 
 from .page import PAGE
@@ -163,7 +164,9 @@ def dev_token(body: TokenRequest, session: SessionDep) -> TokenIssued:
     same team, so a page reload or a second developer does not fork the demo
     into two teams that cannot see each other's meetings. The team is looked up
     by the user's first membership, not by name: two developers naming the
-    same team must land in the same one.
+    same team must land in the same one. First in the person's own order
+    (``team_order``: a team they pinned comes before the one they joined
+    first), which is the team every screen opens on (#943).
 
     Module A writes ``users`` and ``teams`` here. Invariant 4 lists both as
     A's to write, and nothing else in the repository creates either — the
@@ -176,7 +179,7 @@ def dev_token(body: TokenRequest, session: SessionDep) -> TokenIssued:
         session.flush()
 
     membership = session.scalar(
-        sa.select(TeamMember).where(TeamMember.user_id == user.id).order_by(TeamMember.id)
+        sa.select(TeamMember).where(TeamMember.user_id == user.id).order_by(*team_order())
     )
     if membership is None:
         team = session.scalar(sa.select(Team).where(Team.name == body.team_name))

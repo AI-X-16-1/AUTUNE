@@ -202,16 +202,49 @@ def in_table(day: date) -> bool:
     return day in holiday_tables.country_holidays("KR", years=day.year)
 
 
+def _calendar_is_fresh(session: Session, *, now: datetime) -> bool:
+    """Whether the calendar that is kept was read within ``FRESH_FOR`` -- the
+    one question that decides which of the two sources answers."""
+    read_at = session.scalar(select(func.max(ExtPublicHoliday.read_at)))
+    if read_at is None:
+        return False
+    if read_at.tzinfo is None:
+        read_at = read_at.replace(tzinfo=UTC)
+    return now - read_at <= FRESH_FOR
+
+
 def is_public_holiday(session: Session, day: date, *, now: datetime) -> bool:
     """Whether ``day`` is a public holiday in Korea: by the calendar when it
     was read within ``FRESH_FOR``, by the table in code otherwise."""
-    read_at = session.scalar(select(func.max(ExtPublicHoliday.read_at)))
-    if read_at is not None:
-        if read_at.tzinfo is None:
-            read_at = read_at.replace(tzinfo=UTC)
-        if now - read_at <= FRESH_FOR:
-            return session.get(ExtPublicHoliday, day) is not None
+    if _calendar_is_fresh(session, now=now):
+        return session.get(ExtPublicHoliday, day) is not None
     return in_table(day)
+
+
+def public_holidays_between(
+    session: Session, start: date, end: date, *, now: datetime
+) -> list[date]:
+    """Korea's public holidays from ``start`` to ``end``, both included,
+    earliest first -- every day ``is_public_holiday`` would say yes to, and no
+    other (#985).
+
+    One source answers for the whole range, as it does for one day: the
+    calendar that is kept while its read is fresh, the table in code
+    otherwise. Never a mix of the two -- a day the calendar took back would
+    come back from the table. So a range that runs past what the calendar
+    lists has no holidays out there, exactly as a single day asked about out
+    there is not one.
+    """
+    if _calendar_is_fresh(session, now=now):
+        return list(
+            session.scalars(
+                select(ExtPublicHoliday.day)
+                .where(ExtPublicHoliday.day >= start, ExtPublicHoliday.day <= end)
+                .order_by(ExtPublicHoliday.day)
+            )
+        )
+    table = holiday_tables.country_holidays("KR", years=range(start.year, end.year + 1))
+    return sorted(day for day in table if start <= day <= end)
 
 
 class LeaveCalendar(Protocol):

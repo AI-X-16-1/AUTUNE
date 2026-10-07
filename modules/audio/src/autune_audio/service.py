@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from autune_audio.live import registry as live_registry
+from autune_audio.live import tickets as live_tickets
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import user_for_token
@@ -28,7 +29,13 @@ from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedErr
 from . import identification, storage
 from .config import AudioSettings, get_settings
 from .job_guard import JobStopped
-from .models import AudConsentAttestation, AudSpeakerEmbedding, AudSpeakerName, TranscriptionJob
+from .models import (
+    AudConsentAttestation,
+    AudSpeakerEmbedding,
+    AudSpeakerName,
+    AudTeamInvitation,
+    TranscriptionJob,
+)
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
 from .speakers import UNIDENTIFIED
@@ -270,6 +277,69 @@ def pin_team(session: Session, *, team_id: str, member: User, now: datetime | No
     row.pinned_at = now or datetime.now(tz=UTC)
     session.flush()
     log.info("team_pinned", team_id=team_id, user_id=member.id)
+
+
+class LastTeamMemberError(ConflictError):
+    """The only member of a team asked to leave it. Its own code, so the
+    screen can say why instead of "try again"."""
+
+    code = "last_team_member"
+
+
+def leave_team(session: Session, *, team_id: str, member: User) -> None:
+    """Take ``member`` off ``team_id``, by their own act (#552).
+
+    Only a person's own membership: there is no argument for anybody else's,
+    so nobody is removed from a team by somebody else here. The row is what
+    every module checks before it lets a person read the team's data, so that
+    stops with this commit; their pin goes with the row.
+
+    **What they said and what they hold stays, and stays theirs to delete**
+    (decided with the user, 2026-10-06; privacy.md section 4). Their
+    utterances, the items assigned to them and the decisions they took part
+    in are the team's record, as ADR 0007 argues. **Their participant rows
+    keep their ``user_id``**, which is not what that ADR's mechanism says: it
+    clears the link on departure. The link is how
+    ``account.delete_my_speech`` finds a person's lines, so clearing it here
+    would end, at the moment they leave, their way to take their own words
+    out. The ADR is Proposed and its legal review (#92) has not happened; if
+    it comes back wanting the link cleared, this is the place, and deletion
+    has to be offered before the link goes.
+
+    **The invitations they sent to this team go with them** (the module
+    owner, on #552): a link made by somebody who is no longer on the team
+    must not bring anybody onto it. Only the pending ones they made, for this
+    team; another member's invitation, and theirs to another team, stay.
+
+    **The last member cannot leave.** A team with nobody on it has meetings
+    nobody can read or delete and nothing that would ever remove them.
+    Deleting a team is a decision of its own and is not made by this button.
+    Every membership of the team is locked first, so the last two members
+    leaving at once are counted one after the other and cannot both go.
+    """
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.team_id == team_id).with_for_update()
+        )
+    )
+    own = next((row for row in rows if row.user_id == member.id), None)
+    if own is None:
+        # Gone while this request waited for the lock: the same person's
+        # other request left first. Refused as for anybody not on the team.
+        raise NotATeamMemberError("you are not a member of this team")
+    if len(rows) <= 1:
+        raise LastTeamMemberError("the last member of a team cannot leave it")
+    session.delete(own)
+    result = session.execute(
+        sa.delete(AudTeamInvitation).where(
+            AudTeamInvitation.team_id == team_id, AudTeamInvitation.invited_by == member.id
+        )
+    )
+    withdrawn = int(getattr(result, "rowcount", 0))
+    session.flush()
+    # Ids and a count: an invitation's address is never logged.
+    log.info("team_left", team_id=team_id, user_id=member.id, invitations_withdrawn=withdrawn)
 
 
 def unpin_team(session: Session, *, team_id: str, member: User) -> None:
@@ -1089,6 +1159,42 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
         user = user_for_token(session, token)
     except NotFoundError as exc:
         raise PermissionDeniedError("token names nobody") from exc
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return user
+
+
+def live_ticket(session: Session, *, user: User, meeting_id: str) -> str:
+    """A one-use ticket for ``user`` to open the live socket of a meeting.
+
+    For a browser whose session is an HttpOnly cookie on another host than the
+    socket's (``live/tickets.py``). Refused where the socket would refuse the
+    person: no meeting, not a member.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return live_tickets.issue(
+        user_id=user.id, meeting_id=meeting_id, sessions_valid_from=user.sessions_valid_from
+    )
+
+
+def authenticate_live_ticket(session: Session, *, ticket: str, meeting_id: str) -> User:
+    """``authenticate_live`` for a ticket: spend it, then the same membership
+    check. ``PermissionDeniedError`` for a ticket that opens nothing here --
+    unknown, spent, expired, another meeting's, or its person signed out
+    since it was issued."""
+    held = live_tickets.redeem(ticket, meeting_id=meeting_id)
+    if held is None:
+        raise PermissionDeniedError("ticket is not good for this meeting")
+    user = session.get(User, held.user_id)
+    if user is None:
+        raise PermissionDeniedError("ticket names nobody")
+    if user.sessions_valid_from != held.sessions_valid_from:
+        raise PermissionDeniedError("signed out since the ticket was issued")
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
