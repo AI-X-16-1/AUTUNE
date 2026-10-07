@@ -173,12 +173,12 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
-def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_and_a_date() -> None:
+def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_a_date_and_a_basis() -> None:
     """A proposal cannot demote a write, but an L1 one would run with no lead at all.
     And an argument the write does not take fails the approval (``bind_scope``)."""
     write = collect_actions(["extraction"])[WRITE]
     assert write.level == "L2"
-    assert write.parameters == {"team_id", "meeting_id", "due_date"}
+    assert write.parameters == {"team_id", "meeting_id", "due_date", "basis"}
 
 
 def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:

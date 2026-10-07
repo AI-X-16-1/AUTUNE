@@ -6,6 +6,7 @@ SQLite in memory, the way ``test_read_endpoints`` builds B's tables.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -869,6 +870,47 @@ def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
     assert row.description == tools.FOLLOWUP_DESCRIPTION
     assert acting["items"] == []
     assert session.query(ExtEditEvent).count() == 0
+
+
+@pytest.mark.parametrize("basis", ["confirmed", "draft", "cadence", None, "", "anything else"])
+def test_what_followup_took_its_date_from_is_accepted_and_changes_nothing(
+    session: Session, acting: dict[str, list[str]], basis: str | None
+) -> None:
+    """``basis`` is for the approval card (#963, #966). An approved proposal
+    carries it, and the approval step refuses an argument the tool does not
+    declare -- so B declares it, and does nothing with it: the same item, no
+    value refused, nothing stored or sent."""
+    day = KOREA_TODAY + timedelta(days=3)
+
+    result = tools.add_followup_item(TEAM, MEETING, day.isoformat(), basis)
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert (row.description, row.due_date, row.assignee_id, row.status, row.origin) == (
+        tools.FOLLOWUP_DESCRIPTION,
+        day,
+        None,
+        "needs_confirmation",
+        "followup",
+    )
+    if basis:
+        assert basis not in str(result), "the answer does not carry it either"
+        kept = [
+            str(getattr(row, column.name))
+            for column in ExtActionItem.__table__.columns
+            if getattr(row, column.name) is not None
+        ]
+        assert not any(basis == value for value in kept), "and no column of the item holds it"
+    assert acting["items"] == []
+    assert session.query(ExtEditEvent).count() == 0
+
+
+def test_the_followup_tool_declares_basis_as_an_optional_argument() -> None:
+    """What the approval step binds against: declared, by that name, optional."""
+    parameters = inspect.signature(tools.add_followup_item).parameters
+
+    assert list(parameters) == ["team_id", "meeting_id", "due_date", "basis"]
+    assert parameters["basis"].default is None
 
 
 def test_a_date_of_today_is_still_a_date(session: Session, acting: dict[str, list[str]]) -> None:
