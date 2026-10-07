@@ -26,12 +26,14 @@ from sqlalchemy.pool import StaticPool
 
 import autune_extraction.models  # noqa: F401  (ext_ tables)
 from autune_agent import router as routes
+from autune_agent.main import on_event
 from autune_agent.main.pending import arguments_ok
 from autune_agent.main.preview import GONE
 from autune_agent.models import AgentApprover, AgentPendingAction
-from autune_agent.subagents.tracker import graph, plan
+from autune_agent.subagents.tracker import SUBAGENT, graph, plan
 from autune_agent.subagents.tracker.graph import SET_DUE_DATE
 from autune_agent.testing import FakeRouter
+from autune_contracts import INTELLIGENCE_COMPLETED
 from autune_core import Base, Meeting, Team, TeamMember, User, current_user, get_session
 from autune_core.errors import AutuneError
 from autune_extraction import service, tools
@@ -205,6 +207,7 @@ def test_the_proposals_wait_for_the_manager_with_ids_only(
         assert r.arguments == {
             "action_item_id": r.arguments["action_item_id"],
             "due_date": moved_to,
+            "meeting_id": row_of(session, r.arguments["action_item_id"]).meeting_id,
         }
     assert row_of(session, "act_late").due_date == TODAY - timedelta(days=2), "nothing ran yet"
     assert synced == []
@@ -330,3 +333,58 @@ def test_an_item_deleted_since_reads_as_gone_and_its_approval_changes_nothing(
     assert reply.status_code == 200
     assert (reply.json()["status"], reply.json()["result_ok"]) == ("failed", False)
     assert synced == []
+
+
+# --- which meeting a card is about (#959) --------------------------------------------
+
+
+def woken_by(session: Session, meeting_id: str) -> dict[str, AgentPendingAction]:
+    """A meeting was processed and Tracker woke; the waiting rows by item."""
+    (run,) = on_event(
+        INTELLIGENCE_COMPLETED, meeting_id, session=session, subagents={"tracker": SUBAGENT}
+    )
+    assert run.meeting_id == meeting_id
+    rows = session.scalars(select(AgentPendingAction).where(AgentPendingAction.status == "pending"))
+    return {r.arguments["action_item_id"]: r for r in rows}
+
+
+def test_a_move_is_its_items_meetings_not_the_one_that_woke_the_run(
+    session: Session, team: str, synced: list[str]
+) -> None:
+    """The card names the row's meeting and its date (#854). ``mtg_later0`` was
+    just processed; the late items are a month-old meeting's and last week's."""
+    rows = woken_by(session, "mtg_later0")
+
+    assert {i: r.meeting_id for i, r in rows.items()} == {
+        "act_both": "mtg_then",
+        "act_late": "mtg_later2",
+    }
+
+
+def test_a_move_asked_for_in_chat_is_its_items_meetings_too(
+    session: Session, team: str, synced: list[str]
+) -> None:
+    """Asked from the team screen the run is about no meeting, and the card
+    used to name none."""
+    rows = ask(session, team)
+
+    assert {i: r.meeting_id for i, r in rows.items()} == {
+        "act_both": "mtg_then",
+        "act_late": "mtg_later2",
+    }
+
+
+def test_a_move_of_a_woken_run_is_still_approved_on_exactly_its_item(
+    session: Session, team: str, synced: list[str]
+) -> None:
+    """The row now runs under its item's meeting, and B's write is told which
+    meeting the item is of: the approval changes that item's date, once."""
+    rows = woken_by(session, "mtg_later0")
+
+    reply = client(session, "user_kim").post(f"/api/agent/pending/{rows['act_both'].id}/approve")
+
+    assert reply.status_code == 200, reply.text
+    assert (reply.json()["status"], reply.json()["result_ok"]) == ("approved", True)
+    assert row_of(session, "act_both").due_date == plan.new_due_date(graph._today())
+    assert row_of(session, "act_late").due_date == TODAY - timedelta(days=2), "the other waits"
+    assert synced == ["act_both"]

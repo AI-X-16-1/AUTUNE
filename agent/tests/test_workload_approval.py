@@ -156,7 +156,7 @@ def test_the_proposals_wait_with_ids_only(session: Session, team: str, synced: l
     assert [(r.tool, r.scope, r.status) for r in rows] == [(REASSIGN, "workload", "pending")] * 2
     for r in rows:
         assert arguments_ok(r.arguments)
-        assert set(r.arguments) == {"action_item_id", "assignee_id"}
+        assert set(r.arguments) == {"action_item_id", "assignee_id", "meeting_id"}
     assert sorted(r.arguments["action_item_id"] for r in rows) == ["act_park0", "act_park1"]
     assert {r.arguments["assignee_id"] for r in rows} == {"user_lee"}
     assert owner(session, "act_park0") == "user_park", "nothing ran before approval"

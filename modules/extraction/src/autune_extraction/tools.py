@@ -1074,12 +1074,22 @@ def _on_team(session: Session, team_id: str, user_id: str) -> bool:
 
 
 def _change_item(
-    team_id: str, action_item_id: str, payload: ActionItemUpdate
+    team_id: str,
+    action_item_id: str,
+    payload: ActionItemUpdate,
+    *,
+    meeting_id: str | None = None,
 ) -> dict[str, Any] | str:
-    """Apply ``payload`` to one of the team's items; the new status, or a refusal."""
+    """Apply ``payload`` to one of the team's items; the new status, or a refusal.
+
+    ``meeting_id``, when the caller names one, is the item's meeting: an item
+    of another meeting reads as missing, the same as one of another team.
+    """
     with session_scope() as session:
         row = session.get(ExtActionItem, action_item_id)
         if row is None or _team_of(session, row.meeting_id) != team_id:
+            return _not_found("action item", action_item_id)
+        if meeting_id is not None and row.meeting_id != meeting_id:
             return _not_found("action item", action_item_id)
         assignee = payload.assignee_id
         if assignee is not None and not _on_team(session, team_id, assignee):
@@ -1115,30 +1125,48 @@ def confirm_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
     )
 
 
-def reassign_action_item(team_id: str, action_item_id: str, assignee_id: str) -> dict[str, Any]:
+def reassign_action_item(
+    team_id: str, action_item_id: str, assignee_id: str, meeting_id: str | None = None
+) -> dict[str, Any]:
     """Give an item to another member of the team -- what the Workload subagent
     proposes when one person holds too much.
 
     L2 -- runs only after a person (the manager, for Workload) approves. The new
-    assignee must be on the team.
+    assignee must be on the team. ``meeting_id`` is optional: the item's own
+    meeting, named so that the proposal is filed under that meeting and not
+    the one whose processing woke the run (#959). An item that is not that
+    meeting's is refused.
     """
-    result = _change_item(team_id, action_item_id, ActionItemUpdate(assignee_id=assignee_id))
+    result = _change_item(
+        team_id,
+        action_item_id,
+        ActionItemUpdate(assignee_id=assignee_id),
+        meeting_id=meeting_id,
+    )
     return result if isinstance(result, dict) else _acted("담당자를 바꿨습니다.", action_item_id)
 
 
 def set_action_item_due_date(
-    team_id: str, action_item_id: str, due_date: date | str | None
+    team_id: str,
+    action_item_id: str,
+    due_date: date | str | None,
+    meeting_id: str | None = None,
 ) -> dict[str, Any]:
     """Move an item's due date, or clear it with ``None``. The assignee's calendar
     event and the Notion page follow.
 
     L2 -- runs only after a person approves. ``due_date`` is ``YYYY-MM-DD``.
+    ``meeting_id`` is optional: the item's own meeting, named so that the
+    proposal is filed under that meeting and not the one whose processing woke
+    the run (#959). An item that is not that meeting's is refused.
     """
     try:
         due = _as_date(due_date)
     except ValueError:
         return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
-    result = _change_item(team_id, action_item_id, ActionItemUpdate(due_date=due))
+    result = _change_item(
+        team_id, action_item_id, ActionItemUpdate(due_date=due), meeting_id=meeting_id
+    )
     return result if isinstance(result, dict) else _acted("기한을 바꿨습니다.", action_item_id)
 
 

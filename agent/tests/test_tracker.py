@@ -82,7 +82,11 @@ def test_a_late_item_gets_its_due_date_moved_a_week_on() -> None:
     (proposal,) = invoke(stalled(confirmed("act_late", "overdue"))).proposed
 
     assert (proposal.level, proposal.tool, proposal.kind) == ("L2", SET_DUE_DATE, plan.MOVE)
-    assert proposal.arguments == {"action_item_id": "act_late", "due_date": "2026-10-14"}
+    assert proposal.arguments == {
+        "action_item_id": "act_late",
+        "due_date": "2026-10-14",
+        "meeting_id": "mtg_a",
+    }, "and the item's own meeting, as the tool gave it (#959)"
     assert "10월 14일(수)" in proposal.rationale
 
 
@@ -90,7 +94,11 @@ def test_a_late_item_that_is_also_long_carried_gets_the_same_one_proposal() -> N
     (proposal,) = invoke(stalled(confirmed("act_both", "overdue", "carried"))).proposed
 
     assert (proposal.tool, proposal.kind) == (SET_DUE_DATE, plan.MOVE)
-    assert proposal.arguments == {"action_item_id": "act_both", "due_date": "2026-10-14"}
+    assert proposal.arguments == {
+        "action_item_id": "act_both",
+        "due_date": "2026-10-14",
+        "meeting_id": "mtg_a",
+    }
 
 
 def test_a_long_carried_item_that_is_not_late_gets_no_proposal_yet_and_is_counted() -> None:
