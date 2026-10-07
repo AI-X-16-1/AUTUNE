@@ -332,7 +332,7 @@ may do it.
 `/me/speaking-ratio` authorizes on `requester_id == subject_id`. There is no
 admin override and no team-level variant of this endpoint. The requester must
 also still be on the meeting's team: someone who left keeps their participant
-rows (#937, ADR 0007's A1) but reads nothing derived from the team's meetings,
+rows (#937) but reads nothing derived from the team's meetings,
 their own ratio included, and `send_personal_feedback` sends them no DM through
 that team's bot. Their speech still counts in everyone else's share, as the
 meeting record does.
