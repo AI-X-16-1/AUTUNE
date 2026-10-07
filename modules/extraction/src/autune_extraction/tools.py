@@ -1126,7 +1126,12 @@ def add_action_item(
     return _acted("액션아이템 초안을 만들었습니다 (확인 대기).", new_id)
 
 
-def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None) -> dict[str, Any]:
+def add_followup_item(
+    team_id: str,
+    meeting_id: str,
+    due_date: str | None = None,
+    basis: str | None = None,
+) -> dict[str, Any]:
     """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
     after a meeting that left topics open (#561). It starts waiting for
     confirmation, so it reaches nobody until someone confirms it.
@@ -1141,6 +1146,14 @@ def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None
     without one: the approval was for the item, a recommendation that is no
     longer one should not fail it, and an item born overdue would be the
     first thing its assignee is reminded about.
+
+    ``basis`` (optional) is what Follow-up took its date from -- ``confirmed``
+    or ``draft`` due dates, or the team's meeting ``cadence`` (#963, #966).
+    The approval card shows it; B has no use for it. **It is accepted and
+    nothing else**: not stored, not put in the item, not sent or logged, and
+    not checked -- any value passes, because the proposal was approved with
+    it and an argument this did not declare would be refused at the approval
+    step before the item is made. The item is the same whatever it says.
 
     L2 -- runs only after a person (the team lead, for Follow-up) approves. B
     writes the text, so the proposal carries ids only. Recorded as Follow-up's
