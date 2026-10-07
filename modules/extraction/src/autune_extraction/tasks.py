@@ -68,6 +68,7 @@ from . import (
     days_off,
     jira_sync,
     leave_calendar,
+    meeting_notice,
     notion_backfill,
     notion_setup,
     project_send,
@@ -75,6 +76,7 @@ from . import (
     reminders,
     service,
     sync_state,
+    work_report,
 )
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
@@ -1170,6 +1172,125 @@ def ask_confirmations() -> list[str]:
     return asked
 
 
+@shared_task(name="autune.extraction.periodic.send_meeting_notices")
+@periodic(timedelta(minutes=5))
+def send_meeting_notices() -> int:
+    """Soon after a meeting: tell each person, alone, that work of it has
+    landed on them -- how many drafts wait for their confirmation, and where
+    (the user, 2026-10-07; ``meeting_notice``). Returns how many went.
+
+    **A count, and a refusal that names meetings** (PARKJAEKYUNG0525's review
+    of #953; the user, 2026-10-07). A task's return value and the message of
+    what it raises are kept by Celery's result backend: the list of user ids
+    a notice went to, and the ids in a refusal, sat there as a record of who
+    was given work in which run. A refusal is about a text -- here a
+    meeting's title or an item's wording -- so it names the meeting, which is
+    where the text is found and put right; the person it was for is on that
+    meeting's claim rows (``ext_meeting_notices``), not in the error.
+
+    ``send_daily_digests``' shape, for the same reasons: each notice claimed
+    and sent in its own transaction, a team without Slack or a person without
+    a linked account skipped and looked at again next run until the window
+    closes, an unexpected error that one notice's, and a privacy refusal never
+    swallowed -- its claim kept so it is reported once, and raised after the
+    rest are sent. Every five minutes, so "right after the meeting" is minutes;
+    a run with nothing owed is one query, and outside the sending hours it
+    finds nothing.
+    """
+    if not get_settings().after_meeting_notice:
+        return 0
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = meeting_notice.notices_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({n.team_id for n in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent = 0
+    # Meetings, not people: see the docstring.
+    refused: list[str] = []
+    unasked: list[str] = []
+    not_linked = 0
+    leave = get_settings().leave_from_calendar
+    for notice in owed:
+        secret = secrets[notice.team_id]
+        if secret is None:
+            continue
+        if leave:
+            would_go = partial(meeting_notice.notice_would_go, owed=notice, now=now)
+            try:
+                if _held_back(would_go, notice.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message.
+                unasked.append(notice.meeting_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
+                log.warning(
+                    "extraction_meeting_notice_failed",
+                    user_id=notice.user_id,
+                    meeting_id=notice.meeting_id,
+                    reason=type(exc).__name__,
+                )
+                continue
+        try:
+            with session_scope() as session:
+                went = meeting_notice.send_meeting_notice(
+                    session, SlackClient(secret), notice, now=now
+                )
+        except PrivacyViolationError:
+            refused.append(notice.meeting_id)
+            # Reported once: the claim is kept, in its own transaction, so the
+            # next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    meeting_notice.settle_refused_notice(session, notice, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_meeting_notice_refusal_not_kept",
+                    user_id=notice.user_id,
+                    meeting_id=notice.meeting_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
+            log.warning(
+                "extraction_meeting_notice_failed",
+                user_id=notice.user_id,
+                meeting_id=notice.meeting_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent += 1
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
+        log.info(
+            "extraction_meeting_notices_sent",
+            owed=len(owed),
+            sent=sent,
+            not_linked=not_linked,
+        )
+    said = []
+    if refused:
+        said.append(
+            f"meeting notice refused by the outbound check: {len(refused)}, "
+            f"for meeting(s) {', '.join(sorted(set(refused)))}"
+        )
+    if unasked:
+        said.append(
+            "meeting notice: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, for meeting(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+    return sent
+
+
 @shared_task(name="autune.extraction.periodic.send_weekly_digests")
 @periodic(timedelta(minutes=10))
 def send_weekly_digests() -> list[str]:
@@ -1368,6 +1489,118 @@ def send_daily_digests() -> list[str]:
     return sent
 
 
+@shared_task(name="autune.extraction.periodic.send_work_reports")
+@periodic(timedelta(minutes=10))
+def send_work_reports() -> int:
+    """The work-report draft: to each person alone, their own items
+    on one team as a text they can paste to that team -- finished today, moved
+    to in progress today, going on to tomorrow, late (the user, 2026-10-07;
+    ``work_report``). Returns how many went.
+
+    **A count, and no ids anywhere** (mkkim68, review of #954). This goes only
+    on a day something of the person's was finished or moved, so a result, a
+    log line or an error that names a person names a day they worked. The
+    result is a number, a failed send is logged by team and error type, and a
+    refusal is raised by team. And first of all, on every run -- with the
+    feature off, and outside its hour -- the rows of earlier days are deleted
+    (``work_report.forget_past_days``): a row is the "once" of its own day.
+
+    ``send_daily_digests``' shape, for the same reasons: each DM claimed and
+    sent in its own transaction, a team without Slack or a person without a
+    linked account skipped and looked at again next run, an unexpected error
+    that one DM's, and a privacy refusal never swallowed -- settled so it is
+    reported once, and raised after the rest are sent. Every ten minutes;
+    outside a Monday-to-Friday afternoon in Korea it finds nothing owed. Nobody
+    who turned their reminders off, and nobody on a day they paused, is in the
+    list.
+    """
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        work_report.forget_past_days(session, today=reminders.korean_day(now))
+    if not get_settings().work_report:
+        return 0
+    with session_scope() as session:
+        owed = work_report.reports_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({r.team_id for r in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent = 0
+    # Teams, not people: see the docstring.
+    refused: list[str] = []
+    unasked: list[str] = []
+    not_linked = 0
+    leave = get_settings().leave_from_calendar
+    for report in owed:
+        secret = secrets[report.team_id]
+        if secret is None:
+            continue
+        if leave:
+            would_go = partial(work_report.would_go, owed=report, now=now)
+            try:
+                if _held_back(would_go, report.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(report.team_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
+                log.warning(
+                    "extraction_work_report_failed",
+                    team_id=report.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
+        try:
+            with session_scope() as session:
+                went = work_report.send_report(session, SlackClient(secret), report, now=now)
+        except PrivacyViolationError:
+            refused.append(report.team_id)
+            # Reported once: the day's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    work_report.settle_refused(session, report, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_work_report_refusal_not_kept",
+                    team_id=report.team_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
+            log.warning(
+                "extraction_work_report_failed",
+                team_id=report.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent += 1
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
+        log.info("extraction_work_reports_sent", owed=len(owed), sent=sent, not_linked=not_linked)
+    said = []
+    if refused:
+        said.append(
+            f"work report refused by the outbound check: {len(refused)}, "
+            f"in team(s) {', '.join(sorted(set(refused)))}"
+        )
+    if unasked:
+        said.append(
+            "work report: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, in team(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+    return sent
+
+
 def _raise_refusals(what: str, refused: list[str], unasked: list[str]) -> None:
     """Raise the privacy refusals a digest run collected, each as what it was:
     a message the outbound check refused (its claim already settled), or a
@@ -1450,8 +1683,9 @@ def refresh_public_holidays() -> int:
     keep them (``days_off``), so no digest goes on one. Returns how many days
     were kept; 0 when nothing was read.
 
-    Only where a digest is switched on and ``public_holiday_calendar`` is not
-    off: a deployment that sends none makes no call. A read that fails leaves
+    Only where a digest or the after-meeting notice is switched on and
+    ``public_holiday_calendar`` is not off: a deployment that sends none makes
+    no call. A read that fails leaves
     the last good one in place -- and once that is older than
     ``days_off.FRESH_FOR`` the table in code answers -- so the failure is
     logged by type and not raised: there is nothing for a retry queue to do
@@ -1459,7 +1693,10 @@ def refresh_public_holidays() -> int:
     """
     settings = get_settings()
     if not settings.public_holiday_calendar or not (
-        settings.daily_digest or settings.weekly_digest
+        settings.daily_digest
+        or settings.weekly_digest
+        or settings.work_report
+        or settings.after_meeting_notice
     ):
         return 0
     now = datetime.now(tz=UTC)

@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from autune_context import service
 from autune_context.constants import EMBEDDING_DIM
 from autune_context.models import CtxDecision, CtxDecisionVersion, CtxEmbedding, CtxTopicLink
-from autune_core import Meeting, Participant, Team, Utterance, session_scope
+from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, session_scope
 from autune_core.ids import new_id
 from autune_integrations.fakes import FakeSlack
 
@@ -36,6 +36,20 @@ def team_id(db_engine: object) -> Iterator[str]:  # db_engine ensures migrations
     yield tid
     with session_scope() as s:
         s.execute(delete(Team).where(Team.id == tid))
+
+
+def _member(team_id: str, *, left: bool = False) -> str:
+    """A user on ``team_id`` -- or, with ``left``, one who was and is not now.
+
+    A drift DM goes only to somebody who is on the team when it is collected,
+    so a recipient here has to be a real ``TeamMember``."""
+    with session_scope() as s:
+        user = User(email=f"{new_id('usr')}@notify.test", display_name="알림 테스트")
+        s.add(user)
+        s.flush()
+        if not left:
+            s.add(TeamMember(team_id=team_id, user_id=user.id))
+        return user.id
 
 
 def _meeting(team_id: str, *, days_ago: int = 0, started_at: datetime | None = None) -> str:
@@ -192,8 +206,9 @@ def test_a_meeting_with_no_links_sends_nothing(team_id: str) -> None:
 
 def test_drift_warning_posts_once_to_the_channel_and_dms_each_absentee(team_id: str) -> None:
     meeting = _meeting(team_id)
+    alice, bob = _member(team_id), _member(team_id)
     _decision_version(
-        team_id, meeting, change_type="modified", key_stakeholders_absent=["usr_alice", "usr_bob"]
+        team_id, meeting, change_type="modified", key_stakeholders_absent=[alice, bob]
     )
     slack = FakeSlack()
 
@@ -203,7 +218,68 @@ def test_drift_warning_posts_once_to_the_channel_and_dms_each_absentee(team_id: 
     assert sent == 1
     assert len(slack.channel_messages) == 1
     dms = [m for m in slack.sent if m.is_dm]
-    assert {m.channel for m in dms} == {"usr_alice", "usr_bob"}
+    assert {m.channel for m in dms} == {alice, bob}
+
+
+def test_somebody_who_left_the_team_since_the_list_was_made_is_not_told(team_id: str) -> None:
+    """``key_stakeholders_absent`` is stored when the lineage is built and read
+    here, later. A person who left in between is no longer on the team whose
+    bot would send, and the DM quotes the decision's statement."""
+    meeting = _meeting(team_id)
+    stayed, left = _member(team_id), _member(team_id, left=True)
+    _decision_version(
+        team_id, meeting, change_type="modified", key_stakeholders_absent=[left, stayed]
+    )
+    slack = FakeSlack()
+
+    with session_scope() as s:
+        sent = service.notify_decision_drift(s, slack, _CHANNEL, meeting)
+
+    assert sent == 1
+    assert [m.channel for m in slack.sent if m.is_dm] == [stayed]
+    assert len(slack.channel_messages) == 1
+
+
+def test_a_change_whose_absentees_have_all_left_sends_nothing_at_all(team_id: str) -> None:
+    """The channel notice says how many were absent; with nobody left to tell it
+    would announce an absence nobody can act on, as it never does for a change
+    with no absent person."""
+    meeting = _meeting(team_id)
+    left = _member(team_id, left=True)
+    _decision_version(team_id, meeting, change_type="reversed", key_stakeholders_absent=[left])
+    slack = FakeSlack()
+
+    with session_scope() as s:
+        sent = service.notify_decision_drift(s, slack, _CHANNEL, meeting)
+
+    assert sent == 0
+    assert slack.sent == []
+
+
+def test_an_absentee_of_another_team_is_not_told(team_id: str) -> None:
+    """Being a member somewhere is not being on *this* team: the DM goes out
+    through this team's bot, with this team's decision in it."""
+    with session_scope() as s:
+        other = Team(name="notify-test-other")
+        s.add(other)
+        s.flush()
+        other_id = other.id
+    try:
+        outsider = _member(other_id)
+        meeting = _meeting(team_id)
+        _decision_version(
+            team_id, meeting, change_type="modified", key_stakeholders_absent=[outsider]
+        )
+        slack = FakeSlack()
+
+        with session_scope() as s:
+            sent = service.notify_decision_drift(s, slack, _CHANNEL, meeting)
+
+        assert sent == 0
+        assert slack.sent == []
+    finally:
+        with session_scope() as s:
+            s.execute(delete(Team).where(Team.id == other_id))
 
 
 def test_a_new_decision_is_not_a_drift(team_id: str) -> None:
@@ -224,7 +300,7 @@ def test_an_unchanged_restatement_is_not_a_drift(team_id: str) -> None:
     changed when it did not."""
     meeting = _meeting(team_id)
     _decision_version(
-        team_id, meeting, change_type="unchanged", key_stakeholders_absent=["usr_alice"]
+        team_id, meeting, change_type="unchanged", key_stakeholders_absent=[_member(team_id)]
     )
     slack = FakeSlack()
 
@@ -251,7 +327,7 @@ def test_the_notice_dates_an_early_morning_meeting_by_the_korean_day(team_id: st
     """08:00 KST on the 18th is 23:00 UTC on the 17th; the notice must say the 18th."""
     meeting = _meeting(team_id, started_at=datetime(2026, 9, 17, 23, 0, tzinfo=UTC))
     _decision_version(
-        team_id, meeting, change_type="modified", key_stakeholders_absent=["usr_alice"]
+        team_id, meeting, change_type="modified", key_stakeholders_absent=[_member(team_id)]
     )
     slack = FakeSlack()
 
@@ -263,15 +339,14 @@ def test_the_notice_dates_an_early_morning_meeting_by_the_korean_day(team_id: st
 
 def test_the_channel_notice_names_no_one(team_id: str) -> None:
     meeting = _meeting(team_id)
-    _decision_version(
-        team_id, meeting, change_type="modified", key_stakeholders_absent=["usr_alice"]
-    )
+    alice = _member(team_id)
+    _decision_version(team_id, meeting, change_type="modified", key_stakeholders_absent=[alice])
     slack = FakeSlack()
 
     with session_scope() as s:
         service.notify_decision_drift(s, slack, _CHANNEL, meeting)
 
-    assert "usr_alice" not in slack.channel_messages[0].text
+    assert alice not in slack.channel_messages[0].text
 
 
 def test_an_unusually_long_statement_still_sends(team_id: str) -> None:
@@ -286,7 +361,7 @@ def test_an_unusually_long_statement_still_sends(team_id: str) -> None:
         meeting,
         change_type="modified",
         current_statement="가" * 5000,
-        key_stakeholders_absent=["usr_alice"],
+        key_stakeholders_absent=[_member(team_id)],
     )
     slack = FakeSlack()
 
@@ -299,13 +374,12 @@ def test_an_unusually_long_statement_still_sends(team_id: str) -> None:
 
 def test_the_dm_carries_no_raw_id_in_its_text(team_id: str) -> None:
     meeting = _meeting(team_id)
-    _decision_version(
-        team_id, meeting, change_type="modified", key_stakeholders_absent=["usr_alice"]
-    )
+    alice = _member(team_id)
+    _decision_version(team_id, meeting, change_type="modified", key_stakeholders_absent=[alice])
     slack = FakeSlack()
 
     with session_scope() as s:
         service.notify_decision_drift(s, slack, _CHANNEL, meeting)
 
     dm = next(m for m in slack.sent if m.is_dm)
-    assert "usr_alice" not in dm.text
+    assert alice not in dm.text

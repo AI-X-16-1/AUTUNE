@@ -289,10 +289,14 @@ person's, those counts are that person's completion record. So:
   **"Their speech" is the lines whose speaker label is assigned to them.** A
   label nobody assigned, or one whose assignment was undone
   (`DELETE /meetings/{id}/speakers/{label}`), is attributable to no one, and
-  deleting one's own speech does not reach it. Undoing is for a wrong
-  assignment; a voice that diarization split into two labels should have both
-  assigned to the same person, which the speaker picker allows behind a
-  confirmation (#912).
+  deleting one's own speech does not reach it. Any member of the meeting's
+  team may undo an assignment, including one that names somebody else — the
+  same people who may make one — so a person's lines can stop being theirs
+  without their own action. That is deliberate: a wrong assignment has to be
+  correctable by whoever notices it, and the confirmation says what it undoes
+  (#928). Undoing is for a wrong assignment; a voice that diarization split
+  into two labels should have both assigned to the same person, which the
+  speaker picker allows behind a confirmation (#912).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
@@ -494,8 +498,9 @@ the feature needs.
     channel when the meeting is deleted.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
-    changed since the last one (items of theirs now done, items they newly
-    hold -- made, given to them, or confirmed since) and today's work (late;
+    changed since the last one (items of theirs now done, items of theirs
+    closed without being finished, items they newly hold -- made, given to
+    them, or confirmed since) and today's work (late;
     due today; standing untouched for five days or more, when the item is in
     progress or has no due date; in progress; the rest as a count). A
     standing item's line says how many days it has stood: the
@@ -508,11 +513,53 @@ the feature needs.
     from `ext_edit_events`, which holds that an item was edited, which fields
     and when: the message never says who made a change, and it counts
     nothing about a person -- it is a list of that person's own work sent to
-    that person. Autune keeps only that the day's message went
+    that person. **An item closed without being finished is not called
+    done** (#856): a close ends in the same status as finished work, so it
+    leaves an event of its own kind (`closed`) -- that the item was closed
+    and when, and not who closed it -- and this message and the work-report
+    draft below say "closed" from it, so that neither tells a person they
+    finished what was closed, by them or by somebody else. Autune keeps only
+    that the day's message went
     (`ext_daily_digests`), not its text. The reminder switch above stops it.
     A morning DM or a Monday DM the outbound check refuses is not sent, is
     reported once, and keeps that day's (or week's) row so it is not tried
     again every ten minutes.
+  - **Slack, the work-report draft:** on a Monday-to-Friday afternoon
+    in Korea (16:00-17:00, and not later), a direct message to a person about their own items on one
+    team, when something of theirs was finished or moved to in progress that
+    day: a short report -- finished, closed without being finished, moved,
+    going on to tomorrow, late, and the rest as a count (a close alone is not
+    a day's work and sends none) -- headed by the team's name and worded so
+    that the
+    person can paste it to that team. **Autune sends it to that person and to
+    nobody else**: no channel, no lead, no admin, and no collected version of
+    several people's days; whether anybody else reads it is the person's own
+    paste. It carries what the morning DM carries about each item -- its
+    description, a due date that is today's or past, the meeting's title --
+    and a link to the board; no utterance, and nobody else's items. "Today"
+    is read from `ext_edit_events` as the morning DM's "what changed" is, so
+    it never says who made a change, and it counts nothing about a person
+    beyond the number of their own open items it did not list. The text is
+    made from the rows; no model reads or rewrites it. **That it went is
+    kept for its own day and no longer** (mkkim68, review of #954). Unlike
+    the morning DM, this one goes only on a day the person finished or
+    started something, so the row that says it went (`ext_work_reports`:
+    person, team, day) says by itself that they worked on that team that
+    day; kept, the rows would be a calendar of a person's working days --
+    the per-person record of conduct ADR 0003 forbids. The row has one use,
+    not sending twice in a day, so the sending task deletes every earlier
+    day's row each time it runs: every ten minutes, also where the feature
+    is switched off and outside its hour. A row is therefore gone within
+    about ten minutes of the next midnight in Korea while the worker runs,
+    and at the worker's first run if it was down; until then it goes with
+    the account or the team. For the same reason nothing else names a
+    person beside a day: the task's result is a count, a failed send is
+    logged by team and error type, and a refused text is raised by team.
+    The run's log line keeps how many went, not to whom. Not its text
+    either. The reminder switch above stops it, and so do the person's own
+    leave dates and a public holiday below; a draft the outbound check
+    refuses is not sent, is reported once, and keeps that day's row -- which
+    is deleted with the others.
   - **A person's own leave dates:** a person may set one range of days on
     which the morning DM and Monday's DM are not sent
     (`ext_notification_pauses`). When someone is away is theirs alone: only
@@ -544,7 +591,9 @@ the feature needs.
     with the person's grant, as a due-date event's is). A save that says
     neither -- the box was not drawn, the calendar not being connected just
     then -- leaves the event and its id as they stand, and makes no event
-    where there is none. Once the last day has passed
+    where there is none; an event the person deleted in Calendar is not
+    made again by such a save either -- the id is dropped, and only a tick
+    makes one. Once the last day has passed
     the row is deleted as before, the id with it, and **the event stays** on
     the calendar as the person's own record; Autune can no longer reach it.
     A calendar disconnected while the event stands cannot be reached either:
@@ -585,6 +634,27 @@ the feature needs.
     not away. Turn it on only once what the deployment tells people about
     the calendar connection says so; the settings screen says it where it is
     on.
+  - **Slack, the notice after a meeting:** soon after a meeting is
+    processed, a direct message to a person the pipeline has put work of that
+    meeting on, on the meeting's team now. It carries the meeting's title --
+    a value a person typed, sent as stored, as the reminders carry it -- **how
+    many** drafts wait for that person's confirmation, and a link to the
+    meeting's 액션 tab. It carries nothing of a draft: not its text, not its
+    date. A draft is a model's guess until a person confirms it, and
+    unconfirmed content does not reach an outbound surface (#246; the agent
+    layer's rule 3). An item of theirs that a person has already confirmed is
+    named with its date, as in the morning DM. The count is of items waiting,
+    said to the person they wait for; nothing is counted about a person and no
+    utterance is read. Autune keeps only that the notice was sent or
+    refused (`ext_meeting_notices`: the meeting, the person, when), once a
+    person and meeting; the row does not say which of the two, and it goes
+    with the meeting -- when it is deleted, its retention expiry included --
+    and with the person's account. The message itself stays in the person's
+    Slack. 09:00-17:00 Korea time on a working day, and not on a public
+    holiday; the reminder switch, a person's own leave dates and, where
+    that read is on, an out-of-office event on their calendar stop it. A
+    notice the outbound check refuses is not sent, is reported once, and is
+    not tried again.
   - **Public holidays:** no morning DM or Monday DM goes on one. The days
     come from Google's public calendar of Korea's holidays, fetched at its
     public address with no credentials -- nobody's Google grant is used and

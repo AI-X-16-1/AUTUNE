@@ -79,6 +79,33 @@
  *   and that a week whose Monday is one gets its Monday digest on its first
  *   Monday-to-Friday that is not, a day that then has no morning DM (#850).
  *   The digest keeps the name "월요일 요약", which is what the settings call it.
+ * - the work-report draft (B, 2026-10-07; `work_report.py`) is named
+ *   wherever the two digests are -- what is kept of it, for how long, the
+ *   out-of-office read, the copies that stay in Slack and the Slack row -- as
+ *   "오늘 업무 보고 초안", which is what the settings call it. The Slack row
+ *   says the two things that set it apart: it goes only on a day something of
+ *   the person's was finished or moved, and to that person only, though it is
+ *   worded to be pasted to a team. Its send record is NOT kept like a
+ *   digest's: that it went says the person worked that day, so the row is
+ *   deleted once its day has passed (`work_report.forget_past_days`, on every
+ *   run of the task), and the retention row says so (mkkim68, review of #954).
+ * - an item closed without being finished (B, #856, 2026-10-07): the Slack
+ *   row says the morning DM and the work-report draft name it apart from what
+ *   the person finished. No new message, recipient or record: a close alone
+ *   sends nothing, and what is kept of it is an edit event about the item,
+ *   with no person on it, like every other.
+ * - the notice after a meeting (B, 2026-10-07; `meeting_notice.py`) is named
+ *   in the same places -- what is kept of it, for how long, the out-of-office
+ *   read, the copies that stay in Slack and the Slack row -- as "회의 직후
+ *   알림", which is what the settings call it. The Slack row says what it
+ *   carries and what it does not: the meeting's title, HOW MANY items wait
+ *   for the person's confirmation and a link, and no unconfirmed item's text
+ *   or date (#246); an item of theirs already confirmed is named with its
+ *   date. Its send record (`ext_meeting_notices`: meeting, person, when) is
+ *   kept like a due-date reminder's, not like a digest's: it goes with the
+ *   meeting, retention expiry included, or with the account. A notice the
+ *   outbound check refused leaves the same row, as a refused digest does
+ *   (pr's review of #953).
  * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
  *   item's or a decision's page stays as the team's record; a deleted item's
  *   page is trashed and its issue closed, retried (#764); a decision whose
@@ -299,7 +326,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "알림 발송 기록",
-            "본인에게 마감 알림, 월요일 요약 및 아침 요약을 보냈다는 사실과 그 일시. 메시지의 내용은 보관하지 않습니다",
+            "본인에게 마감 알림, 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림을 보냈다는 사실과 그 일시. 메시지의 내용은 보관하지 않습니다",
             "서비스 이용 과정에서 생성",
           ],
           [
@@ -369,11 +396,11 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "알림 발송 기록",
-            "마감 알림의 발송 기록은 해당 액션 아이템이 삭제될 때까지(회의의 보유 기간이 만료되어 삭제되는 경우를 포함합니다). 월요일 요약 및 아침 요약의 발송 기록은 회원 탈퇴 또는 팀의 삭제 시까지. 발송 일시가 남으므로 평소보다 늦게 발송된 날은 그 사유를 짐작할 여지가 있으나, 사유는 기록하지 않습니다.",
+            "마감 알림의 발송 기록은 해당 액션 아이템이 삭제될 때까지(회의의 보유 기간이 만료되어 삭제되는 경우를 포함합니다). 월요일 요약 및 아침 요약의 발송 기록은 회원 탈퇴 또는 팀의 삭제 시까지. 회의 직후 알림의 발송 기록은 해당 회의가 삭제될 때까지(회의의 보유 기간이 만료되어 삭제되는 경우를 포함합니다) 또는 회원 탈퇴 시까지. 오늘 업무 보고 초안은 본인이 담당하는 항목이 완료되었거나 진행 중으로 바뀐 날에만 보내므로, 그 발송 기록은 같은 날 다시 보내지 않기 위하여서만 쓰고 발송한 날이 지난 뒤 처음 실행되는 정리 작업(10분마다 실행)에서 삭제합니다. 발송 일시가 남으므로 평소보다 늦게 발송된 날은 그 사유를 짐작할 여지가 있으나, 사유는 기록하지 않습니다.",
           ],
           [
             "부재중 일정의 시각",
-            "저장하지 않습니다. 본인에게 월요일 요약 또는 아침 요약을 보낼지 판단하는 때에 조회하여 그 판단에만 쓰고 보관하지 않습니다.",
+            "저장하지 않습니다. 본인에게 월요일 요약, 아침 요약, 오늘 업무 보고 초안 또는 회의 직후 알림을 보낼지 판단하는 때에 조회하여 그 판단에만 쓰고 보관하지 않습니다.",
           ],
           [
             "계정이 없는 참석자에 대하여 직접 입력한 이름",
@@ -415,7 +442,7 @@ const PRIVACY: LegalDocument = {
           "이용자가 액션 아이템을 삭제한 경우 해당 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다. 이용자가 결정 사항의 확정을 취소하거나 결정 사항을 삭제한 경우에는 해당 Notion 페이지와 Jira 항목에서 결정 사항의 문장을 지운 뒤 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다(Jira 항목은 삭제하지 않습니다). 외부 서비스의 응답이 없어 처리하지 못한 사본은 기록해 두었다가 다시 시도하며, 거듭 실패한 사본은 해당 서비스에 남을 수 있습니다. Notion의 페이지 변경 이력과 Jira의 항목 변경 이력에는, 각 서비스가 자체적으로 보관하는 범위에서 지우기 전의 문장이 남을 수 있습니다.",
           "Slack, Notion 및 Jira에 보낸 프로젝트별 회의록은 해당 회의가 삭제되거나 보유 기간이 만료된 경우 회수(내용을 비우고 삭제 또는 종료)를 요청하고, 그 회의록에 포함된 내용이 삭제·정정·확정 취소된 경우 사본을 다시 작성합니다. 외부 서비스의 응답이 없으면 일정 기간 다시 시도하며, 그래도 처리하지 못한 사본은 해당 서비스에 남을 수 있습니다.",
           "팀의 Slack 채널에 보낸 회의 리포트 및 주간 팀 리포트는 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 해당 채널에 남습니다.",
-          "본인에게 Slack으로 보낸 확인 요청 메시지, 마감 알림, 월요일 요약 및 아침 요약도 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 본인의 Slack에 남습니다. 다만, 확인 요청 메시지가 인용한 발화가 정정된 경우에는 그 메시지의 인용문을 정정된 내용으로 바꿉니다.",
+          "본인에게 Slack으로 보낸 확인 요청 메시지, 마감 알림, 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림도 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 본인의 Slack에 남습니다. 다만, 확인 요청 메시지가 인용한 발화가 정정된 경우에는 그 메시지의 인용문을 정정된 내용으로 바꿉니다.",
           "팀의 Slack 채널에 보낸 이전 회의와의 연결 알림, 결정 사항의 변경 공지, 회의 전 브리핑 및 추출 실패 알림과, 결정이 바뀐 회의에서 발언하지 않은 본인에게 Slack으로 보낸 알림도 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하거나 고쳐 쓰지 않으며, 해당 채널 또는 본인의 Slack에 남습니다.",
           "담당자 본인의 Google Calendar에 등록된 일정은 삭제를 요청하며, Google의 응답이 없는 경우 일정이 남을 수 있습니다.",
           "회원이 탈퇴하는 경우 해당 회원이 Google Calendar 연결 및 Gmail을 통한 초대 메일 발송을 위하여 부여한 권한의 해지를 Google에 요청합니다. Google의 응답이 없는 경우 그 권한은 이용자가 Google 계정에서 직접 해제할 때까지 남을 수 있으며, 회사는 탈퇴 후 해당 권한의 사본을 보관하지 않습니다.",
@@ -441,7 +468,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약 및 화요일부터 금요일까지 아침의 본인 업무 요약(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약 및 아침 요약이 모두 중지됩니다. 기간을 정하여 월요일 요약 및 아침 요약만 받지 않을 수도 있습니다. 월요일 요약 및 아침 요약은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 회의의 액션 아이템 및 결정 사항의 추출이 연속하여 3회 실패한 때 팀 채널에 1회 보내는 알림(회의 제목, 시도 횟수 및 서비스 화면 링크. 발화 내용과 오류의 내용은 싣지 않습니다), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약, 화요일부터 금요일까지 아침의 본인 업무 요약 및 월요일부터 금요일까지 오후의 본인 업무 보고 초안(본인이 담당하는 액션 아이템의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 끝내지 않고 닫힌 본인 담당 항목은 아침 요약과 오늘 업무 보고 초안에서 완료한 항목과 구분하여 적습니다. 오늘 업무 보고 초안은 그날 본인이 담당하는 항목 중 완료되었거나 진행 중으로 바뀐 것이 있는 날에만 보내며, 본인이 팀에 직접 붙여 넣을 수 있도록 팀의 명칭을 적은 보고문의 형태입니다. 회사는 이를 본인에게만 보내고, 팀이나 다른 이용자에게 보내지 않습니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림이 모두 중지됩니다. 기간을 정하여 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림만 받지 않을 수도 있습니다. 월요일 요약, 아침 요약 및 오늘 업무 보고 초안은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 회사가 해당 기능을 활성화한 경우 회의가 처리된 직후 그 회의에서 담당 항목이 생긴 본인에게 보내는 회의 직후 알림(회의 제목, 본인의 확인을 기다리는 본인 담당 항목의 건수, 이미 확정된 본인 담당 항목의 내용 및 기한, 서비스 화면 링크. 확정되지 않은 항목의 내용과 기한은 싣지 않습니다. 공휴일이 아닌 월요일부터 금요일까지 09시부터 17시 사이에 보내고, 그 밖의 시간에 처리된 회의의 알림은 다음 근무일 09시 이후에 보냅니다. 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에는, 회사가 해당 기능을 활성화한 경우 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 액션 아이템의 건수), 회의의 액션 아이템 및 결정 사항의 추출이 연속하여 3회 실패한 때 팀 채널에 1회 보내는 알림(회의 제목, 시도 횟수 및 서비스 화면 링크. 발화 내용과 오류의 내용은 싣지 않습니다), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 액션 아이템의 내용·담당자·기한)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",

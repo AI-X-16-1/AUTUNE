@@ -148,6 +148,18 @@ export function ActionCard({
             {staleLabel(item)}
           </span>
         ) : null}
+        {item.closed_unfinished ? (
+          // Among the finished ones in 완료, and not one of them (#856): said
+          // in muted text, since nothing about it is late or wrong.
+          <span
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontWeight: "var(--text-status-weight)" }}
+            title="끝내지 않고 닫힘"
+            aria-label="끝내지 않고 닫힘"
+          >
+            닫힘
+          </span>
+        ) : null}
         {item.needs_reassignment ? (
           // Text, not a fill: red belongs to elapsing time and failure
           // (ui-spec section 0), and this is neither -- it is work nobody holds.

@@ -5,13 +5,17 @@ the decision is a rule the team can read and test, and the lead approves what
 it proposes, so the rule only has to propose sensibly, never decide.
 
 Both thresholds are first guesses, to be checked on W5's real meetings (#22).
+So are the suggested date's share and horizon (#963).
 """
 
 from __future__ import annotations
 
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from statistics import median_low
+from typing import Literal
 
 from autune_agent.results import Finding, ToolResult
 
@@ -27,6 +31,19 @@ DEFAULT_BUSINESS_DAYS = 3
 MAX_CADENCE_DAYS = 14
 """The longest gap between meetings a suggestion follows: a follow-up is about
 what was left open, so it should not wait for a team that meets monthly."""
+
+DUE_DATE_SHARE = 0.8
+"""The share of M's work that should be due before the follow-up (#963). A
+first guess, checked on W5's real meetings (#22)."""
+
+DUE_HORIZON_DAYS = 14
+"""Items due later than this many days from today are long-running work, left
+to a later meeting rather than this follow-up (#963). A first guess (#22)."""
+
+Basis = Literal["confirmed", "draft", "cadence"]
+"""What a suggested date rests on: confirmed due dates only, due dates of which
+at least one is still a draft, or the team's meeting rhythm. The approvals card
+marks a ``draft`` date "초안 기준" (#963)."""
 
 
 @dataclass(frozen=True)
@@ -108,3 +125,45 @@ def suggest_date(held: list[date], today: date) -> date:
     while day.weekday() >= 5:
         day += timedelta(days=1)
     return day
+
+
+@dataclass(frozen=True)
+class Due:
+    """One open, dated action item of M: its due date and whether a person
+    confirmed it. Nothing else -- no title, no assignee (spec section 6)."""
+
+    day: date
+    confirmed: bool
+
+
+@dataclass(frozen=True)
+class Suggestion:
+    day: date
+    basis: Basis
+
+
+def suggest_from_due_dates(due: Sequence[Due], today: date) -> Suggestion | None:
+    """The follow-up just after most of M's work is due (spec section 5, #963).
+
+    In order: a confirmed item already past its date makes it the next
+    business day. A draft's past date is dropped instead -- a date B misread is
+    more likely than work late minutes after the meeting. Items due after
+    ``DUE_HORIZON_DAYS`` are dropped too. Of what is left, the date is the
+    next business day after the ``DUE_DATE_SHARE`` point, never before the
+    next business day after today.
+
+    ``None`` when no date is left: the caller falls back to ``suggest_date``.
+    The same items in any order give the same suggestion.
+    """
+    earliest = _business_days_after(today, 1)
+    if any(d.confirmed and d.day < today for d in due):
+        return Suggestion(earliest, "confirmed")
+    horizon = today + timedelta(days=DUE_HORIZON_DAYS)
+    kept = sorted((d for d in due if today <= d.day <= horizon), key=lambda d: d.day)
+    if not kept:
+        return None
+    # Rounded first: 0.8 * 15 is 12.000000000000002 in floating point.
+    k = max(math.ceil(round(DUE_DATE_SHARE * len(kept), 9)), 1)
+    day = max(_business_days_after(kept[k - 1].day, 1), earliest)
+    basis: Basis = "confirmed" if all(d.confirmed for d in kept) else "draft"
+    return Suggestion(day, basis)

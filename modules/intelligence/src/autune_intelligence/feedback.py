@@ -19,7 +19,9 @@ the room," not "quieter than the other people who happened to talk."
 
 The percentage is personal data. It goes in the blocks, which Slack shows only
 after the DM is opened, and not in the fallback, which appears in a notification
-preview on a phone the person may not be holding.
+preview on a phone the person may not be holding. So does the meeting's label:
+the DM names which meeting it is about (#945, another DM may arrive beside it),
+but only once opened.
 """
 
 from __future__ import annotations
@@ -29,20 +31,26 @@ from typing import Any
 _NOT_STORED = "이 수치는 서버에 저장되지 않으며, 본인에게만 전송됩니다."
 
 
-def build_speaking_ratio_dm(*, ratio: float, participant_count: int) -> tuple[str, list[dict]]:
+def build_speaking_ratio_dm(
+    *, ratio: float, participant_count: int, meeting_label: str | None = None
+) -> tuple[str, list[dict]]:
     """The DM telling one participant their share of one meeting.
 
     ``ratio`` is 0..1, a share of the speech attributed to consenting
     participants. ``participant_count`` is how many people that share is split
     among — the same population — used for the even-share baseline and shown so
-    the number is legible in a small meeting.
+    the number is legible in a small meeting. ``meeting_label`` names the
+    meeting (title and date, already escaped and checked by the caller); it is
+    shown under the heading and never in the fallback.
     """
     percent = round(ratio * 100)
     fallback = "이번 회의에서의 발언 비중을 알려드립니다."
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": "● *이번 회의 발언 비중*"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{percent}%*"}},
     ]
+    if meeting_label:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": meeting_label}]})
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{percent}%*"}})
     if participant_count > 0:
         even = round(100 / participant_count)
         blocks.append(

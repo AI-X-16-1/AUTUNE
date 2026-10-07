@@ -90,6 +90,7 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
     text = build_daily_digest(
         DailyDigest(
             done=[DigestLine("로그인 고치기", None, "주간 회의")],
+            closed=[DigestLine("접은 일", None, "주간 회의")],
             taken_on=[DigestLine("새 일 <!channel>", date(2026, 10, 8), None)],
             late=[DigestLine("늦은 일", date(2026, 10, 1), "기획 <회의>")],
             due_today=[DigestLine("오늘 일", TUESDAY, None)],
@@ -103,6 +104,7 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
         "좋은 아침입니다. 지난 진행 상황과 오늘 할 일입니다.",
         "지난 진행 상황",
         "• 완료: 로그인 고치기 · 주간 회의",
+        "• 끝내지 않고 닫힘: 접은 일 · 주간 회의",
         "• 새로 맡음: 새 일 &lt;!channel&gt;",
         "오늘 할 일",
         "• 기한 지남(2026-10-01): 늦은 일 · 기획 &lt;회의&gt;",
@@ -171,6 +173,7 @@ def test_nothing_changed_and_nothing_open_is_no_message() -> None:
     assert DailyDigest().empty is True
     assert DailyDigest(others=1).empty is False
     assert DailyDigest(done=[DigestLine("끝", None, None)]).empty is False
+    assert DailyDigest(closed=[DigestLine("접음", None, None)]).empty is False
 
 
 # --- who is owed, and what is read -------------------------------------------------
@@ -511,6 +514,75 @@ def test_an_edit_from_before_fields_were_named_may_have_been_the_confirmation(
     moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
 
     assert content_for(session).taken_on == []
+
+
+# --- closed without being finished (#856; the user, 2026-10-07) --------------------
+
+
+def closed(session: Session, item_id: str, *, at: datetime) -> None:
+    """A close through the real ``close_without_finishing`` -- so the event is
+    whatever that function records -- stamped ``at``."""
+    item = session.get(ExtActionItem, item_id)
+    assert item is not None
+    before = {e.id for e in session.query(ExtEditEvent)}
+    assert service.close_without_finishing(session, item) is True
+    session.flush()
+    (event,) = [e for e in session.query(ExtEditEvent) if e.id not in before]
+    event.created_at = at
+    session.flush()
+
+
+def test_an_item_closed_without_finishing_is_told_as_closed_and_not_as_done(
+    session: Session,
+) -> None:
+    edited(session, "act_done", "status", at=MONDAY_NOON_KST)
+    closed(session, "act_doing", at=MONDAY_NOON_KST)
+    closed(session, "act_lee", at=MONDAY_NOON_KST)  # somebody else's
+    closed(session, "act_other", at=MONDAY_NOON_KST)  # theirs, another team's
+
+    content = content_for(session)
+
+    assert [line.description for line in content.done] == ["어제 끝낸 일"]
+    assert [line.description for line in content.closed] == ["하던 일"]
+    assert content.in_progress == []
+    lines = build_daily_digest(content, board_url="https://autune.example/actions").split("\n")
+    assert lines[2:4] == [
+        "• 완료: 어제 끝낸 일 · team_1 회의",
+        "• 끝내지 않고 닫힘: 하던 일 · team_1 회의",
+    ]
+
+
+def test_an_item_moved_and_then_closed_since_is_closed(session: Session) -> None:
+    item = session.get(ExtActionItem, "act_later")
+    assert item is not None
+    moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
+    closed(session, "act_later", at=MONDAY_NOON_KST + timedelta(hours=1))
+
+    content = content_for(session)
+
+    assert content.done == []
+    assert [line.description for line in content.closed] == ["나중 일"]
+
+
+def test_an_item_closed_then_reopened_and_finished_is_done(session: Session) -> None:
+    item = session.get(ExtActionItem, "act_later")
+    assert item is not None
+    closed(session, "act_later", at=MONDAY_NOON_KST)
+    moved(session, item, ActionStatus.TODO, at=MONDAY_NOON_KST + timedelta(hours=1))
+    moved(session, item, ActionStatus.DONE, at=MONDAY_NOON_KST + timedelta(hours=2))
+
+    content = content_for(session)
+
+    assert [line.description for line in content.done] == ["나중 일"]
+    assert content.closed == []
+
+
+def test_an_item_closed_before_the_last_one_is_not_said_again(session: Session) -> None:
+    closed(session, "act_later", at=datetime(2026, 9, 1, tzinfo=UTC))
+
+    content = content_for(session)
+
+    assert content.closed == [] and content.done == []
 
 
 def test_a_meeting_past_its_retention_is_in_neither_half(session: Session) -> None:

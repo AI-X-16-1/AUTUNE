@@ -39,7 +39,9 @@ Rules, each tested:
   expired, or they left and never reconnect) must not keep the item off its new
   assignee's calendar (PARKJAEKYUNG0525, mminjae97, review of #441).
 - Deleting the item in Autune deletes its event first (``remove_event``).
-- A finished item keeps its event, titled ``[완료]``.
+- A finished item keeps its event, titled ``[완료]``. One closed without being
+  finished keeps it too, titled ``[닫힘]``: the calendar is the assignee's own,
+  and it must not tell them they finished what was closed (#856).
 - A due date removed in Autune removes the event.
 """
 
@@ -104,9 +106,12 @@ CalendarFor = Callable[[str], "tuple[CalendarEvents, str] | None"]
 connected one. Built by the task from ``user_integrations``."""
 
 
-def event_summary(item: ExtActionItem) -> str:
-    prefix = "[완료]" if item.status == ActionStatus.DONE.value else "[마감]"
-    return f"{prefix} {item.description}"
+def event_summary(item: ExtActionItem, *, closed: bool = False) -> str:
+    """The event's title. ``closed`` is ``service.closed_unfinished``'s answer
+    for the item: done, and not finished."""
+    if item.status != ActionStatus.DONE.value:
+        return f"[마감] {item.description}"
+    return f"{'[닫힘]' if closed else '[완료]'} {item.description}"
 
 
 def _calendar_owner(session: Session, item: ExtActionItem | None) -> str | None:
@@ -271,7 +276,11 @@ def sync_due_date_to_calendar(
         )
         assert row is not None
 
-    summary = event_summary(item)
+    summary = event_summary(
+        item,
+        closed=item.status == ActionStatus.DONE.value
+        and item.id in service.closed_unfinished(session, [item.id]),
+    )
     if row.event_id and client.update_all_day_event(
         calendar_id, row.event_id, summary, item.due_date, description=EVENT_DESCRIPTION
     ):

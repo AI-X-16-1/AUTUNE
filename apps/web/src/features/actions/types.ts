@@ -117,6 +117,12 @@ export interface ActionItemRead extends ActionItem {
    */
   needs_recheck: boolean;
   /**
+   * A done item that was closed without being finished (#856). The card says
+   * 닫힘 so 완료 does not show it as work somebody finished. About the item:
+   * who closed it is not kept.
+   */
+  closed_unfinished?: boolean;
+  /**
    * Whether the item belongs in the candidate band. Decided by the server,
    * which holds the threshold the classifier's confidences are measured
    * against; false for everything while that threshold is unset (#122).
@@ -199,8 +205,9 @@ export interface SourceUtterance {
  * the value before or after, and never who.
  */
 export interface EditHistoryEntry {
-  kind: "created" | "edited";
-  /** For `edited`: e.g. `["due_date"]`. Empty for `created` and for old edits. */
+  /** `closed`: closed without being finished — not a correction of the item. */
+  kind: "created" | "edited" | "closed";
+  /** For `edited`: e.g. `["due_date"]`. Empty for `created`, `closed` and old edits. */
   fields: string[];
   at: string;
 }

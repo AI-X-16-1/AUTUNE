@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
 
+from autune_contracts.enums import ActionStatus
 from autune_core import Base, Meeting, PrivacyViolationError, TeamMember, User, Utterance
 from autune_core.settings import Settings as CoreSettings
 from autune_core.user_integrations import UserIntegrationConfig
@@ -40,6 +41,7 @@ from autune_extraction.models import (
     ExtEditEvent,
     ExtExternalRef,
 )
+from autune_extraction.schemas import ActionItemUpdate
 from autune_integrations import (
     CalendarEvent,
     PermanentIntegrationError,
@@ -235,6 +237,28 @@ def test_a_finished_item_keeps_its_event_marked_done(session: Session) -> None:
     assert ref is not None
 
     row.status = "done"
+    sync(session, calendars, row)
+
+    assert calendars.events(ME)[ref.event_id or ""]["summary"].startswith("[완료] ")
+
+
+def test_an_item_closed_without_finishing_is_not_titled_as_finished(session: Session) -> None:
+    """The calendar is the assignee's own: it does not tell them they finished
+    what was closed (#856). Re-opened and then finished, it says 완료."""
+    calendars = Calendars(ME)
+    row = item(session)
+    ref = sync(session, calendars, row)
+    assert ref is not None
+
+    assert service.close_without_finishing(session, row) is True
+    session.flush()
+    sync(session, calendars, row)
+
+    assert calendars.events(ME)[ref.event_id or ""]["summary"].startswith("[닫힘] ")
+
+    for status in (ActionStatus.TODO, ActionStatus.DONE):
+        service.update_action_item(session, row, ActionItemUpdate(status=status))
+        session.flush()
     sync(session, calendars, row)
 
     assert calendars.events(ME)[ref.event_id or ""]["summary"].startswith("[완료] ")

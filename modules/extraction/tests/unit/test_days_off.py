@@ -826,6 +826,20 @@ def test_the_holidays_are_read_and_kept_where_a_digest_is_on(
     assert {row.day for row in session.query(ExtPublicHoliday)} == {HANGUL_DAY, date(2026, 12, 25)}
 
 
+@pytest.mark.parametrize("switch", ["work_report", "after_meeting_notice"])
+def test_the_holidays_are_read_where_only_another_message_that_keeps_working_days_is_on(
+    session: Session, world: World, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    # Neither digest on: the work report and the notice after a meeting ask
+    # the same table whether today is a working day, so the read still runs.
+    world.settings.update({"daily_digest": False, "weekly_digest": False, switch: True})
+    monkeypatch.setattr(days_off, "fetch_public_holidays", lambda *, today: {HANGUL_DAY})
+
+    assert tasks.refresh_public_holidays() == 1
+
+    assert {row.day for row in session.query(ExtPublicHoliday)} == {HANGUL_DAY}
+
+
 @pytest.mark.parametrize(
     "settings",
     [

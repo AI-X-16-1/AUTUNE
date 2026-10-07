@@ -539,6 +539,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 function historyText(entry: EditHistoryEntry): string {
   if (entry.kind === "created") return "직접 추가함";
+  if (entry.kind === "closed") return "끝내지 않고 닫힘";
   const labels = [
     ...new Set(entry.fields.map((field) => FIELD_LABELS[field] ?? field)),
   ];

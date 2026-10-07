@@ -261,6 +261,10 @@ export interface DueReminderSetting {
   weekly_here: boolean;
   /** Whether it sends the morning DM, which the same switch governs. */
   daily_here: boolean;
+  /** The work-report draft (2026-10-07); absent from an older server. */
+  work_report_here?: boolean;
+  /** The notice after a meeting (2026-10-07); absent from an older server. */
+  after_meeting_here?: boolean;
 }
 
 export const getDueReminders = () => api.extraction<DueReminderSetting>("/me/due-reminders");
