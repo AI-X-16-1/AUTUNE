@@ -2017,8 +2017,15 @@ def closed_unfinished(session: Session, item_ids: Collection[str]) -> set[str]:
     The caller asks about items that are ``done`` now: for those, this is
     "closed, not finished". An item closed and later re-opened and really
     finished has an ordinary status edit after its close, and is not here.
-    Events of one transaction share a timestamp, so the id breaks the tie, as
-    in ``edit_history``.
+
+    **Read in the order the rows were written -- by id, not by time**
+    (PARKJAEKYUNG0525, review of #979). On PostgreSQL ``created_at`` is when
+    the writing transaction began, so a board edit that began before a close
+    and landed after it carries the earlier time: by time the close would read
+    as the last word on an item a person has since marked done. Every writer
+    of a status holds the item's row when it adds its event (an edit by its
+    ``UPDATE``, a close by ``tools.close_action_item``'s lock), so the id
+    follows the order the statuses were written in.
     """
     if not item_ids:
         return set()
@@ -2029,7 +2036,7 @@ def closed_unfinished(session: Session, item_ids: Collection[str]) -> set[str]:
             ExtEditEvent.action_item_id.in_(item_ids),
             ExtEditEvent.kind.in_(("edited", "closed")),
         )
-        .order_by(ExtEditEvent.created_at, ExtEditEvent.id)
+        .order_by(ExtEditEvent.id)
     ).tuples():
         if item_id is not None and (kind == "closed" or "status" in (fields or "").split(",")):
             last[item_id] = kind

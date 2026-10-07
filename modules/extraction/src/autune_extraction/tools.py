@@ -141,9 +141,11 @@ def _item_finding(item: ActionItemRead, today: date) -> dict[str, Any]:
         who = "재배정 필요"
     due = item.due_date.isoformat() if item.due_date else "기한 없음"
     overdue = _overdue(item, today)
+    # ``done`` would have the reader say it was finished (review of #979).
+    status = "closed" if item.closed_unfinished else item.status
     return {
         "title": item.description,
-        "body": f"{who} · {due}{' · 기한 지남' if overdue else ''} · {item.status}",
+        "body": f"{who} · {due}{' · 기한 지남' if overdue else ''} · {status}",
         "score": _urgency(item, today),
         "id": item.id,
         "meeting_id": item.meeting_id,
@@ -184,7 +186,9 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
 
     Returns the meeting's confirmed action items, most urgent first (at most
     five), and in ``summary`` how many are still waiting for confirmation.
-    Unconfirmed items are counted, never quoted.
+    Unconfirmed items are counted, never quoted. Each item's line ends with its
+    status; ``closed`` is an item closed without being finished -- do not
+    report it as done.
     """
     if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
@@ -837,7 +841,8 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
     tools return ids.
 
     Returns the item as one finding. An item still waiting for confirmation is
-    reported as waiting, without its text (#261 rule 3).
+    reported as waiting, without its text (#261 rule 3). A status of ``closed``
+    is an item closed without being finished -- not done.
     """
     row = session.get(ExtActionItem, action_item_id)
     if row is None or _team_of(session, row.meeting_id) != team_id:
@@ -1096,14 +1101,18 @@ def close_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
 
     L2 -- runs only after a person approves. For work that was done use
     ``set_action_item_status`` with ``done``. Refused for an item still
-    waiting for confirmation and for one already done.
+    waiting for confirmation, for one already done and for one already closed.
     """
     with session_scope() as session:
-        row = session.get(ExtActionItem, action_item_id)
+        # Held to the commit: a second close, or an edit of the status, waits
+        # and then reads what this one left (review of #979).
+        row = session.get(ExtActionItem, action_item_id, with_for_update=True)
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
         if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
             return _refused("not confirmed", "확정되지 않은 액션아이템은 닫을 수 없습니다.")
+        if row.status == ActionStatus.DONE.value and service.closed_unfinished(session, [row.id]):
+            return _refused("already closed", "이미 닫힌 액션아이템입니다.")
         if not service.close_without_finishing(session, row):
             return _refused("already done", "이미 완료된 액션아이템입니다.")
     # Its copies outside follow as they follow any change of status.
