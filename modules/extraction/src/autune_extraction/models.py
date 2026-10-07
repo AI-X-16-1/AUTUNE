@@ -1111,11 +1111,22 @@ class ExtEditEvent(Base):
     The drawer's history (S18) shows "기한 수정됨"; keeping the value before an
     edit would keep the sentence a person chose to replace, a tombstone by
     another name (privacy.md section 4).
+
+    ``closed`` is the one kind that is not a correction: the item was **closed
+    without being finished** (#856, the user 2026-10-07). An item has no
+    cancelled state, so a close leaves it ``done``, and "what a person
+    finished" is read from the status and these rows alone -- this kind is
+    what tells a close from finished work (``service.closed_unfinished``). It
+    says that and when, about an item; like every row here it does not say
+    who. It carries no ``fields``: a reader that looks for an edit of the
+    status must not find one in it. Edit cost does not count it.
     """
 
     __tablename__ = "ext_edit_events"
     __table_args__ = (
-        CheckConstraint("kind IN ('created','deleted','edited')", name="ck_ext_edit_events_kind"),
+        CheckConstraint(
+            "kind IN ('created','deleted','edited','closed')", name="ck_ext_edit_events_kind"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

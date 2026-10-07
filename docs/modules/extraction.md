@@ -306,7 +306,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_action_item_sources` | Which utterances an item came from |
 | `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
 | `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
-| `ext_edit_events` | One row per correction. Counts only — no person on it |
+| `ext_edit_events` | One row per correction, and one per close without finishing (`closed`, which is not a correction and is left out of edit cost). Counts only — no person on it |
 | `ext_external_refs` | The Notion page an action item became, one per item and system |
 | `ext_decision_refs` | The Notion page a confirmed decision became, one per decision and system |
 | `ext_calendar_events` | The event an item's due date became on its assignee's own calendar, and the date last synced |
@@ -503,8 +503,9 @@ other module's tables.
   an account on the meeting's team. Off by default:
   `AUTUNE_EXTRACTION_DUE_REMINDERS=true` turns it on
 - A DM to each person on a Tuesday-to-Friday morning (09:00–12:00 Korea time):
-  what changed on their own items since the last one and what is theirs to do
-  today (`reminders.build_daily_digest`,
+  what changed on their own items since the last one (done, closed without
+  being finished -- said apart, see the close below -- and newly held) and
+  what is theirs to do today (`reminders.build_daily_digest`,
   `autune.extraction.periodic.send_daily_digests`). Today's part names, after
   what is late and what is due today, each item of theirs that is in progress
   or has no due date and that nobody has touched for five days or more
@@ -575,10 +576,12 @@ other module's tables.
   with a draft "오늘 업무 보고" of their own items on one team, written so
   that they can paste it to that team themselves (`work_report.py`,
   `autune.extraction.periodic.send_work_reports`, the user 2026-10-07).
-  Four parts, each item in the first it fits, and the rest of their open
-  items as a count: 끝낸 일 (theirs, done now, status edited today), 진행한 일
-  (in progress now, status edited today), 내일로 넘어가는 일 (in progress from
-  before, or due today and not finished), 늦은 일 (due before today). That is
+  Five parts, each item in the first it fits, and the rest of their open
+  items as a count: 끝낸 일 (theirs, done now, status edited today, and not
+  closed), 끝내지 않고 닫힌 일 (closed today without being finished -- see the
+  close below; alone it sends no draft), 진행한 일 (in progress now, status
+  edited today), 내일로 넘어가는 일 (in progress from before, or due today and
+  not finished), 늦은 일 (due before today). That is
   all the edit log can say -- it keeps that a field changed and when, never
   the value or who -- so work that left no change on the board is not seen,
   and an item of theirs somebody else marked done reads as finished. Sent
@@ -596,6 +599,25 @@ other module's tables.
   sent (the user); a report that did not go in it is not sent later, so the
   day it describes ends at about 16:00. Off by default:
   `AUTUNE_EXTRACTION_WORK_REPORT=true` turns it on
+- An item can be **closed without being finished** (#856; the user,
+  2026-10-07) -- dropped, overtaken, no longer needed. There is no cancelled
+  status: `tools.close_action_item` (an L2 action, run only after a person
+  approves; no board control calls it yet) makes a confirmed, open item
+  `done` and records an edit event of kind `closed` in place of an edit of
+  the status (`service.close_without_finishing`). That event is all that
+  tells a close from finished work -- `service.closed_unfinished`: the
+  latest change of the item's status was a close -- and everything that says
+  "finished" to or about a person reads it: the morning DM says "끝내지 않고
+  닫힘" apart from 완료, the work-report draft has its own part, the
+  assignee's calendar event is titled `[닫힘]` and not `[완료]`, the card in
+  완료 is marked 닫힘 (`closed_unfinished` on the item read), the drawer's
+  history says so, and `workload_by_owner` does not count it as work its
+  holder finished. The event says that and when, about the item, and never
+  who closed it; edit cost leaves it out, since a close corrects nothing the
+  model wrote. An item re-opened and then finished is finished. **Not told
+  apart outside:** the Notion page and the Jira issue of a closed item read
+  완료 / a `done` status, and the minutes list it with the finished ones --
+  none of them has a closed state here
 - Role-specific reports (Phase 2)
 
 ## AI stack

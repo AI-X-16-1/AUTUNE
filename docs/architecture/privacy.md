@@ -498,8 +498,9 @@ the feature needs.
     channel when the meeting is deleted.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
-    changed since the last one (items of theirs now done, items they newly
-    hold -- made, given to them, or confirmed since) and today's work (late;
+    changed since the last one (items of theirs now done, items of theirs
+    closed without being finished, items they newly hold -- made, given to
+    them, or confirmed since) and today's work (late;
     due today; standing untouched for five days or more, when the item is in
     progress or has no due date; in progress; the rest as a count). A
     standing item's line says how many days it has stood: the
@@ -512,7 +513,13 @@ the feature needs.
     from `ext_edit_events`, which holds that an item was edited, which fields
     and when: the message never says who made a change, and it counts
     nothing about a person -- it is a list of that person's own work sent to
-    that person. Autune keeps only that the day's message went
+    that person. **An item closed without being finished is not called
+    done** (#856): a close ends in the same status as finished work, so it
+    leaves an event of its own kind (`closed`) -- that the item was closed
+    and when, and not who closed it -- and this message and the work-report
+    draft below say "closed" from it, so that neither tells a person they
+    finished what was closed, by them or by somebody else. Autune keeps only
+    that the day's message went
     (`ext_daily_digests`), not its text. The reminder switch above stops it.
     A morning DM or a Monday DM the outbound check refuses is not sent, is
     reported once, and keeps that day's (or week's) row so it is not tried
@@ -520,8 +527,10 @@ the feature needs.
   - **Slack, the work-report draft:** on a Monday-to-Friday afternoon
     in Korea (16:00-17:00, and not later), a direct message to a person about their own items on one
     team, when something of theirs was finished or moved to in progress that
-    day: a short report -- finished, moved, going on to tomorrow, late, and
-    the rest as a count -- headed by the team's name and worded so that the
+    day: a short report -- finished, closed without being finished, moved,
+    going on to tomorrow, late, and the rest as a count (a close alone is not
+    a day's work and sends none) -- headed by the team's name and worded so
+    that the
     person can paste it to that team. **Autune sends it to that person and to
     nobody else**: no channel, no lead, no admin, and no collected version of
     several people's days; whether anybody else reads it is the person's own

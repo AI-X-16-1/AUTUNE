@@ -494,7 +494,8 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
             # so ``None`` here is exactly "nobody on the team holds it".
             load = members.get(i.assignee_id) if i.assignee_id else None
             if status == ActionStatus.DONE:
-                if load is not None:
+                # Closed without being finished is nobody's finished work.
+                if load is not None and not i.closed_unfinished:
                     load.done += 1
                 continue
             load = load or unowned
@@ -1073,6 +1074,29 @@ def set_action_item_status(team_id: str, action_item_id: str, status: str) -> di
     return result if isinstance(result, dict) else _acted("상태를 바꿨습니다.", action_item_id)
 
 
+def close_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
+    """Close a confirmed item that will not be finished -- dropped, overtaken, or
+    no longer needed. It leaves the open work like a finished one, and is kept
+    apart from finished work: its holder's morning DM and work report say it
+    was closed, not that they finished it, and the board marks it 닫힘.
+
+    L2 -- runs only after a person approves. For work that was done use
+    ``set_action_item_status`` with ``done``. Refused for an item still
+    waiting for confirmation and for one already done.
+    """
+    with session_scope() as session:
+        row = session.get(ExtActionItem, action_item_id)
+        if row is None or _team_of(session, row.meeting_id) != team_id:
+            return _not_found("action item", action_item_id)
+        if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            return _refused("not confirmed", "확정되지 않은 액션아이템은 닫을 수 없습니다.")
+        if not service.close_without_finishing(session, row):
+            return _refused("already done", "이미 완료된 액션아이템입니다.")
+    # Its copies outside follow as they follow any change of status.
+    tasks.sync_after_confirmation(action_item_id)
+    return _acted("액션아이템을 끝내지 않고 닫았습니다.", action_item_id)
+
+
 def add_action_item(
     team_id: str,
     meeting_id: str,
@@ -1222,6 +1246,7 @@ ACTIONS = [
     reassign_action_item,
     set_action_item_due_date,
     set_action_item_status,
+    close_action_item,
     add_action_item,
     add_followup_item,
     review_decision,

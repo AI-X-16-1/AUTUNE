@@ -166,6 +166,7 @@ def test_the_response_carries_every_field_the_board_reads() -> None:
         "deleted_source_count",
         "needs_reassignment",
         "needs_recheck",
+        "closed_unfinished",
         "is_candidate",
         "sync_refs",
         "sync_failures",
