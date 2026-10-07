@@ -15,7 +15,6 @@ import type {
   TemplateComparison,
   TemplateOption,
   TemplateSelection,
-  TopicGraph,
 } from "./types";
 
 export { api };
@@ -37,17 +36,6 @@ export { api };
  */
 export const getReport = (meetingId: string) =>
   api.gap<GapReport>(`/reports/${meetingId}`);
-
-/**
- * The topic graph behind the report, for drawing.
- *
- * Nodes come in the report's order, so a screen showing both never has to
- * reconcile two orderings. It carries no participation: who spoke is in the
- * report, keyed by topic id, and a node is the one place a per-person number
- * could arrive attached to a picture.
- */
-export const getTopicGraph = (meetingId: string) =>
-  api.gap<TopicGraph>(`/topics/${meetingId}`);
 
 /**
  * The checklist this meeting is held to, item by item — the S20 rail.

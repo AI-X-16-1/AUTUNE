@@ -16,8 +16,8 @@ interface State {
 /**
  * The template-comparison rail for one meeting.
  *
- * A third read beside `useGapReport` and `useTopicGraph`, and a third hook for
- * the same reason the screen keeps their states apart: the rail is a separate
+ * A read beside `useGapReport`, and a hook of its own for the same reason the
+ * screen keeps their states apart: the rail is a separate
  * endpoint, so a rail that is still arriving and a rail the meeting genuinely
  * has nothing for are different sentences, and only a per-section state can
  * tell them apart.
