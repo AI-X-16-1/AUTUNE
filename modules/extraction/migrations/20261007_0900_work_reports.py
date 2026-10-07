@@ -3,8 +3,11 @@
 A person who finished or started something today is sent, that afternoon, a
 draft report of their own items on one team (``work_report``, the user
 2026-10-07). This table is the "once": one row per person, team and day,
-written before the message goes. No text -- the message is not kept. Goes with
-the person and with the team.
+written before the message goes. No text -- the message is not kept. A row is
+deleted once its day has passed (the sending task, every run): the draft goes
+only on a day the person finished or started something, so a row kept would
+say which days they worked. Goes with the person and with the team before
+that.
 
 Its own table, not ``ext_daily_digests``: that one's key is the same three
 columns, and its latest row is where the next morning DM counts from.

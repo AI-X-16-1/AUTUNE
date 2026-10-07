@@ -336,7 +336,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
 | `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
 | `ext_minutes_events` | A project's minutes as an all-day event on the meeting's day, on the calendar of the person who sent them (#788): one row per meeting, project and person, holding the event id, so sending again updates the same event, and a digest of the minutes it last received, so a refresh leaves an unchanged event alone and asks for no grant. Only that person's own grant reaches it. No text; goes with the meeting, the project and the person |
-| `ext_work_reports` | That a person was sent the work-report draft for one day through one team's Slack (`work_report.py`). The primary key is the "once". No text. Its own table: `ext_daily_digests` has the same key, and its latest row is where the next morning DM counts from |
+| `ext_work_reports` | That a person was sent the work-report draft for one day through one team's Slack (`work_report.py`). The primary key is the "once". No text. **A row lives for its day only**: the draft goes only on a day the person finished or started something, so a kept row would say which days they worked, and the sending task deletes every earlier day's row on each run (`work_report.forget_past_days`). Its own table: `ext_daily_digests` has the same key, and its latest row is where the next morning DM counts from |
 
 **The summary tab (S15 요약, #421, WBS 4.9).** B owns it. v1 is structured and
 uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
@@ -535,7 +535,12 @@ other module's tables.
   and an item of theirs somebody else marked done reads as finished. Sent
   only when something of theirs was finished or moved today; plain text from
   the rows, no model; to the person and nobody else -- no channel, no lead.
-  Once per person, team and day (`ext_work_reports`). The same switch and
+  Once per person, team and day (`ext_work_reports`) -- and that row is
+  deleted once its day has passed, by the same task on every run (also with
+  the feature off, and outside its hour): that the draft went says the
+  person worked that day, and no such record is kept (mkkim68, review of
+  #954). The task returns a count and logs a failure by team, for the same
+  reason. The same switch and
   leave dates that stop the morning DM stop it, and so does a public holiday;
   only about items whose assignee is on the meeting's team. The hour is the
   last of 09:00-17:00, outside which the DMs made from 2026-10-07 on are not

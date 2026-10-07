@@ -474,17 +474,114 @@ def test_a_choice_made_after_the_list_was_drawn_up_still_holds(session: Session)
     assert slack.sent == [] and session.query(ExtWorkReport).count() == 0
 
 
+# --- a row lives for its day only (mkkim68, review of #954) ---------------------------
+
+
+def sent_on(session: Session, day: date, who: WorkReportOwed | None = None) -> None:
+    """A report claimed and sent for ``day``, by the code that claims one."""
+    owed = who or kim(day)
+    assert work_report.send_report(session, FakeSlack(), owed, now=now()) is True
+
+
+def days_kept(session: Session) -> list[tuple[str, date]]:
+    return sorted((r.user_id, r.day) for r in session.query(ExtWorkReport))
+
+
+def test_the_rows_of_earlier_days_are_deleted_and_todays_is_kept(session: Session) -> None:
+    """That a report went says its person finished or started work that day:
+    kept, the rows are a calendar of somebody's working days."""
+    move(session, "act_a", ActionStatus.DONE)
+    move(session, "act_lee", ActionStatus.DONE)
+    day = today()
+    sent_on(session, day - timedelta(days=1))
+    sent_on(session, day)
+    sent_on(session, day, WorkReportOwed(user_id="user_lee", team_id="team_1", day=day))
+    work_report.settle_refused(session, kim(day - timedelta(days=5)), now=now())  # a refused text's
+    assert len(days_kept(session)) == 4
+
+    assert work_report.forget_past_days(session, today=day) == 2
+
+    assert days_kept(session) == [("user_kim", day), ("user_lee", day)]
+    assert work_report.forget_past_days(session, today=day) == 0
+    assert work_report.forget_past_days(session, today=day + timedelta(days=1)) == 2
+    assert days_kept(session) == []
+
+
 # --- the task -----------------------------------------------------------------------
 
 
-def test_the_setting_is_off_by_default_and_the_task_then_sends_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert ExtractionSettings(_env_file=None).work_report is False  # type: ignore[call-arg]
-    monkeypatch.setattr(tasks, "get_settings", lambda: SimpleNamespace(work_report=False))
-    monkeypatch.setattr(tasks, "session_scope", None)  # would fail if it were opened
+@pytest.fixture
+def scoped(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        try:
+            yield session
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
 
-    assert tasks.send_work_reports() == []
+    monkeypatch.setattr(tasks, "session_scope", scope)
+
+
+@pytest.mark.usefixtures("scoped", "afternoon")
+def test_the_setting_is_off_by_default_and_the_task_then_sends_nothing_but_still_forgets(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deployment that switched the feature off must not keep its last rows
+    for good: yesterday's goes on the next run all the same. And off is off:
+    it is the report's hour and one is owed for today, and nothing is even
+    looked up to send it."""
+    assert ExtractionSettings(_env_file=None).work_report is False  # type: ignore[call-arg]
+    move(session, "act_a", ActionStatus.DONE)
+    sent_on(session, today() - timedelta(days=1))
+    session.commit()
+    monkeypatch.setattr(
+        tasks,
+        "get_settings",
+        lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
+    )
+    monkeypatch.setattr(tasks, "load_integration", None)  # would fail if anything were sent
+
+    assert tasks.send_work_reports() == 0
+
+    assert days_kept(session) == []
+
+
+class _Clock(datetime):
+    """``datetime.now`` as the task calls it, held at a moment a test picks."""
+
+    moment = datetime(2026, 10, 7, 15, 30, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[no-untyped-def, override]
+        return cls.moment
+
+
+@pytest.mark.usefixtures("scoped")
+def test_the_day_that_is_over_is_koreas_not_utcs(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Half past midnight on Thursday in Korea is still Wednesday in UTC.
+    Wednesday's row is yesterday's and goes; Thursday's is today's and stays --
+    by the UTC date Wednesday's would live until nine in the morning
+    (mminjae97, review of #954)."""
+    wednesday, thursday = date(2026, 10, 7), date(2026, 10, 8)
+    _Clock.moment = datetime(2026, 10, 8, 0, 30, tzinfo=reminders.KST).astimezone(UTC)
+    assert _Clock.moment.date() == wednesday
+    for day in (wednesday, thursday):
+        work_report.settle_refused(session, kim(day), now=_Clock.moment)
+    session.commit()
+    monkeypatch.setattr(tasks, "datetime", _Clock)
+    monkeypatch.setattr(
+        tasks,
+        "get_settings",
+        lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
+    )
+
+    assert tasks.send_work_reports() == 0
+
+    assert days_kept(session) == [("user_kim", thursday)]
 
 
 @dataclass
@@ -531,15 +628,34 @@ def test_the_task_sends_each_person_their_own_and_nothing_twice(
     move(session, "act_lee", ActionStatus.IN_PROGRESS)
     session.commit()
 
-    assert sorted(tasks.send_work_reports()) == ["user_kim", "user_lee"]
+    assert tasks.send_work_reports() == 2, "a count: the result names nobody"
 
     by_person = {m.channel: m.text for m in checked_slack.sent}
     assert sorted(by_person) == ["user_kim", "user_lee"]
     assert "보고서 쓰기" in by_person["user_kim"] and "이 님의 일" not in by_person["user_kim"]
     assert "이 님의 일" in by_person["user_lee"] and "보고서 쓰기" not in by_person["user_lee"]
 
-    assert tasks.send_work_reports() == []
+    assert tasks.send_work_reports() == 0
     assert len(checked_slack.sent) == 2
+
+
+def test_the_next_days_run_deletes_the_day_before_whatever_the_hour(
+    session: Session, checked_slack: CheckedSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Yesterday's row is gone at the first run of today -- in the morning,
+    on a weekend, long before the report's own hour -- and today's stands."""
+    move(session, "act_a", ActionStatus.DONE)
+    move(session, "act_lee", ActionStatus.DONE)
+    day = today()
+    sent_on(session, day - timedelta(days=1))
+    sent_on(session, day, WorkReportOwed(user_id="user_lee", team_id="team_1", day=day))
+    session.commit()
+    monkeypatch.setattr(work_report, "report_day", lambda moment: None)  # not its hour
+
+    assert tasks.send_work_reports() == 0
+
+    assert days_kept(session) == [("user_lee", day)]
+    assert checked_slack.sent == []
 
 
 def test_a_refused_report_is_raised_after_the_others_go_and_not_tried_again(
@@ -555,8 +671,9 @@ def test_a_refused_report_is_raised_after_the_others_go_and_not_tried_again(
     item.description = "010-1234-5678로 전화하기"
     session.commit()
 
-    with pytest.raises(PrivacyViolationError, match="user_kim"):
+    with pytest.raises(PrivacyViolationError, match="team_1") as raised:
         tasks.send_work_reports()
+    assert "user_" not in str(raised.value), "raised by team: an error names no person beside a day"
 
     assert [m.channel for m in checked_slack.sent] == ["user_lee"]
     assert not any("010-1234-5678" in m.text for m in checked_slack.sent)
@@ -565,7 +682,7 @@ def test_a_refused_report_is_raised_after_the_others_go_and_not_tried_again(
         ("user_lee", "team_1"),
     ]
 
-    assert tasks.send_work_reports() == [], "nothing owed, nothing refused, nothing raised"
+    assert tasks.send_work_reports() == 0, "nothing owed, nothing refused, nothing raised"
     assert len(checked_slack.sent) == 1
 
 
@@ -586,14 +703,15 @@ def test_a_report_slack_did_not_take_stays_owed(
     monkeypatch.setattr(checked_slack, "send_dm", send_dm)
 
     with capture_logs() as logs:
-        assert tasks.send_work_reports() == []
+        assert tasks.send_work_reports() == 0
 
     assert session.query(ExtWorkReport).count() == 0
     failed = [entry for entry in logs if entry["event"] == "extraction_work_report_failed"]
-    assert [(e["user_id"], e["reason"]) for e in failed] == [
-        ("user_kim", "TransientIntegrationError")
+    assert [(e["team_id"], e["reason"]) for e in failed] == [
+        ("team_1", "TransientIntegrationError")
     ]
     assert not any("보고서 쓰기" in str(entry) for entry in logs), "no item text in a log line"
+    assert not any("user_" in str(entry) for entry in logs), "and no person in one either"
     assert [r.user_id for r in work_report.reports_to_send(session, now=now())] == [
         "user_kim",
         "user_lee",
@@ -607,7 +725,7 @@ def test_a_team_without_slack_is_skipped(
     session.commit()
     monkeypatch.setattr(tasks, "load_integration", lambda s, team, service: None)
 
-    assert tasks.send_work_reports() == []
+    assert tasks.send_work_reports() == 0
     assert checked_slack.sent == [] and session.query(ExtWorkReport).count() == 0
 
 

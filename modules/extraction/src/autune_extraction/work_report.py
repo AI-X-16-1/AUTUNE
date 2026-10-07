@@ -43,6 +43,18 @@ no change on the board sends nothing. Not to somebody who turned their
 reminders off ("마감 알림 받기") or whose own leave dates cover the day, and
 only about items whose assignee is on the meeting's team now. A deployment
 sends none until ``AUTUNE_EXTRACTION_WORK_REPORT`` is on.
+
+**Nothing is kept of which day a person worked** (mkkim68, review of #954).
+The report goes only on a day something of the person's was finished or
+moved, so that it went says so much about them: kept, the rows of
+``ext_work_reports`` would be a calendar of each person's working days, which
+ADR 0003 forbids as it forbids any per-person record of conduct. The row is
+needed for one thing -- not sending twice in a day -- so it lives for its day:
+``forget_past_days`` deletes every earlier day's row, and the task calls it
+first on every run, whatever the setting and the hour. For the same reason the
+task returns a count and no ids, logs a failed send by team and error type,
+and raises a refusal by team: no result, log line or error names a person
+beside a day.
 """
 
 from __future__ import annotations
@@ -51,7 +63,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
@@ -219,6 +231,21 @@ def _finished_or_started(
     if team_id is not None:
         query = query.where(Meeting.team_id == team_id)
     return [(item, team, title) for item, team, title in session.execute(query).tuples()]
+
+
+def forget_past_days(session: Session, *, today: date) -> int:
+    """Delete every row of a day before ``today`` (Korea's) and say how many.
+
+    A row is the "once" of its own day and nothing after it: yesterday's cannot
+    stop or allow anything today, and what it would go on saying is that its
+    person finished or started work that day (the module docstring). A text
+    the outbound check refused is settled with the same row and goes the same
+    way. Called first by the task on every run -- every ten minutes, with the
+    feature off and outside its hour too -- so a row is gone within about ten
+    minutes of the next midnight in Korea for as long as the worker runs, and
+    at its first run if it was down."""
+    gone = session.execute(delete(ExtWorkReport).where(ExtWorkReport.day < today))
+    return int(getattr(gone, "rowcount", 0) or 0)
 
 
 def reports_to_send(session: Session, *, now: datetime) -> list[WorkReportOwed]:

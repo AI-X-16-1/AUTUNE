@@ -106,6 +106,14 @@ def test_an_work_report_reads_today_is_claimed_once_and_goes_with_the_account(
     work_report.settle_refused(db_session, owed, now=now)
     assert count(db_session, "ext_work_reports") == 1, "settling a claimed day adds nothing"
 
+    # A row lives for its day: today's stands, and tomorrow's run deletes it.
+    assert work_report.forget_past_days(db_session, today=day) == 0
+    assert count(db_session, "ext_work_reports") == 1
+    assert work_report.forget_past_days(db_session, today=day + timedelta(days=1)) == 1
+    assert count(db_session, "ext_work_reports") == 0
+
+    # And before its day is over it goes with the account.
+    assert work_report.send_report(db_session, slack, owed, now=now) is True
     db_session.execute(sa.delete(User).where(User.id == user.id))
     db_session.flush()
     assert db_session.scalars(sa.select(ExtWorkReport)).all() == []

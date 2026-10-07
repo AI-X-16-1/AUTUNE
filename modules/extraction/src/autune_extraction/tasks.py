@@ -1339,11 +1339,19 @@ def send_daily_digests() -> list[str]:
 
 @shared_task(name="autune.extraction.periodic.send_work_reports")
 @periodic(timedelta(minutes=10))
-def send_work_reports() -> list[str]:
+def send_work_reports() -> int:
     """The work-report draft: to each person alone, their own items
     on one team as a text they can paste to that team -- finished today, moved
     to in progress today, going on to tomorrow, late (the user, 2026-10-07;
-    ``work_report``). Returns the user ids one went to.
+    ``work_report``). Returns how many went.
+
+    **A count, and no ids anywhere** (mkkim68, review of #954). This goes only
+    on a day something of the person's was finished or moved, so a result, a
+    log line or an error that names a person names a day they worked. The
+    result is a number, a failed send is logged by team and error type, and a
+    refusal is raised by team. And first of all, on every run -- with the
+    feature off, and outside its hour -- the rows of earlier days are deleted
+    (``work_report.forget_past_days``): a row is the "once" of its own day.
 
     ``send_daily_digests``' shape, for the same reasons: each DM claimed and
     sent in its own transaction, a team without Slack or a person without a
@@ -1354,9 +1362,11 @@ def send_work_reports() -> list[str]:
     who turned their reminders off, and nobody on a day they paused, is in the
     list.
     """
-    if not get_settings().work_report:
-        return []
     now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        work_report.forget_past_days(session, today=reminders.korean_day(now))
+    if not get_settings().work_report:
+        return 0
     with session_scope() as session:
         owed = work_report.reports_to_send(session, now=now)
         secrets: dict[str, str | None] = {}
@@ -1364,7 +1374,8 @@ def send_work_reports() -> list[str]:
             config = load_integration(session, team_id, "slack")
             secrets[team_id] = config.require_secret() if config is not None else None
 
-    sent: list[str] = []
+    sent = 0
+    # Teams, not people: see the docstring.
     refused: list[str] = []
     unasked: list[str] = []
     not_linked = 0
@@ -1381,12 +1392,11 @@ def send_work_reports() -> list[str]:
             except PrivacyViolationError:
                 # The question to the calendar was refused, not the message:
                 # nothing is claimed for it, and it is raised as what it was.
-                unasked.append(report.user_id)
+                unasked.append(report.team_id)
                 continue
-            except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+            except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
                 log.warning(
                     "extraction_work_report_failed",
-                    user_id=report.user_id,
                     team_id=report.team_id,
                     reason=type(exc).__name__,
                 )
@@ -1395,7 +1405,7 @@ def send_work_reports() -> list[str]:
             with session_scope() as session:
                 went = work_report.send_report(session, SlackClient(secret), report, now=now)
         except PrivacyViolationError:
-            refused.append(report.user_id)
+            refused.append(report.team_id)
             # Reported once: the day's claim is kept, in its own transaction,
             # so the next run does not refuse the same text again.
             try:
@@ -1404,7 +1414,6 @@ def send_work_reports() -> list[str]:
             except Exception as exc:  # noqa: BLE001 -- the violation is still raised
                 log.warning(
                     "extraction_work_report_refusal_not_kept",
-                    user_id=report.user_id,
                     team_id=report.team_id,
                     reason=type(exc).__name__,
                 )
@@ -1412,25 +1421,31 @@ def send_work_reports() -> list[str]:
         except SlackRecipientNotLinkedError:
             not_linked += 1
             continue
-        except Exception as exc:  # noqa: BLE001 -- one DM's; logged by type, ids only
+        except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
             log.warning(
                 "extraction_work_report_failed",
-                user_id=report.user_id,
                 team_id=report.team_id,
                 reason=type(exc).__name__,
             )
             continue
         if went:
-            sent.append(report.user_id)
+            sent += 1
     if owed and not leave:
         # No summary where calendars are read (``_held_back``).
-        log.info(
-            "extraction_work_reports_sent",
-            owed=len(owed),
-            sent=len(sent),
-            not_linked=not_linked,
+        log.info("extraction_work_reports_sent", owed=len(owed), sent=sent, not_linked=not_linked)
+    said = []
+    if refused:
+        said.append(
+            f"work report refused by the outbound check: {len(refused)}, "
+            f"in team(s) {', '.join(sorted(set(refused)))}"
         )
-    _raise_refusals("work report", refused, unasked)
+    if unasked:
+        said.append(
+            "work report: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, in team(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
     return sent
 
 

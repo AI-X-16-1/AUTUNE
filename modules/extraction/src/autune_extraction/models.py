@@ -866,7 +866,14 @@ class ExtWorkReport(Base):
     primary key is the "once", as ``ext_daily_digests``'s is. No text: the
     message is not kept. Its own table because that one's key is the same
     three columns and its latest row is where the next morning DM counts
-    from. Goes with the person and with the team."""
+    from.
+
+    **A row lives for its day only.** The draft goes only on a day something
+    of the person's was finished or moved, so a row kept would say which days
+    a person worked (ADR 0003; mkkim68, review of #954): the sending task
+    deletes every earlier day's row each time it runs
+    (``work_report.forget_past_days``). Goes with the person and with the
+    team before that."""
 
     __tablename__ = "ext_work_reports"
 

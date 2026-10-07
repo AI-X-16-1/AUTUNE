@@ -82,7 +82,10 @@
  *   "오늘 업무 보고 초안", which is what the settings call it. The Slack row
  *   says the two things that set it apart: it goes only on a day something of
  *   the person's was finished or moved, and to that person only, though it is
- *   worded to be pasted to a team.
+ *   worded to be pasted to a team. Its send record is NOT kept like a
+ *   digest's: that it went says the person worked that day, so the row is
+ *   deleted once its day has passed (`work_report.forget_past_days`, on every
+ *   run of the task), and the retention row says so (mkkim68, review of #954).
  * - copies outside are not all alike (privacy 제4조 ⑤, terms 제13조 ③): an
  *   item's or a decision's page stays as the team's record; a deleted item's
  *   page is trashed and its issue closed, retried (#764); a decision whose
@@ -373,7 +376,7 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "알림 발송 기록",
-            "마감 알림의 발송 기록은 해당 액션 아이템이 삭제될 때까지(회의의 보유 기간이 만료되어 삭제되는 경우를 포함합니다). 월요일 요약, 아침 요약 및 오늘 업무 보고 초안의 발송 기록은 회원 탈퇴 또는 팀의 삭제 시까지. 발송 일시가 남으므로 평소보다 늦게 발송된 날은 그 사유를 짐작할 여지가 있으나, 사유는 기록하지 않습니다.",
+            "마감 알림의 발송 기록은 해당 액션 아이템이 삭제될 때까지(회의의 보유 기간이 만료되어 삭제되는 경우를 포함합니다). 월요일 요약 및 아침 요약의 발송 기록은 회원 탈퇴 또는 팀의 삭제 시까지. 오늘 업무 보고 초안은 본인이 담당하는 항목이 완료되었거나 진행 중으로 바뀐 날에만 보내므로, 그 발송 기록은 같은 날 다시 보내지 않기 위하여서만 쓰고 발송한 날이 지난 뒤 처음 실행되는 정리 작업(10분마다 실행)에서 삭제합니다. 발송 일시가 남으므로 평소보다 늦게 발송된 날은 그 사유를 짐작할 여지가 있으나, 사유는 기록하지 않습니다.",
           ],
           [
             "부재중 일정의 시각",
