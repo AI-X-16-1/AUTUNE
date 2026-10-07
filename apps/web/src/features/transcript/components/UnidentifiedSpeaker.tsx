@@ -49,8 +49,9 @@ export type PickableMember = TeamMember & { assignedTo?: string };
  * labels, and the second label has to reach the same account: "내 발화 삭제"
  * finds a person's lines through that link, so a label left unassigned keeps
  * lines its speaker can no longer delete (privacy invariant 11, #912 review).
- * The confirmation is there because a wrong assignment has no undo yet. The
- * caller orders the list and sets `assignedTo` (`unassigned` in
+ * The confirmation is there because putting one person on two labels is
+ * rarely right; a wrong one can be undone with 지정 해제 (`AssignedSpeaker`).
+ * The caller orders the list and sets `assignedTo` (`unassigned` in
  * `StoredTranscript`).
  */
 export function UnidentifiedSpeaker({
@@ -144,9 +145,9 @@ export function UnidentifiedSpeaker({
         // Selecting is not confirming. On Windows Chrome an arrow key on a
         // closed select fires `change`, so a keyboard user who tabs here and
         // presses ↓ once used to assign the first team member outright
-        // (@PARKJAEKYUNG0525 on #370). There is no endpoint to undo it, and
-        // with voice profiles on it puts one person's voice under another
-        // person's name. The button below is the confirmation.
+        // (@PARKJAEKYUNG0525 on #370). With voice profiles on it puts one
+        // person's voice under another person's name until somebody notices
+        // and presses 지정 해제. The button below is the confirmation.
         onChange={(event) => setPicked(event.target.value)}
         className="focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]"
         style={{
@@ -180,7 +181,7 @@ export function UnidentifiedSpeaker({
       </Button>
       {confirming && (
         <>
-          <span style={{ color: "var(--color-ink-strong)" }}>
+          <span role="status" style={{ color: "var(--color-ink-strong)" }}>
             {confirming.name}은(는) 이미 {confirming.assignedTo}로 지정되어 있습니다. 같은 사람의
             목소리가 둘로 나뉜 경우에만 지정하세요.
           </span>

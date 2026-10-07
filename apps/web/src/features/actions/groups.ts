@@ -107,3 +107,25 @@ export function byProject<T extends Row>(
       : [{ key: "", title: NO_PROJECT, note: null, items: unsorted }]),
   ];
 }
+
+/**
+ * The team to say beside each project's name, by project id, where projects
+ * are listed without their items: the filter and the progress strip. Two
+ * teams can each have a project of the same name, so -- the rule `byProject`
+ * has for a group -- a project says its team when the list is of several
+ * teams, and says nothing when it is of one. A team whose name did not arrive
+ * says nothing either.
+ */
+export function projectTeams(
+  projects: Project[],
+  teams: TeamName[],
+): Map<string, string> {
+  const said = new Map<string, string>();
+  if (new Set(projects.map((project) => project.team_id ?? "")).size < 2)
+    return said;
+  for (const project of projects) {
+    const team = teams.find((one) => one.id === project.team_id);
+    if (team !== undefined) said.set(project.id, team.name);
+  }
+  return said;
+}

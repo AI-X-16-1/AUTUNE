@@ -78,4 +78,18 @@ describe("ProcessingStages", () => {
     expect(stateOf("원본 음성 삭제")).toBe("완료");
     expect(stateOf("개인정보 마스킹 · 저장")).toBe("대기");
   });
+
+  // #859 review: with the stored-flag test gone, nothing drew a finished
+  // meeting. Every pipeline step reads 완료 there.
+  it("shows every step done for a finished meeting", () => {
+    render(
+      <ProcessingStages
+        meeting={meeting({ status: "complete", stage: null, stage_progress: null })}
+      />,
+    );
+
+    for (const label of ["음성 인식", "화자 분리", "원본 음성 삭제", "개인정보 마스킹 · 저장"]) {
+      expect(stateOf(label)).toBe("완료");
+    }
+  });
 });

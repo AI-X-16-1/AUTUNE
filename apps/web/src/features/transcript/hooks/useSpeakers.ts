@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 
-import { assignSpeaker, getSpeakers, listTeamMembers, nameSpeaker } from "../api";
+import { assignSpeaker, getSpeakers, listTeamMembers, nameSpeaker, unassignSpeaker } from "../api";
 import type { SpeakerEntry, TeamMember } from "../types";
 
 /**
@@ -135,10 +135,10 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
     };
   }, [teamId]);
 
-  // `assign` and `name` are the same write with a different request: one
-  // `pending`, one `assignError`, the same refetch-before-release.
+  // `assign`, `name` and `unassign` are the same write with a different
+  // request: one `pending`, one `assignError`, the same refetch-before-release.
   const write = useCallback(
-    async (send: () => Promise<void>) => {
+    async (send: () => Promise<void>, describe: (caught: unknown) => string = assignErrorMessage) => {
       const generation = generationRef.current;
       setPending(true);
       setAssignError(null);
@@ -153,7 +153,7 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
         // cannot be mistaken here for `assign`'s own failure.
         await load(generation);
       } catch (caught) {
-        if (generationRef.current === generation) setAssignError(assignErrorMessage(caught));
+        if (generationRef.current === generation) setAssignError(describe(caught));
       } finally {
         if (generationRef.current === generation) setPending(false);
       }
@@ -174,6 +174,13 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
     [meetingId, write],
   );
 
+  /** Undo a wrong assignment; the label is unidentified again. */
+  const unassign = useCallback(
+    (speakerLabel: string) =>
+      write(() => unassignSpeaker(meetingId, speakerLabel), unassignErrorMessage),
+    [meetingId, write],
+  );
+
   return {
     speakers,
     speakersError,
@@ -181,6 +188,7 @@ export function useSpeakers(meetingId: string, teamId: string | null) {
     membersError,
     assign,
     name,
+    unassign,
     assignError,
     pending,
   };
@@ -211,4 +219,17 @@ function assignErrorMessage(caught: unknown): string {
     }
   }
   return "화자를 지정하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+}
+
+/** `assignErrorMessage`'s counterpart for `DELETE`, by the same statuses. */
+function unassignErrorMessage(caught: unknown): string {
+  if (caught instanceof ApiError) {
+    if (caught.status === 403) {
+      return "이 화자의 지정을 해제할 권한이 없습니다. 이 회의의 팀에 속해 있는지 확인해 주세요.";
+    }
+    if (caught.status === 404) {
+      return "이 화자를 찾을 수 없습니다. 새로고침한 뒤 다시 시도해 주세요.";
+    }
+  }
+  return "지정을 해제하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 }

@@ -121,7 +121,11 @@ agreement, and sync the result to Notion and Jira.
    classifier's own one-line summary. The due date is still read from the original
    words, which carry the verb ending it depends on.
 4. **NLI verification** — check whether an apparent agreement entails an actual
-   commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`.
+   commitment. Weak assent ("한번 볼게요") is labeled `ambiguous`. Before this
+   step a fixed rule takes the label off an `ambiguous` turn that is nothing but
+   an acknowledgement ("네 알겠습니다."): it has no content to ask the speaker
+   about, so it is not verified, recorded or asked. The same words labeled
+   `commitment` -- an acceptance of a request -- are left alone.
 5. **Build decision entities** — group the utterances classified as decisions
    into `Decision` records with a `dec_` id and the statement as settled. One
    decision often spans several utterances. **Module D depends on this**: it is
@@ -131,8 +135,11 @@ agreement, and sync the result to Notion and Jira.
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
    minutes `ask_confirmations` asks each one recorded within the 72-hour window
-   whose speaker is identified and consented, through the team's Slack bot to
-   the account that person linked (#255, #478), and to nobody else. A team
+   whose speaker is identified, consented and is on the meeting's team now,
+   through the team's Slack bot to the account that person linked (#255,
+   #478), and to nobody else. A speaker who has left the team is not asked,
+   and a button pressed on a DM they were sent before leaving is not recorded
+   -- the web refuses them the same answer. A team
    without Slack, or a speaker who has not linked, is looked at again on the
    next run until the window closes.
    **Where the speaker answers** (decided with the user, 2026-10-01; #585). The
@@ -385,10 +392,24 @@ holding only the label it was drafted with the account of the one identified,
 consenting speaker behind its sources, and clears the label. An item whose
 assignee a person may have edited -- an edit naming an assignee field, or an
 older edit row naming no fields -- or whose label a person renamed is left
-alone. The fill is write-once: a later re-identification of the speaker is a
-person's reassignment on the board. A confirmed item is synced to Notion,
-Jira and the calendar the way the router syncs a board edit; like a board
-edit, no `ExtractionResult` is published.
+alone. A confirmed item is synced to Notion, Jira and the calendar the way
+the router syncs a board edit; like a board edit, no `ExtractionResult` is
+published.
+
+**A speaker corrected or undone afterwards (#929).** The same run keeps the
+assignee with the speaker in the other direction too. A model item's assignee
+comes from its speaker and from nowhere else, so while no person has chosen
+one it is whatever a fresh extraction would write: when A moves the label to
+another member, the item moves to that member; when A undoes the assignment
+(#928), the item loses the account and shows the speaker label again. The
+same items are left alone as above, and so is one that is done -- who
+finished it is not recorded, and nothing is sent about it any more. An item
+a person confirmed or started does follow: its reminders, digests, Notion
+page, Jira issue and calendar event are what would otherwise stay with the
+person the label was wrongly put to. Two things do not follow: a reminder
+already sent for a due date is not sent again to the new assignee, and the
+previous assignee's calendar event is removed only as far as their grant
+still allows (`calendar_sync`).
 
 **What earlier meetings left open (PRD 5.2, WBS 4.8).** `GET
 /carried-over/{meeting_id}` answers a member of the meeting's team with the
@@ -442,7 +463,7 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
-| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these |
+| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |

@@ -77,6 +77,13 @@ subagent and never reaches it. When the layer has no tools for the scope or
 the model asks for nothing, `ask` returns an empty result and `answer` says so,
 as `unrouted` does today.
 
+A request that only looks something up goes to `ask`, unless a subagent
+declared `answers_lookups=True` and its description covers the subject; the
+router sees that subagent's description with `[answers questions]` appended
+(#879). Report declares it, because its chat reads are module E's whole
+surface and `ask` holds three of them. A subagent that writes or proposes
+(Research, Workload) leaves it off, so a question never wakes it.
+
 `agent_runs.route` is `"ask"` for such a run and `outcome` is `answered`.
 `scope_for("ask")` is `any`, which only matters if a later version lets the
 loop propose.

@@ -173,6 +173,24 @@ With the setting off, step 1 is the only thing this endpoint does today: the
 person is assigned, no profile is written, and no candidate will ever be
 offered for them until the setting is turned on and they are confirmed again.
 
+### `DELETE /meetings/{meeting_id}/speakers/{speaker_label}`
+
+No body. Any member of the meeting's team may call it. Undoes a wrong
+confirmation:
+
+1. `Participant.user_id = None` for that label, so `transcript_payload` carries
+   no `speaker_id` for it and the screens show it as unidentified again;
+2. a profile row sourced from that (meeting, label) is deleted, whatever the
+   setting — the same delete as step 3 above. Profiles from other meetings stay;
+3. a name typed before the assignment is not restored (step 5 above deleted it).
+
+A label nobody is put to → 204, so a retried press does not fail. An unknown
+label → 404, a caller outside the team → 403. No event goes out, as none goes
+out for an assignment; modules that read `Participant.user_id` again (C's
+participation, E's own speaking ratio) follow the change. B fills an action
+item's assignee once from an identified label and does not take it back when
+the label is undone or reassigned — #929, B's to fix.
+
 ### `PUT /meetings/{meeting_id}/speakers/{speaker_label}/name`
 
 Body `{"name": "외부 디자이너"}`, 1-50 characters after trimming. Any member of

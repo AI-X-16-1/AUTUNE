@@ -495,6 +495,19 @@ def assign_speaker(
     )
 
 
+@router.delete(
+    "/meetings/{meeting_id}/speakers/{speaker_label}", status_code=status.HTTP_204_NO_CONTENT
+)
+def unassign_speaker(
+    meeting_id: str, speaker_label: str, user: CurrentUser, session: SessionDep
+) -> None:
+    """Undo a wrong confirmation: the speaker goes back to nobody, and the
+    voice this meeting added to that person's profile is deleted."""
+    service.unassign_speaker(
+        session, meeting_id=meeting_id, speaker_label=speaker_label, unassigned_by=user
+    )
+
+
 @router.put(
     "/meetings/{meeting_id}/speakers/{speaker_label}/name",
     status_code=status.HTTP_204_NO_CONTENT,

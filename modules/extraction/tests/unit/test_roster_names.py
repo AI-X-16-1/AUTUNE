@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from autune_core import Base, Meeting, TeamMember, User
+from autune_core import Base, Meeting, Participant, TeamMember, User
 from autune_extraction import service
 from autune_extraction.pipeline import llm as llm_module
 from autune_extraction.pipeline.base import Prediction, give_roster
@@ -210,7 +210,8 @@ def test_the_checked_classifier_hands_the_roster_to_its_proposer(slept) -> None:
 def session() -> Iterator[Session]:
     engine = create_engine("sqlite://")
     Base.metadata.create_all(
-        engine, tables=[Meeting.__table__, User.__table__, TeamMember.__table__]
+        engine,
+        tables=[Meeting.__table__, User.__table__, TeamMember.__table__, Participant.__table__],
     )
     with Session(engine) as s:
         s.add(Meeting(id="mtg_1", team_id="team_1", title="주간 회의"))
@@ -228,6 +229,42 @@ def session() -> Iterator[Session]:
 def test_the_roster_is_the_meeting_teams_members(session: Session) -> None:
     assert service.team_roster(session, "mtg_1") == ["김민경", "박재경"]
     assert service.team_roster(session, "mtg_missing") == []
+
+
+def test_somebody_who_spoke_in_the_meeting_and_left_the_team_is_still_on_its_roster(
+    session: Session,
+) -> None:
+    """Their participant row still names them; their membership is gone."""
+    session.add(User(id="user_gone", email="gone@example.com", display_name="한서윤"))
+    session.add(
+        Participant(id="par_gone", meeting_id="mtg_1", speaker_label="C", user_id="user_gone")
+    )
+    session.flush()
+
+    assert service.team_roster(session, "mtg_1") == ["김민경", "박재경", "한서윤"]
+
+
+def test_a_member_who_also_spoke_is_listed_once(session: Session) -> None:
+    session.add(Participant(id="par_a", meeting_id="mtg_1", speaker_label="A", user_id="user_a"))
+    session.add(Participant(id="par_a2", meeting_id="mtg_1", speaker_label="B", user_id="user_a"))
+    session.flush()
+
+    assert service.team_roster(session, "mtg_1") == ["김민경", "박재경"]
+
+
+def test_a_speaker_nobody_identified_and_another_meetings_speaker_add_nothing(
+    session: Session,
+) -> None:
+    session.add(Meeting(id="mtg_2", team_id="team_1", title="다른 회의"))
+    session.add(User(id="user_gone", email="gone@example.com", display_name="한서윤"))
+    session.add(
+        Participant(id="par_gone", meeting_id="mtg_2", speaker_label="C", user_id="user_gone")
+    )
+    session.add(Participant(id="par_unknown", meeting_id="mtg_1", speaker_label="D", user_id=None))
+    session.flush()
+
+    assert service.team_roster(session, "mtg_1") == ["김민경", "박재경"]
+    assert service.team_roster(session, "mtg_2") == ["김민경", "박재경", "한서윤"]
 
 
 def test_llm_classifier_starts_with_no_roster() -> None:

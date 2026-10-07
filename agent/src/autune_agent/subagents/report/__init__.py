@@ -28,4 +28,6 @@ SUBAGENT = Subagent(
     tools=(*TOOLS, *chat.CHAT_READS),
     build=build,
     triggers=TRIGGERS,
+    # Its chat reads are E's whole surface, which the ask loop does not hold (#879).
+    answers_lookups=True,
 )

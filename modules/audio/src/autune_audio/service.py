@@ -1395,6 +1395,57 @@ def assign_speaker(
     log.info("speaker_assigned", meeting_id=meeting_id, learned=learned, reason=reason)
 
 
+def unassign_speaker(
+    session: Session, *, meeting_id: str, speaker_label: str, unassigned_by: User
+) -> None:
+    """Undo "``화자 2`` is this person": the label goes back to nobody.
+
+    The reverse of ``assign_speaker``'s two effects. The participant row drops
+    its user, so ``transcript_payload`` publishes no ``speaker_id`` for the
+    label, and the profile vector this (meeting, label) copied into somebody's
+    voice profile is deleted -- a wrong confirmation must not keep teaching the
+    candidate list the wrong voice. Profiles that came from other meetings are
+    not touched.
+
+    A name typed before the assignment is not restored: ``assign_speaker``
+    deleted it, and the label is now simply unidentified again, ready to be
+    assigned or named.
+
+    Allowed to any member of the meeting's team, the same people who may
+    assign. Unassigning a label nobody is put to is a no-op, not an error, so
+    a second press after a lost response does not fail.
+
+    No event goes out, as none goes out for an assignment. What follows the
+    change is whatever reads ``Participant.user_id`` again: C's participation
+    and E's own speaking ratio recompute from it. B does not follow it: it
+    fills an action item's assignee once from an identified label and keeps
+    it after the label is undone or reassigned (#929, B's to fix).
+    """
+    meeting = session.get(Meeting, meeting_id, with_for_update=True)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=unassigned_by.id, team_id=meeting.team_id)
+
+    participant = session.scalar(
+        sa.select(Participant).where(
+            Participant.meeting_id == meeting_id,
+            Participant.speaker_label == speaker_label,
+        )
+    )
+    if participant is None:
+        raise NotFoundError("speaker", f"{meeting_id}/{speaker_label}")
+    participant.user_id = None
+    # Bound parameters are a meeting id and a label, never a vector (#356).
+    session.execute(
+        sa.delete(AudSpeakerEmbedding).where(
+            AudSpeakerEmbedding.source_meeting_id == meeting_id,
+            AudSpeakerEmbedding.source_speaker_label == speaker_label,
+        )
+    )
+    session.flush()
+    log.info("speaker_unassigned", meeting_id=meeting_id)
+
+
 def name_speaker(
     session: Session,
     *,
