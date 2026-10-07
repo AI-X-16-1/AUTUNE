@@ -350,36 +350,36 @@ text, as settled on #509.
   they cost nothing idle and need no change if it does. A date that follows
   confirmations as they happen is option B, still open. #22's check records
   how often a proposal was `cadence` because nothing was confirmed yet.
-- **Recompute at approval** (option C, open; raised 2026-10-07 after #966).
-  With confirmed dates only, a proposal made at `intelligence.completed` is
-  mostly `cadence`. Option C computes the date again when the lead approves,
-  from the dates confirmed by then.
+- **A fresher date, on the card only** (option C; reshaped 2026-10-07 on
+  #972). With confirmed dates only, a proposal made at `intelligence.completed`
+  is mostly `cadence`. Recomputing at approval was considered and is **not
+  done**: `main/`'s owner holds that the approver runs what the card showed
+  ("approve what you saw"), and a date rebuilt inside `pending.approve` could
+  differ from it. Instead `preview` computes the date again each time the list
+  is read, from the dates confirmed by then, and shows it beside the stored
+  one as a hint ("지금 확정 기한으로 계산하면 X"). Approval runs the stored
+  arguments unchanged. A lead who wants the new date moves it on the board
+  after approving, or rejects the card and gets a fresh proposal. No hook in
+  `main/`; the hint sits with #967's mark on the same card.
 
-  *Not possible today.* `pending.approve` runs the row's stored `arguments`
-  through `run_action` and `bind_scope`, which check scope and never rebuild
-  arguments. It holds `actions` only, no read tools and no subagent hook. The
-  pieces exist: `preview` already calls read tools when the list is read
-  (`router.py`), the approval's `RunScope` can build a `Toolbox` on
-  `SUBAGENT.tools`, and `rules.suggest_from_due_dates` is pure. C needs, in
-  `main/` (김민경): an optional `Subagent.refresh(arguments, toolbox)`,
-  `approve` passing read tools and calling it before `run_action`, and
-  `preview` calling the same function so the card shows the date that will
-  run. B computing the date inside `add_followup_item` is ruled out: it moves
-  Follow-up's rule into B.
+  *Open:* how `preview` gets the same rule. `main/preview.py` importing
+  `autune_agent.subagents.followup.rules` is allowed by import-linter today
+  (no contract forbids `main` → a subagent; `main/subagents.py` already
+  imports each subagent package), but it ties `main/` to one subagent's
+  internals. Asked on #967.
 
-  | | C. At approval | B. On confirmation |
+  | | C. Hint on the card | B. On confirmation |
   | --- | --- | --- |
   | New event or contract | None | A confirmation event in `packages/contracts`, a `main/` trigger |
   | Replaced proposals, DMs | None; one DM | One per confirmation, unless debounced |
-  | Card while pending | Stable | May change while the lead reads it |
-  | Helps when | The lead approves after items are confirmed. An approval right after #632's DM is still `cadence` | Always: the pending date follows confirmations |
-  | "Approve what you saw" | Holds only if `preview` runs the same `refresh`; the gap between reading the list and clicking remains | Holds |
+  | What runs on approval | The stored date; the hint is advice | The latest pending date |
+  | Helps when | The lead reads the card after items are confirmed | Always: the pending date follows confirmations |
+  | "Approve what you saw" | Holds | Holds |
   | After approval | Both stop: the item's due date is the board's and a person's | — |
 
   Decided by #22's check (section 5, "First guesses"): the time from proposal
   to approval, and the share of M's dated items confirmed at approval. Mostly
-  after confirmation → C. Mostly before → B, or neither. Whether a hook like
-  `Subagent.refresh` suits `main/` is asked of its owner first (#972).
+  after confirmation → C's hint is enough. Mostly before → B, or neither.
 - **Stage 2: a model-written reason** (after #963). The card could say why in a
   sentence, for example that two items are due on Thursday and Friday and the
   results can be compared the following Monday. A model writes only that
@@ -455,7 +455,7 @@ text, as settled on #509.
 | ④ | #963: this revision, `rules.suggest_from_due_dates`, `graph.py` reading B's dates and proposing `basis` | 김민경 (`agent/docs/`), 1 (`subagents/followup/`) |
 | — | B's `meeting_due_dates` read, and `add_followup_item` taking an optional `basis` (section 5, #966) | B's owner |
 | — | The card's "초안 기준" mark from `basis` (`main/preview.py`, #967) | 김민경 |
-| — | Option C's hook: `Subagent.refresh`, `approve` and `preview` calling it (section 7, #972), if chosen | 김민경 |
+| — | Option C's hint: `preview` recomputing the date for the card only (section 7, #972, #967), if chosen | 김민경 |
 
 ④ merges after B's `basis` parameter. Before it, every approval fails in
 `bind_scope`. `test_the_write_is_one_b_declares_l2_and_takes_the_meeting_a_date_and_a_basis`
