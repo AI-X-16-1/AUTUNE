@@ -5,6 +5,16 @@ import { DashboardCard } from "./DashboardCard";
 import { HeatmapMockup, HoverPreview } from "./HoverPreview";
 import type { HeatmapCell } from "../types";
 
+/**
+ * Both floors behind an empty grid: B leaves out a role with fewer than three
+ * identified people at a meeting (`RoleStance`), and the server shows a pair
+ * only after three meetings scored it (`MIN_MEETINGS_PER_HEATMAP_CELL`). A
+ * small team can meet every week and still see this, so the copy names both.
+ */
+const NOT_ENOUGH_SAMPLE =
+  "표본이 충분한 직무 쌍이 아직 없습니다. 직무 입장은 그 직무에서 3명 이상 참석한 회의에서만 계산하고, " +
+  "한 직무 쌍이 회의 3회 이상 쌓이면 표시됩니다. 한 사람의 입장이 드러나지 않도록 정한 기준입니다.";
+
 const CELL = 30;
 
 /**
@@ -22,7 +32,7 @@ export function AlignmentHeatmap({ cells }: { cells: HeatmapCell[] }) {
       <HoverPreview mockup={<HeatmapMockup />}>
         <DashboardCard title="직무 쌍 얼라인먼트">
           <p style={{ margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" }}>
-            표본이 충분한 직무 쌍이 아직 없습니다. 직무 쌍마다 회의 3회 이상 쌓이면 표시됩니다 (#168).
+            {NOT_ENOUGH_SAMPLE}
           </p>
         </DashboardCard>
       </HoverPreview>
