@@ -67,6 +67,7 @@ from . import (
     calendar_sync,
     days_off,
     jira_sync,
+    meeting_notice,
     notion_backfill,
     notion_setup,
     project_send,
@@ -1138,6 +1139,104 @@ def ask_confirmations() -> list[str]:
     return asked
 
 
+@shared_task(name="autune.extraction.periodic.send_meeting_notices")
+@periodic(timedelta(minutes=5))
+def send_meeting_notices() -> list[str]:
+    """Soon after a meeting: tell each person, alone, that work of it has
+    landed on them -- how many drafts wait for their confirmation, and where
+    (the user, 2026-10-07; ``meeting_notice``). Returns the user ids one went
+    to.
+
+    ``send_daily_digests``' shape, for the same reasons: each notice claimed
+    and sent in its own transaction, a team without Slack or a person without
+    a linked account skipped and looked at again next run until the window
+    closes, an unexpected error that one notice's, and a privacy refusal never
+    swallowed -- its claim kept so it is reported once, and raised after the
+    rest are sent. Every five minutes, so "right after the meeting" is minutes;
+    a run with nothing owed is one query, and outside the sending hours it
+    finds nothing.
+    """
+    if not get_settings().after_meeting_notice:
+        return []
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = meeting_notice.notices_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({n.team_id for n in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent: list[str] = []
+    refused: list[str] = []
+    unasked: list[str] = []
+    not_linked = 0
+    leave = get_settings().leave_from_calendar
+    for notice in owed:
+        secret = secrets[notice.team_id]
+        if secret is None:
+            continue
+        if leave:
+            would_go = partial(meeting_notice.notice_would_go, owed=notice, now=now)
+            try:
+                if _held_back(would_go, notice.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message.
+                unasked.append(notice.user_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
+                log.warning(
+                    "extraction_meeting_notice_failed",
+                    user_id=notice.user_id,
+                    meeting_id=notice.meeting_id,
+                    reason=type(exc).__name__,
+                )
+                continue
+        try:
+            with session_scope() as session:
+                went = meeting_notice.send_meeting_notice(
+                    session, SlackClient(secret), notice, now=now
+                )
+        except PrivacyViolationError:
+            refused.append(notice.user_id)
+            # Reported once: the claim is kept, in its own transaction, so the
+            # next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    meeting_notice.settle_refused_notice(session, notice, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_meeting_notice_refusal_not_kept",
+                    user_id=notice.user_id,
+                    meeting_id=notice.meeting_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
+            log.warning(
+                "extraction_meeting_notice_failed",
+                user_id=notice.user_id,
+                meeting_id=notice.meeting_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent.append(notice.user_id)
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
+        log.info(
+            "extraction_meeting_notices_sent",
+            owed=len(owed),
+            sent=len(sent),
+            not_linked=not_linked,
+        )
+    _raise_refusals("meeting notice", refused, unasked)
+    return sent
+
+
 @shared_task(name="autune.extraction.periodic.send_weekly_digests")
 @periodic(timedelta(minutes=10))
 def send_weekly_digests() -> list[str]:
@@ -1418,8 +1517,9 @@ def refresh_public_holidays() -> int:
     keep them (``days_off``), so no digest goes on one. Returns how many days
     were kept; 0 when nothing was read.
 
-    Only where a digest is switched on and ``public_holiday_calendar`` is not
-    off: a deployment that sends none makes no call. A read that fails leaves
+    Only where a digest or the after-meeting notice is switched on and
+    ``public_holiday_calendar`` is not off: a deployment that sends none makes
+    no call. A read that fails leaves
     the last good one in place -- and once that is older than
     ``days_off.FRESH_FOR`` the table in code answers -- so the failure is
     logged by type and not raised: there is nothing for a retry queue to do
@@ -1427,7 +1527,7 @@ def refresh_public_holidays() -> int:
     """
     settings = get_settings()
     if not settings.public_holiday_calendar or not (
-        settings.daily_digest or settings.weekly_digest
+        settings.daily_digest or settings.weekly_digest or settings.after_meeting_notice
     ):
         return 0
     now = datetime.now(tz=UTC)

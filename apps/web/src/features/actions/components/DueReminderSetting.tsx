@@ -13,7 +13,8 @@ import {
  * the day before an item of theirs is due and once after it passes. On unless
  * they turn it off. It changes only their own; nobody else's is shown here.
  *
- * The same switch governs the Monday digest and the morning DM. The Monday
+ * The same switch governs the Monday digest, the morning DM and the notice
+ * that goes after a meeting (a count of drafts waiting, and a link). The Monday
  * digest goes on the week's first working day when Monday is a public holiday
  * (#850), and the label says so.
  */
@@ -46,6 +47,7 @@ export function DueReminderSetting() {
     ["마감 알림", setting.sent_here],
     ["월요일 요약", setting.weekly_here],
     ["아침 요약", setting.daily_here],
+    ["회의 직후 알림", setting.after_meeting_here],
   ];
   const sent = kinds.filter(([, here]) => here).map(([name]) => name);
   const unsent = kinds.filter(([, here]) => !here).map(([name]) => name);
@@ -72,8 +74,8 @@ export function DueReminderSetting() {
           onChange={(event) => change(event.target.checked)}
         />
         마감 알림 받기 (마감 전날과 마감이 지난 뒤 한 번, 월요일의 내 할 일
-        요약 — 월요일이 공휴일이면 그 주의 첫 평일 —, 화~금 아침 요약 · Slack
-        DM)
+        요약 — 월요일이 공휴일이면 그 주의 첫 평일 —, 화~금 아침 요약, 회의
+        직후 내 담당 항목 알림 · Slack DM)
       </label>
       {unsent.length > 0 && (
         <span className="text-[var(--color-ink-muted)]" style={meta}>

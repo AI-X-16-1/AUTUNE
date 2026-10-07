@@ -515,6 +515,22 @@ the feature needs.
     not away. Turn it on only once what the deployment tells people about
     the calendar connection says so; the settings screen says it where it is
     on.
+  - **Slack, the notice after a meeting:** soon after a meeting is
+    processed, a direct message to a person the pipeline has put work of that
+    meeting on, on the meeting's team now. It carries the meeting's title --
+    a value a person typed, sent as stored, as the reminders carry it -- **how
+    many** drafts wait for that person's confirmation, and a link to the
+    meeting's 액션 tab. It carries nothing of a draft: not its text, not its
+    date. A draft is a model's guess until a person confirms it, and
+    unconfirmed content does not reach an outbound surface (#246; the agent
+    layer's rule 3). An item of theirs that a person has already confirmed is
+    named with its date, as in the morning DM. The count is of items waiting,
+    said to the person they wait for; nothing is counted about a person and no
+    utterance is read. Autune keeps only that the notice went
+    (`ext_meeting_notices`: the meeting, the person, when), once a person and
+    meeting. 09:00-17:00 Korea time on a working day; the reminder switch and
+    a person's own leave dates stop it. A notice the outbound check refuses is
+    not sent, is reported once, and is not tried again.
   - **Public holidays:** no morning DM or Monday DM goes on one. The days
     come from Google's public calendar of Korea's holidays, fetched at its
     public address with no credentials -- nobody's Google grant is used and

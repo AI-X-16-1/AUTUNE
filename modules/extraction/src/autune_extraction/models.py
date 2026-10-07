@@ -860,6 +860,23 @@ class ExtDailyDigest(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtMeetingNotice(Base):
+    """That a person was told, right after a meeting, that work of it had
+    landed on them (the user, 2026-10-07; ``meeting_notice``). The primary key
+    is the "once": one notice a person and meeting. No text and no count: the
+    message is not kept. Goes with the meeting and with the person."""
+
+    __tablename__ = "ext_meeting_notices"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtNotificationPause(Base):
     """The days a person asked not to get the morning DM or Monday's digest --
     leave, as they set it themselves (the user, 2026-10-05).

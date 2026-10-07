@@ -665,7 +665,7 @@ def answer_confirmation(
 
 
 def _reminder_setting(on: bool) -> DueReminderSetting:
-    """The person's choice, and which of the three messages it governs this
+    """The person's choice, and which of the messages it governs this
     deployment sends at all."""
     settings = get_settings()
     return DueReminderSetting(
@@ -673,6 +673,7 @@ def _reminder_setting(on: bool) -> DueReminderSetting:
         sent_here=settings.due_reminders,
         weekly_here=settings.weekly_digest,
         daily_here=settings.daily_digest,
+        after_meeting_here=settings.after_meeting_notice,
     )
 
 

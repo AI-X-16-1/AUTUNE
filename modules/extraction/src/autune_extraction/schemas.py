@@ -450,18 +450,21 @@ class DueReminderSetting(BaseModel):
     """The caller's own due-date reminders (review of #751).
 
     ``on`` is their choice: on unless they turned it off. It is one switch
-    for three messages -- the due-date reminder, the Monday digest and the
-    morning DM -- and a deployment turns each of the three on by itself, so
-    the screen is told which of them this one sends: ``sent_here`` for the
-    reminder (``AUTUNE_EXTRACTION_DUE_REMINDERS``), ``weekly_here`` for the
-    Monday digest (``..._WEEKLY_DIGEST``), ``daily_here`` for the morning DM
-    (``..._DAILY_DIGEST``). ``sent_here`` alone had the screen say "this
-    server sends none yet" on a deployment that sent the two digests."""
+    for several messages -- the due-date reminder, the Monday digest, the
+    morning DM and the notice after a meeting -- and a deployment turns each
+    on by itself, so the screen is told which of them this one sends:
+    ``sent_here`` for the reminder (``AUTUNE_EXTRACTION_DUE_REMINDERS``),
+    ``weekly_here`` for the Monday digest (``..._WEEKLY_DIGEST``),
+    ``daily_here`` for the morning DM (``..._DAILY_DIGEST``),
+    ``after_meeting_here`` for the notice after a meeting
+    (``..._AFTER_MEETING_NOTICE``). ``sent_here`` alone had the screen say
+    "this server sends none yet" on a deployment that sent the two digests."""
 
     on: bool
     sent_here: bool
     weekly_here: bool = False
     daily_here: bool = False
+    after_meeting_here: bool = False
 
 
 class DueReminderSettingIn(BaseModel):
