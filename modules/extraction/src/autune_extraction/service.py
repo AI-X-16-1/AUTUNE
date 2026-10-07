@@ -5211,6 +5211,9 @@ def trash_item_page(
     notion.trash_page(page_id)
 
 
+NOTION_TEXT_LIMIT = 2000
+"""Notion's limit on one text object; a longer line is cut, never sent whole."""
+
 NOTION_STATUS_LABELS: Mapping[str, str] = {
     ActionStatus.NEEDS_CONFIRMATION.value: "확인 필요",
     ActionStatus.TODO.value: "진행 전",
@@ -5425,10 +5428,12 @@ def notion_properties(
     """
 
     def text(value: str) -> dict[str, Any]:
-        return {"rich_text": [{"type": "text", "text": {"content": value[:2000]}}]}
+        return {"rich_text": [{"type": "text", "text": {"content": value[:NOTION_TEXT_LIMIT]}}]}
 
     fields: dict[str, Any] = {
-        "title": {"title": [{"type": "text", "text": {"content": item.description[:2000]}}]},
+        "title": {
+            "title": [{"type": "text", "text": {"content": item.description[:NOTION_TEXT_LIMIT]}}]
+        },
         "status": {"select": {"name": NOTION_STATUS_LABELS.get(item.status, item.status)}},
         "confidence": {"number": round(item.confidence, 3)},
     }
@@ -5794,13 +5799,13 @@ def decision_notion_properties(
     Autune; the page carries only how many there were.
     """
     fields: dict[str, Any] = {
-        "title": {"title": [{"type": "text", "text": {"content": statement[:2000]}}]},
+        "title": {"title": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]},
         "confidence": {"number": round(decision.confidence, 3)},
         "sources": {"number": len(decision.sources)},
     }
     if meeting_title:
         fields["meeting"] = {
-            "rich_text": [{"type": "text", "text": {"content": meeting_title[:2000]}}]
+            "rich_text": [{"type": "text", "text": {"content": meeting_title[:NOTION_TEXT_LIMIT]}}]
         }
     return {names[key]: value for key, value in fields.items() if key in names}
 

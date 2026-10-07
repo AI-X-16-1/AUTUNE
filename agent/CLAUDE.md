@@ -13,6 +13,7 @@ Placement: ADR 0010 (`Accepted`; #260 closed 2026-09-29).
 | `src/autune_agent/subagents/followup/` | 박재경 |
 | `src/autune_agent/subagents/workload/` | 강민구 |
 | `src/autune_agent/subagents/report/` | 이승환 |
+| `src/autune_agent/subagents/tracker/` | 강민구 |
 
 Stay in your own `subagents/<name>/`. A change you need in `main/` is an issue
 to its owner.

@@ -142,6 +142,7 @@ modules = [
     "autune_agent.subagents.followup",
     "autune_agent.subagents.workload",
     "autune_agent.subagents.report",
+    "autune_agent.subagents.tracker",
 ]
 
 # A subagent reads a module only through the Toolbox, which holds its allow-list
