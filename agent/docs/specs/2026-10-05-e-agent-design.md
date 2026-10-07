@@ -486,6 +486,18 @@ The sections above are left as designed; each affected one points here.
       differ in their stances. After that, the question and a reworded one
       reached Report on every run (five of five). A Research question ("아무도
       확인 못 한 쟁점 조사해줘") still went to Research.
+    - **Weekly-report lookups went to the ask loop** (2026-10-07, synthetic
+      team only; see the next point). "지난주 주간 리포트 보여줘" and "주간 리포트에
+      뭐라고 나왔어?" went to the ask loop on four runs of five, and
+      `audio.recent_meetings` answered with a list of meetings. Report's
+      description now names the weekly report E posts to the team channel, and
+      what a person asks of it. After that, five of five reached
+      `weekly_reports`. "지난주에 무슨 회의 했어?" and "이번 주 내 할 일 뭐 남았어?"
+      still went to the ask loop.
+    - **Real-model checks use a synthetic team only** until #935 is decided.
+      The checks above, from 2026-10-06/07, read a copy of the local dev DB,
+      which holds the team's recordings; the facts are on #935. The current way
+      is an empty scratch database at main's heads, seeded with one mock team.
 13. **`send_empty` (section 4).** `set_weekly_report_schedule`'s `send_empty`
     is optional; `None` keeps the team's current value, so a schedule change
     no longer turns it off.
