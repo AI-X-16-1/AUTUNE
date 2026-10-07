@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from autune_contracts.enums import ActionStatus
 from autune_core import Base, Meeting, TeamMember, User, Utterance
 from autune_extraction import service, tools
 from autune_extraction.config import ExtractionSettings
@@ -35,7 +36,7 @@ from autune_extraction.models import (
     ExtProject,
     ExtSyncFailure,
 )
-from autune_extraction.schemas import ActionItemCreate
+from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 from autune_extraction.slots import KST
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
@@ -199,6 +200,121 @@ def test_unconfirmed_items_are_counted_never_quoted(session: Session) -> None:
     titles = [i["title"] for i in result["items"]]
     assert titles == ["act_confirmed 할 일"]
     assert "확인 대기 1건" in result["summary"]
+
+
+# --- meeting_due_dates (#966) ----------------------------------------------------------
+
+
+def test_due_dates_of_an_unknown_meeting_are_ok_false_not_an_exception(session: Session) -> None:
+    result = tools.meeting_due_dates(session, "mtg_nope")
+
+    assert result["ok"] is False and "mtg_nope" in result["reason"]
+    assert result["items"] == [] and result["evidence"] == []
+
+
+def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
+    session: Session,
+) -> None:
+    """One row, every date in it, earliest first, a shared day twice -- and no
+    title, assignee or text of any item."""
+    item(session, "act_b", due=TODAY + timedelta(days=5))
+    item(session, "act_a", due=TODAY + timedelta(days=2), status="in_progress")
+    item(session, "act_c", due=TODAY + timedelta(days=5), assignee="user_gone")
+    item(session, "act_late", due=TODAY - timedelta(days=3))
+    item(session, "act_undated")
+    item(session, "act_done", status="done", due=TODAY + timedelta(days=1))
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["ok"] is True
+    (row,) = result["items"]
+    assert row == {
+        "title": "기한",
+        "due_dates": [
+            {"date": (TODAY - timedelta(days=3)).isoformat(), "confirmed": True},
+            {"date": (TODAY + timedelta(days=2)).isoformat(), "confirmed": True},
+            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
+            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
+        ],
+    }
+    assert result["evidence"] == ["act_late", "act_a", "act_b", "act_c"]
+    assert result["summary"] == (
+        "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 대기 0건."
+    )
+    said = str(result)
+    assert "할 일" not in said, "no item's text"
+    assert "박지영" not in said and "이건우" not in said and "user_" not in said, (
+        "and nobody's name"
+    )
+
+
+def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Session) -> None:
+    """#261 rule 3, and the user on #966: confirmed items' dates only. The
+    draft's date is the earliest here, so it would lead the list if it leaked;
+    confirming it -- through the board's own write -- is what lets it out."""
+    draft_day = TODAY + timedelta(days=1)
+    item(session, "act_confirmed", due=TODAY + timedelta(days=4))
+    item(session, "act_draft", status="needs_confirmation", due=draft_day)
+    item(session, "act_draft_undated", status="needs_confirmation")
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    dates = [entry["date"] for entry in result["items"][0]["due_dates"]]
+    assert dates == [(TODAY + timedelta(days=4)).isoformat()]
+    assert draft_day.isoformat() not in str(result)
+    assert result["evidence"] == ["act_confirmed"], "no card can point at a draft"
+    assert "확인 대기 2건" in result["summary"]
+    assert all(entry["confirmed"] is True for entry in result["items"][0]["due_dates"])
+
+    row = session.get(ExtActionItem, "act_draft")
+    assert row is not None
+    service.update_action_item(session, row, ActionItemUpdate(status=ActionStatus.TODO))
+    session.flush()
+
+    after = tools.meeting_due_dates(session, MEETING)
+    assert [entry["date"] for entry in after["items"][0]["due_dates"]] == [
+        draft_day.isoformat(),
+        (TODAY + timedelta(days=4)).isoformat(),
+    ]
+    assert after["evidence"] == ["act_draft", "act_confirmed"]
+    assert "확인 대기 1건" in after["summary"]
+
+
+def test_only_drafts_have_dates_means_no_row_and_no_evidence(session: Session) -> None:
+    """Right after a meeting nearly everything waits: the caller gets counts
+    and falls back to its own rule."""
+    item(session, "act_draft", status="needs_confirmation", due=TODAY + timedelta(days=1))
+    item(session, "act_open")
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["ok"] is True
+    assert result["items"] == [] and result["evidence"] == []
+    assert result["summary"] == (
+        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 대기 1건."
+    )
+
+
+def test_every_date_is_in_the_one_row_past_the_five_item_cap(session: Session) -> None:
+    """``_result`` keeps five rows; the rule this feeds needs all the dates."""
+    for n in range(8):
+        item(session, f"act_{n}", due=TODAY + timedelta(days=n))
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert len(result["items"]) == 1 and result["truncated"] is False
+    assert len(result["items"][0]["due_dates"]) == 8
+    assert len(result["evidence"]) == 8
+
+
+def test_another_meetings_dates_are_not_this_meetings(session: Session) -> None:
+    item(session, "act_here", due=TODAY + timedelta(days=2))
+    item(session, "act_there", due=TODAY + timedelta(days=9), meeting=OTHER_MEETING)
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["evidence"] == ["act_here"]
+    assert (TODAY + timedelta(days=9)).isoformat() not in str(result)
 
 
 def test_reassignment_then_overdue_come_first(session: Session) -> None:
