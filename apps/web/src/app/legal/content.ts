@@ -51,7 +51,10 @@
  * - one switch of the person's turns all three off (#771, #826, #833). Their
  *   own pause dates (#833, ext_notification_pauses) stop the two digests and
  *   not the reminders, are theirs alone, and are deleted once they have
- *   ended: 제2조, 제3조 and the Slack row say exactly that much.
+ *   ended: 제2조, 제3조 and the Slack row say exactly that much. They go to
+ *   the person's own Google Calendar only when that person ticks "내 Google
+ *   캘린더에도 추가" (leave_calendar, 2026-10-06): the Google Calendar row of
+ *   제5조 says the dates, the choice and that the event stays there.
  * - an invitation is mailed from the inviter's OWN Gmail, only when they
  *   choose it for that invitation (#760): the invited address, the inviter's
  *   name, the team's name and the link go to Google, under a grant that can
@@ -469,10 +472,10 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Google LLC (Google Calendar)",
-            "액션 아이템의 내용 및 기한. 참석자와 전사 내용은 포함하지 않습니다.",
-            "담당자 본인의 일정 등록",
-            "담당자가 본인의 캘린더를 연결한 때부터",
-            "해당 서비스의 약관 및 이용자의 설정에 따름",
+            "액션 아이템의 내용 및 기한. 참석자와 전사 내용은 포함하지 않습니다. 이용자가 본인의 캘린더에도 추가하기를 선택한 경우에 한하여 본인이 정한 알림 중지 기간(시작일 및 종료일)",
+            "담당자 본인의 일정 등록. 이용자가 선택한 경우 본인의 휴가 일정(비공개 종일 일정) 등록",
+            "담당자가 본인의 캘린더를 연결한 때부터. 알림 중지 기간은 이용자가 본인의 캘린더에도 추가하기를 선택하고 저장한 때에 한하며, 선택하지 않은 기간은 Google에 전송하지 않습니다.",
+            "해당 서비스의 약관 및 이용자의 설정에 따름. 캘린더에 추가한 휴가 일정은 이용자가 선택을 해제하거나 기간을 해제하면 삭제하며, 종료일이 지난 일정은 이용자 본인의 캘린더에 남습니다.",
           ],
           [
             "Google LLC (Gmail)",

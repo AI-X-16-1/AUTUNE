@@ -31,7 +31,33 @@ def _participant(session: Session, meeting_id: str, *, user_id: str | None, labe
     row = Participant(meeting_id=meeting_id, user_id=user_id, speaker_label=label, consented=True)
     session.add(row)
     session.flush()
+    if user_id is not None:
+        _join_team(session, meeting_id, user_id)
     return row.id
+
+
+def _join_team(session: Session, meeting_id: str, user_id: str) -> None:
+    """A participant with an account is on the meeting's team, as in production."""
+    from autune_core import Meeting, TeamMember
+
+    team_id = session.get(Meeting, meeting_id).team_id
+    exists = session.scalar(
+        sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    if exists is None:
+        session.add(TeamMember(team_id=team_id, user_id=user_id))
+        session.flush()
+
+
+def _leave_team(session: Session, meeting_id: str, user_id: str) -> None:
+    """What #937's ``leave_team`` does to E: the membership goes, the participant rows stay."""
+    from autune_core import Meeting, TeamMember
+
+    team_id = session.get(Meeting, meeting_id).team_id
+    session.execute(
+        sa.delete(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    session.flush()
 
 
 def _utter(session: Session, meeting_id: str, participant_id: str | None, start, end) -> None:
@@ -93,6 +119,21 @@ def test_dms_each_identified_participant_their_own_ratio(db_session: Session, me
     assert sent == 3
     assert {m.channel for m in slack.sent} == {alice, bob, carol}
     assert all(m.is_dm for m in slack.sent)
+
+
+def test_someone_who_left_the_team_gets_no_dm_and_still_counts(
+    db_session: Session, meeting: str
+) -> None:
+    """#937: their rows stay, so the others' shares are unchanged; the team's bot
+    does not DM someone who is no longer on the team."""
+    alice, bob, carol = _three_speakers(db_session, meeting)
+    _leave_team(db_session, meeting, carol)
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 2
+    assert {m.channel for m in slack.sent} == {alice, bob}
 
 
 def test_a_speaker_with_no_user_account_is_skipped(db_session: Session, meeting: str) -> None:

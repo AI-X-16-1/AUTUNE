@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from sqlalchemy.orm import Session
 
+from autune_contracts import CONTRACT_VERSION
 from autune_core import Meeting, Utterance
 from autune_intelligence import service
 from autune_intelligence.forget import SPEECH_DELETED_TEXT, forget_speech
@@ -57,7 +58,7 @@ def _copies(
     db_session: Session, meeting: str, *, mine: str, theirs: str, previous: str | None = None
 ) -> IntelCompletion:
     extraction: dict[str, Any] = {
-        "contract_version": "2.4",
+        "contract_version": CONTRACT_VERSION,
         "meeting_id": meeting,
         "action_items": [
             {"id": "act_line", "description": LINE, "source_utterance_ids": [mine], **CONFIRMED},
@@ -85,7 +86,7 @@ def _copies(
         "ambiguous_agreements": [{"utterance_id": mine, "reason": "확인 필요"}],
     }
     gap = {
-        "contract_version": "2.4",
+        "contract_version": CONTRACT_VERSION,
         "meeting_id": meeting,
         "topics": [
             {"id": "topic_mine", "label": "결제 API 스펙", "utterance_ids": [mine]},
@@ -126,7 +127,7 @@ def _copies(
             }
         )
     context = {
-        "contract_version": "2.4",
+        "contract_version": CONTRACT_VERSION,
         "meeting_id": meeting,
         "topic_links": [
             {"topic_label": "결제 API 스펙", "linked_meeting_id": meeting},
@@ -300,7 +301,7 @@ def test_what_b_deletes_or_rewrites_goes_from_es_copy_too(db_session: Session, t
             meeting_id=meeting,
             first_seen_at=datetime.now(UTC),
             extraction_payload={
-                "contract_version": "2.4",
+                "contract_version": CONTRACT_VERSION,
                 "meeting_id": meeting,
                 "action_items": [
                     {
@@ -384,7 +385,7 @@ def test_a_topic_gone_from_one_meeting_keeps_its_links_in_another(
                 meeting_id=meeting,
                 first_seen_at=datetime.now(UTC),
                 gap_payload={
-                    "contract_version": "2.4",
+                    "contract_version": CONTRACT_VERSION,
                     "meeting_id": meeting,
                     "topics": [
                         {"id": "topic_mine", "label": only_mine, "utterance_ids": [mine]},
@@ -394,7 +395,7 @@ def test_a_topic_gone_from_one_meeting_keeps_its_links_in_another(
                     "gaps": [],
                 },
                 context_payload={
-                    "contract_version": "2.4",
+                    "contract_version": CONTRACT_VERSION,
                     "meeting_id": meeting,
                     "topic_links": [
                         {"topic_label": only_mine, "linked_meeting_id": meeting},

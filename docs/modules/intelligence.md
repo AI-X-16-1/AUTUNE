@@ -38,6 +38,7 @@ report, and deliver each participant their own speaking ratio.
 | --- | --- | --- |
 | `apps/web`, `apps/bot` | `IntelligenceSnapshot` | `autune.intelligence.completed` |
 | agent layer (Report subagent) | `Payload` (the meeting id only) | `autune.intelligence.meeting_report_changed` -- a person edited a report's draft (#674) |
+| C | `MeetingReportPosted` (channel and the report's ts) | `autune.intelligence.meeting_report_posted` -- a meeting's report went out, once, so C's question cards can reply in its thread (#824) |
 | Slack DM | Personal speaking ratio, to that person only | — |
 | Slack channel | Weekly report, prediction warnings | — |
 
@@ -61,7 +62,10 @@ See `../architecture/async-pipeline.md`.
 2. **Quality score** — grade A–F from decision density, gap count, action-item
    confirmation rate (the share of the meeting's items that got confirmed,
    fixed when the meeting is scored; stored as `action_item_completion_rate`),
-   and participation balance.
+   and participation balance. A `GapReport` with `measured: false` (no
+   consented speech reached C, #248) leaves the gap burden and participation
+   balance unscored and out of the weights, never "no gaps"; `null`, from a
+   producer before contract 2.5, reads as measured.
 3. **Gap classification** — SetFit classifies each gap's `Gap.title` (not
    `Gap.category` — C's category is free text whose vocabulary is not stable
    across meetings, the reason this step exists at all, and mixing it into the
@@ -330,7 +334,12 @@ built: it needs `chat.delete` in `packages/integrations` and a decision on who
 may do it.
 
 `/me/speaking-ratio` authorizes on `requester_id == subject_id`. There is no
-admin override and no team-level variant of this endpoint.
+admin override and no team-level variant of this endpoint. The requester must
+also still be on the meeting's team: someone who left keeps their participant
+rows (#937) but reads nothing derived from the team's meetings,
+their own ratio included, and `send_personal_feedback` sends them no DM through
+that team's bot. Their speech still counts in everyone else's share, as the
+meeting record does.
 
 ## Celery tasks
 

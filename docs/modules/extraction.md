@@ -504,11 +504,46 @@ other module's tables.
 - A DM to each person on a Tuesday-to-Friday morning (09:00–12:00 Korea time):
   what changed on their own items since the last one and what is theirs to do
   today (`reminders.build_daily_digest`,
-  `autune.extraction.periodic.send_daily_digests`). Monday has the weekly
+  `autune.extraction.periodic.send_daily_digests`). Today's part names, after
+  what is late and what is due today, each item of theirs that is in progress
+  or has no due date and that nobody has touched for five days or more
+  ("6일째 그대로"), longest first -- `reminders.STALLED_AFTER_DAYS`, counted
+  from when the item was made or last edited. A not-started item whose date
+  is still ahead is not named. Monday has the weekly
   digest instead and a weekend has nothing. Not sent to a person who turned
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:
   `AUTUNE_EXTRACTION_DAILY_DIGEST=true` turns it on
+- Those leave dates on the person's own Google Calendar, only when they tick
+  "내 Google 캘린더에도 추가" beside them (`leave_calendar.py`, 2026-10-06):
+  `PUT /me/notification-pause` takes `on_calendar` -- `true` the tick,
+  `false` the box unticked, and left out by a screen that drew no box, which
+  leaves the calendar as it stands: an event already there moves with the
+  dates and keeps its id, and none is made where there is none (lsh2217's
+  review of #922: read as `false`, a dates-only save by a person whose
+  calendar was disconnected dropped the id, and the next ticked save made a
+  second event) -- and
+  writes, moves or removes one private all-day event titled "휴가" in the
+  request, through the person's own grant; the answer's `calendar` says what
+  happened (`added`, `removed`, `removal_queued`, `not_connected`,
+  `not_removed`, `failed`, `off`) and the dates are saved whichever it is.
+  `not_connected` is an event that was not put there; `not_removed` is one
+  that is there and cannot be taken off, because the calendar is no longer
+  connected -- the person is told to delete it themselves. **Google is asked
+  with no transaction open** (mminjae97's review of #922): the dates are
+  committed first, then the calendar is asked, holding neither the row's lock
+  nor a connection, then the answer is written in a second transaction. One
+  save at a time is at the calendar for a person -- the first leaves
+  `calendar_claimed_at` on the row, and a save that finds a claim younger
+  than two minutes (`leave_calendar.CLAIM_FOR`) is refused with 409 and
+  changes nothing, the dates included -- so a double press still makes one
+  event. A claim left by a process that died stops holding after those two
+  minutes. A save that comes back to find its claim taken over, or the row
+  gone, writes nothing and queues the event it made for removal. The read says
+  `calendar_connected` so the screen draws the box only then. The event's id
+  is kept on the pause (`calendar_event_id`) and goes with it after the last
+  day; the event itself then stays on the calendar. Rules and what is said
+  to the person: `docs/architecture/privacy.md` section 6
 - Neither digest goes on a public holiday (`days_off.py`): the days are read
   twice a day from Google's public calendar of Korea's holidays, with no
   credentials (`autune.extraction.periodic.refresh_public_holidays`;

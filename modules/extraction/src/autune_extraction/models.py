@@ -898,6 +898,20 @@ class ExtNotificationPause(Base):
     message. It is not kept past its last day: the morning run deletes a range
     that has ended (``service.forget_ended_pauses``). The due-date reminders
     do not read it; a deadline is not put off by leave. Goes with the account.
+
+    **The one way the dates leave Autune is the person's own tick**
+    (``leave_calendar``, the user 2026-10-06): "내 Google 캘린더에도 추가" puts
+    one private all-day event over the range on their own calendar, through
+    their own grant. ``calendar_event_id`` is that event, kept so a changed
+    range moves it and a cleared one removes it; ``None`` for a pause nobody
+    asked to have on a calendar. The id goes with the row, and the event then
+    stays on the calendar as the person's own.
+
+    ``calendar_claimed_at`` is when a save of this person's went to the
+    calendar and has not come back: Google is asked with no transaction open,
+    so this, not the row's lock, is what keeps a second save out meanwhile
+    (``leave_calendar.CLAIM_FOR``). ``None`` at rest. It says nothing a
+    reader could use -- no screen, route or log carries it.
     """
 
     __tablename__ = "ext_notification_pauses"
@@ -911,6 +925,10 @@ class ExtNotificationPause(Base):
     starts_on: Mapped[date] = mapped_column(Date, nullable=False)
     ends_on: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    calendar_event_id: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    calendar_claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ExtPublicHoliday(Base):
@@ -1182,6 +1200,8 @@ class ExtCalendarCleanup(Base):
     ``ext_calendar_events`` goes with the meeting, so the meeting hook copies
     the event here first and ``tasks.drain_calendar_cleanup`` removes it with
     that person's own grant. No meeting key: the row has to outlive the meeting.
+    A leave event Google did not let go of when its dates were cleared waits
+    here too (``leave_calendar``).
     ``user_id`` cascades -- an account deletion removes its own events in its
     hook, and nothing could remove them after.
     """

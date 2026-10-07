@@ -32,6 +32,9 @@ missing. Never block a user-visible result on a failed module.
 `IntelligenceSnapshot` on `autune.intelligence.completed`. A plain `Payload`
 (the meeting id) on `autune.intelligence.meeting_report_changed` when a person
 edits a report's draft, for the Report subagent to propose its post (#674).
+A `MeetingReportPosted` (channel and the report's ts) on
+`autune.intelligence.meeting_report_posted` once a meeting's report is posted,
+so C's question cards can reply in its thread (#824).
 
 ## Owns
 
@@ -62,7 +65,9 @@ section 3 is binding.
 - **No small-group distributions.** A distribution over a four-person meeting
   identifies everyone; anonymization does not help.
 - `/api/intelligence/me/speaking-ratio` authorizes on
-  `requester_id == subject_id`, with no admin override.
+  `requester_id == subject_id`, with no admin override, and only while the
+  requester is still on the meeting's team. Someone who left keeps their
+  participant rows (#937) but gets neither the read nor the DM.
 - **The influence map (Phase 2) goes to the person themselves and nobody
   else — decided on #28.** Same delivery as speaking ratio (subject-only,
   by DM); it must never land on the shared dashboard, and no admin override.

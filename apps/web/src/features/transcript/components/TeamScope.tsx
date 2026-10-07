@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ApiError } from "@/shared/api/client";
 import { Button, ChipToggle } from "@/shared/ui";
@@ -8,12 +8,16 @@ import { Button, ChipToggle } from "@/shared/ui";
 import { listTeams, pinTeam, unpinTeam } from "../api";
 import {
   announceTeams,
+  LISTED_TEAMS,
   onTeamChosen,
   onTeamsChanged,
   rememberTeam,
+  teamsToList,
   teamToOpen,
 } from "../selectedTeam";
 import type { TeamSummary } from "../types";
+
+import { below, TeamsWindow, type Place } from "./TeamsWindow";
 
 /**
  * Which team a team-level screen is about — the one thing module A knows that
@@ -29,6 +33,17 @@ import type { TeamSummary } from "../types";
  * One team: rendered straight through. Several: a row of chips above the
  * screen. None: said in words, because a screen asked for a team that does
  * not exist would only show an error of its own.
+ *
+ * **The row shows three teams, and "더보기" for the rest** (the user,
+ * 2026-10-07: "내부의 팀 목록들도 사이드바처럼 3개만 보이고 더보기로"). They are
+ * the sidebar's three (`teamsToList`): the first three as the server orders
+ * them -- pinned first, then in the order joined -- with the team on screen
+ * always one of them, in the last place when it is not among the first.
+ * "더보기" opens the window that lists every team (`TeamsWindow`), the same
+ * one the sidebar and the home screen open; a team picked there is the team
+ * on screen. It is offered only to somebody on more than three teams: with
+ * three or fewer the row already shows them all, and pinning has its own
+ * button here.
  *
  * **A team once chosen stays chosen** (the user, 2026-10-06): on this screen
  * and on every other one that mounts this row, until the person picks another
@@ -49,6 +64,9 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
   const [teamId, setTeamId] = useState<string | null>(null);
   const [pinning, setPinning] = useState(false);
   const [pinProblem, setPinProblem] = useState<string | null>(null);
+  const [at, setAt] = useState<Place | null>(null);
+  const more = useRef<HTMLSpanElement>(null);
+  const close = useCallback(() => setAt(null), []);
 
   const togglePin = async (team: TeamSummary) => {
     setPinning(true);
@@ -111,7 +129,7 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
       {teams.length > 1 && (
         <div style={{ marginBottom: "var(--space-16)" }}>
           <div className="flex flex-wrap items-center gap-1.5">
-            {teams.map((team) => (
+            {teamsToList(teams, teamId).map((team) => (
               <ChipToggle
                 key={team.team_id}
                 selected={team.team_id === teamId}
@@ -120,6 +138,39 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
                 {team.pinned ? `${team.name} · 고정` : team.name}
               </ChipToggle>
             ))}
+            {teams.length > LISTED_TEAMS ? (
+              <span ref={more}>
+                <Button
+                  tone="text"
+                  size="compact"
+                  type="button"
+                  aria-haspopup="dialog"
+                  aria-expanded={at !== null}
+                  aria-controls="teams-window"
+                  aria-label="팀 더보기"
+                  onClick={() =>
+                    setAt((open) =>
+                      open === null && more.current ? below(more.current, teams.length) : null,
+                    )
+                  }
+                >
+                  더보기
+                </Button>
+              </span>
+            ) : null}
+            {at !== null ? (
+              <TeamsWindow
+                teams={teams}
+                teamId={teamId}
+                at={at}
+                opener={more}
+                onChoose={(chosenId) => {
+                  rememberTeam(chosenId);
+                  close();
+                }}
+                onClose={close}
+              />
+            ) : null}
             {current ? (
               <Button
                 tone="text"
