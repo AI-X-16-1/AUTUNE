@@ -15,6 +15,9 @@ export type PendingAction = {
   body: string;
   /** Approved, but the outcome was never recorded; a person must check it. */
   needs_check: boolean;
+  /** The card's meeting, read when the list is read (#854). */
+  meeting_title?: string | null;
+  meeting_started_at?: string | null;
 };
 
 export type RejectReason =
