@@ -355,8 +355,10 @@ the measurement kept BM25; see "Changes during implementation", 4 and 7.)*
    workarounds live in one place in `chat.py`: the list of actions the chat
    path declares (without `set_weekly_report_schedule`) and one
    meeting-scope check before a post is proposed. Lifting them once #862
-   lands is a few lines and their tests. *(Request 1 landed as #874 and the
-   schedule change is lifted; requests 2 and 3 are open, with #879.)*
+   lands is a few lines and their tests. *(All three landed: request 1 as #874,
+   and the schedule change is lifted (#911); request 2 as #896; request 3 as
+   #897. #879's two follow-ups landed as #923 and #924. See "Changes during
+   implementation", 10 and 12.)*
 1. **E's tools and the glossary** (module E, plus `agent-layer.md` section 4),
    with `expected_draft_id`. #821, which this needed, is merged. *(Built as
    the plan's Tasks 1 to 7; see "Changes during implementation", 9.)*
@@ -450,6 +452,17 @@ The sections above are left as designed; each affected one points here.
     section 4. #862's item 2 covers only team-scoped runs. This needs a
     further `main/` change: a chat redraft or post supersedes the pipeline's
     post row for the same meeting.
+
+    *Resolved in `main/` (2026-10-06):*
+    - **#924:** a chat proposal of the same action now supersedes the
+      pipeline's pending card for that meeting, so neither card above stays
+      live.
+    - **#896:** a team-scoped run's L2 is keyed on the meeting its arguments
+      name. E still proposes a post only from a meeting-scoped run, though:
+      `request_post` from the team view points to the meeting screen.
+      `publish_meeting_report`'s arguments carry the `draft_id` only, so
+      lifting that is an E change. The post proposal would have to name its
+      `meeting_id`.
 11. **Links (section 4).** The answers name the meeting screen and the
     dashboard card in words. They do not link them, unlike section 4's
     "links".
@@ -459,6 +472,20 @@ The sections above are left as designed; each affected one points here.
     "결정 밀도가 뭐야?" or "주간 리포트 언제 나가?" may never reach the E agent
     until the router's rule changes. That rule is `main/`, 김민경's. Section
     1's goal depends on it.
+
+    *Resolved (2026-10-06/07):*
+    - **#923:** a subagent can declare `answers_lookups=True`, and a lookup
+      that fits its description then reaches it. The Report subagent sets it.
+    - **Checked on a copy of the dev DB with the real model** (2026-10-07):
+      "결정 밀도가 뭐야?", "완료율은 어떻게 계산돼?", "주간 리포트 언제 나가?",
+      "요즘 우리 팀 회의 품질 어때?", "이 회의 리포트 보여줘", "리포트 올려줘" and
+      "다시 써줘" reached Report on every run and called the right reads.
+    - **"PM이랑 개발 사이 입장 차이 어때?" went to Research on one run in two.**
+      Research's description names "disputes". Report's description now says
+      that role alignment is how far roles such as PM and engineering agree or
+      differ in their stances. After that, the question and a reworded one
+      reached Report on every run (five of five). A Research question ("아무도
+      확인 못 한 쟁점 조사해줘") still went to Research.
 13. **`send_empty` (section 4).** `set_weekly_report_schedule`'s `send_empty`
     is optional; `None` keeps the team's current value, so a schedule change
     no longer turns it off.
