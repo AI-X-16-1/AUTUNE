@@ -8,6 +8,10 @@ included; the last did on 2026-10-07.
 
 ## Context
 
+**As of 2026-09-23, when this was written.** What it describes as missing
+has been on main since #666 (2026-10-02): the runner and its CI step, the
+lint rule and the contract test of decision 5, and the first component test.
+
 The frontend has no test infrastructure. No `vitest`, no `jest`, no
 `@testing-library/*`, and no `test` script in either `package.json`. The CI
 JavaScript job runs four steps — lint, types, build, and two checks that
@@ -146,6 +150,9 @@ question. Privacy rules on the screen stop depending on who reviewed the PR.
 "just a layout change" — and the first few will be slower while the fixtures for
 a contract-shaped payload get written. The `@autune/contracts` fixtures are
 Python; the TS side has none, and someone has to write the first one.
+(Narrowed on 2026-10-02 by decision 7, #106: until the six-week review this
+holds for new shared components and for changes to how masked text is drawn,
+not for the screens that already existed.)
 
 **Accepted costs.** The lint rule is a string match: it catches the field named
 the obvious way and not a ratio computed on the client out of two other numbers.
@@ -171,4 +178,5 @@ rather than in it.
 - ADR 0003, which made privacy a code-level constraint rather than a policy
   document; this is the same argument applied to the screen.
 
-<!-- 0007 is reserved for the legal review tracked in #92. -->
+<!-- When this was numbered, 0007 was reserved for the legal review tracked in
+     #92. It has been written since: ADR 0007, Proposed until that review. -->
