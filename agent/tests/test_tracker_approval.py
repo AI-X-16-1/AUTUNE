@@ -388,3 +388,26 @@ def test_a_move_of_a_woken_run_is_still_approved_on_exactly_its_item(
     assert row_of(session, "act_both").due_date == plan.new_due_date(graph._today())
     assert row_of(session, "act_late").due_date == TODAY - timedelta(days=2), "the other waits"
     assert synced == ["act_both"]
+
+
+def test_a_card_queued_before_names_no_meeting_and_its_approval_fails_writing_nothing(
+    session: Session, team: str, synced: list[str]
+) -> None:
+    """mkkim68's repro (review of #998). A row queued before #959 has no
+    ``meeting_id`` in its arguments and is the waking meeting's. Approved now,
+    that meeting is filled in for B's write -- which takes ``meeting_id`` since
+    #959 -- and B refuses an item of another meeting. It fails closed: nothing
+    is written. Revision ``a3d7c5e19f08`` retires such rows so that nobody is
+    left one (``integration/test_pending_old_shape_pg.py``)."""
+    rows = woken_by(session, "mtg_later0")
+    old = rows["act_both"]  # an item of mtg_then
+    old.arguments = {k: v for k, v in old.arguments.items() if k != "meeting_id"}
+    old.meeting_id = "mtg_later0"
+    session.commit()
+
+    reply = client(session, "user_kim").post(f"/api/agent/pending/{old.id}/approve")
+
+    assert reply.status_code == 200, reply.text
+    assert (reply.json()["status"], reply.json()["result_ok"]) == ("failed", False)
+    assert row_of(session, "act_both").due_date == TODAY - timedelta(days=9), "nothing written"
+    assert synced == []
