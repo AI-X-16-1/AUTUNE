@@ -136,6 +136,51 @@ def test_someone_who_left_the_team_gets_no_dm_and_still_counts(
     assert {m.channel for m in slack.sent} == {alice, bob}
 
 
+class _BlocksSlack(FakeSlack):
+    """FakeSlack that also keeps each DM's blocks; the outbound check still runs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bodies: list[str] = []
+
+    def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
+        ts = super().send_dm(user_id, text, blocks)
+        out = []
+        for block in blocks or []:
+            if isinstance(block.get("text"), dict):
+                out.append(block["text"]["text"])
+            out.extend(e.get("text", "") for e in block.get("elements", []))
+        self.bodies.append("\n".join(out))
+        return ts
+
+
+@pytest.mark.parametrize(
+    ("title", "shown", "hidden"),
+    [
+        ("결제 회의", "결제 회의 · ", None),
+        ("kim@example.com 1:1", " 회의", "kim@example.com"),
+    ],
+)
+def test_the_dm_says_which_meeting_unless_its_title_holds_personal_data(
+    db_session: Session, meeting: str, title: str, shown: str, hidden: str | None
+) -> None:
+    """#945. A title like a calendar event's "kim@example.com 1:1" would make
+    ``check_outbound`` refuse the whole DM, so the date stands in for it."""
+    from autune_core import Meeting
+
+    db_session.get(Meeting, meeting).title = title
+    _three_speakers(db_session, meeting)
+    slack = _BlocksSlack()
+
+    service.send_personal_feedback(db_session, slack, meeting)
+
+    texts = slack.bodies
+    assert len(texts) == 3 and all(shown in t for t in texts)
+    if hidden is not None:
+        assert all(hidden not in t for t in texts)
+        assert all(hidden not in m.text for m in slack.sent)
+
+
 def test_a_speaker_with_no_user_account_is_skipped(db_session: Session, meeting: str) -> None:
     alice, bob, _carol = _three_speakers(db_session, meeting)
     p_ghost = _participant(db_session, meeting, user_id=None, label="Speaker 4")
