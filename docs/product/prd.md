@@ -330,6 +330,13 @@ automatic PII masking; immediate raw-audio deletion; action item extraction and
 tracking; Notion/Jira integration; gap detection; Slack integration; past-topic
 linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
+**The action item screen is an editable worksheet, and that is in the MVP**
+(ADR 0006, #61). What extraction produces is a draft a person completes: every
+item can be edited, deleted or added by hand, each shows the utterances it came
+from, and an item below the confidence threshold is shown as a candidate rather
+than dropped. Recall is ranked above precision -- a wrong item costs a click, a
+missing one costs re-reading the meeting.
+
 **Added by #260, and no larger:** the main agent with chat and the
 morning briefing; five subagents — Research, Briefing, Follow-up, Workload,
 Report (5.7) — and a sixth, Tracker, added on #856 by its owner with the main
@@ -353,12 +360,26 @@ implementation decision.
 ### Product
 | Metric | 6 weeks | 3 months |
 | --- | --- | --- |
-| Action item extraction F1 | 0.80+ | 0.88+ |
+| Action item F1, on our own held-out Korean evaluation set | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
+| Classifier macro F1 over the five kinds, `none` present | not set (#221) | not set |
+| Items the user accepts with no edit (edit cost, per meeting) | the first measurement is the baseline | improve on it |
 | Speaker diarization DER | ≤ 15% | ≤ 10% |
 | Gap detection precision | 0.70+ | 0.82+ |
 | Topic linking accuracy | 0.75+ | 0.85+ |
 | PII masking recall | 0.95+ | 0.99+ |
 | Processing time | ≤ 1.5× recording length | ≤ 1× |
+
+The three extraction rows follow ADR 0006 (#61) and read the way
+`../modules/extraction.md` states them. The action item figure was `0.80+` /
+`0.88+` until then: that is above the best published result for the task,
+43.12, on a task where two trained annotators agree at κ 0.46 (ADR 0006 gives
+both sources), so it could only be read as a miss. **Every report of our
+action item F1 carries the reference number, 43.12, beside it.** What a
+training run can move, and what the harness scores, is the classifier's macro
+F1; it has no like-for-like figure in the literature, so no target is set for
+it (#221). Edit cost is the product measure -- how much of the list a person
+accepts as it is -- counted per meeting and never per person (ADR 0003), and
+it has no published baseline either.
 
 ### Business
 | Metric | 6 weeks | 3 months |
