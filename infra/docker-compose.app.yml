@@ -269,6 +269,10 @@ services:
         # Empty: the browser calls the page's own origin, which nginx splits
         # between web and api.
         NEXT_PUBLIC_API_URL: ""
+        # The live socket goes to the API's own address instead (dev.yml):
+        # through the site's address the WebSocket handshake loses its
+        # Upgrade header. Empty keeps it on the page's origin.
+        NEXT_PUBLIC_LIVE_URL: ${DEV_LIVE_URL:-}
         API_PROXY_TARGET: http://api:8000
     image: autune-web:dev
     restart: unless-stopped
