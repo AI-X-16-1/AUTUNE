@@ -1,9 +1,10 @@
 # 0009. Frontend tests are component-level, and the app-wide privacy rule is not one of them
 
-**Status:** Proposed
-**Date:** 2026-09-23
+**Status:** Accepted
+**Date:** 2026-09-23, accepted 2026-10-07
 **Deciders:** 김민경, 강민구, 박재경, 문민재, 이승환 — the tooling sits in root
-config and `.github/`, so it is everyone's.
+config and `.github/`, so it is everyone's. Each agreed on #106, decision 7
+included; the last did on 2026-10-07.
 
 ## Context
 
