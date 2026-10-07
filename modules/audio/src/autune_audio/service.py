@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from autune_audio.live import registry as live_registry
+from autune_audio.live import tickets as live_tickets
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import user_for_token
@@ -1158,6 +1159,42 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
         user = user_for_token(session, token)
     except NotFoundError as exc:
         raise PermissionDeniedError("token names nobody") from exc
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return user
+
+
+def live_ticket(session: Session, *, user: User, meeting_id: str) -> str:
+    """A one-use ticket for ``user`` to open the live socket of a meeting.
+
+    For a browser whose session is an HttpOnly cookie on another host than the
+    socket's (``live/tickets.py``). Refused where the socket would refuse the
+    person: no meeting, not a member.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return live_tickets.issue(
+        user_id=user.id, meeting_id=meeting_id, sessions_valid_from=user.sessions_valid_from
+    )
+
+
+def authenticate_live_ticket(session: Session, *, ticket: str, meeting_id: str) -> User:
+    """``authenticate_live`` for a ticket: spend it, then the same membership
+    check. ``PermissionDeniedError`` for a ticket that opens nothing here --
+    unknown, spent, expired, another meeting's, or its person signed out
+    since it was issued."""
+    held = live_tickets.redeem(ticket, meeting_id=meeting_id)
+    if held is None:
+        raise PermissionDeniedError("ticket is not good for this meeting")
+    user = session.get(User, held.user_id)
+    if user is None:
+        raise PermissionDeniedError("ticket names nobody")
+    if user.sessions_valid_from != held.sessions_valid_from:
+        raise PermissionDeniedError("signed out since the ticket was issued")
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
