@@ -207,6 +207,62 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     )
 
 
+def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
+    """Use this when a day has to be chosen around one meeting's work -- a
+    follow-up meeting after most of what it agreed is due (#963, #966). Do not
+    use it to learn what the items are, whose they are or which is late: that
+    is ``meeting_action_items``.
+
+    Returns one row, ``기한``, whose ``due_dates`` lists the due date of every
+    action item of the meeting that is **confirmed**, not done and has a date,
+    earliest first -- one entry an item, so a day two items share is there
+    twice. A date and nothing else: no title, no assignee, no text. With an
+    assignee beside it a date would say who is late; without one it says only
+    when the meeting's work falls due. ``evidence`` holds those items' ids. No
+    row at all when no such item has a date.
+
+    **An unconfirmed item's date does not come out** (#246, #261 rule 3: B's
+    unconfirmed content is counted, never quoted; the user, 2026-10-07, asked
+    whether a draft's date might go: "확정된 항목의 기한만"). A date is not
+    text, but it is content of a draft nobody has accepted, and a date
+    recommended to a team from it would be built on that draft. Unconfirmed
+    items are in ``summary`` as a count, with how many confirmed open items
+    there are and how many of those have no date. ``confirmed`` is therefore
+    always ``true``; it is in each entry because the caller asked for the
+    shape, so nothing has to change there if a draft's date is ever allowed.
+
+    A meeting that does not exist or is past retention is ``ok: false``, as
+    for every tool that takes one.
+    """
+    if service.live_meeting(session, meeting_id) is None:
+        return _missing(meeting_id)
+    rows = service.list_action_items(session, meeting_id=meeting_id)
+    waiting = sum(i.status == ActionStatus.NEEDS_CONFIRMATION.value for i in rows)
+    opened = [i for i in rows if i.status in {status.value for status in _OPEN}]
+    dated = sorted((i for i in opened if i.due_date is not None), key=lambda i: (i.due_date, i.id))
+    summary = (
+        f"확정된 열린 액션아이템 {len(opened)}건 중 기한 있음 {len(dated)}건, "
+        f"기한 없음 {len(opened) - len(dated)}건. 확인 대기 {waiting}건."
+    )
+    items = (
+        [
+            {
+                "title": "기한",
+                # One row holding them all: a row an item would be cut at five
+                # (``MAX_ITEMS``), and the rule this feeds needs every date.
+                "due_dates": [
+                    {"date": i.due_date.isoformat(), "confirmed": True}
+                    for i in dated
+                    if i.due_date is not None
+                ],
+            }
+        ]
+        if dated
+        else []
+    )
+    return _result(summary=summary, items=items, evidence=[i.id for i in dated])
+
+
 def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -> dict[str, Any]:
     """Use this for a morning briefing or when asked what is late, due soon, or
     left without an owner across a team's meetings. Do not use it for one
@@ -870,6 +926,7 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
 
 TOOLS = [
     meeting_action_items,
+    meeting_due_dates,
     open_action_items,
     open_item_owners,
     stalled_action_items,
