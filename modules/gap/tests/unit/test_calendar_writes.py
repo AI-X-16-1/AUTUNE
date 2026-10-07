@@ -704,6 +704,96 @@ def test_a_question_whose_words_were_deleted_has_its_line_taken_out(
     assert session.get(GapGap, "gap_1").carried_at is not None
 
 
+def leave(session: Session, user_id: str, team_id: str = TEAM) -> None:
+    """What #937's ``leave_team`` does to C: the membership goes, nothing else."""
+    member = session.scalar(
+        select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    assert member is not None
+    session.delete(member)
+    session.flush()
+
+
+def test_lines_come_off_the_calendar_of_somebody_who_left_the_team(
+    client: TestClient, session: Session, calendars: dict[str, Any], hooks: Session
+) -> None:
+    """#937: they can no longer open the meeting, so its gaps leave their
+    calendar too, as B's due-date event does (#944)."""
+    gap(session, "gap_1")
+    gap(session, "gap_2", risk_score=0.8)
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.descriptions["evt_picked"] = "1. 지난주 회고"
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+    assert "(gap_1)" in google.descriptions["evt_picked"]
+
+    leave(session, MEMBER)
+    assert calendar_writes.queue_departed_lines() == 2
+    assert calendar_writes.queue_departed_lines() == 0  # safe to run twice
+    assert recorded(session) == set()
+
+    assert calendar_writes.drain_agenda_cleanup() == 1
+    assert google.descriptions["evt_picked"] == "1. 지난주 회고"
+    assert google.send_updates[-1] == "none"
+    assert list(session.scalars(select(GapAgendaCleanup))) == []
+
+
+def test_lines_of_somebody_still_on_the_team_stay(
+    client: TestClient,
+    session: Session,
+    calendars: dict[str, Any],
+    hooks: Session,
+    teammate: str,
+) -> None:
+    gap(session, "gap_1")
+    calendars[MEMBER] = FakeCalendar([event("evt_mine", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_mine"})
+    session.add(
+        GapAgendaEvent(
+            meeting_id=MEETING,
+            gap_id="gap_1",
+            user_id=teammate,
+            calendar_id="primary",
+            event_id="evt_theirs",
+        )
+    )
+    session.flush()
+
+    leave(session, teammate)
+    assert calendar_writes.queue_departed_lines() == 1
+
+    assert recorded(session) == {("gap_1", MEMBER, "evt_mine")}
+    assert {(q.user_id, q.event_id) for q in session.scalars(select(GapAgendaCleanup))} == {
+        (teammate, "evt_theirs")
+    }
+
+
+def test_being_on_another_team_does_not_keep_the_lines(
+    client: TestClient, session: Session, calendars: dict[str, Any], hooks: Session
+) -> None:
+    """Membership is the meeting's team's, not any team's."""
+    gap(session, "gap_1")
+    calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+    session.add(TeamMember(team_id="team_2", user_id=MEMBER))
+    session.flush()
+
+    leave(session, MEMBER)
+
+    assert calendar_writes.queue_departed_lines() == 1
+
+
+def test_the_periodic_drain_queues_departed_lines_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autune_gap import tasks
+
+    calls: list[str] = []
+    monkeypatch.setattr(calendar_writes, "queue_departed_lines", lambda: calls.append("queue") or 0)
+    monkeypatch.setattr(calendar_writes, "drain_agenda_cleanup", lambda: calls.append("drain") or 0)
+
+    tasks.drain_agenda_cleanup()
+
+    assert calls == ["queue", "drain"]
+
+
 def test_both_hooks_are_registered() -> None:
     from autune_core.deletion import registered_modules
 

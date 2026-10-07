@@ -885,7 +885,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again. Read by nothing but the cleanup |
-| PostgreSQL `gap_agenda_cleanup` | Lines of a deleted or expired meeting still to take off their owners' calendars, drained by the worker. Keyed by the owner, not the meeting |
+| PostgreSQL `gap_agenda_cleanup` | Lines still to take off their owners' calendars, drained by the worker: those of a deleted or expired meeting, and those of an owner who left the meeting's team (#937). Keyed by the owner, not the meeting |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
 Everything that exists cascades from `meetings.id` (or, for the agenda tables,
@@ -1214,6 +1214,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
 | `autune.gap.publish_report` | `PUT /templates/{meeting_id}`, `POST`/`DELETE /gaps/{id}/dismiss` | `cpu_heavy` |
 | `autune.gap.periodic.rescore_changed_people` | every 10 minutes | `cpu_heavy` |
+| `autune.gap.periodic.drain_agenda_cleanup` | every 10 minutes: queues the lines of an owner no longer on the meeting's team, then takes queued lines out with each owner's grant | `cpu_heavy` |
 
 ## Slack surface
 
