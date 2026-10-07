@@ -860,11 +860,44 @@ class ExtDailyDigest(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtWorkReport(Base):
+    """That a person was sent the work-report draft for one day,
+    through one team's Slack (``work_report``, the user 2026-10-07). The
+    primary key is the "once", as ``ext_daily_digests``'s is. No text: the
+    message is not kept. Its own table because that one's key is the same
+    three columns and its latest row is where the next morning DM counts
+    from.
+
+    **A row lives for its day only.** The draft goes only on a day something
+    of the person's was finished or moved, so a row kept would say which days
+    a person worked (ADR 0003; mkkim68, review of #954): the sending task
+    deletes every earlier day's row each time it runs
+    (``work_report.forget_past_days``). Goes with the person and with the
+    team before that."""
+
+    __tablename__ = "ext_work_reports"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtMeetingNotice(Base):
     """That a person was told, right after a meeting, that work of it had
     landed on them (the user, 2026-10-07; ``meeting_notice``). The primary key
     is the "once": one notice a person and meeting. No text and no count: the
-    message is not kept. Goes with the meeting and with the person."""
+    message is not kept.
+
+    **Sent or refused.** A notice the outbound check refused keeps its row too
+    (``meeting_notice.settle_refused_notice``), so that it is reported once
+    and not built again; nothing on the row tells the two apart, and
+    ``sent_at`` is then when it was refused. Goes with the meeting -- its
+    retention expiry included -- and with the person."""
 
     __tablename__ = "ext_meeting_notices"
 
@@ -888,6 +921,20 @@ class ExtNotificationPause(Base):
     message. It is not kept past its last day: the morning run deletes a range
     that has ended (``service.forget_ended_pauses``). The due-date reminders
     do not read it; a deadline is not put off by leave. Goes with the account.
+
+    **The one way the dates leave Autune is the person's own tick**
+    (``leave_calendar``, the user 2026-10-06): "내 Google 캘린더에도 추가" puts
+    one private all-day event over the range on their own calendar, through
+    their own grant. ``calendar_event_id`` is that event, kept so a changed
+    range moves it and a cleared one removes it; ``None`` for a pause nobody
+    asked to have on a calendar. The id goes with the row, and the event then
+    stays on the calendar as the person's own.
+
+    ``calendar_claimed_at`` is when a save of this person's went to the
+    calendar and has not come back: Google is asked with no transaction open,
+    so this, not the row's lock, is what keeps a second save out meanwhile
+    (``leave_calendar.CLAIM_FOR``). ``None`` at rest. It says nothing a
+    reader could use -- no screen, route or log carries it.
     """
 
     __tablename__ = "ext_notification_pauses"
@@ -901,6 +948,10 @@ class ExtNotificationPause(Base):
     starts_on: Mapped[date] = mapped_column(Date, nullable=False)
     ends_on: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    calendar_event_id: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    calendar_claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ExtPublicHoliday(Base):
@@ -1172,6 +1223,8 @@ class ExtCalendarCleanup(Base):
     ``ext_calendar_events`` goes with the meeting, so the meeting hook copies
     the event here first and ``tasks.drain_calendar_cleanup`` removes it with
     that person's own grant. No meeting key: the row has to outlive the meeting.
+    A leave event Google did not let go of when its dates were cleared waits
+    here too (``leave_calendar``).
     ``user_id`` cascades -- an account deletion removes its own events in its
     hook, and nothing could remove them after.
     """

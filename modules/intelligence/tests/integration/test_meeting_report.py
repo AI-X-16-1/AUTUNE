@@ -354,6 +354,29 @@ def test_task_posts_to_the_teams_configured_channel(
 
 
 @pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_task_tells_c_where_the_report_went_once(
+    db_session: Session, team: str, meeting: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#824: C's question cards reply in the report's thread. A second run posts
+    nothing and so announces nothing."""
+    from autune_contracts import INTELLIGENCE_MEETING_REPORT_POSTED, MeetingReportPosted
+
+    published: list[tuple[str, dict]] = []
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: published.append((event, payload)))
+    service.save_meeting_report(db_session, meeting, BODY)
+    _connect_slack(db_session, team, config={"channel": "C123"})
+
+    with patch.object(tasks, "SlackClient", return_value=FakeSlack()):
+        tasks.deliver_meeting_report(meeting)
+        tasks.deliver_meeting_report(meeting)
+
+    ((event, payload),) = published
+    posted = MeetingReportPosted.model_validate(payload)
+    assert event == INTELLIGENCE_MEETING_REPORT_POSTED
+    assert (posted.meeting_id, posted.channel, posted.thread_ts) == (meeting, "C123", "1.000000")
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
 def test_task_posts_nothing_when_the_draft_was_replaced_after_approval(
     db_session: Session, team: str, meeting: str
 ) -> None:

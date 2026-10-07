@@ -117,4 +117,211 @@ describe("NotificationPauseSetting", () => {
     await waitFor(() => expect(get).toHaveBeenCalled());
     expect(container.innerHTML).toBe("");
   });
+
+  // "내 Google 캘린더에도 추가" (the user, 2026-10-06): when someone is away is
+  // theirs alone, so the dates reach a calendar only by their own tick.
+  const box = () =>
+    screen.queryByRole("checkbox", {
+      name: "내 Google 캘린더에도 추가",
+    }) as HTMLInputElement | null;
+  const CONNECTED = { ...NONE, calendar_connected: true };
+
+  it("offers the calendar only to a person whose calendar is connected", async () => {
+    get.mockResolvedValue(NONE);
+    render(<NotificationPauseSetting />);
+    await first();
+    expect(box()).toBeNull();
+    expect(screen.getByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeTruthy();
+  });
+
+  it("leaves the box unticked, and says what a tick writes before it is ticked", async () => {
+    get.mockResolvedValue(CONNECTED);
+    render(<NotificationPauseSetting />);
+    await first();
+    expect(box()?.checked).toBe(false);
+    const line = screen.getByText(/종일\s+일정으로 들어갑니다/).textContent ?? "";
+    expect(line).toContain("휴가");
+    expect(line).toContain("비공개 일정");
+    expect(line).toContain("바쁘다는 것만");
+    expect(line).toContain("그 일정을");
+    expect(line).toContain("기간이 지난 일정은 내 캘린더에 그대로 남습니다");
+  });
+
+  it("sends the tick only when it was ticked, and says the event went", async () => {
+    get.mockResolvedValue(CONNECTED);
+    put.mockResolvedValue({
+      ...WEEK,
+      on_calendar: true,
+      calendar_connected: true,
+      calendar: "added",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    fireEvent.change(await first(), { target: { value: "2026-10-12" } });
+    fireEvent.change(last(), { target: { value: "2026-10-16" } });
+    fireEvent.click(box()!);
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({ ...WEEK, on_calendar: true }),
+    );
+    expect(
+      (await screen.findByRole("status")).textContent,
+    ).toBe("내 Google 캘린더에 휴가 일정을 넣었습니다.");
+    expect(box()?.checked).toBe(true);
+    expect(screen.getByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeTruthy();
+  });
+
+  it("sends an unticked box as false, so an earlier event is taken off", async () => {
+    get.mockResolvedValue({ ...WEEK, on_calendar: true, calendar_connected: true });
+    put.mockResolvedValue({
+      ...WEEK,
+      on_calendar: false,
+      calendar_connected: true,
+      calendar: "removed",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    await first();
+    expect(box()?.checked).toBe(true);
+    fireEvent.click(box()!);
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({ ...WEEK, on_calendar: false }),
+    );
+    expect(
+      (await screen.findByRole("status")).textContent,
+    ).toBe("내 Google 캘린더에서 휴가 일정을 지웠습니다.");
+    expect(box()?.checked).toBe(false);
+  });
+
+  it.each([
+    ["failed", "캘린더에는 넣지 못했으니"],
+    ["not_connected", "캘린더가 연결되어 있지 않아"],
+    ["removal_queued", "지금은 지우지 못했습니다"],
+    ["not_removed", "이전 휴가 일정을 지우지 못했습니다. 캘린더에서 직접 지워 주세요."],
+  ] as const)(
+    "says the dates are kept when the calendar answered %s",
+    async (calendar, words) => {
+      get.mockResolvedValue(CONNECTED);
+      put.mockResolvedValue({
+        ...WEEK,
+        calendar_connected: true,
+        calendar,
+      } as NotificationPauseRead);
+      render(<NotificationPauseSetting />);
+      fireEvent.change(await first(), { target: { value: "2026-10-12" } });
+      fireEvent.change(last(), { target: { value: "2026-10-16" } });
+      fireEvent.click(box()!);
+      fireEvent.click(save());
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain(words);
+      expect((await first()).value).toBe("2026-10-12");
+      expect(screen.queryByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeNull();
+    },
+  );
+
+  it("sends no tick from a screen that drew no box, and does not say the new range is on the calendar", async () => {
+    // Their calendar is not connected just now, and an event of theirs
+    // stands from before: the server keeps it (the field is left out, not
+    // false) and answers that the calendar could not follow.
+    get.mockResolvedValue({ ...WEEK, on_calendar: true });
+    put.mockResolvedValue({
+      starts_on: "2026-10-19",
+      ends_on: "2026-10-23",
+      on_calendar: true,
+      calendar: "not_connected",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    fireEvent.change(await first(), { target: { value: "2026-10-19" } });
+    fireEvent.change(last(), { target: { value: "2026-10-23" } });
+    expect(box()).toBeNull();
+    fireEvent.click(save());
+
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({
+        starts_on: "2026-10-19",
+        ends_on: "2026-10-23",
+      }),
+    );
+    // The state is said once, and the save's line agrees with it (the user,
+    // 2026-10-07): the event is still there, on the range it had.
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "기간은 저장했습니다. 캘린더가 연결되어 있지 않아 캘린더의 휴가 일정은 이전 기간 그대로입니다.",
+    );
+    expect(
+      screen.getByText(
+        "내 Google 캘린더에 넣어 둔 휴가 일정이 있지만, 지금은 캘린더가 연결되어 있지 않아 그 일정을 옮기거나 지울 수 없습니다. 다시 연결한 뒤 저장하면 이 기간으로 옮겨집니다.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeNull();
+    expect(screen.queryByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeNull();
+    expect(screen.queryByText(/캘린더에는 넣지 못했습니다/)).toBeNull();
+    expect(screen.queryByText(/이 기간은 내 Google 캘린더/)).toBeNull();
+  });
+
+  it("says the same state after a reload, with no save's line left", async () => {
+    get.mockResolvedValue({ ...WEEK, on_calendar: true });
+    render(<NotificationPauseSetting />);
+    await first();
+
+    expect(screen.getByText(/넣어 둔 휴가 일정이 있지만/)).toBeTruthy();
+    expect(screen.queryByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeNull();
+    expect(screen.queryByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps its promise after reconnecting: the box opens ticked, and saving sends the tick", async () => {
+    // "다시 연결한 뒤 저장하면 이 기간으로 옮겨집니다" is true of this save: the
+    // server moves the event that stands when the tick comes with the dates.
+    get.mockResolvedValue({ ...WEEK, on_calendar: true, calendar_connected: true });
+    put.mockResolvedValue({
+      ...WEEK,
+      on_calendar: true,
+      calendar_connected: true,
+      calendar: "added",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    await first();
+
+    expect(box()?.checked).toBe(true);
+    expect(screen.queryByText(/넣어 둔 휴가 일정이 있지만/)).toBeNull();
+    expect(
+      screen.getByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/),
+    ).toBeTruthy();
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({ ...WEEK, on_calendar: true }),
+    );
+  });
+
+  it("still says connect-to-choose and could-not-put to a person with no event on a calendar", async () => {
+    get.mockResolvedValue(WEEK);
+    put.mockResolvedValue({ ...WEEK, on_calendar: false, calendar: "not_connected" } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    await first();
+    expect(screen.getByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeTruthy();
+    fireEvent.click(save());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "기간은 저장했습니다. 캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다.",
+    );
+    expect(screen.queryByText(/넣어 둔 휴가 일정이 있지만/)).toBeNull();
+  });
+
+  it("says nothing about a calendar after a save that touched none", async () => {
+    get.mockResolvedValue(CONNECTED);
+    put.mockResolvedValue({
+      ...WEEK,
+      calendar_connected: true,
+      calendar: "off",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    fireEvent.change(await first(), { target: { value: "2026-10-12" } });
+    fireEvent.change(last(), { target: { value: "2026-10-16" } });
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({ ...WEEK, on_calendar: false }),
+    );
+    await screen.findByRole("button", { name: "해제" });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });

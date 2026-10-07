@@ -121,14 +121,16 @@ def meeting_features(
     tracked = [c for c in (lineage or []) if c.change_type != ChangeType.NEW]
     moved = [c for c in tracked if c.change_type in (ChangeType.MODIFIED, ChangeType.REVERSED)]
     actions = extraction.action_items if extraction is not None else []
+    # A meeting C could not read has no gaps to count (#248): unmeasured, not zero.
+    gaps = gap.gaps if gap is not None and gap.measured is not False else None
 
     return MeetingFeatures(
         quality_value=quality_value,
         decision_count=len(extraction.decisions) if extraction is not None else None,
         high_gap_count=(
-            sum(1 for g in gap.gaps if g.severity == GapSeverity.HIGH) if gap is not None else None
+            sum(1 for g in gaps if g.severity == GapSeverity.HIGH) if gaps is not None else None
         ),
-        gap_count=len(gap.gaps) if gap is not None else None,
+        gap_count=len(gaps) if gaps is not None else None,
         alignment_min=min(alignment_scores, default=None),
         changed_decision_share=(len(moved) / len(tracked)) if tracked else None,
         reversed_count=(

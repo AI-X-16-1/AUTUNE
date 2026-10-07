@@ -143,4 +143,32 @@ describe("CalendarConnect", () => {
     await waitFor(() => expect(connection).toHaveBeenCalled());
     expect(container.innerHTML).toBe("");
   });
+
+  it.each([
+    ["before the person connects", false],
+    ["to somebody already connected", true],
+  ])("says what a ticked 휴가 기간 writes, %s", async (_when, connected) => {
+    // A use of the grant is said where the grant is asked for (#838, #872);
+    // the leave event is one (the user, 2026-10-06).
+    connection.mockResolvedValue({ connected });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: false });
+    render(<CalendarConnect />);
+
+    const line = (await screen.findByText(/휴가 기간/)).textContent ?? "";
+    expect(line).toContain("직접 체크하고");
+    expect(line).toContain("저장할 때에만");
+    expect(line).toContain("비공개 종일 일정");
+    expect(line).toContain("그 일정을 지우며");
+    expect(line).toContain("기간이 지난 일정은 내");
+    expect(line).toContain("다른 일정을 읽지는 않습니다");
+  });
+
+  it("says it when the server cannot be asked about the pause either", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockRejectedValue(new Error("down"));
+    render(<CalendarConnect />);
+
+    await connectButton();
+    expect(await screen.findByText(/휴가 기간/)).toBeTruthy();
+  });
 });

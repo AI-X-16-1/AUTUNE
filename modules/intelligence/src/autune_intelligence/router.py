@@ -12,7 +12,8 @@ itself. A team route refuses anyone not on the team; ``/scores/{meeting_id}``
 answers another team's person with the same 404 as a meeting with no score, so
 whether a meeting exists does not leak. What they carry: action-item counts,
 gap *title text* (meeting content), meeting reports. Nothing here posts.
-``/me/speaking-ratio`` authorises on the subject, not the team.
+``/me/speaking-ratio`` authorises on the subject, who must still be on the
+meeting's team (#937).
 """
 
 from __future__ import annotations

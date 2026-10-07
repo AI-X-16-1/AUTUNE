@@ -39,7 +39,7 @@ export function DueReminderSetting() {
 
   if (setting === null) return null;
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
-  // One switch, three messages, and a server turns each on by itself: the
+  // One switch, five messages, and a server turns each on by itself: the
   // line under the switch says which of them this one sends. It used to read
   // the reminder's flag alone and say "none yet" on a server sending both
   // digests (dev, 2026-10-05).
@@ -47,7 +47,8 @@ export function DueReminderSetting() {
     ["마감 알림", setting.sent_here],
     ["월요일 요약", setting.weekly_here],
     ["아침 요약", setting.daily_here],
-    ["회의 직후 알림", setting.after_meeting_here],
+    ["오늘 업무 보고", setting.work_report_here === true],
+    ["회의 직후 알림", setting.after_meeting_here === true],
   ];
   const sent = kinds.filter(([, here]) => here).map(([name]) => name);
   const unsent = kinds.filter(([, here]) => !here).map(([name]) => name);
@@ -74,8 +75,8 @@ export function DueReminderSetting() {
           onChange={(event) => change(event.target.checked)}
         />
         마감 알림 받기 (마감 전날과 마감이 지난 뒤 한 번, 월요일의 내 할 일
-        요약 — 월요일이 공휴일이면 그 주의 첫 평일 —, 화~금 아침 요약, 회의
-        직후 내 담당 항목 알림 · Slack DM)
+        요약 — 월요일이 공휴일이면 그 주의 첫 평일 —, 화~금 아침 요약, 평일
+        오후의 오늘 업무 보고 초안, 회의 직후 내 담당 항목 알림 · Slack DM)
       </label>
       {unsent.length > 0 && (
         <span className="text-[var(--color-ink-muted)]" style={meta}>

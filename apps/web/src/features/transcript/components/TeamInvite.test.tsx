@@ -16,8 +16,10 @@ const invite =
       emailed?: boolean;
     }>
   >();
+const openLink = vi.fn<(teamId: string) => Promise<{ token: string; expires_at: string }>>();
 vi.mock("../api", () => ({
   inviteToTeam: (...args: [string, string, boolean?]) => invite(...args),
+  makeOpenInvitationLink: (teamId: string) => openLink(teamId),
 }));
 
 // The person's own Gmail grant (#552). Unknown by default -- as for a visitor
@@ -52,6 +54,7 @@ function copyLinkFor(email: string) {
 afterEach(() => {
   cleanup();
   invite.mockReset();
+  openLink.mockReset();
   gmail.mockReset();
   gmail.mockImplementation(() => Promise.resolve(null));
   assign.mockReset();
@@ -280,5 +283,106 @@ describe("TeamInvite", () => {
 
       expect(screen.queryByRole("button", { name: "Gmail 연결 해제" })).toBeNull();
     });
+  });
+});
+
+describe("TeamInvite, a link for no address", () => {
+  // #552, 2026-10-06 (the module owner's conditions; the hour is also the
+  // requester's): beside the invitation for an address, once, for an hour.
+  const OPEN = { token: "tok_open", expires_at: "2026-10-06T08:05:00Z" };
+  const OPEN_LINK = `${window.location.origin}/invite#tok_open`;
+  const openButton = () =>
+    screen.getByRole("button", { name: "주소 없이 링크 만들기" }) as HTMLButtonElement;
+  const until = () => {
+    const at = new Date(OPEN.expires_at);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  };
+
+  it("is offered with no address typed, and says what it gives up before it is pressed", () => {
+    render(<TeamInvite teamId="team_1" />);
+
+    expect(openButton().disabled).toBe(false);
+    expect(
+      screen.getByText(/1시간 동안 한 번만 쓸 수 있습니다.*링크를 가진 사람은 로그인만 하면\s+팀에 들어옵니다/),
+    ).toBeTruthy();
+    // The invitation for an address is still what the field and its button are for.
+    expect(
+      (screen.getByRole("button", { name: "초대 링크 복사" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(openLink).not.toHaveBeenCalled();
+  });
+
+  it("makes the link, copies it, and lists it by when it stops working", async () => {
+    openLink.mockResolvedValue(OPEN);
+    const writeText = vi.fn(() => Promise.resolve());
+    clipboard(writeText);
+    const invited = vi.fn();
+    render(<TeamInvite teamId="team_1" onInvited={invited} />);
+
+    fireEvent.click(openButton());
+
+    await screen.findByText("초대 링크를 복사했습니다. 직접 전달해 주세요.");
+    expect(openLink).toHaveBeenCalledExactlyOnceWith("team_1");
+    expect(invite).not.toHaveBeenCalled();
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(OPEN_LINK);
+    expect(screen.getByText(`주소 없음 · ${until()}까지, 한 번만`)).toBeTruthy();
+    expect(invited).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists one such link: a new one takes the place of the earlier", async () => {
+    openLink.mockResolvedValueOnce(OPEN).mockResolvedValueOnce({ ...OPEN, token: "tok_second" });
+    clipboard(() => Promise.reject(new Error("denied")));
+    render(<TeamInvite teamId="team_1" />);
+
+    fireEvent.click(openButton());
+    const first = (await screen.findByLabelText("주소 없음 초대 링크")) as HTMLInputElement;
+    expect(first.value).toBe(OPEN_LINK);
+    fireEvent.click(openButton());
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("주소 없음 초대 링크") as HTMLInputElement).value).toBe(
+        `${window.location.origin}/invite#tok_second`,
+      ),
+    );
+    expect(screen.getAllByLabelText("주소 없음 초대 링크")).toHaveLength(1);
+  });
+
+  it("keeps the invitations for addresses in the list beside it", async () => {
+    invite.mockResolvedValue(ISSUED);
+    openLink.mockResolvedValue(OPEN);
+    clipboard(() => Promise.resolve());
+    render(<TeamInvite teamId="team_1" />);
+    copyLinkFor("a@example.com");
+    await screen.findByText("a@example.com · 2026-10-09까지");
+
+    fireEvent.click(openButton());
+
+    await screen.findByText(`주소 없음 · ${until()}까지, 한 번만`);
+    expect(screen.getByText("a@example.com · 2026-10-09까지")).toBeTruthy();
+  });
+
+  it("is never mailed, even by someone who has connected Gmail", async () => {
+    gmail.mockImplementation(() => Promise.resolve({ connected: true }));
+    openLink.mockResolvedValue(OPEN);
+    clipboard(() => Promise.resolve());
+    render(<TeamInvite teamId="team_1" />);
+    await screen.findByRole("button", { name: "메일 전송" });
+
+    fireEvent.click(openButton());
+
+    await screen.findByText(`주소 없음 · ${until()}까지, 한 번만`);
+    expect(screen.queryByRole("button", { name: "주소 없음 다시 보내기" })).toBeNull();
+    expect(invite).not.toHaveBeenCalled();
+  });
+
+  it("says so when the link could not be made", async () => {
+    openLink.mockRejectedValue(new Error("409"));
+    render(<TeamInvite teamId="team_1" />);
+
+    fireEvent.click(openButton());
+
+    expect((await screen.findByRole("alert")).textContent).toContain("링크를 만들지 못했습니다");
+    expect(screen.queryByText(/주소 없음 ·/)).toBeNull();
   });
 });

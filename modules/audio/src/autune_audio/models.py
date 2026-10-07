@@ -17,10 +17,12 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -257,19 +259,33 @@ class AudTeamInvitation(Base):
     party's address held before they agreed to anything: it goes with the
     team, with the inviter's account, when it lapses, and when the invited
     person deletes their own account (``invitations``).
+
+    ``email`` is ``NULL`` for a link made for no address (#552, 2026-10-06):
+    whoever opens it signed in joins, once, within the hour. An inviter has
+    at most one such link open for a team -- a partial unique index, so that
+    two requests at once cannot leave two; the ``(team_id, email)`` constraint
+    says nothing about rows whose ``email`` is ``NULL``.
     """
 
     __tablename__ = "aud_team_invitations"
     __table_args__ = (
         UniqueConstraint("team_id", "email", name="uq_aud_team_invitations_team_email"),
         UniqueConstraint("token_hash", name="uq_aud_team_invitations_token_hash"),
+        Index(
+            "uq_aud_team_invitations_open_link",
+            "team_id",
+            "invited_by",
+            unique=True,
+            postgresql_where=text("email IS NULL"),
+            sqlite_where=text("email IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     team_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     invited_by: Mapped[str] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True

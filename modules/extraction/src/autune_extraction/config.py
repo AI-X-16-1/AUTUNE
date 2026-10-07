@@ -208,6 +208,15 @@ class ExtractionSettings(BaseSettings):
     the first run messages people's real Slack accounts.
     """
 
+    work_report: bool = False
+    """``AUTUNE_EXTRACTION_WORK_REPORT``: whether a person who finished or
+    started something today is sent, on a Monday-to-Friday afternoon in Korea, a
+    Slack DM with a draft report of their own items on that team -- theirs to
+    paste to the team or not (``work_report``, the user 2026-10-07). To the
+    person only. Off by default for the reason ``due_reminders`` is: the first
+    run messages people's real Slack accounts.
+    """
+
     after_meeting_notice: bool = False
     """``AUTUNE_EXTRACTION_AFTER_MEETING_NOTICE``: whether a person is sent a
     Slack DM soon after a meeting is processed, saying how many drafts of that

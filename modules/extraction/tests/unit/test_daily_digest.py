@@ -37,7 +37,7 @@ from autune_core import (
     get_session,
 )
 from autune_core.errors import AutuneError, ValidationError
-from autune_extraction import reminders, service, tasks
+from autune_extraction import leave_calendar, reminders, service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
     ExtActionItem,
@@ -130,7 +130,44 @@ def test_a_long_list_is_cut_and_counted() -> None:
     assert "• 기한 지남 외 3개" in lines
 
 
+def test_what_has_stood_for_days_comes_after_todays_dates_and_says_how_long() -> None:
+    text = build_daily_digest(
+        DailyDigest(
+            late=[DigestLine("늦은 일", date(2026, 10, 1), None)],
+            due_today=[DigestLine("오늘 일", TUESDAY, None)],
+            stalled=[
+                DigestLine("오래 둔 일 <b>", date(2026, 10, 20), "기획 회의", idle_days=12),
+                DigestLine("며칠 둔 일", None, None, idle_days=5),
+            ],
+            in_progress=[DigestLine("하던 일", None, None)],
+        ),
+        board_url="https://autune.example/actions",
+    )
+
+    lines = text.split("\n")
+    start = lines.index("오늘 할 일")
+    assert lines[start : start + 5] == [
+        "오늘 할 일",
+        "• 기한 지남(2026-10-01): 늦은 일",
+        "• 오늘 기한: 오늘 일",
+        "• 12일째 그대로: 오래 둔 일 &lt;b&gt; · 기획 회의",
+        "• 5일째 그대로: 며칠 둔 일",
+    ]
+    assert lines[start + 5] == "• 진행 중: 하던 일"
+
+
+def test_a_long_list_of_standing_items_is_cut_and_counted_too() -> None:
+    stalled = [DigestLine(f"둔 일 {n}", None, None, idle_days=30 - n) for n in range(7)]
+
+    lines = build_daily_digest(DailyDigest(stalled=stalled), board_url="u").split("\n")
+
+    assert sum(1 for line in lines if "일째 그대로: " in line) == 5
+    assert "• 그대로인 일 외 2개" in lines
+    assert "• 오늘 기한이거나 진행 중인 항목이 없습니다." not in lines
+
+
 def test_nothing_changed_and_nothing_open_is_no_message() -> None:
+    assert DailyDigest(stalled=[DigestLine("둔 일", None, None, idle_days=6)]).empty is False
     assert DailyDigest().empty is True
     assert DailyDigest(others=1).empty is False
     assert DailyDigest(done=[DigestLine("끝", None, None)]).empty is False
@@ -279,6 +316,107 @@ def content_for(session: Session) -> reminders.DailyDigest:
         since=reminders.previous_morning(TUESDAY).astimezone(UTC),
         now=TUESDAY_10_KST,
     )
+
+
+# --- what has stood for days (the user, 2026-10-07) ---------------------------------
+
+
+def made(session: Session, item_id: str, *, days_before: float) -> None:
+    """Put the item's making ``days_before`` the morning the DM is read."""
+    item = session.get(ExtActionItem, item_id)
+    assert item is not None
+    item.created_at = TUESDAY_10_KST - timedelta(days=days_before)
+    session.flush()
+
+
+def undated(session: Session, item_id: str) -> None:
+    item = session.get(ExtActionItem, item_id)
+    assert item is not None
+    item.due_date = None
+    session.flush()
+
+
+def test_an_item_nobody_touched_for_five_days_is_named_with_how_long(session: Session) -> None:
+    """Made long ago and never edited: the in-progress one moves out of 진행 중,
+    the one with no date moves out of the count, longest first."""
+    made(session, "act_doing", days_before=6.5)
+    made(session, "act_later", days_before=12)
+    undated(session, "act_later")
+
+    content = content_for(session)
+
+    assert [(line.description, line.idle_days) for line in content.stalled] == [
+        ("나중 일", 12),
+        ("하던 일", 6),
+    ]
+    assert content.in_progress == []
+    assert content.others == 0
+
+
+def test_a_not_started_item_whose_date_is_still_ahead_is_left_in_the_count(
+    session: Session,
+) -> None:
+    """Due on the 20th and untouched for twelve days: waiting for its date, not
+    stalled. Once somebody starts it and leaves it, it is named."""
+    made(session, "act_later", days_before=12)
+
+    content = content_for(session)
+
+    assert content.stalled == []
+    assert content.others == 1
+
+    session.get(ExtActionItem, "act_later").status = "in_progress"  # type: ignore[union-attr]
+    session.flush()
+    assert [(line.description, line.idle_days) for line in content_for(session).stalled] == [
+        ("나중 일", 12)
+    ]
+
+
+def test_five_days_is_the_line_and_an_edit_starts_the_count_again(session: Session) -> None:
+    made(session, "act_doing", days_before=5)
+    made(session, "act_later", days_before=30)
+    undated(session, "act_later")
+    edited(session, "act_later", "due_date", at=TUESDAY_10_KST - timedelta(days=4, hours=23))
+
+    content = content_for(session)
+
+    assert [(line.description, line.idle_days) for line in content.stalled] == [("하던 일", 5)]
+    assert content.others == 1, "touched four days ago: counted as before, not named"
+
+    made(session, "act_doing", days_before=4.99)
+    assert content_for(session).stalled == []
+
+
+def test_a_late_item_and_one_due_today_keep_their_own_lines(session: Session) -> None:
+    """Each item once, in the first group it fits: its date says more than its age."""
+    for item_id in ("act_late", "act_today"):
+        made(session, item_id, days_before=20)
+
+    content = content_for(session)
+
+    assert content.stalled == []
+    assert [line.description for line in content.late] == ["늦은 일"]
+    assert [line.description for line in content.due_today] == ["오늘 일"]
+    assert all(line.idle_days is None for line in [*content.late, *content.due_today])
+
+
+def test_the_standing_items_in_a_dm_are_that_persons_on_that_team(session: Session) -> None:
+    """Through the real send: user_kim's own, on team_1 -- not their item on
+    team_2, not user_lee's, not one held by somebody who is off the team."""
+    for item_id in ("act_doing", "act_other", "act_lee", "act_gone"):
+        made(session, item_id, days_before=9)
+    session.get(ExtActionItem, "act_lee").due_date = None  # type: ignore[union-attr]
+    session.get(ExtActionItem, "act_gone").due_date = None  # type: ignore[union-attr]
+    session.flush()
+    slack = FakeSlack()
+
+    assert service.send_daily_digest(session, slack, owed_for(session), now=TUESDAY_10_KST) is True  # type: ignore[arg-type]
+
+    ((who, text),) = slack.sent
+    assert who == "user_kim"
+    assert "• 9일째 그대로: 하던 일 · team_1 회의" in text
+    assert "• 진행 중: 하던 일" not in text
+    assert "다른 팀 일" not in text and "이 님의 일" not in text and "팀에 없는 사람 일" not in text
 
 
 def drafted(session: Session, item_id: str, *, origin: str = "model") -> ExtActionItem:
@@ -687,7 +825,10 @@ def test_a_refused_monday_digest_is_raised_once_and_not_tried_again(
 
 
 @pytest.fixture
-def api(session: Session) -> TestClient:
+def api(session: Session, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    # The pause read says whether the caller has a calendar connected; here
+    # nobody has (``user_integrations`` is JSONB and not in this SQLite).
+    monkeypatch.setattr(leave_calendar, "load_user_integration", lambda *_: None)
     app = FastAPI()
 
     @app.exception_handler(AutuneError)
@@ -703,10 +844,16 @@ def api(session: Session) -> TestClient:
 def test_a_person_sets_reads_and_clears_their_own_pause(api: TestClient, session: Session) -> None:
     today = reminders.korean_day(datetime.now(tz=UTC))
     first, last = today + timedelta(days=1), today + timedelta(days=3)
+    nothing_on_a_calendar = {
+        "on_calendar": False,
+        "calendar_leave": False,
+        "calendar_connected": False,
+    }
     assert api.get(f"{PREFIX}/me/notification-pause").json() == {
         "starts_on": None,
         "ends_on": None,
-        "calendar_leave": False,
+        **nothing_on_a_calendar,
+        "calendar": None,
     }
 
     answer = api.put(
@@ -718,14 +865,20 @@ def test_a_person_sets_reads_and_clears_their_own_pause(api: TestClient, session
     assert answer.json() == {
         "starts_on": first.isoformat(),
         "ends_on": last.isoformat(),
-        "calendar_leave": False,
+        **nothing_on_a_calendar,
+        "calendar": "off",
     }
-    assert api.get(f"{PREFIX}/me/notification-pause").json() == answer.json()
+    assert api.get(f"{PREFIX}/me/notification-pause").json() == {**answer.json(), "calendar": None}
     (row,) = session.query(ExtNotificationPause).all()
     assert row.user_id == READER, "the signed-in person's, and nobody else's"
 
     cleared = api.put(f"{PREFIX}/me/notification-pause", json={"starts_on": None, "ends_on": None})
-    assert cleared.json() == {"starts_on": None, "ends_on": None, "calendar_leave": False}
+    assert cleared.json() == {
+        "starts_on": None,
+        "ends_on": None,
+        **nothing_on_a_calendar,
+        "calendar": "off",
+    }
     assert session.query(ExtNotificationPause).count() == 0
 
 

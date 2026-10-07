@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from typing import Any, cast
 
@@ -67,6 +67,7 @@ from . import (
     calendar_sync,
     days_off,
     jira_sync,
+    leave_calendar,
     meeting_notice,
     notion_backfill,
     notion_setup,
@@ -75,6 +76,7 @@ from . import (
     reminders,
     service,
     sync_state,
+    work_report,
 )
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
@@ -90,6 +92,7 @@ from .models import (
     ExtExternalCleanup,
     ExtExternalRef,
     ExtMinutesEvent,
+    ExtNotificationPause,
     ExtProjectRefreshOwed,
     ExtProjectSendCleanup,
 )
@@ -447,6 +450,36 @@ def _close(clients: project_send.Clients) -> None:
     for pair in (clients.notion, clients.slack, clients.jira):
         if pair is not None:
             pair[0].close()
+
+
+def set_leave(
+    session: Session,
+    user_id: str,
+    *,
+    starts_on: date | None,
+    ends_on: date | None,
+    on_calendar: bool | None,
+    now: datetime,
+) -> leave_calendar.Outcome:
+    """A person's own leave dates saved, and their own calendar following when
+    they ticked the box (2026-10-06): the calendar client is built here, where
+    every client is, and ``leave_calendar.set_leave`` does the rest. Runs in
+    the request, as ``send_project_minutes`` does.
+
+    ``set_leave`` commits the dates before it asks Google and writes the
+    answer in a transaction of its own, which the caller commits. The client
+    is built with ``release_after_read`` so that reading the grant does not
+    reopen a transaction for the calls to sit in."""
+    with _calendars(session, release_after_read=True) as calendar_for:
+        return leave_calendar.set_leave(
+            session,
+            calendar_for,
+            user_id,
+            starts_on=starts_on,
+            ends_on=ends_on,
+            on_calendar=on_calendar,
+            now=now,
+        )
 
 
 def send_project_minutes(
@@ -1435,6 +1468,118 @@ def send_daily_digests() -> list[str]:
     return sent
 
 
+@shared_task(name="autune.extraction.periodic.send_work_reports")
+@periodic(timedelta(minutes=10))
+def send_work_reports() -> int:
+    """The work-report draft: to each person alone, their own items
+    on one team as a text they can paste to that team -- finished today, moved
+    to in progress today, going on to tomorrow, late (the user, 2026-10-07;
+    ``work_report``). Returns how many went.
+
+    **A count, and no ids anywhere** (mkkim68, review of #954). This goes only
+    on a day something of the person's was finished or moved, so a result, a
+    log line or an error that names a person names a day they worked. The
+    result is a number, a failed send is logged by team and error type, and a
+    refusal is raised by team. And first of all, on every run -- with the
+    feature off, and outside its hour -- the rows of earlier days are deleted
+    (``work_report.forget_past_days``): a row is the "once" of its own day.
+
+    ``send_daily_digests``' shape, for the same reasons: each DM claimed and
+    sent in its own transaction, a team without Slack or a person without a
+    linked account skipped and looked at again next run, an unexpected error
+    that one DM's, and a privacy refusal never swallowed -- settled so it is
+    reported once, and raised after the rest are sent. Every ten minutes;
+    outside a Monday-to-Friday afternoon in Korea it finds nothing owed. Nobody
+    who turned their reminders off, and nobody on a day they paused, is in the
+    list.
+    """
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        work_report.forget_past_days(session, today=reminders.korean_day(now))
+    if not get_settings().work_report:
+        return 0
+    with session_scope() as session:
+        owed = work_report.reports_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({r.team_id for r in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent = 0
+    # Teams, not people: see the docstring.
+    refused: list[str] = []
+    unasked: list[str] = []
+    not_linked = 0
+    leave = get_settings().leave_from_calendar
+    for report in owed:
+        secret = secrets[report.team_id]
+        if secret is None:
+            continue
+        if leave:
+            would_go = partial(work_report.would_go, owed=report, now=now)
+            try:
+                if _held_back(would_go, report.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(report.team_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
+                log.warning(
+                    "extraction_work_report_failed",
+                    team_id=report.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
+        try:
+            with session_scope() as session:
+                went = work_report.send_report(session, SlackClient(secret), report, now=now)
+        except PrivacyViolationError:
+            refused.append(report.team_id)
+            # Reported once: the day's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    work_report.settle_refused(session, report, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_work_report_refusal_not_kept",
+                    team_id=report.team_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
+            log.warning(
+                "extraction_work_report_failed",
+                team_id=report.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent += 1
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
+        log.info("extraction_work_reports_sent", owed=len(owed), sent=sent, not_linked=not_linked)
+    said = []
+    if refused:
+        said.append(
+            f"work report refused by the outbound check: {len(refused)}, "
+            f"in team(s) {', '.join(sorted(set(refused)))}"
+        )
+    if unasked:
+        said.append(
+            "work report: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, in team(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+    return sent
+
+
 def _raise_refusals(what: str, refused: list[str], unasked: list[str]) -> None:
     """Raise the privacy refusals a digest run collected, each as what it was:
     a message the outbound check refused (its claim already settled), or a
@@ -1527,7 +1672,10 @@ def refresh_public_holidays() -> int:
     """
     settings = get_settings()
     if not settings.public_holiday_calendar or not (
-        settings.daily_digest or settings.weekly_digest or settings.after_meeting_notice
+        settings.daily_digest
+        or settings.weekly_digest
+        or settings.work_report
+        or settings.after_meeting_notice
     ):
         return 0
     now = datetime.now(tz=UTC)
@@ -1967,7 +2115,9 @@ def sync_action_item_jira(action_item_id: str) -> str:
 
 
 @contextmanager
-def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
+def _calendars(
+    session: Session, *, release_after_read: bool = False
+) -> Iterator[calendar_sync.CalendarFor]:
     """A lookup from a person to their own calendar client and calendar id --
     ``None`` for someone who has not connected one -- with every client it
     opened closed on the way out.
@@ -1984,6 +2134,12 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
     asking Google: the answer is known, and a refresh with the wrong client
     is one refused call per sync for as long as the person stays connected.
     A grant from before the client was recorded is tried as it always was.
+
+    ``release_after_read`` ends the session's transaction once a grant has been
+    read, before Google is asked for a token. For a caller that has committed
+    its own work and must not hold a connection across the calls
+    (``set_leave``); it commits, so a caller with work still pending must not
+    pass it.
     """
     client_id, client_secret = get_core_settings().google_integration_credentials
     opened: dict[str, tuple[calendar_sync.CalendarEvents, str]] = {}
@@ -1993,6 +2149,9 @@ def _calendars(session: Session) -> Iterator[calendar_sync.CalendarFor]:
         if user_id in opened:
             return opened[user_id]
         config = load_user_integration(session, user_id, calendar_sync.CALENDAR)
+        if release_after_read:
+            # ``config`` is a copy, not a row: nothing below reads the session.
+            session.commit()
         if config is None or not config.secret or not client_id or not client_secret:
             return None
         issued_to = config.config.get("client_id")
@@ -2485,7 +2644,8 @@ CLEANUP_MAX_ATTEMPTS = 5
 @on_user_deleted("extraction")
 def forget_user_calendar_events(user_id: str) -> None:
     """Before an account goes (#582, #588): every due-date event B put on that
-    person's own calendar, removed now.
+    person's own calendar, removed now -- and the leave event they asked for,
+    while its pause still stands (``leave_calendar``).
 
     Now, not queued: the events can only be removed with the person's own
     Google grant (``user_integrations``), and that row goes with ``users``
@@ -2509,10 +2669,13 @@ def forget_user_calendar_events(user_id: str) -> None:
             minutes = list(
                 session.scalars(select(ExtMinutesEvent).where(ExtMinutesEvent.user_id == user_id))
             )
+            # The leave they asked to have there; its row goes with ``users``.
+            pause = session.get(ExtNotificationPause, user_id)
             ids = (
                 [e.event_id for e in events if e.event_id]
                 + [q.event_id for q in queued]
                 + [m.event_id for m in minutes]
+                + ([pause.calendar_event_id] if pause and pause.calendar_event_id else [])
             )
             removed, failed = _remove_events(calendar_for, user_id, ids)
             for row in [*events, *queued, *minutes]:

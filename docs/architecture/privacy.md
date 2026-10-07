@@ -289,10 +289,14 @@ person's, those counts are that person's completion record. So:
   **"Their speech" is the lines whose speaker label is assigned to them.** A
   label nobody assigned, or one whose assignment was undone
   (`DELETE /meetings/{id}/speakers/{label}`), is attributable to no one, and
-  deleting one's own speech does not reach it. Undoing is for a wrong
-  assignment; a voice that diarization split into two labels should have both
-  assigned to the same person, which the speaker picker allows behind a
-  confirmation (#912).
+  deleting one's own speech does not reach it. Any member of the meeting's
+  team may undo an assignment, including one that names somebody else — the
+  same people who may make one — so a person's lines can stop being theirs
+  without their own action. That is deliberate: a wrong assignment has to be
+  correctable by whoever notices it, and the confirmation says what it undoes
+  (#928). Undoing is for a wrong assignment; a voice that diarization split
+  into two labels should have both assigned to the same person, which the
+  speaker picker allows behind a confirmation (#912).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
@@ -331,6 +335,27 @@ to nobody else, with when the link lapses and who invited
 (`GET /api/audio/teams/{team_id}/invitations`): the list looks nobody up, so
 it reads the same for an address with an account and one without, and it
 never carries the token or its hash. Any member of the team may cancel one.
+
+**An invitation may also be made for no address** (#552, 2026-10-06). It
+holds nobody's address -- there is none to hold -- and for the same reason
+nothing but the link says who may use it: **whoever has the link joins the
+team by signing in.** That is the one place the read boundary of a team
+rests on a link alone, so it is kept small: the link admits one person and
+is then gone; it **lapses one hour** after it is made (seven days is for an
+invitation with an address); a person has one open for a team at a time,
+and making another ends the earlier one; it is never mailed by Autune; and
+it is in the same pending list, as a link with no address, where any member
+of the team can cancel it. Its token is stored as a hash like any other,
+and log lines carry ids. Nobody is told when somebody joins by it -- the
+member list shows them. **Somebody who joins by it stays.** Nothing takes a
+member off a team today: leaving is held until ADR 0007 is reviewed (#92),
+removing another member was never built, and a `team_members` row goes only
+with the account or the team. So a link that reaches the wrong person admits
+them for good, with everything the team can read, and the limits above are
+all there is against it -- they make it one person within one hour, they do
+not undo it. This is accepted for now, knowingly; a way to remove a member
+is what would change it. An invitation for an address is unchanged and is
+still only for that address.
 
 The inviter may have the link **mailed from their own Gmail** (#552), when
 they ask and only through their own `gmail.send` grant -- Autune runs no mail
@@ -474,8 +499,14 @@ the feature needs.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
-    hold -- made, given to them, or confirmed since) and today's work (late, due today, in progress; the rest as a
-    count). It carries what a reminder carries about each item -- its
+    hold -- made, given to them, or confirmed since) and today's work (late;
+    due today; standing untouched for five days or more, when the item is in
+    progress or has no due date; in progress; the rest as a count). A
+    standing item's line says how many days it has stood: the
+    time since the item was made or last edited, read from the same edit
+    record as "what changed" and worked out each morning, not stored. It is
+    how long an item has waited, said to the person who holds it. It carries
+    what a reminder carries about each item -- its
     description, a late item's due date, the meeting's title -- and a link to
     the board; no utterance, and nobody else's items. "What changed" is read
     from `ext_edit_events`, which holds that an item was edited, which fields
@@ -486,12 +517,91 @@ the feature needs.
     A morning DM or a Monday DM the outbound check refuses is not sent, is
     reported once, and keeps that day's (or week's) row so it is not tried
     again every ten minutes.
+  - **Slack, the work-report draft:** on a Monday-to-Friday afternoon
+    in Korea (16:00-17:00, and not later), a direct message to a person about their own items on one
+    team, when something of theirs was finished or moved to in progress that
+    day: a short report -- finished, moved, going on to tomorrow, late, and
+    the rest as a count -- headed by the team's name and worded so that the
+    person can paste it to that team. **Autune sends it to that person and to
+    nobody else**: no channel, no lead, no admin, and no collected version of
+    several people's days; whether anybody else reads it is the person's own
+    paste. It carries what the morning DM carries about each item -- its
+    description, a due date that is today's or past, the meeting's title --
+    and a link to the board; no utterance, and nobody else's items. "Today"
+    is read from `ext_edit_events` as the morning DM's "what changed" is, so
+    it never says who made a change, and it counts nothing about a person
+    beyond the number of their own open items it did not list. The text is
+    made from the rows; no model reads or rewrites it. **That it went is
+    kept for its own day and no longer** (mkkim68, review of #954). Unlike
+    the morning DM, this one goes only on a day the person finished or
+    started something, so the row that says it went (`ext_work_reports`:
+    person, team, day) says by itself that they worked on that team that
+    day; kept, the rows would be a calendar of a person's working days --
+    the per-person record of conduct ADR 0003 forbids. The row has one use,
+    not sending twice in a day, so the sending task deletes every earlier
+    day's row each time it runs: every ten minutes, also where the feature
+    is switched off and outside its hour. A row is therefore gone within
+    about ten minutes of the next midnight in Korea while the worker runs,
+    and at the worker's first run if it was down; until then it goes with
+    the account or the team. For the same reason nothing else names a
+    person beside a day: the task's result is a count, a failed send is
+    logged by team and error type, and a refused text is raised by team.
+    The run's log line keeps how many went, not to whom. Not its text
+    either. The reminder switch above stops it, and so do the person's own
+    leave dates and a public holiday below; a draft the outbound check
+    refuses is not sent, is reported once, and keeps that day's row -- which
+    is deleted with the others.
   - **A person's own leave dates:** a person may set one range of days on
     which the morning DM and Monday's DM are not sent
     (`ext_notification_pauses`). When someone is away is theirs alone: only
     they can read or write it, no screen or route shows it to a teammate or
     an admin, nothing is derived from it, and it is deleted once its last
     day has passed. Due-date reminders do not read it.
+  - **Those dates on the person's own calendar, by their own tick** (the
+    user, 2026-10-06): the one way the dates leave Autune. A person whose own
+    Google Calendar is connected is shown a box beside the dates, "내 Google
+    캘린더에도 추가", **off until they tick it**; nobody else can tick it for
+    them and no setting of a team or a deployment does. Ticked and saved, the
+    range goes onto that person's own calendar through their own grant as one
+    all-day event: the two dates, the fixed title "휴가" and a fixed line
+    saying where it came from -- no meeting, no item, no other person, no
+    attendee, so nobody is invited or notified. **Who can see an event on a
+    calendar is decided by that calendar's sharing, not by Autune**, so it is
+    written `visibility: private`: someone the person shares the calendar
+    with sees that they are busy on those days and not why. That is still
+    more than "theirs alone", and it is why it happens only on the person's
+    own press and is said before they press -- under the box, and beside the
+    calendar's connect button, to somebody already connected as well.
+    Autune keeps the event's id on the pause row
+    (`ext_notification_pauses.calendar_event_id`) and, only while a save is at
+    the calendar, the time that save began (`calendar_claimed_at`, cleared
+    when it returns; it keeps a second save out and is shown nowhere) -- and
+    nothing else: a changed range moves the
+    same event, and a save with the box unticked, or clearing the dates,
+    removes it (a removal Google does not answer is queued and tried again
+    with the person's grant, as a due-date event's is). A save that says
+    neither -- the box was not drawn, the calendar not being connected just
+    then -- leaves the event and its id as they stand, and makes no event
+    where there is none; an event the person deleted in Calendar is not
+    made again by such a save either -- the id is dropped, and only a tick
+    makes one. Once the last day has passed
+    the row is deleted as before, the id with it, and **the event stays** on
+    the calendar as the person's own record; Autune can no longer reach it.
+    A calendar disconnected while the event stands cannot be reached either:
+    the event stays there, where the person can delete it, and the save that
+    would have removed it tells them so.
+    A deleted account has an event that still stands removed first, by B's
+    user hook. Autune never reads the calendar for any of this: a leave the
+    person wrote there themselves is not looked for, and the out-of-office
+    read below asks Google for out-of-office events only, which this plain
+    event is not. No log line carries the dates. Like an item's due date
+    (#435) and a project's minutes a person chose to send (#788,
+    `ext_minutes_events`), it goes onto the writer's own calendar and nobody
+    else's. Unlike a due date, which follows from the connection, it is
+    about the person and not the team's work, so connecting a calendar is
+    never enough: a range goes only when the box is ticked at that save.
+    Still true of everything inside Autune: no screen, route or message
+    shows one person's dates to another.
   - **Out-of-office time, from a person's own calendar:** where a deployment
     turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
     person who connected Google Calendar is not sent the morning DM or
@@ -526,11 +636,16 @@ the feature needs.
     layer's rule 3). An item of theirs that a person has already confirmed is
     named with its date, as in the morning DM. The count is of items waiting,
     said to the person they wait for; nothing is counted about a person and no
-    utterance is read. Autune keeps only that the notice went
-    (`ext_meeting_notices`: the meeting, the person, when), once a person and
-    meeting. 09:00-17:00 Korea time on a working day; the reminder switch and
-    a person's own leave dates stop it. A notice the outbound check refuses is
-    not sent, is reported once, and is not tried again.
+    utterance is read. Autune keeps only that the notice was sent or
+    refused (`ext_meeting_notices`: the meeting, the person, when), once a
+    person and meeting; the row does not say which of the two, and it goes
+    with the meeting -- when it is deleted, its retention expiry included --
+    and with the person's account. The message itself stays in the person's
+    Slack. 09:00-17:00 Korea time on a working day, and not on a public
+    holiday; the reminder switch, a person's own leave dates and, where
+    that read is on, an out-of-office event on their calendar stop it. A
+    notice the outbound check refuses is not sent, is reported once, and is
+    not tried again.
   - **Public holidays:** no morning DM or Monday DM goes on one. The days
     come from Google's public calendar of Korea's holidays, fetched at its
     public address with no credentials -- nobody's Google grant is used and
@@ -551,8 +666,13 @@ the feature needs.
     the grant is revoked at Google (#763), and the row goes with the account
     (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
     unreachable Google leaves the events on the calendar and the grant listed
-    under the person's third-party access, and the deletion goes on. Each event is only the item's
+    under the person's third-party access, and the deletion goes on. Each of those events is only the item's
     description and date, with no attendees and nothing from the transcript.
+    B writes two other kinds of event on a person's own calendar, each only
+    by that person's own act and each removed by the same user hook: a
+    project's minutes they chose to send (#788, `ext_minutes_events`) and
+    their own leave dates ("Those dates on the person's own calendar",
+    above).
   - **Google Calendar, S20's 다음 회의 잡기 (module C, #824):** the presser's
     own calendar only, with their own grant (`user_integrations`). A line
     carries a gap's title and suggested question -- both stored masked, or

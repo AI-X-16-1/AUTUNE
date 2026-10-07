@@ -450,20 +450,22 @@ class DueReminderSetting(BaseModel):
     """The caller's own due-date reminders (review of #751).
 
     ``on`` is their choice: on unless they turned it off. It is one switch
-    for several messages -- the due-date reminder, the Monday digest, the
-    morning DM and the notice after a meeting -- and a deployment turns each
-    on by itself, so the screen is told which of them this one sends:
-    ``sent_here`` for the reminder (``AUTUNE_EXTRACTION_DUE_REMINDERS``),
-    ``weekly_here`` for the Monday digest (``..._WEEKLY_DIGEST``),
-    ``daily_here`` for the morning DM (``..._DAILY_DIGEST``),
-    ``after_meeting_here`` for the notice after a meeting
-    (``..._AFTER_MEETING_NOTICE``). ``sent_here`` alone had the screen say
-    "this server sends none yet" on a deployment that sent the two digests."""
+    for five messages -- the due-date reminder, the Monday digest, the
+    morning DM, the work-report draft (``work_report_here``,
+    ``..._WORK_REPORT``) and the notice after a meeting
+    (``after_meeting_here``, ``..._AFTER_MEETING_NOTICE``) -- and a
+    deployment turns each on by itself, so the screen is told which of
+    them this one sends: ``sent_here`` for the reminder
+    (``AUTUNE_EXTRACTION_DUE_REMINDERS``), ``weekly_here`` for the
+    Monday digest (``..._WEEKLY_DIGEST``), ``daily_here`` for the morning DM
+    (``..._DAILY_DIGEST``). ``sent_here`` alone had the screen say "this
+    server sends none yet" on a deployment that sent the two digests."""
 
     on: bool
     sent_here: bool
     weekly_here: bool = False
     daily_here: bool = False
+    work_report_here: bool = False
     after_meeting_here: bool = False
 
 
@@ -477,12 +479,26 @@ class NotificationPause(BaseModel):
     """The caller's own leave dates: no morning DM and no Monday digest from
     ``starts_on`` to ``ends_on``, both days included (the user, 2026-10-05).
     Both ``None`` is no pause. Sent to clear or replace it, and answered with
-    what stands. Their own only: nothing here names a person."""
+    what stands. Their own only: nothing here names a person.
+
+    ``on_calendar`` is the person's tick on "내 Google 캘린더에도 추가" (the
+    user, 2026-10-06): sent ``true``, the range also goes onto their own
+    calendar as one private all-day event; sent ``false``, an event put there
+    for an earlier range is removed. **Left out, the calendar stays as it
+    stands**: an event already there moves with the dates, and where there is
+    none, none is made -- nor is one made in place of an event the person
+    deleted in Calendar: that takes the tick. That is what a screen that drew no box sends -- a
+    person whose calendar is not connected just now did not untick anything,
+    and reading the missing field as ``false`` dropped the event's id, so the
+    next ticked save made a second event beside the first (lsh2217's review of
+    #922). Answered ``true`` while such an event stands. Nothing is put on a
+    calendar without the tick."""
 
     model_config = ConfigDict(extra="forbid")
 
     starts_on: date | None = None
     ends_on: date | None = None
+    on_calendar: bool | None = None
 
 
 class NotificationPauseRead(NotificationPause):
@@ -490,9 +506,21 @@ class NotificationPauseRead(NotificationPause):
     here. ``calendar_leave`` says whether this deployment also reads
     out-of-office time from a calendar the person connected
     (``AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR``), so the screen can say so
-    where it is true and stay silent where it is not."""
+    where it is true and stay silent where it is not.
+
+    ``calendar_connected`` is whether the caller has a calendar of their own
+    connected -- the box is drawn only then. ``calendar`` is what happened on
+    that calendar for the save just made (``leave_calendar.Outcome``), and
+    ``None`` on a plain read."""
 
     calendar_leave: bool = False
+    calendar_connected: bool = False
+    calendar: (
+        Literal[
+            "off", "added", "removed", "removal_queued", "not_connected", "not_removed", "failed"
+        ]
+        | None
+    ) = None
 
 
 class MeetingNoteUpdate(BaseModel):

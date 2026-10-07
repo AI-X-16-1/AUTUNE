@@ -4017,13 +4017,21 @@ def set_notification_pause(
 ) -> ExtNotificationPause | None:
     """Replace this person's pause with ``starts_on``..``ends_on``, both days
     included, or clear it when both are ``None``. One range a person: setting
-    another replaces the first, nothing is kept of it. Only the caller's own --
-    the route passes the signed-in person and there is no way to name another.
+    another replaces the first, and nothing is kept of the first's dates. Only
+    the caller's own -- the route passes the signed-in person and there is no
+    way to name another.
+
+    The row is replaced in place and comes back locked. The one thing it
+    carries over is ``calendar_event_id`` -- the event the person asked for on
+    their own calendar -- which ``leave_calendar.set_leave`` moves or removes
+    next. The lock covers the dates and that id; the calendar itself is asked
+    after the commit, and a double press is kept to one event there by
+    ``calendar_claimed_at``.
     """
     if (starts_on is None) != (ends_on is None):
         raise ValidationError("a pause needs both its first and its last day, or neither")
-    session.execute(delete(ExtNotificationPause).where(ExtNotificationPause.user_id == user_id))
     if starts_on is None or ends_on is None:
+        session.execute(delete(ExtNotificationPause).where(ExtNotificationPause.user_id == user_id))
         session.flush()
         return None
     if ends_on < starts_on:
@@ -4035,10 +4043,18 @@ def set_notification_pause(
         raise ValidationError("a pause that has already ended would change nothing")
     if (starts_on - today).days > MAX_PAUSE_AHEAD_DAYS:
         raise ValidationError(f"a pause may start {MAX_PAUSE_AHEAD_DAYS} days ahead at most")
-    pause = ExtNotificationPause(
-        user_id=user_id, starts_on=starts_on, ends_on=ends_on, created_at=now
+    session.execute(
+        _insert_if_absent_into(session, ExtNotificationPause)
+        .values(user_id=user_id, starts_on=starts_on, ends_on=ends_on, created_at=now)
+        .on_conflict_do_nothing(index_elements=["user_id"])
     )
-    session.add(pause)
+    pause = session.execute(
+        select(ExtNotificationPause)
+        .where(ExtNotificationPause.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
+    pause.starts_on, pause.ends_on, pause.created_at = starts_on, ends_on, now
     session.flush()
     return pause
 
@@ -4138,10 +4154,20 @@ def daily_digest_content(
     mark at all and is not seen: an already confirmed item given to a person
     by ``fill_identified_assignees``.
 
-    **Today** is their open items: late ones, the ones due today, then the
-    ones in progress -- each item once, in the first that fits -- and the
-    rest only counted. Their own items on this team, as the weekly digest
-    reads them: a meeting past its retention window is left out."""
+    **Today** is their open items: late ones, the ones due today, the ones
+    nobody has touched for days, then the ones in progress -- each item once,
+    in the first that fits -- and the rest only counted. Their own items on
+    this team, as the weekly digest reads them: a meeting past its retention
+    window is left out.
+
+    **Untouched for days** (``_idle_days``; the user, 2026-10-07) is read from
+    the same record as "what changed": when the item was made and when it was
+    last edited, never what the edit was or who made it. So it says how long
+    the *item* has stood, to the person who holds it, and nothing is kept of
+    it -- it is worked out again each morning. **Only an item in progress, or
+    one with no due date, is named** (the user, the same day): a not-started
+    item whose date is still ahead is not stalled, it is not due yet, and it
+    stays in the count."""
     marks: dict[str, set[str]] = {}
     for item_id, kind, fields in session.execute(
         select(ExtEditEvent.action_item_id, ExtEditEvent.kind, ExtEditEvent.fields)
@@ -4173,9 +4199,11 @@ def daily_digest_content(
     taken_on: list[reminders.DigestLine] = []
     late: list[reminders.DigestLine] = []
     due_today: list[reminders.DigestLine] = []
+    stalled: list[reminders.DigestLine] = []
     in_progress: list[reminders.DigestLine] = []
     others = 0
     open_rows = _open_items_of(session, user_id=owed.user_id, team_id=owed.team_id, now=now)
+    idle = _idle_days(session, [item for item, _team, _title in open_rows], now=now)
     confirmed = _confirmed_since(
         session,
         [
@@ -4193,18 +4221,64 @@ def daily_digest_content(
             late.append(line)
         elif item.due_date == owed.day:
             due_today.append(line)
+        elif item.id in idle and (
+            item.status == ActionStatus.IN_PROGRESS.value or item.due_date is None
+        ):
+            # Begun and left, or with no date to say when: work that has
+            # stopped. A not-started item whose date is still ahead is waiting
+            # for that date, and naming it every morning would only repeat.
+            stalled.append(replace(line, idle_days=idle[item.id]))
         elif item.status == ActionStatus.IN_PROGRESS.value:
             in_progress.append(line)
         else:
             others += 1
+    # Longest first; the stable sort keeps the board's order among equals.
+    stalled.sort(key=lambda line: -(line.idle_days or 0))
     return reminders.DailyDigest(
         done=done,
         taken_on=taken_on,
         late=late,
         due_today=due_today,
+        stalled=stalled,
         in_progress=in_progress,
         others=others,
     )
+
+
+def _idle_days(
+    session: Session, items: Sequence[ExtActionItem], *, now: datetime
+) -> dict[str, int]:
+    """Whole days since each of these items was last touched, for the ones
+    that have stood ``reminders.STALLED_AFTER_DAYS`` or more.
+
+    Touched is made or edited: the row's own ``created_at`` and the latest
+    ``ext_edit_events`` row of the item, whichever is later. A model's draft
+    has no ``created`` event, so the row's time is its start; a person's
+    confirmation is an edit, so an item confirmed yesterday is not old. One
+    thing changes an item and leaves no mark: ``fill_identified_assignees``
+    giving it to somebody -- such an item can read as standing since before
+    its holder had it.
+    """
+    if not items:
+        return {}
+    last_edit = {
+        item_id: at
+        for item_id, at in session.execute(
+            select(ExtEditEvent.action_item_id, func.max(ExtEditEvent.created_at))
+            .where(ExtEditEvent.action_item_id.in_([item.id for item in items]))
+            .group_by(ExtEditEvent.action_item_id)
+        ).tuples()
+    }
+    idle: dict[str, int] = {}
+    for item in items:
+        touched = _aware(item.created_at)
+        edit = last_edit.get(item.id)
+        if edit is not None:
+            touched = max(touched, _aware(edit))
+        days = (now - touched).days
+        if days >= reminders.STALLED_AFTER_DAYS:
+            idle[item.id] = days
+    return idle
 
 
 def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: datetime) -> set[str]:
