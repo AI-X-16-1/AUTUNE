@@ -174,6 +174,9 @@ def _call(fn, *args, **kwargs):
 def _holds_the_shape(result: dict) -> None:
     assert set(result) == KEYS
     assert all(ID.fullmatch(value) for value in result["evidence"])
+    # The agent reads an item's id as text (``ask._quotable`` calls ``startswith``),
+    # so an integer primary key must never reach it (#901).
+    assert all(ID.fullmatch(item["id"]) for item in result["items"] if "id" in item)
     assert len(result["items"]) <= tools.MAX_ITEMS
 
 
