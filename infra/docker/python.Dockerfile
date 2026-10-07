@@ -39,7 +39,13 @@ COPY infra/alembic infra/alembic
 # `--all-packages`: the modules are workspace members. `local-models` puts in
 # what C, D and E run in process (spaCy, SetFit, KURE-v1); without it they
 # raise on first use and the API still answers 200 -- see scripts/up.sh.
+# `cuda` is module A's: CUDA 12's cuBLAS, which faster-whisper needs on a GPU
+# and torch's CUDA 13 does not provide (modules/audio/pyproject.toml).
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --all-packages --extra local-models
+    uv sync --frozen --no-dev --all-packages --extra local-models --extra cuda
+
+# CTranslate2 dlopens libcublas.so.12 by name, and a pip-installed CUDA library
+# is not on the loader's path. Harmless where there is no GPU: nothing loads it.
+ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.12/site-packages/nvidia/cublas/lib
 
 USER autune

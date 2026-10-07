@@ -16,7 +16,9 @@ x-python: &python
   build: {context: .., dockerfile: infra/docker/python.Dockerfile}
   image: autune-python:dev
   env_file: [../.env.example]
-  environment:
+  # Anchored on its own because a merge key (`<<`) is shallow: a service that
+  # writes `environment:` replaces this whole map unless it merges it back in.
+  environment: &python-env
     # Dummy meetings only (#517). This mounts /api/audio/dev/token, which
     # issues a token for any email; nginx puts it behind a password.
     AUTUNE_ENV: local
@@ -174,20 +176,51 @@ services:
       # Importing every module (torch among them) takes a while on a CPU.
       start_period: 120s
 
+  # Two workers, so that a transcription no longer holds up everything else.
+  # One worker took every queue on --pool=solo, so while it transcribed a
+  # meeting (about 1.3x the recording on this CPU) every other upload, every
+  # analysis of B, C, D and E, and every Slack notice waited behind it.
+  #
+  # --pool=solo on both: E's classifier aborts under prefork or threads
+  # (#329), as in scripts/up.sh.
   worker:
     <<: *python
     container_name: ${COMPOSE_PROJECT_NAME}-worker
     restart: unless-stopped
-    # --pool=solo: E's classifier aborts under prefork or threads (#329), as in
-    # scripts/up.sh.
     command: ["celery", "-A", "autune_worker.celery_app", "worker",
-              "-Q", "default,cpu_heavy,gpu", "-l", "info", "--pool=solo"]
+              "-Q", "default,cpu_heavy", "-l", "info", "--pool=solo"]
     volumes:
-      # The API writes an upload here and the worker transcribes it, so the
+      # KURE-v1, the re-ranker and E's models download on first use (several
+      # GB); a named volume keeps them across redeploys. No audio-tmp: every
+      # autune.audio.* task goes to the `gpu` queue (autune_core.celery_app).
+      - models:/models
+
+  # Module A's tasks only: transcription, diarization, and A's periodic sweeps.
+  # Whisper runs on the RTX 3060 (12 GB): large-v3 at float16 (pipeline.py
+  # picks it for cuda) and pyannote beside it. Transcriptions still run one at
+  # a time, but each takes a fraction of what it took on the CPU.
+  #
+  # Pyannote follows AUTUNE_AUDIO_DEVICE. Left unset on purpose: torch's wheel
+  # is CUDA 13, which needs an NVIDIA driver of 580 or later; with an older
+  # one torch sees no GPU, pyannote takes the CPU and logs
+  # diarization_device_unavailable, and transcription is not refused.
+  worker-audio:
+    <<: *python
+    container_name: ${COMPOSE_PROJECT_NAME}-worker-audio
+    restart: unless-stopped
+    command: ["celery", "-A", "autune_worker.celery_app", "worker",
+              "-Q", "gpu", "-l", "info", "--pool=solo", "-n", "audio@%h"]
+    environment:
+      <<: *python-env
+      AUTUNE_AUDIO_DEVICE: cuda
+    # Docker Desktop hands the GPU to the container through WSL 2. Without a
+    # usable GPU the container does not start, and the deploy says so.
+    gpus: all
+    volumes:
+      # The API writes an upload here and this worker transcribes it, so the
       # two share it. tmpfs: raw audio never lands on a disk (invariant 11).
       - audio-tmp:/tmp/autune-audio
-      # Whisper, pyannote, KURE-v1 and the re-ranker download on first use
-      # (several GB); a named volume keeps them across redeploys.
+      # Whisper and pyannote download on first use; same volume as above.
       - models:/models
 
   beat:
@@ -244,5 +277,5 @@ volumes:
     # so the several GB already downloaded on the server are kept.
     name: autune_models
   audio-tmp:
-    # Shared between api and worker, and in memory only.
+    # Shared between api and worker-audio, and in memory only.
     driver_opts: {type: tmpfs, device: tmpfs, o: "uid=1000,gid=1000,mode=0700"}
