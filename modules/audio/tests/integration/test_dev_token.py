@@ -70,6 +70,33 @@ def test_the_same_email_gets_the_same_user_and_team(client: TestClient) -> None:
     assert first["team_id"] == second["team_id"]
 
 
+def test_the_token_is_for_the_team_the_person_pinned_not_the_one_joined_first(
+    client: TestClient, db_session: Session
+) -> None:
+    """#943: every screen opens on the first team of ``team_order``; the dev
+    token named the one joined first, so a person who pinned another team came
+    in on a different team from the one the screens show."""
+    first = client.post("/api/audio/dev/token", json={"email": "demo@example.com"}).json()
+    later = Team(name="나중에 들어간 팀")
+    db_session.add(later)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=later.id, user_id=first["user_id"]))
+    db_session.flush()
+
+    unpinned = client.post("/api/audio/dev/token", json={"email": "demo@example.com"}).json()
+    assert unpinned["team_id"] == first["team_id"], "nothing pinned: the team joined first"
+
+    pinned = client.put(
+        f"/api/audio/teams/{later.id}/pin",
+        headers={"Authorization": f"Bearer {first['token']}"},
+    )
+    assert pinned.status_code == 200
+
+    again = client.post("/api/audio/dev/token", json={"email": "demo@example.com"}).json()
+    assert again["team_id"] == later.id
+    assert again["user_id"] == first["user_id"]
+
+
 def test_the_token_opens_a_route_that_takes_current_user(
     client: TestClient, db_session: Session
 ) -> None:
