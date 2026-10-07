@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import date, timedelta
 from statistics import median_low
@@ -94,15 +95,20 @@ def cited(open_gaps: ToolResult, verdict: Verdict) -> list[Finding]:
     return [by_id[i] for i in verdict.evidence if i in by_id]
 
 
-def _business_days_after(day: date, n: int) -> date:
+def is_business_day(day: date, off: AbstractSet[date] = frozenset()) -> bool:
+    """A weekday that is not one of ``off``, the public holidays (#964)."""
+    return day.weekday() < 5 and day not in off
+
+
+def _business_days_after(day: date, n: int, off: AbstractSet[date] = frozenset()) -> date:
     while n > 0:
         day += timedelta(days=1)
-        if day.weekday() < 5:
+        if is_business_day(day, off):
             n -= 1
     return day
 
 
-def suggest_date(held: list[date], today: date) -> date:
+def suggest_date(held: list[date], today: date, off: AbstractSet[date] = frozenset()) -> date:
     """When the follow-up meeting could be: the team's usual gap after its
     latest meeting, never before the next business day.
 
@@ -110,19 +116,20 @@ def suggest_date(held: list[date], today: date) -> date:
     The usual gap is the median of the gaps between them, kept to one to
     ``MAX_CADENCE_DAYS`` days; with fewer than two days it is unknown and the
     suggestion is ``DEFAULT_BUSINESS_DAYS`` business days from today. A
-    weekend moves to the Monday after. Holidays are not known here -- the
-    lead moves the date on the board.
+    weekend or a public holiday in ``off`` moves to the next business day.
+    Without ``off`` only weekends are skipped, and the lead moves the date on
+    the board.
 
     Meeting days only: no calendar and nobody's availability (spec section 6).
     """
     days = sorted(set(held), reverse=True)
-    earliest = _business_days_after(today, 1)
+    earliest = _business_days_after(today, 1, off)
     if len(days) < 2:
-        return _business_days_after(today, DEFAULT_BUSINESS_DAYS)
+        return _business_days_after(today, DEFAULT_BUSINESS_DAYS, off)
     gaps = [(a - b).days for a, b in zip(days, days[1:], strict=False)]
     cadence = min(max(median_low(gaps), 1), MAX_CADENCE_DAYS)
     day = max(days[0] + timedelta(days=cadence), earliest)
-    while day.weekday() >= 5:
+    while not is_business_day(day, off):
         day += timedelta(days=1)
     return day
 
@@ -142,7 +149,9 @@ class Suggestion:
     basis: Basis
 
 
-def suggest_from_due_dates(due: Sequence[Due], today: date) -> Suggestion | None:
+def suggest_from_due_dates(
+    due: Sequence[Due], today: date, off: AbstractSet[date] = frozenset()
+) -> Suggestion | None:
     """The follow-up just after most of M's work is due (spec section 5, #963).
 
     In order: a confirmed item already past its date makes it the next
@@ -153,9 +162,10 @@ def suggest_from_due_dates(due: Sequence[Due], today: date) -> Suggestion | None
     next business day after today.
 
     ``None`` when no date is left: the caller falls back to ``suggest_date``.
-    The same items in any order give the same suggestion.
+    The same items in any order give the same suggestion. A business day is
+    a weekday not in ``off``, the public holidays (#964).
     """
-    earliest = _business_days_after(today, 1)
+    earliest = _business_days_after(today, 1, off)
     if any(d.confirmed and d.day < today for d in due):
         return Suggestion(earliest, "confirmed")
     horizon = today + timedelta(days=DUE_HORIZON_DAYS)
@@ -164,6 +174,6 @@ def suggest_from_due_dates(due: Sequence[Due], today: date) -> Suggestion | None
         return None
     # Rounded first: 0.8 * 15 is 12.000000000000002 in floating point.
     k = max(math.ceil(round(DUE_DATE_SHARE * len(kept), 9)), 1)
-    day = max(_business_days_after(kept[k - 1].day, 1), earliest)
+    day = max(_business_days_after(kept[k - 1].day, 1, off), earliest)
     basis: Basis = "confirmed" if all(d.confirmed for d in kept) else "draft"
     return Suggestion(day, basis)
