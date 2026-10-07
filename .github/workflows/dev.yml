@@ -34,9 +34,9 @@ jobs:
       AUTUNE_AGENT_LLM_API_KEY: ${{ secrets.AUTUNE_AGENT_LLM_API_KEY }}
       # Required: the provider key under its shared name, which module B
       # reads when its own is blank (#701). The compose file sets B's
-      # classifier and its resolver to `llm`, and without a key B builds neither -- on
-      # the first meeting, after the deploy looked fine. "Check
-      # configuration" refuses before that.
+      # classifier, its resolver and its NLI (step 4, #934) to `llm`, and
+      # without a key B builds none of them -- on the first meeting, after
+      # the deploy looked fine. "Check configuration" refuses before that.
       AUTUNE_LLM_API_KEY: ${{ secrets.AUTUNE_LLM_API_KEY }}
       # The address the domain serves. Google sends sign-in back here, and
       # the api sends the browser here afterwards, so it must be the origin
