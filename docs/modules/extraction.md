@@ -329,6 +329,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
 | `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
 | `ext_daily_digests` | That a person was sent the morning DM for one day through one team's Slack. The primary key is the "once", and the latest row's time is where the next DM's "since the last one" starts; the message is not kept. Goes with the person and with the team |
+| `ext_meeting_notices` | That the notice after one meeting was sent to a person, or refused by the outbound check -- a refused one keeps its row so it is reported once and not built again, and the row does not say which. The primary key is the "once"; no text and no count. Goes with the meeting (its retention expiry included) and with the person |
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
@@ -546,6 +547,17 @@ other module's tables.
   is kept on the pause (`calendar_event_id`) and goes with it after the last
   day; the event itself then stays on the calendar. Rules and what is said
   to the person: `docs/architecture/privacy.md` section 6
+- A DM to a person soon after a meeting is processed, when the pipeline has
+  put work of that meeting on them (`meeting_notice.py`,
+  `autune.extraction.periodic.send_meeting_notices`, every five minutes): the
+  meeting's title, **how many** drafts wait for their confirmation, and a link
+  to that meeting's 액션 tab. No draft's text or date -- unconfirmed content
+  does not leave (#246) -- while an item already confirmed is named with its
+  date. Once a person and meeting (`ext_meeting_notices`); only somebody on
+  the meeting's team now; 09:00-17:00 Korea time on a working day, and what
+  could not go then goes at 09:00 on the next working day. Stopped by the
+  reminder switch and by a person's own leave dates. Off by default:
+  `AUTUNE_EXTRACTION_AFTER_MEETING_NOTICE=true` turns it on
 - Neither digest goes on a public holiday (`days_off.py`): the days are read
   twice a day from Google's public calendar of Korea's holidays, with no
   credentials (`autune.extraction.periodic.refresh_public_holidays`;

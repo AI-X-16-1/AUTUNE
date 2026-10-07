@@ -119,8 +119,8 @@ export function NotificationPauseSetting() {
         style={meta}
       >
         <span>
-          휴가 기간 (아침 요약과 월요일 요약을 받지 않음. 월요일이 공휴일이라 다른 날
-          오는 월요일 요약도 같습니다)
+          휴가 기간 (아침 요약, 월요일 요약, 오늘 업무 보고 초안, 회의 직후 알림을 받지
+          않음. 월요일이 공휴일이라 다른 날 오는 월요일 요약도 같습니다)
         </span>
         <input
           type="date"

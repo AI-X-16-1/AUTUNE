@@ -91,6 +91,7 @@ def test_they_are_on_unless_the_person_turned_them_off(
         "weekly_here": False,
         "daily_here": False,
         "work_report_here": False,
+        "after_meeting_here": False,
     }
 
 
@@ -104,6 +105,7 @@ def test_turning_them_off_and_on_again(session: Session, monkeypatch: pytest.Mon
         "weekly_here": False,
         "daily_here": False,
         "work_report_here": False,
+        "after_meeting_here": False,
     }
     assert session.get(ExtDueReminderOptOut, READER) is not None
     assert client.get(f"{PREFIX}/me/due-reminders").json()["on"] is False
@@ -124,6 +126,7 @@ def test_the_screen_is_told_when_this_deployment_sends_none(
         "weekly_here": False,
         "daily_here": False,
         "work_report_here": False,
+        "after_meeting_here": False,
     }
 
 
@@ -140,6 +143,7 @@ def test_the_screen_is_told_which_of_the_three_this_deployment_sends(
         "weekly_here": True,
         "daily_here": True,
         "work_report_here": False,
+        "after_meeting_here": False,
     }
     answer = client.put(f"{PREFIX}/me/due-reminders", json={"on": False}).json()
     assert (answer["weekly_here"], answer["daily_here"]) == (True, True)
