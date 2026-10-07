@@ -518,7 +518,9 @@ other module's tables.
   `PUT /me/notification-pause` takes `on_calendar` -- `true` the tick,
   `false` the box unticked, and left out by a screen that drew no box, which
   leaves the calendar as it stands: an event already there moves with the
-  dates and keeps its id, and none is made where there is none (lsh2217's
+  dates and keeps its id, and none is made where there is none -- nor in
+  place of an event the person deleted in Calendar: that takes a tick, and
+  such a save answers `off` and drops the id (lsh2217's
   review of #922: read as `false`, a dates-only save by a person whose
   calendar was disconnected dropped the id, and the next ticked save made a
   second event) -- and

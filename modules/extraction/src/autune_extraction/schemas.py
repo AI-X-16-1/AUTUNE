@@ -481,7 +481,8 @@ class NotificationPause(BaseModel):
     calendar as one private all-day event; sent ``false``, an event put there
     for an earlier range is removed. **Left out, the calendar stays as it
     stands**: an event already there moves with the dates, and where there is
-    none, none is made. That is what a screen that drew no box sends -- a
+    none, none is made -- nor is one made in place of an event the person
+    deleted in Calendar: that takes the tick. That is what a screen that drew no box sends -- a
     person whose calendar is not connected just now did not untick anything,
     and reading the missing field as ``false`` dropped the event's id, so the
     next ticked save made a second event beside the first (lsh2217's review of
