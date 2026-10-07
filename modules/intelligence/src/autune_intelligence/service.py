@@ -1518,9 +1518,11 @@ def speaking_ratio_for_user(
 ) -> SpeakingRatioRead | None:
     """The user's own share of ``meeting_id``, or ``None`` if they were not in it.
 
-    ``None`` return is only "you were not in this meeting", which the route turns
-    into a 404. Otherwise a ``SpeakingRatioRead`` comes back, and its ``ratio``
-    may still be ``None``:
+    ``None`` means "you were not in this meeting" or "you are no longer on its
+    team", which the route turns into the same 404. Someone who left the team
+    keeps their participant rows (#937) but no longer reads anything derived
+    from its meetings, their own ratio included (privacy.md). Otherwise a
+    ``SpeakingRatioRead`` comes back, and its ``ratio`` may still be ``None``:
 
     - ``reason="small_meeting"`` — fewer than ``_MIN_SPEAKERS_FOR_RATIO``
       consenting participants actually spoke, so any real number would fix
@@ -1539,6 +1541,9 @@ def speaking_ratio_for_user(
         )
     )
     if not participant_rows:
+        return None
+    team_id = session.scalar(sa.select(Meeting.team_id).where(Meeting.id == meeting_id))
+    if team_id is None or not _is_member(session, user_id=user_id, team_id=team_id):
         return None
     # A split speaker's rows can disagree on consent (confirmed separately);
     # requiring every row to consent, rather than picking one row arbitrarily,
@@ -1592,6 +1597,17 @@ def _deliver_personal(
     slack.send_dm(recipient_user_id, fallback, blocks)
 
 
+def _ratio_dm_label(meeting: Meeting) -> str:
+    """Which meeting the ratio DM is about: "{title} · 10/7", or the date alone
+    when the title holds personal data -- the same test the report header makes,
+    because ``check_outbound`` would refuse the whole DM over one string."""
+    when = (meeting.started_at or meeting.created_at).astimezone(_KST)
+    day = f"{when.month}/{when.day}"
+    if meeting.title and not find_unmasked(meeting.title):
+        return f"{_slack_escape(meeting.title)} · {day}"
+    return f"{day} 회의"
+
+
 def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
     """DM each identified participant their own speaking ratio. Returns the count.
 
@@ -1601,8 +1617,10 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
     task fails loudly rather than dropping a DM that a later run could send. The
     ratio is withheld entirely — no DM at all — when fewer than
     ``_MIN_SPEAKERS_FOR_RATIO`` people (``speaker_count_for_gate``) spoke, for
-    the same reason ``/me/speaking-ratio`` withholds it. The ratio is not
-    stored anywhere; this function writes nothing.
+    the same reason ``/me/speaking-ratio`` withholds it. Someone no longer on
+    the meeting's team gets no DM through that team's bot (#937); their speech
+    still counts in everyone else's share, as the meeting record does. The
+    ratio is not stored anywhere; this function writes nothing.
     """
     shares = compute_speaking_shares(session, meeting_id)
     gate_count = speaker_count_for_gate(shares)
@@ -1615,6 +1633,9 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
         return 0
 
     participant_count = _consented_participant_count(session, meeting_id)
+    meeting = session.get(Meeting, meeting_id)
+    team_id = meeting.team_id if meeting is not None else None
+    label = _ratio_dm_label(meeting) if meeting is not None else None
     sent = 0
     for share in shares:
         if share.user_id is None:
@@ -1624,8 +1645,15 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
                 participant_id=share.participant_id,
             )
             continue
+        if team_id is None or not _is_member(session, user_id=share.user_id, team_id=team_id):
+            log.info(
+                "speaking_ratio_recipient_left_team",
+                meeting_id=meeting_id,
+                user_id=share.user_id,
+            )
+            continue
         fallback, blocks = build_speaking_ratio_dm(
-            ratio=share.ratio, participant_count=participant_count
+            ratio=share.ratio, participant_count=participant_count, meeting_label=label
         )
         try:
             _deliver_personal(slack, share.user_id, fallback, blocks)

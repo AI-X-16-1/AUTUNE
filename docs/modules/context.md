@@ -1070,6 +1070,14 @@ separate the two.
   Slack's error code and a count, never by recipient id**: each recipient is
   someone who was absent when a decision changed, which the channel notice
   deliberately reduces to a count.
+- **A drift DM goes only to somebody who is on the team when it is collected.**
+  `key_stakeholders_absent` is narrowed to current members when it is computed,
+  and `collect_drift_notices` narrows it again against `team_members` of the
+  meeting's team, because a person can leave in between (seconds for the
+  ordinary warning, hours for the catch-up one) and the DM quotes up to 400
+  characters of the decision. An event left with nobody to tell is dropped
+  whole, its channel notice included. What remains is the moment between that
+  read and Slack's answer.
 
 ## Phased delivery
 

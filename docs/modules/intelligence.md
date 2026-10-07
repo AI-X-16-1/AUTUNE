@@ -334,7 +334,12 @@ built: it needs `chat.delete` in `packages/integrations` and a decision on who
 may do it.
 
 `/me/speaking-ratio` authorizes on `requester_id == subject_id`. There is no
-admin override and no team-level variant of this endpoint.
+admin override and no team-level variant of this endpoint. The requester must
+also still be on the meeting's team: someone who left keeps their participant
+rows (#937) but reads nothing derived from the team's meetings,
+their own ratio included, and `send_personal_feedback` sends them no DM through
+that team's bot. Their speech still counts in everyone else's share, as the
+meeting record does.
 
 ## Celery tasks
 
@@ -354,7 +359,10 @@ admin override and no team-level variant of this endpoint.
 
 - Weekly insight report to the team channel
 - Prediction warnings when misalignment risk crosses a threshold
-- Personal speaking-ratio DM: "이번 회의에서 당신의 발언 비중은 12%였습니다"
+- Personal speaking-ratio DM: "이번 회의 발언 비중 · 결제 회의 · 10/7 · 12%". The
+  meeting is named in the DM body (#945; B's post-meeting DM may arrive beside
+  it), never in the notification preview, and by its date alone when the title
+  holds personal data.
 
 ## AI stack
 

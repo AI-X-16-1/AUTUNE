@@ -23,6 +23,14 @@ vi.mock("../api", () => ({
   unpinTeam: vi.fn(),
 }));
 
+// The invitation control is 설정 › 구성원's own and has its own tests
+// (TeamInvite.test.tsx). Here it is enough to see WHICH team it is handed.
+vi.mock("./TeamInvite", () => ({
+  TeamInvite: ({ teamId, canConnectMail }: { teamId: string; canConnectMail?: boolean }) => (
+    <div data-testid="team-invite" data-team={teamId} data-mail={String(canConnectMail === true)} />
+  ),
+}));
+
 afterEach(() => {
   cleanup();
   for (const mock of [replace, listTeams, listMeetings, pin]) mock.mockReset();
@@ -285,5 +293,119 @@ describe("HomeScreen, the team row", () => {
     expect(screen.getByText("첫째 회의")).toBeTruthy();
     // Still open: a person may want to pin another.
     expect(win()).not.toBeNull();
+  });
+});
+
+// "팀원 추가" at the right end of the row, opening a window in the middle of
+// the screen (the user, 2026-10-07). It is 설정 › 구성원's invitation, for the
+// one team the home screen is showing.
+describe("HomeScreen, 팀원 추가", () => {
+  const addButton = () => screen.queryByRole("button", { name: "팀원 추가" });
+  const windowOpen = () => screen.queryByRole("dialog", { name: "팀원 추가" });
+  const invitedTeam = () => screen.getByTestId("team-invite").getAttribute("data-team");
+
+  it("is not offered while 전체 is shown: there is no one team to invite to", async () => {
+    open([SEARCH, PAY]);
+    await screen.findByText("첫째 회의");
+
+    expect(addButton()).toBeNull();
+  });
+
+  it("is at the end of the row once a team is shown, and opens a window for that team", async () => {
+    open([SEARCH, PAY]);
+    await screen.findByText("첫째 회의");
+    fireEvent.click(screen.getByRole("button", { name: "결제 스쿼드" }));
+    await screen.findByText("결제 장애 회고");
+
+    const button = addButton();
+    expect(button).not.toBeNull();
+    expect(row().contains(button)).toBe(true);
+    expect(row().lastElementChild?.contains(button)).toBe(true);
+    expect(windowOpen()).toBeNull();
+
+    fireEvent.click(button!);
+
+    const dialog = windowOpen()!;
+    expect(dialog.getAttribute("aria-modal")).not.toBeNull();
+    expect(dialog.textContent).toContain("결제 스쿼드 팀에 초대합니다.");
+    expect(invitedTeam()).toBe("team_pay");
+    // Over a dimmed page drawn on the body, not inside the row.
+    const backdrop = screen.getByTestId("team-member-backdrop");
+    expect(backdrop.parentElement).toBe(document.body);
+    expect(row().contains(dialog)).toBe(false);
+    // Connecting Gmail leaves the page; it stays under 설정 › 구성원.
+    expect(screen.getByTestId("team-invite").getAttribute("data-mail")).toBe("false");
+    expect(dialog.textContent).toContain("설정 › 구성원");
+  });
+
+  it("is for the team shown now, not the one shown before", async () => {
+    open([SEARCH, PAY]);
+    await screen.findByText("첫째 회의");
+    fireEvent.click(screen.getByRole("button", { name: "결제 스쿼드" }));
+    await screen.findByText("결제 장애 회고");
+    fireEvent.click(screen.getByRole("button", { name: "검색 스쿼드 · 고정" }));
+    await screen.findByText("검색 주간 회의");
+
+    fireEvent.click(addButton()!);
+
+    expect(windowOpen()!.textContent).toContain("검색 스쿼드 팀에 초대합니다.");
+    expect(invitedTeam()).toBe("team_search");
+  });
+
+  it("goes away with the team when 전체 is pressed again", async () => {
+    open([SEARCH, PAY]);
+    await screen.findByText("첫째 회의");
+    fireEvent.click(screen.getByRole("button", { name: "결제 스쿼드" }));
+    await screen.findByText("결제 장애 회고");
+    expect(addButton()).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "전체" }));
+    await screen.findByText("첫째 회의");
+
+    expect(addButton()).toBeNull();
+  });
+
+  it("gives somebody on one team the button alone, for that team, and still no row", async () => {
+    open([SEARCH]);
+    await screen.findByText("검색 주간 회의");
+
+    expect(screen.queryByRole("group", { name: "팀" })).toBeNull();
+    fireEvent.click(addButton()!);
+
+    expect(windowOpen()!.textContent).toContain("검색 스쿼드 팀에 초대합니다.");
+    expect(invitedTeam()).toBe("team_search");
+  });
+
+  it.each(["닫기", "Escape", "the dimmed page", "the button again"])(
+    "closes on %s",
+    async (how) => {
+      open([SEARCH]);
+      await screen.findByText("검색 주간 회의");
+      fireEvent.click(addButton()!);
+      expect(windowOpen()).not.toBeNull();
+
+      if (how === "닫기") fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+      else if (how === "Escape") fireEvent.keyDown(document, { key: "Escape" });
+      else if (how === "the dimmed page")
+        fireEvent.mouseDown(screen.getByTestId("team-member-backdrop"));
+      else {
+        // A press on the opener is the opener's: it is not also a press outside.
+        fireEvent.mouseDown(addButton()!);
+        fireEvent.click(addButton()!);
+      }
+
+      expect(windowOpen()).toBeNull();
+      expect(screen.getByText("검색 주간 회의")).toBeTruthy();
+    },
+  );
+
+  it("stays open on a press inside it", async () => {
+    open([SEARCH]);
+    await screen.findByText("검색 주간 회의");
+    fireEvent.click(addButton()!);
+
+    fireEvent.mouseDown(screen.getByTestId("team-invite"));
+
+    expect(windowOpen()).not.toBeNull();
   });
 });

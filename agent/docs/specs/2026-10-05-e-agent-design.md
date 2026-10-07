@@ -34,7 +34,7 @@ chat ─▶ main agent ─(routes on the description)─▶ E agent ─▶ E's t
 | First version | **Reads and actions.** Actions keep section 8's levels: L1 runs and the person is told after; L2 waits for an approver. |
 | RAG | Yes, where it makes answers better: a **metric glossary** that the agent retrieves from, so a meaning or a formula is quoted, not made up (section 5). A search over report text is a later step (section 8). |
 | A rejected approval | It leaves E's draft as it was. A person changes something on the dashboard to ask again, or asks the E agent in chat to propose the post again. |
-| A post asked for outside a meeting | Proposed only from a run scoped to that meeting. From the team view the agent finds the meeting and links its screen (section 4, "Posting from the team view"). |
+| A post asked for outside a meeting | From the team view, proposed with the meeting it names in `meeting_id`, so plan mode keys and runs the approval there (#896). A meeting page that names another meeting points to that meeting's page (section 4, "Posting from the team view"; "Changes during implementation", 16). |
 | The glossary's language | Korean, as user-facing response content (section 5, "Language"). |
 
 ### Out of scope
@@ -177,7 +177,8 @@ name (`subagents.py`); anything else is chat.
     screen, where the request is meeting-scoped (#733).
   - **Later, with 김민경:** `queue_l2` supersedes by the proposal's own
     `meeting_id` argument when the run has none. Then posting from the team
-    view can be allowed.
+    view can be allowed. *(Landed as #896; posting from the team view is
+    allowed since "Changes during implementation", 16.)*
   - A duplicate card would not post twice either way: E's post is claimed
     once (`sent_at`). The cost is only noise for approvers.
 - **When L1 fails after the answer:**
@@ -355,8 +356,10 @@ the measurement kept BM25; see "Changes during implementation", 4 and 7.)*
    workarounds live in one place in `chat.py`: the list of actions the chat
    path declares (without `set_weekly_report_schedule`) and one
    meeting-scope check before a post is proposed. Lifting them once #862
-   lands is a few lines and their tests. *(Request 1 landed as #874 and the
-   schedule change is lifted; requests 2 and 3 are open, with #879.)*
+   lands is a few lines and their tests. *(All three landed: request 1 as #874,
+   and the schedule change is lifted (#911); request 2 as #896; request 3 as
+   #897. #879's two follow-ups landed as #923 and #924. See "Changes during
+   implementation", 10 and 12.)*
 1. **E's tools and the glossary** (module E, plus `agent-layer.md` section 4),
    with `expected_draft_id`. #821, which this needed, is merged. *(Built as
    the plan's Tasks 1 to 7; see "Changes during implementation", 9.)*
@@ -450,6 +453,14 @@ The sections above are left as designed; each affected one points here.
     section 4. #862's item 2 covers only team-scoped runs. This needs a
     further `main/` change: a chat redraft or post supersedes the pipeline's
     post row for the same meeting.
+
+    *Resolved in `main/` (2026-10-06):*
+    - **#924:** a chat proposal of the same action now supersedes the
+      pipeline's pending card for that meeting, so neither card above stays
+      live.
+    - **#896:** a team-scoped run's L2 is keyed on the meeting its arguments
+      name. E then still proposed a post only from a meeting-scoped run; item
+      16 lifts that.
 11. **Links (section 4).** The answers name the meeting screen and the
     dashboard card in words. They do not link them, unlike section 4's
     "links".
@@ -459,6 +470,32 @@ The sections above are left as designed; each affected one points here.
     "결정 밀도가 뭐야?" or "주간 리포트 언제 나가?" may never reach the E agent
     until the router's rule changes. That rule is `main/`, 김민경's. Section
     1's goal depends on it.
+
+    *Resolved (2026-10-06/07):*
+    - **#923:** a subagent can declare `answers_lookups=True`, and a lookup
+      that fits its description then reaches it. The Report subagent sets it.
+    - **Checked on a copy of the dev DB with the real model** (2026-10-07):
+      "결정 밀도가 뭐야?", "완료율은 어떻게 계산돼?", "주간 리포트 언제 나가?",
+      "요즘 우리 팀 회의 품질 어때?", "이 회의 리포트 보여줘", "리포트 올려줘" and
+      "다시 써줘" reached Report on every run and called the right reads.
+    - **"PM이랑 개발 사이 입장 차이 어때?" went to Research on one run in two.**
+      Research's description names "disputes". Report's description now says
+      that role alignment is how far roles such as PM and engineering agree or
+      differ in their stances. After that, the question and a reworded one
+      reached Report on every run (five of five). A Research question ("아무도
+      확인 못 한 쟁점 조사해줘") still went to Research.
+    - **Weekly-report lookups went to the ask loop** (2026-10-07, synthetic
+      team only; see the next point). "지난주 주간 리포트 보여줘" and "주간 리포트에
+      뭐라고 나왔어?" went to the ask loop on four runs of five, and
+      `audio.recent_meetings` answered with a list of meetings. Report's
+      description now names the weekly report E posts to the team channel, and
+      what a person asks of it. After that, five of five reached
+      `weekly_reports`. "지난주에 무슨 회의 했어?" and "이번 주 내 할 일 뭐 남았어?"
+      still went to the ask loop.
+    - **Real-model checks use a synthetic team only** until #935 is decided.
+      The checks above, from 2026-10-06/07, read a copy of the local dev DB,
+      which holds the team's recordings; the facts are on #935. The current way
+      is an empty scratch database at main's heads, seeded with one mock team.
 13. **`send_empty` (section 4).** `set_weekly_report_schedule`'s `send_empty`
     is optional; `None` keeps the team's current value, so a schedule change
     no longer turns it off.
@@ -476,3 +513,18 @@ The sections above are left as designed; each affected one points here.
     not reported as a missing part; if no call ever fits, the reply asks for a
     weekday and an hour 0-23. The reply spells out 오전/오후, because "6시"
     may mean either and the model picks one.
+16. **Posting from the team view (section 4, after #896).** In a run about no
+    meeting, `request_post` and `redraft` name the meeting in `meeting_id`,
+    and the post and correction proposals carry it next to `draft_id` /
+    `correction_id`. Plan mode keys the approval on that meeting and runs it
+    there.
+    - Asked without a meeting, `request_post` goes back to the model (find it
+      with `meeting_reports`). It is not reported as a missing part. If no call
+      names one, the reply asks which meeting.
+    - A meeting page that names *another* meeting still points to that page,
+      because its approvals are keyed on its own meeting. A redraft from there
+      proposes the other meeting's draft but no post.
+    - Checked with the real model on the synthetic team: "Mock meeting 11 리포트
+      올려줘" and "다시 써서 올려줘" from the team view proposed the post, the
+      second also the draft (L1). The pending cards were keyed on that
+      meeting, and asking again replaced the earlier card.

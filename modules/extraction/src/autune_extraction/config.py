@@ -208,6 +208,25 @@ class ExtractionSettings(BaseSettings):
     the first run messages people's real Slack accounts.
     """
 
+    work_report: bool = False
+    """``AUTUNE_EXTRACTION_WORK_REPORT``: whether a person who finished or
+    started something today is sent, on a Monday-to-Friday afternoon in Korea, a
+    Slack DM with a draft report of their own items on that team -- theirs to
+    paste to the team or not (``work_report``, the user 2026-10-07). To the
+    person only. Off by default for the reason ``due_reminders`` is: the first
+    run messages people's real Slack accounts.
+    """
+
+    after_meeting_notice: bool = False
+    """``AUTUNE_EXTRACTION_AFTER_MEETING_NOTICE``: whether a person is sent a
+    Slack DM soon after a meeting is processed, saying how many drafts of that
+    meeting wait for their confirmation, with a link to them
+    (``meeting_notice``, the user, 2026-10-07). A count and a link: no draft's
+    text is sent before a person confirms it (#246). Off by default for the
+    reason ``due_reminders`` is: the first run messages people's real Slack
+    accounts.
+    """
+
     public_holiday_calendar: bool = True
     """``AUTUNE_EXTRACTION_PUBLIC_HOLIDAY_CALENDAR``: whether Korea's public
     holidays are read from Google's public holiday calendar

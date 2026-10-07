@@ -31,7 +31,33 @@ def _participant(session: Session, meeting_id: str, *, user_id: str | None, labe
     row = Participant(meeting_id=meeting_id, user_id=user_id, speaker_label=label, consented=True)
     session.add(row)
     session.flush()
+    if user_id is not None:
+        _join_team(session, meeting_id, user_id)
     return row.id
+
+
+def _join_team(session: Session, meeting_id: str, user_id: str) -> None:
+    """A participant with an account is on the meeting's team, as in production."""
+    from autune_core import Meeting, TeamMember
+
+    team_id = session.get(Meeting, meeting_id).team_id
+    exists = session.scalar(
+        sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    if exists is None:
+        session.add(TeamMember(team_id=team_id, user_id=user_id))
+        session.flush()
+
+
+def _leave_team(session: Session, meeting_id: str, user_id: str) -> None:
+    """What #937's ``leave_team`` does to E: the membership goes, the participant rows stay."""
+    from autune_core import Meeting, TeamMember
+
+    team_id = session.get(Meeting, meeting_id).team_id
+    session.execute(
+        sa.delete(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    session.flush()
 
 
 def _utter(session: Session, meeting_id: str, participant_id: str | None, start, end) -> None:
@@ -93,6 +119,66 @@ def test_dms_each_identified_participant_their_own_ratio(db_session: Session, me
     assert sent == 3
     assert {m.channel for m in slack.sent} == {alice, bob, carol}
     assert all(m.is_dm for m in slack.sent)
+
+
+def test_someone_who_left_the_team_gets_no_dm_and_still_counts(
+    db_session: Session, meeting: str
+) -> None:
+    """#937: their rows stay, so the others' shares are unchanged; the team's bot
+    does not DM someone who is no longer on the team."""
+    alice, bob, carol = _three_speakers(db_session, meeting)
+    _leave_team(db_session, meeting, carol)
+    slack = FakeSlack()
+
+    sent = service.send_personal_feedback(db_session, slack, meeting)
+
+    assert sent == 2
+    assert {m.channel for m in slack.sent} == {alice, bob}
+
+
+class _BlocksSlack(FakeSlack):
+    """FakeSlack that also keeps each DM's blocks; the outbound check still runs."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bodies: list[str] = []
+
+    def send_dm(self, user_id: str, text: str, blocks: list[dict] | None = None) -> str:
+        ts = super().send_dm(user_id, text, blocks)
+        out = []
+        for block in blocks or []:
+            if isinstance(block.get("text"), dict):
+                out.append(block["text"]["text"])
+            out.extend(e.get("text", "") for e in block.get("elements", []))
+        self.bodies.append("\n".join(out))
+        return ts
+
+
+@pytest.mark.parametrize(
+    ("title", "shown", "hidden"),
+    [
+        ("결제 회의", "결제 회의 · ", None),
+        ("kim@example.com 1:1", " 회의", "kim@example.com"),
+    ],
+)
+def test_the_dm_says_which_meeting_unless_its_title_holds_personal_data(
+    db_session: Session, meeting: str, title: str, shown: str, hidden: str | None
+) -> None:
+    """#945. A title like a calendar event's "kim@example.com 1:1" would make
+    ``check_outbound`` refuse the whole DM, so the date stands in for it."""
+    from autune_core import Meeting
+
+    db_session.get(Meeting, meeting).title = title
+    _three_speakers(db_session, meeting)
+    slack = _BlocksSlack()
+
+    service.send_personal_feedback(db_session, slack, meeting)
+
+    texts = slack.bodies
+    assert len(texts) == 3 and all(shown in t for t in texts)
+    if hidden is not None:
+        assert all(hidden not in t for t in texts)
+        assert all(hidden not in m.text for m in slack.sent)
 
 
 def test_a_speaker_with_no_user_account_is_skipped(db_session: Session, meeting: str) -> None:

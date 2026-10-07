@@ -19,9 +19,13 @@ SUBAGENT = Subagent(
     name="report",
     description=(
         "Use this for anything about module E: a meeting's quality score, the team's "
-        "trend and completion, recurring gap patterns, role alignment, the misalignment "
-        "prediction, meeting reports (show, redo before posting, ask to post) and weekly "
-        "reports and their schedule, and what any of these numbers means. Also when a "
+        "trend and completion, recurring gap patterns, role alignment (how far roles such "
+        "as PM and engineering agree or differ in their stances across the team's "
+        "meetings), the misalignment "
+        "prediction, meeting reports (show, redo before posting, ask to post), the "
+        "weekly report E posts to the team channel (show last week's or this week's, what "
+        "it said, whether it went out, when it goes out, change its schedule), and what "
+        "any of these numbers means. Also when a "
         "meeting's analysis has just finished. Do not use it for action items or "
         "decisions themselves, or to brief a meeting that has not happened."
     ),

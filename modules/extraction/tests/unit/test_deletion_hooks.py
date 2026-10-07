@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
@@ -23,7 +23,12 @@ import autune_extraction.models  # noqa: F401  (ext_ tables)
 from autune_core import Base, Meeting, User
 from autune_core.deletion import registered_modules
 from autune_extraction import tasks
-from autune_extraction.models import ExtActionItem, ExtCalendarCleanup, ExtCalendarEvent
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtCalendarCleanup,
+    ExtCalendarEvent,
+    ExtNotificationPause,
+)
 from autune_integrations import PermanentIntegrationError, TransientIntegrationError
 
 
@@ -147,6 +152,29 @@ def test_it_also_removes_events_queued_for_them(
 
     assert ("primary", "ev_old") in calendars["by_user"]["user_kim"].deleted
     assert queued(session) == []
+
+
+def test_it_also_removes_the_leave_event_they_asked_for(
+    session: Session, calendars: dict[str, Any]
+) -> None:
+    """A leave still standing was put on their calendar by their own tick
+    (``leave_calendar``); it goes with the account like their due dates."""
+    for user, event in (("user_kim", "ev_leave"), ("user_lee", "ev_lee_leave")):
+        session.add(
+            ExtNotificationPause(
+                user_id=user,
+                starts_on=date(2026, 10, 12),
+                ends_on=date(2026, 10, 14),
+                created_at=datetime(2026, 10, 6, tzinfo=UTC),
+                calendar_event_id=event,
+            )
+        )
+    session.commit()
+
+    tasks.forget_user_calendar_events("user_kim")
+
+    assert ("primary", "ev_leave") in calendars["by_user"]["user_kim"].deleted
+    assert calendars["by_user"]["user_lee"].deleted == [], "nobody else's leave"
 
 
 @pytest.mark.parametrize(

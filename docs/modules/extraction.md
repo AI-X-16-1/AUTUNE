@@ -329,6 +329,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
 | `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
 | `ext_daily_digests` | That a person was sent the morning DM for one day through one team's Slack. The primary key is the "once", and the latest row's time is where the next DM's "since the last one" starts; the message is not kept. Goes with the person and with the team |
+| `ext_meeting_notices` | That the notice after one meeting was sent to a person, or refused by the outbound check -- a refused one keeps its row so it is reported once and not built again, and the row does not say which. The primary key is the "once"; no text and no count. Goes with the meeting (its retention expiry included) and with the person |
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
@@ -336,6 +337,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
 | `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
 | `ext_minutes_events` | A project's minutes as an all-day event on the meeting's day, on the calendar of the person who sent them (#788): one row per meeting, project and person, holding the event id, so sending again updates the same event, and a digest of the minutes it last received, so a refresh leaves an unchanged event alone and asks for no grant. Only that person's own grant reaches it. No text; goes with the meeting, the project and the person |
+| `ext_work_reports` | That a person was sent the work-report draft for one day through one team's Slack (`work_report.py`). The primary key is the "once". No text. **A row lives for its day only**: the draft goes only on a day the person finished or started something, so a kept row would say which days they worked, and the sending task deletes every earlier day's row on each run (`work_report.forget_past_days`). Its own table: `ext_daily_digests` has the same key, and its latest row is where the next morning DM counts from |
 
 **The summary tab (S15 요약, #421, WBS 4.9).** B owns it. v1 is structured and
 uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
@@ -513,6 +515,49 @@ other module's tables.
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:
   `AUTUNE_EXTRACTION_DAILY_DIGEST=true` turns it on
+- Those leave dates on the person's own Google Calendar, only when they tick
+  "내 Google 캘린더에도 추가" beside them (`leave_calendar.py`, 2026-10-06):
+  `PUT /me/notification-pause` takes `on_calendar` -- `true` the tick,
+  `false` the box unticked, and left out by a screen that drew no box, which
+  leaves the calendar as it stands: an event already there moves with the
+  dates and keeps its id, and none is made where there is none -- nor in
+  place of an event the person deleted in Calendar: that takes a tick, and
+  such a save answers `off` and drops the id (lsh2217's
+  review of #922: read as `false`, a dates-only save by a person whose
+  calendar was disconnected dropped the id, and the next ticked save made a
+  second event) -- and
+  writes, moves or removes one private all-day event titled "휴가" in the
+  request, through the person's own grant; the answer's `calendar` says what
+  happened (`added`, `removed`, `removal_queued`, `not_connected`,
+  `not_removed`, `failed`, `off`) and the dates are saved whichever it is.
+  `not_connected` is an event that was not put there; `not_removed` is one
+  that is there and cannot be taken off, because the calendar is no longer
+  connected -- the person is told to delete it themselves. **Google is asked
+  with no transaction open** (mminjae97's review of #922): the dates are
+  committed first, then the calendar is asked, holding neither the row's lock
+  nor a connection, then the answer is written in a second transaction. One
+  save at a time is at the calendar for a person -- the first leaves
+  `calendar_claimed_at` on the row, and a save that finds a claim younger
+  than two minutes (`leave_calendar.CLAIM_FOR`) is refused with 409 and
+  changes nothing, the dates included -- so a double press still makes one
+  event. A claim left by a process that died stops holding after those two
+  minutes. A save that comes back to find its claim taken over, or the row
+  gone, writes nothing and queues the event it made for removal. The read says
+  `calendar_connected` so the screen draws the box only then. The event's id
+  is kept on the pause (`calendar_event_id`) and goes with it after the last
+  day; the event itself then stays on the calendar. Rules and what is said
+  to the person: `docs/architecture/privacy.md` section 6
+- A DM to a person soon after a meeting is processed, when the pipeline has
+  put work of that meeting on them (`meeting_notice.py`,
+  `autune.extraction.periodic.send_meeting_notices`, every five minutes): the
+  meeting's title, **how many** drafts wait for their confirmation, and a link
+  to that meeting's 액션 tab. No draft's text or date -- unconfirmed content
+  does not leave (#246) -- while an item already confirmed is named with its
+  date. Once a person and meeting (`ext_meeting_notices`); only somebody on
+  the meeting's team now; 09:00-17:00 Korea time on a working day, and what
+  could not go then goes at 09:00 on the next working day. Stopped by the
+  reminder switch and by a person's own leave dates. Off by default:
+  `AUTUNE_EXTRACTION_AFTER_MEETING_NOTICE=true` turns it on
 - Neither digest goes on a public holiday (`days_off.py`): the days are read
   twice a day from Google's public calendar of Korea's holidays, with no
   credentials (`autune.extraction.periodic.refresh_public_holidays`;
@@ -526,6 +571,31 @@ other module's tables.
   is not sent either digest; it is asked again on the next run, so somebody
   back within the sending hours gets theirs then. Out-of-office times only
   are read, and nothing is stored (`docs/architecture/privacy.md`)
+- A DM to a person on a Monday-to-Friday afternoon (16:00-17:00 Korea time)
+  with a draft "오늘 업무 보고" of their own items on one team, written so
+  that they can paste it to that team themselves (`work_report.py`,
+  `autune.extraction.periodic.send_work_reports`, the user 2026-10-07).
+  Four parts, each item in the first it fits, and the rest of their open
+  items as a count: 끝낸 일 (theirs, done now, status edited today), 진행한 일
+  (in progress now, status edited today), 내일로 넘어가는 일 (in progress from
+  before, or due today and not finished), 늦은 일 (due before today). That is
+  all the edit log can say -- it keeps that a field changed and when, never
+  the value or who -- so work that left no change on the board is not seen,
+  and an item of theirs somebody else marked done reads as finished. Sent
+  only when something of theirs was finished or moved today; plain text from
+  the rows, no model; to the person and nobody else -- no channel, no lead.
+  Once per person, team and day (`ext_work_reports`) -- and that row is
+  deleted once its day has passed, by the same task on every run (also with
+  the feature off, and outside its hour): that the draft went says the
+  person worked that day, and no such record is kept (mkkim68, review of
+  #954). The task returns a count and logs a failure by team, for the same
+  reason. The same switch and
+  leave dates that stop the morning DM stop it, and so does a public holiday;
+  only about items whose assignee is on the meeting's team. The hour is the
+  last of 09:00-17:00, outside which the DMs made from 2026-10-07 on are not
+  sent (the user); a report that did not go in it is not sent later, so the
+  day it describes ends at about 16:00. Off by default:
+  `AUTUNE_EXTRACTION_WORK_REPORT=true` turns it on
 - Role-specific reports (Phase 2)
 
 ## AI stack
