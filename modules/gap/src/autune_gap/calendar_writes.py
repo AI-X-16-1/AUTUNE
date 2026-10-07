@@ -39,7 +39,10 @@ has its lines queued for removal (``queue_gap_lines``, #587). When the meeting
 goes -- deleted or expired -- its records are copied to ``GapAgendaCleanup``
 and ``drain_agenda_cleanup`` takes the lines out with each owner's own grant;
 when an account goes, its lines are taken out at once, while the grant still
-exists. Both best effort, as module B's are (privacy.md section 4).
+exists. When the owner leaves the meeting's team (#937), the lines on their
+calendar are queued the same way by ``queue_departed_lines``, as module B
+takes back a departed assignee's due-date event (#944). All best effort, as
+module B's are (privacy.md section 4).
 
 What leaves for Google is the gap's title and its question, both stored masked
 (``graph.build_topics`` refuses a label holding a masked span), and the gap id
@@ -627,6 +630,61 @@ def queue_gap_lines(session: Session, gap_ids: Sequence[str]) -> int:
         .on_conflict_do_nothing(index_elements=["user_id", "event_id", "gap_id"])
     )
     session.execute(delete(GapAgendaEvent).where(GapAgendaEvent.gap_id.in_(gap_ids)))
+    return len(rows)
+
+
+def queue_departed_lines() -> int:
+    """Queue for ``drain_agenda_cleanup`` the lines on the calendar of somebody
+    no longer on their meeting's team, and forget where they were; returns how
+    many were queued.
+
+    A line holds a gap's title and question, and its owner is the person who
+    pressed. Once they leave the team (#937) they can no longer open the
+    meeting, so its gaps come off their own calendar, as module B takes a
+    departed assignee's due-date event off theirs (#944). Leaving starts
+    nothing in C, so this runs with the drain. The owner's grant takes the
+    lines out: it is theirs, not the team's.
+
+    A line on somebody else's event that a departed person was invited to is
+    not touched: it is on a member's calendar, and who that member invites is
+    theirs. Somebody who comes back loses the lines; pressing again writes
+    them. Safe to run twice."""
+    with session_scope() as session:
+        still_on_team = (
+            select(TeamMember.id)
+            .where(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == GapAgendaEvent.user_id,
+            )
+            .exists()
+        )
+        rows = session.execute(
+            select(
+                GapAgendaEvent.id,
+                GapAgendaEvent.user_id,
+                GapAgendaEvent.calendar_id,
+                GapAgendaEvent.event_id,
+                GapAgendaEvent.gap_id,
+            )
+            .join(Meeting, Meeting.id == GapAgendaEvent.meeting_id)
+            .where(~still_on_team)
+        ).all()
+        if rows:
+            session.execute(
+                _insert(session, GapAgendaCleanup)
+                .values(
+                    [
+                        {"user_id": u, "calendar_id": c, "event_id": e, "gap_id": g}
+                        for _, u, c, e, g in rows
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=["user_id", "event_id", "gap_id"])
+            )
+            session.execute(
+                delete(GapAgendaEvent).where(GapAgendaEvent.id.in_([r.id for r in rows]))
+            )
+    if rows:
+        log.info("gap_departed_agenda_lines_queued", lines=len(rows))
     return len(rows)
 
 
