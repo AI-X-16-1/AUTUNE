@@ -1615,6 +1615,15 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
     has an absent list (see ``_rethread``), and ``UNCHANGED`` means the NLI
     check found the statement re-affirmed, not changed, so notifying on it
     would tell an absent stakeholder a decision moved when it did not.
+
+    **Who is still on the team is read again here**, not taken from the stored
+    ``key_stakeholders_absent``: that list was narrowed to current members when
+    it was computed (``_absent_for``), which can be minutes or, for a catch-up
+    warning, hours before this runs, and a person who left a team in between
+    must not be sent a quote of its decision through that team's Slack bot.
+    The team is the meeting's -- the one whose bot sends. An event left with
+    nobody to tell is dropped whole, its channel notice too, as one that never
+    had an absent person is.
     """
     rows = session.scalars(
         select(CtxDecisionVersion).where(
@@ -1625,9 +1634,14 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
         )
     ).all()
     meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        return []
     notices = []
     for version in rows:
-        absent = version.key_stakeholders_absent
+        members = _current_team_member_ids(
+            session, meeting.team_id, set(version.key_stakeholders_absent)
+        )
+        absent = [user_id for user_id in version.key_stakeholders_absent if user_id in members]
         if not absent:
             continue
         thread = session.get(CtxDecision, version.thread_id)
@@ -1646,9 +1660,7 @@ def collect_drift_notices(session: Session, meeting_id: str) -> list[DriftNotice
                 statement_preview=version.current_statement[:400],
                 change_type=ChangeType(version.change_type),
                 absent_user_ids=tuple(absent),
-                meeting_date=(
-                    meeting_day(meeting.started_at) if meeting and meeting.started_at else None
-                ),
+                meeting_date=meeting_day(meeting.started_at) if meeting.started_at else None,
             )
         )
     return notices
