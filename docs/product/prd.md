@@ -362,7 +362,7 @@ implementation decision.
 ### Product
 | Metric | 6 weeks | 3 months |
 | --- | --- | --- |
-| Action item F1, on our own held-out Korean evaluation set | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
+| Action item F1, on our own held-out Korean evaluation set | 0.43 (= 43%) — matching the best published AMI result, 43.12% (ADR 0006) | above it |
 | Classifier macro F1 over the five kinds, `none` present | not set (#221) | not set |
 | Items the user accepts with no edit (edit cost, per meeting) | the first measurement is the baseline | improve on it |
 | Speaker diarization DER | ≤ 15% | ≤ 10% |
@@ -374,9 +374,10 @@ implementation decision.
 The three extraction rows follow ADR 0006 (#61) and read the way
 `../modules/extraction.md` states them. The action item figure was `0.80+` /
 `0.88+` until then: that is above the best published result for the task,
-43.12, on a task where two trained annotators agree at κ 0.46 (ADR 0006 gives
-both sources), so it could only be read as a miss. **Every report of our
-action item F1 carries the reference number, 43.12, beside it.** What a
+43.12% (about 0.43 on that scale), on a task where two trained annotators
+agree at κ 0.46 (ADR 0006 gives both sources), so it could only be read as a
+miss. **Every report of our action item F1 carries the reference number,
+43.12%, beside it.** What a
 training run can move, and what the harness scores, is the classifier's macro
 F1; it has no like-for-like figure in the literature, so no target is set for
 it (#221). Edit cost is the product measure -- how much of the list a person

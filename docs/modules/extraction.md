@@ -814,7 +814,7 @@ comparison with numbers taken before `none` existed.
 
 | Metric | Six weeks | Three months |
 | --- | --- | --- |
-| Action item F1 | 0.43 — matching the best published AMI result, 43.12 (ADR 0006) | above it |
+| Action item F1 | 0.43 (= 43%) — matching the best published AMI result, 43.12% (ADR 0006) | above it |
 | Classifier macro F1 over the five kinds, `none` present | not set (#221). The AMI dialogue-act literature reports accuracy over a 15-tag set, so it has no figure that is like for like with this metric; and the owner chose the LLM classifier (`classifier_impl=llm`) over the trained one for cost (2026-10-06), so no target is set for the trained one. The code's default is still `local` | not set |
 | Items the user accepts with no edit | the first measurement is the baseline | improve on it |
 

@@ -133,7 +133,7 @@ Each module owner maintains an evaluation script reporting their KPI from
 | --- | --- | --- |
 | A | Diarization DER | ≤ 15% |
 | A | PII masking recall | 0.95+ |
-| B | Action item F1, on our own held-out Korean evaluation set | 0.43, reported beside the best published AMI result, 43.12 (ADR 0006) |
+| B | Action item F1, on our own held-out Korean evaluation set | 0.43 (= 43%), reported beside the best published AMI result, 43.12% (ADR 0006) |
 | B | Classifier macro F1 over the five kinds, `none` present | not set (#221) |
 | B | Items the user accepts with no edit (edit cost, per meeting) | the first measurement is the baseline |
 | C | Gap detection precision | 0.70+ |
