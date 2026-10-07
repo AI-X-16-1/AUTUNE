@@ -504,10 +504,11 @@ other module's tables.
   what changed on their own items since the last one and what is theirs to do
   today (`reminders.build_daily_digest`,
   `autune.extraction.periodic.send_daily_digests`). Today's part names, after
-  what is late and what is due today, each open item of theirs that nobody
-  has touched for five days or more ("6일째 그대로"), longest first --
-  `reminders.STALLED_AFTER_DAYS`, counted from when the item was made or last
-  edited. Monday has the weekly
+  what is late and what is due today, each item of theirs that is in progress
+  or has no due date and that nobody has touched for five days or more
+  ("6일째 그대로"), longest first -- `reminders.STALLED_AFTER_DAYS`, counted
+  from when the item was made or last edited. A not-started item whose date
+  is still ahead is not named. Monday has the weekly
   digest instead and a weekend has nothing. Not sent to a person who turned
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:

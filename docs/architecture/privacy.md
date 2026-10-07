@@ -474,9 +474,10 @@ the feature needs.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
-    hold -- made, given to them, or confirmed since) and today's work (late,
-    due today, untouched for five days or more, in progress; the rest as a
-    count). An untouched item's line says how many days it has stood: the
+    hold -- made, given to them, or confirmed since) and today's work (late;
+    due today; standing untouched for five days or more, when the item is in
+    progress or has no due date; in progress; the rest as a count). A
+    standing item's line says how many days it has stood: the
     time since the item was made or last edited, read from the same edit
     record as "what changed" and worked out each morning, not stored. It is
     how long an item has waited, said to the person who holds it. It carries

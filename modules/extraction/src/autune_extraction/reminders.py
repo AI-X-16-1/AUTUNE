@@ -208,8 +208,9 @@ DAILY_MAX_LINES = 5
 STALLED_AFTER_DAYS = 5
 """An open item nobody has touched for this many days or more is named in its
 holder's morning DM with how long it has stood (the user, 2026-10-07: "5일 넘게
-변화 없는 일"). Days on the calendar, weekends included: a constant, not a
-setting -- nothing was asked for per team."""
+변화 없는 일") -- when it is in progress or has no due date; one not started
+and not yet due is left in the count. Days on the calendar, weekends included:
+a constant, not a setting -- nothing was asked for per team."""
 
 DAILY_LOOKBACK = timedelta(days=7)
 """How far back "since the last one" may reach, for someone whose last morning
@@ -238,9 +239,9 @@ class DailyDigest:
     ``done`` and ``taken_on`` are what changed since their last morning DM;
     ``late``, ``due_today``, ``stalled`` and ``in_progress`` are today's work,
     each item in the first of the four it fits; ``others`` counts their
-    remaining open items, which the board lists. ``stalled`` is what has not
-    been touched for ``STALLED_AFTER_DAYS`` or more, longest first, each line
-    carrying its ``idle_days``."""
+    remaining open items, which the board lists. ``stalled`` is what is in
+    progress or undated and has not been touched for ``STALLED_AFTER_DAYS`` or
+    more, longest first, each line carrying its ``idle_days``."""
 
     done: Sequence[DigestLine] = ()
     taken_on: Sequence[DigestLine] = ()

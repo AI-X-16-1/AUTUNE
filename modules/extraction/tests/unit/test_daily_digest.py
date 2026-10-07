@@ -329,11 +329,19 @@ def made(session: Session, item_id: str, *, days_before: float) -> None:
     session.flush()
 
 
+def undated(session: Session, item_id: str) -> None:
+    item = session.get(ExtActionItem, item_id)
+    assert item is not None
+    item.due_date = None
+    session.flush()
+
+
 def test_an_item_nobody_touched_for_five_days_is_named_with_how_long(session: Session) -> None:
     """Made long ago and never edited: the in-progress one moves out of 진행 중,
-    the one due later moves out of the count, longest first."""
+    the one with no date moves out of the count, longest first."""
     made(session, "act_doing", days_before=6.5)
     made(session, "act_later", days_before=12)
+    undated(session, "act_later")
 
     content = content_for(session)
 
@@ -345,9 +353,29 @@ def test_an_item_nobody_touched_for_five_days_is_named_with_how_long(session: Se
     assert content.others == 0
 
 
+def test_a_not_started_item_whose_date_is_still_ahead_is_left_in_the_count(
+    session: Session,
+) -> None:
+    """Due on the 20th and untouched for twelve days: waiting for its date, not
+    stalled. Once somebody starts it and leaves it, it is named."""
+    made(session, "act_later", days_before=12)
+
+    content = content_for(session)
+
+    assert content.stalled == []
+    assert content.others == 1
+
+    session.get(ExtActionItem, "act_later").status = "in_progress"  # type: ignore[union-attr]
+    session.flush()
+    assert [(line.description, line.idle_days) for line in content_for(session).stalled] == [
+        ("나중 일", 12)
+    ]
+
+
 def test_five_days_is_the_line_and_an_edit_starts_the_count_again(session: Session) -> None:
     made(session, "act_doing", days_before=5)
     made(session, "act_later", days_before=30)
+    undated(session, "act_later")
     edited(session, "act_later", "due_date", at=TUESDAY_10_KST - timedelta(days=4, hours=23))
 
     content = content_for(session)

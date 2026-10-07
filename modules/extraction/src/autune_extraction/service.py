@@ -4148,7 +4148,10 @@ def daily_digest_content(
     the same record as "what changed": when the item was made and when it was
     last edited, never what the edit was or who made it. So it says how long
     the *item* has stood, to the person who holds it, and nothing is kept of
-    it -- it is worked out again each morning."""
+    it -- it is worked out again each morning. **Only an item in progress, or
+    one with no due date, is named** (the user, the same day): a not-started
+    item whose date is still ahead is not stalled, it is not due yet, and it
+    stays in the count."""
     marks: dict[str, set[str]] = {}
     for item_id, kind, fields in session.execute(
         select(ExtEditEvent.action_item_id, ExtEditEvent.kind, ExtEditEvent.fields)
@@ -4202,7 +4205,12 @@ def daily_digest_content(
             late.append(line)
         elif item.due_date == owed.day:
             due_today.append(line)
-        elif item.id in idle:
+        elif item.id in idle and (
+            item.status == ActionStatus.IN_PROGRESS.value or item.due_date is None
+        ):
+            # Begun and left, or with no date to say when: work that has
+            # stopped. A not-started item whose date is still ahead is waiting
+            # for that date, and naming it every morning would only repeat.
             stalled.append(replace(line, idle_days=idle[item.id]))
         elif item.status == ActionStatus.IN_PROGRESS.value:
             in_progress.append(line)
