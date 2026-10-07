@@ -190,8 +190,10 @@ def notice_content(session: Session, owed: NoticeOwed, *, now: datetime) -> Meet
     or nothing of theirs is left to tell of.
 
     **An unconfirmed item contributes one to a count and nothing else.** Its
-    row is read for its status only; its description and date are not taken
-    off it, so nothing below this function can send them."""
+    row is loaded like the others and only its status is looked at: its
+    description and date are never copied into the notice, so nothing below
+    this function can send them (mminjae97, review of #953: the row is read
+    whole, not its status alone)."""
     if not service.due_reminders_on(session, owed.user_id) or service.notifications_paused(
         session, owed.user_id, reminders.korean_day(now)
     ):

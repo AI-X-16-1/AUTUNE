@@ -1174,11 +1174,19 @@ def ask_confirmations() -> list[str]:
 
 @shared_task(name="autune.extraction.periodic.send_meeting_notices")
 @periodic(timedelta(minutes=5))
-def send_meeting_notices() -> list[str]:
+def send_meeting_notices() -> int:
     """Soon after a meeting: tell each person, alone, that work of it has
     landed on them -- how many drafts wait for their confirmation, and where
-    (the user, 2026-10-07; ``meeting_notice``). Returns the user ids one went
-    to.
+    (the user, 2026-10-07; ``meeting_notice``). Returns how many went.
+
+    **A count, and a refusal that names meetings** (PARKJAEKYUNG0525's review
+    of #953; the user, 2026-10-07). A task's return value and the message of
+    what it raises are kept by Celery's result backend: the list of user ids
+    a notice went to, and the ids in a refusal, sat there as a record of who
+    was given work in which run. A refusal is about a text -- here a
+    meeting's title or an item's wording -- so it names the meeting, which is
+    where the text is found and put right; the person it was for is on that
+    meeting's claim rows (``ext_meeting_notices``), not in the error.
 
     ``send_daily_digests``' shape, for the same reasons: each notice claimed
     and sent in its own transaction, a team without Slack or a person without
@@ -1190,7 +1198,7 @@ def send_meeting_notices() -> list[str]:
     finds nothing.
     """
     if not get_settings().after_meeting_notice:
-        return []
+        return 0
     now = datetime.now(tz=UTC)
     with session_scope() as session:
         owed = meeting_notice.notices_to_send(session, now=now)
@@ -1199,7 +1207,8 @@ def send_meeting_notices() -> list[str]:
             config = load_integration(session, team_id, "slack")
             secrets[team_id] = config.require_secret() if config is not None else None
 
-    sent: list[str] = []
+    sent = 0
+    # Meetings, not people: see the docstring.
     refused: list[str] = []
     unasked: list[str] = []
     not_linked = 0
@@ -1215,7 +1224,7 @@ def send_meeting_notices() -> list[str]:
                     continue
             except PrivacyViolationError:
                 # The question to the calendar was refused, not the message.
-                unasked.append(notice.user_id)
+                unasked.append(notice.meeting_id)
                 continue
             except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
                 log.warning(
@@ -1231,7 +1240,7 @@ def send_meeting_notices() -> list[str]:
                     session, SlackClient(secret), notice, now=now
                 )
         except PrivacyViolationError:
-            refused.append(notice.user_id)
+            refused.append(notice.meeting_id)
             # Reported once: the claim is kept, in its own transaction, so the
             # next run does not refuse the same text again.
             try:
@@ -1257,16 +1266,28 @@ def send_meeting_notices() -> list[str]:
             )
             continue
         if went:
-            sent.append(notice.user_id)
+            sent += 1
     if owed and not leave:
         # No summary where calendars are read (``_held_back``).
         log.info(
             "extraction_meeting_notices_sent",
             owed=len(owed),
-            sent=len(sent),
+            sent=sent,
             not_linked=not_linked,
         )
-    _raise_refusals("meeting notice", refused, unasked)
+    said = []
+    if refused:
+        said.append(
+            f"meeting notice refused by the outbound check: {len(refused)}, "
+            f"for meeting(s) {', '.join(sorted(set(refused)))}"
+        )
+    if unasked:
+        said.append(
+            "meeting notice: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, for meeting(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
     return sent
 
 
