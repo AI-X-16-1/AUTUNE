@@ -145,14 +145,19 @@ def test_a_meeting_c_could_not_read_scores_without_gap_burden(
     ).model_dump(mode="json")
     _stage(db_session, meeting, "extraction", extraction)
     _stage(db_session, meeting, "context", _context(meeting))
-    unmeasured = GapReport(meeting_id=meeting, measured=False).model_dump(mode="json")
+    # Participation rows here too: the rule is the flag, not C leaving them empty.
+    unmeasured = GapReport(
+        meeting_id=meeting,
+        measured=False,
+        participation=[{"topic_id": "t1", "spoke": ["u1"], "silent": ["u2"]}],
+    ).model_dump(mode="json")
     _stage(db_session, meeting, "gap", unmeasured)
 
     snapshot = service.aggregate_meeting(db_session, meeting)
 
     assert snapshot is not None and snapshot.missing_sources == []
     score = db_session.get(IntelScore, meeting)
-    assert score.gap_count is None
+    assert score.gap_count is None and score.participation_balance is None
     rest = {
         "decision_density": score.decision_density,
         "action_item_completion_rate": score.action_item_completion_rate,

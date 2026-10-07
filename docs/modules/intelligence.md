@@ -63,9 +63,9 @@ See `../architecture/async-pipeline.md`.
    confirmation rate (the share of the meeting's items that got confirmed,
    fixed when the meeting is scored; stored as `action_item_completion_rate`),
    and participation balance. A `GapReport` with `measured: false` (no
-   consented speech reached C, #248) leaves the gap component unscored and out
-   of the weights, never "no gaps"; `null`, from a producer before contract
-   2.5, reads as measured.
+   consented speech reached C, #248) leaves the gap burden and participation
+   balance unscored and out of the weights, never "no gaps"; `null`, from a
+   producer before contract 2.5, reads as measured.
 3. **Gap classification** — SetFit classifies each gap's `Gap.title` (not
    `Gap.category` — C's category is free text whose vocabulary is not stable
    across meetings, the reason this step exists at all, and mixing it into the

@@ -280,7 +280,8 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
     )
     missing = missing_sources(row)
 
-    # A meeting C could not read sends no gaps (#248): unscored, not gap-free.
+    # A meeting C could not read sends no gaps (#248): unscored, not gap-free -- gap burden and
+    # participation balance alike.
     # ``measured is None`` is a producer before contract 2.5 and reads as measured.
     measured_gap = gap if gap is not None and gap.measured is not False else None
     high_gap_count = (
@@ -301,7 +302,7 @@ def aggregate_meeting(session: Session, meeting_id: str) -> IntelligenceSnapshot
             else None
         ),
         "participation_balance": (
-            _participation_balance(gap.participation) if gap is not None else None
+            _participation_balance(measured_gap.participation) if measured_gap is not None else None
         ),
     }
     score = _quality_score(components)
