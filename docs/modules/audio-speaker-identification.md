@@ -186,10 +186,11 @@ confirmation:
 
 A label nobody is put to → 204, so a retried press does not fail. An unknown
 label → 404, a caller outside the team → 403. No event goes out, as none goes
-out for an assignment; modules that read `Participant.user_id` again (C's
-participation, E's own speaking ratio) follow the change. B fills an action
-item's assignee once from an identified label and does not take it back when
-the label is undone or reassigned — #929, B's to fix.
+out for an assignment. The other modules follow by reading `Participant.user_id`
+again: E's own speaking ratio at once, on request; B's action-item assignees
+within its ten-minute fill, back to the speaker label (#936); C's participation
+and D's `key_stakeholders_absent` on their own periodic recompute
+(`refresh_absence`, #360).
 
 ### `PUT /meetings/{meeting_id}/speakers/{speaker_label}/name`
 
