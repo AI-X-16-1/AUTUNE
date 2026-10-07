@@ -101,6 +101,25 @@ from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summar
 
 log = get_logger(__name__)
 
+SWEEP_EVERY = timedelta(minutes=10)
+"""How often a periodic task of this module runs unless it has a reason for
+another pace: the retries, the drains, the read-backs from Calendar and Jira,
+and the sends that wait for their hour. Each task's docstring says why ten
+minutes is enough for it."""
+
+REQUESTED_RUN_EVERY = timedelta(minutes=1)
+"""``run_requested_extractions``: a person is waiting at the screen."""
+
+AFTER_MEETING_DM_EVERY = timedelta(minutes=5)
+"""``ask_confirmations`` and ``send_meeting_notices``: a message meant for
+right after the meeting should be minutes behind it."""
+
+PAUSE_FORGET_EVERY = timedelta(hours=1)
+"""``forget_ended_notification_pauses``."""
+
+HOLIDAY_REFRESH_EVERY = timedelta(hours=12)
+"""``refresh_public_holidays``."""
+
 # Before anything of module B is served or run: a configuration B refuses
 # (an unacknowledged cloud model, #392) stops the process that imports this,
 # instead of surfacing on the first request or the first meeting. The worker
@@ -598,7 +617,7 @@ next change to the meeting rewrites it."""
 
 
 @shared_task(name="autune.extraction.periodic.retry_project_minutes_refresh")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retry_project_minutes_refresh() -> int:
     """Refresh again the project minutes a refresh left behind (#787 review).
     Returns how many meetings are in line now.
@@ -670,7 +689,7 @@ PROJECT_CLEANUP_BATCH = 100
 
 
 @shared_task(name="autune.extraction.periodic.drain_project_send_cleanup")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def drain_project_send_cleanup() -> int:
     """Retract the minutes copies whose meeting or project was deleted (#787
     review), with each team's own connection. Returns how many went.
@@ -725,7 +744,7 @@ def drain_project_send_cleanup() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.reextract_consent_changes")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def reextract_consent_changes() -> list[str]:
     """Extract again every meeting whose consenting speech changed after its
     last extraction (#518). Returns those meetings' ids.
@@ -944,7 +963,7 @@ def _tell_teams() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.retry_failed_extractions")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retry_failed_extractions() -> list[str]:
     """Try again every meeting whose extraction failed and has tries left, then
     tell the teams of those that have none. Returns the meetings that went
@@ -1014,7 +1033,7 @@ def retry_failed_extractions() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.run_requested_extractions")
-@periodic(timedelta(minutes=1))
+@periodic(REQUESTED_RUN_EVERY)
 def run_requested_extractions() -> list[str]:
     """Run the extractions people asked for with "다시 추출". Returns the
     meetings that went through.
@@ -1051,7 +1070,7 @@ def run_requested_extractions() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.fill_identified_assignees")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def fill_identified_assignees() -> list[str]:
     """Items whose speaker was identified after extraction get that person as
     their assignee (#360), and an item whose speaker was since corrected to
@@ -1090,7 +1109,7 @@ def fill_identified_assignees() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.ask_confirmations")
-@periodic(timedelta(minutes=5))
+@periodic(AFTER_MEETING_DM_EVERY)
 def ask_confirmations() -> list[str]:
     """Step 6: DM each speaker the ambiguous agreement they made -- "was that a
     commitment?" -- and start its clock (#70, WBS 8.3). Returns the utterance
@@ -1173,7 +1192,7 @@ def ask_confirmations() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.send_meeting_notices")
-@periodic(timedelta(minutes=5))
+@periodic(AFTER_MEETING_DM_EVERY)
 def send_meeting_notices() -> int:
     """Soon after a meeting: tell each person, alone, that work of it has
     landed on them -- how many drafts wait for their confirmation, and where
@@ -1292,7 +1311,7 @@ def send_meeting_notices() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.send_weekly_digests")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def send_weekly_digests() -> list[str]:
     """Monday's digest of each person's own open items, by Slack DM to that
     person alone (the user, 2026-10-04; ``service.weekly_digests_to_send``).
@@ -1391,7 +1410,7 @@ def send_weekly_digests() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.send_daily_digests")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def send_daily_digests() -> list[str]:
     """The morning DM: to each person alone, what changed on their own items
     since the last one and what is theirs to do today (the user, 2026-10-05;
@@ -1490,7 +1509,7 @@ def send_daily_digests() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.send_work_reports")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def send_work_reports() -> int:
     """The work-report draft: to each person alone, their own items
     on one team as a text they can paste to that team -- finished today, moved
@@ -1677,7 +1696,7 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
 
 
 @shared_task(name="autune.extraction.periodic.refresh_public_holidays")
-@periodic(timedelta(hours=12))
+@periodic(HOLIDAY_REFRESH_EVERY)
 def refresh_public_holidays() -> int:
     """Read Korea's public holidays from Google's public holiday calendar and
     keep them (``days_off``), so no digest goes on one. Returns how many days
@@ -1714,7 +1733,7 @@ def refresh_public_holidays() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.forget_ended_notification_pauses")
-@periodic(timedelta(hours=1))
+@periodic(PAUSE_FORGET_EVERY)
 def forget_ended_notification_pauses() -> int:
     """Delete the pauses that have ended (``service.forget_ended_pauses``):
     when a person was away is kept only while it stops a message. Its own
@@ -1730,7 +1749,7 @@ def forget_ended_notification_pauses() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.remind_due_items")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def remind_due_items() -> list[str]:
     """Tell each assignee, once, that an item of theirs is due tomorrow or has
     passed its date (``reminders``). Returns the item ids a message went for.
@@ -2241,7 +2260,7 @@ CALENDAR_FIRST_LOOKBACK = timedelta(days=1)
 
 
 @shared_task(name="autune.extraction.periodic.pull_calendar_changes")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def pull_calendar_changes() -> None:
     """Every ten minutes, read back what each connected person changed on their
     own calendar (#435): a task they dragged to another day has a new due date.
@@ -2324,7 +2343,7 @@ def _pull_one(user_id: str) -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.pull_jira_changes")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def pull_jira_changes() -> None:
     """Every ten minutes, read back the status people moved their issues to in
     Jira (``jira_sync.read_back``): an issue dragged to Done is a done item on
@@ -2486,7 +2505,7 @@ def backfill_notion(team_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.retire_decision_pages")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retire_decision_pages() -> int:
     """Take out of Notion the decision pages that should no longer be there,
     on a timer (#683). Returns how many were retired.
@@ -2789,7 +2808,7 @@ def queue_meeting_calendar_events(meeting_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.drain_calendar_cleanup")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def drain_calendar_cleanup() -> int:
     """Take queued due-date events off their owners' calendars (#588).
 
@@ -2852,7 +2871,7 @@ def drain_calendar_cleanup() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.take_back_departed_calendar_events")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def take_back_departed_calendar_events() -> int:
     """Take a due-date event off the calendar of somebody who has left the
     meeting's team (#552). Returns how many events were taken off.
@@ -2914,7 +2933,7 @@ def take_back_departed_calendar_events() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.drain_external_cleanup")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def drain_external_cleanup() -> int:
     """Trash the Notion pages and close the Jira issues of deleted items whose
     cleanup the deleting request could not do (#692). Returns how many went.
@@ -3192,7 +3211,7 @@ def _sync_decision_jira_logged(decision_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.retire_decision_issues")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retire_decision_issues() -> int:
     """Retire, on a timer, the Jira issues of decisions that are gone or no
     longer confirmed -- what ``retire_decision_pages`` is for Notion (#683).
