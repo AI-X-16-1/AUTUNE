@@ -13,9 +13,11 @@ it is finally used. Each database touch here is short and scoped.
 from __future__ import annotations
 
 from contextlib import suppress
+from typing import Annotated
 
 import anyio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
 
 from autune_audio import masking_rules, service
 from autune_audio.config import get_settings
@@ -25,7 +27,8 @@ from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import LiveSession, TranscribeFailed
 from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber
-from autune_core import get_logger
+from autune_audio.schemas import LiveTicket
+from autune_core import CurrentUser, get_logger, get_session
 from autune_core.auth import SESSION_COOKIE
 from autune_core.db import session_scope
 from autune_core.errors import (
@@ -79,6 +82,20 @@ def build_session() -> LiveSession:
             max_speakers=speaker_cap(settings),
         ),
     )
+
+
+@router.post("/live/{meeting_id}/ticket", response_model=LiveTicket)
+def live_ticket(
+    meeting_id: str, user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> LiveTicket:
+    """A minute-long token for ``hello``, for a socket on another host.
+
+    Asked over the page's own origin, where the session cookie goes; the
+    socket itself may be on the API's address (``NEXT_PUBLIC_LIVE_URL`` on the
+    web side), where it does not. See ``service.live_ticket``.
+    """
+    token = service.live_ticket(session, user=user, meeting_id=meeting_id)
+    return LiveTicket(token=token, expires_in=int(service.LIVE_TICKET_TTL.total_seconds()))
 
 
 @router.websocket("/live/{meeting_id}")

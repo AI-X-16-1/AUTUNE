@@ -350,17 +350,47 @@ export function getToken(): string | null {
 }
 
 /**
- * `ws://` or `wss://` for the live channel, on the page's own origin.
+ * Where the live socket opens, when not on the page's own origin: the API's
+ * address as the browser reaches it, `wss://...` with no path. Inlined at
+ * build time; empty means the page's origin.
  *
- * Through the same `/api` rewrite as every HTTP call: Next proxies the
- * WebSocket upgrade too (probed against `next dev` — the API logged the
- * handshake as accepted). Same origin keeps the session cookie first-party on
- * the handshake, which is how a Google-signed-in browser authenticates the
- * socket, and leaves no second API address to configure per environment.
+ * The dev server needs it: the site's address carries every HTTP call to the
+ * API, but a WebSocket handshake reaches the API there without its `Upgrade`
+ * header and is answered 404, while the API's own address carries it.
+ */
+const LIVE_ORIGIN = (process.env.NEXT_PUBLIC_LIVE_URL ?? "").replace(/\/+$/, "");
+
+/** Whether the live socket opens on another host than the page's. */
+export const liveIsCrossOrigin = (): boolean => LIVE_ORIGIN !== "";
+
+/**
+ * `ws://` or `wss://` for the live channel.
+ *
+ * On the page's own origin by default, through the same `/api` rewrite as
+ * every HTTP call: Next proxies the WebSocket upgrade too (probed against
+ * `next dev` -- the API logged the handshake as accepted). Same origin keeps
+ * the session cookie first-party on the handshake, which is how a
+ * Google-signed-in browser authenticates the socket. With
+ * `NEXT_PUBLIC_LIVE_URL` set the socket goes there instead, and the cookie
+ * does not: `getLiveTicket` stands in for it.
  */
 export function liveSocketUrl(meetingId: string): string {
+  if (LIVE_ORIGIN) return `${LIVE_ORIGIN}/api/audio/live/${meetingId}`;
   const { protocol, host } = window.location;
   return `${protocol === "https:" ? "wss" : "ws"}://${host}/api/audio/live/${meetingId}`;
+}
+
+/**
+ * A minute-long token for the live socket's `hello`, asked for over the
+ * page's own origin, where the session cookie goes. Only for a socket on
+ * another host (`liveIsCrossOrigin`), which the cookie does not reach.
+ */
+export async function getLiveTicket(meetingId: string): Promise<string> {
+  const ticket = await api.audio<{ token: string; expires_in: number }>(
+    `/live/${encodeURIComponent(meetingId)}/ticket`,
+    { method: "POST" },
+  );
+  return ticket.token;
 }
 
 /** The meeting's research documents the reader may see: approved ones for any member. */

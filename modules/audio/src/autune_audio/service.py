@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from autune_audio.live import registry as live_registry
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
-from autune_core.auth import user_for_token
+from autune_core.auth import issue_token, user_for_token
 from autune_core.deletion import on_user_deleted
 from autune_core.entities import team_order
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
@@ -1163,6 +1163,32 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=user.id, team_id=meeting.team_id)
     return user
+
+
+LIVE_TICKET_TTL = timedelta(seconds=60)
+"""How long a live ticket opens a socket. The page asks for one right before
+it connects; a minute covers a slow handshake and leaves little to steal."""
+
+
+def live_ticket(session: Session, *, user: User, meeting_id: str) -> str:
+    """A short-lived token for ``user`` to open the live socket of a meeting.
+
+    For a browser whose session is an HttpOnly cookie on another host than the
+    socket's: the cookie does not reach the socket, and the page cannot read it
+    to put in ``hello``. The same checks as ``authenticate_live``, so a ticket
+    is refused here exactly where the socket would refuse the cookie.
+
+    The ticket is an ordinary session token with a minute to live -- the
+    socket reads it through ``user_for_token`` like any other, and signing out
+    ends it too (#727). It is readable by the page's JavaScript for that
+    minute, which the cookie never is; that is the cost of a socket on another
+    origin, kept to sixty seconds.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return issue_token(user.id, ttl=LIVE_TICKET_TTL)
 
 
 _ACCEPTS_A_LIVE_SESSION = frozenset({"scheduled", "recording"})
