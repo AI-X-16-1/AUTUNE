@@ -39,11 +39,14 @@ from autune_core.errors import PrivacyViolationError
 
 from .template import (
     AWAITING_TOOL,
+    CHANNEL_TOOL,
     CORRECTION_ACTION,
     DRAFT_ACTION,
+    NO_SLACK,
     POSTED,
     PUBLISH_ACTION,
     compose_report,
+    no_channel,
 )
 
 log = logging.getLogger(__name__)
@@ -254,6 +257,8 @@ class _Turn:
         self.schedule_refused = False
         self.post_needs_meeting = False
         """Who proposed the run's one post: ``"request_post"`` or ``"redraft"``."""
+        self.no_slack_said = False
+        """The reply already says a post was not asked for: no Slack channel."""
 
     def read(self, name: str, **args: Any) -> ToolResult:
         try:
@@ -273,6 +278,17 @@ class _Turn:
         """
         body = self.read(BODY)
         return body, body.ok or body.reason != NO_MEETING
+
+    def _no_channel(self) -> bool:
+        """E says the team has no Slack channel, so a post would fail at approval."""
+        if CHANNEL_TOOL not in self.toolbox.describe():
+            return False
+        return no_channel(self.read(CHANNEL_TOOL))
+
+    def _no_slack(self) -> ToolResult:
+        self.no_slack_said = True
+        self.lines.append(NO_SLACK)
+        return ToolResult(ok=True, summary=NO_SLACK)
 
     def _compose(self, meeting: dict[str, Any]) -> SubagentResult | ToolResult:
         try:
@@ -337,6 +353,14 @@ class _Turn:
                 self.post_from = "redraft"
             self.proposed.append(proposal)
         line = "최신 수치로 리포트 초안을 다시 만들도록 요청했습니다."
+        if (
+            own_meeting
+            and not any(p.tool == PUBLISH_ACTION for p in composed.proposed)
+            and not self.no_slack_said
+        ):
+            # compose_report leaves the post out only when there is no channel.
+            line += " " + NO_SLACK
+            self.no_slack_said = True
         self.lines.append(line)
         return ToolResult(ok=True, summary=line + " (요청만 했고 아직 실행되지 않았습니다)")
 
@@ -422,9 +446,13 @@ class _Turn:
         if not awaiting.ok:
             return awaiting
         self.done.add("request_post")
+        if self.no_slack_said:
+            return ToolResult(ok=True, summary=NO_SLACK)
         waiting = awaiting.items[0] if awaiting.items else None
         correction_id = getattr(waiting, "correction_id", None) if waiting is not None else None
         if getattr(waiting, "kind", None) == "correction" and isinstance(correction_id, str):
+            if self._no_channel():
+                return self._no_slack()
             self.proposed.append(
                 ProposedAction(
                     kind="meeting_report_correction_post",
@@ -443,6 +471,8 @@ class _Turn:
                 line = "아직 이 회의의 리포트가 없습니다."
                 self.lines.append(line)
                 return ToolResult(ok=True, summary=line)
+            if self._no_channel():
+                return self._no_slack()
             self.proposed.append(
                 ProposedAction(
                     kind="meeting_report_post",
