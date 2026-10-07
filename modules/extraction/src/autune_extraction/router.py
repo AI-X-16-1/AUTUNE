@@ -673,6 +673,7 @@ def _reminder_setting(on: bool) -> DueReminderSetting:
         sent_here=settings.due_reminders,
         weekly_here=settings.weekly_digest,
         daily_here=settings.daily_digest,
+        work_report_here=settings.work_report,
     )
 
 

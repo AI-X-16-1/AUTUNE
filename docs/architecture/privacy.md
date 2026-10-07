@@ -486,6 +486,25 @@ the feature needs.
     A morning DM or a Monday DM the outbound check refuses is not sent, is
     reported once, and keeps that day's (or week's) row so it is not tried
     again every ten minutes.
+  - **Slack, the work-report draft:** on a Monday-to-Friday afternoon
+    in Korea (16:00-17:00, and not later), a direct message to a person about their own items on one
+    team, when something of theirs was finished or moved to in progress that
+    day: a short report -- finished, moved, going on to tomorrow, late, and
+    the rest as a count -- headed by the team's name and worded so that the
+    person can paste it to that team. **Autune sends it to that person and to
+    nobody else**: no channel, no lead, no admin, and no collected version of
+    several people's days; whether anybody else reads it is the person's own
+    paste. It carries what the morning DM carries about each item -- its
+    description, a due date that is today's or past, the meeting's title --
+    and a link to the board; no utterance, and nobody else's items. "Today"
+    is read from `ext_edit_events` as the morning DM's "what changed" is, so
+    it never says who made a change, and it counts nothing about a person
+    beyond the number of their own open items it did not list. The text is
+    made from the rows; no model reads or rewrites it. Autune keeps only
+    that the day's message went (`ext_work_reports`), not its text. The
+    reminder switch above stops it, and so do the person's own leave dates
+    and a public holiday below; a draft the outbound check refuses is not
+    sent, is reported once, and keeps that day's row.
   - **A person's own leave dates:** a person may set one range of days on
     which the morning DM and Monday's DM are not sent
     (`ext_notification_pauses`). When someone is away is theirs alone: only
