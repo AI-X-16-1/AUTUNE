@@ -785,6 +785,15 @@ runner DEV-SERVER1. It runs two compose projects:
 - `autune-app`, from `infra/docker-compose.app.yml`: `alembic upgrade heads`
   as a one-off, then the containers below, on the `autune` project's network.
 
+**The host has an NVIDIA GeForce RTX 3060 (12 GB)**, on an Intel i5-9400F
+with 32 GB of RAM. Docker Desktop hands it to `worker-audio` through WSL 2; that
+needs the NVIDIA Windows driver and nothing installed inside WSL. Whisper runs
+there on CUDA 12's cuBLAS (module A's `cuda` extra, on `LD_LIBRARY_PATH` in the
+image), and pyannote on torch's CUDA 13, which needs driver 580 or later — with
+an older driver pyannote alone falls back to the CPU and logs
+`diarization_device_unavailable`. Check with
+`docker run --rm --gpus all nvidia/cuda:12.9.1-base-ubuntu24.04 nvidia-smi`.
+
 Every long-running container has `restart: unless-stopped`, so all of them come
 back after a reboot, provided Docker Desktop itself starts at sign-in.
 
@@ -792,7 +801,8 @@ back after a reboot, provided Docker Desktop itself starts at sign-in.
 | --- | --- | --- |
 | `autune-app-nginx` | 80, on `DEV_PUBLIC_HOST` only | one origin: `/api/` (and the live WebSocket) to `api`, everything else to `web` |
 | `autune-app-api` | 8000, on `DEV_PUBLIC_HOST` only | `uvicorn autune_api.main:app`, also reached directly for `/docs` and curl; no password on `/dev` routes here, LAN only |
-| `autune-app-worker` | none | Celery, queues `default,cpu_heavy,gpu`, `--pool=solo` |
+| `autune-app-worker` | none | Celery, queues `default,cpu_heavy`, `--pool=solo`: B, C, D and E's tasks and every notice |
+| `autune-app-worker-audio` | none | Celery, queue `gpu`, `--pool=solo`, with the host's GPU (`gpus: all`) and `AUTUNE_AUDIO_DEVICE=cuda`: module A's tasks only, so a transcription never holds up the other modules |
 | `autune-app-beat` | none | Celery beat: sends the `autune.<module>.periodic.*` tasks on their schedules |
 | `autune-app-web` | none | `next start`, built with an empty `NEXT_PUBLIC_API_URL`, so the browser calls its own origin |
 | `autune-postgres`, `autune-redis` | 5432, 6379, loopback only | as locally |

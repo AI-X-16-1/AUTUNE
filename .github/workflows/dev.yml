@@ -134,4 +134,4 @@ jobs:
 
       - name: Show application logs on failure
         if: failure()
-        run: docker compose -f infra/docker-compose.app.yml logs --tail 100 api worker web nginx
+        run: docker compose -f infra/docker-compose.app.yml logs --tail 100 api worker worker-audio web nginx

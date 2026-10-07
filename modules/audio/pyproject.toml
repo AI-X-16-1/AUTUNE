@@ -40,6 +40,15 @@ mlx = [
     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
+# Whisper on an NVIDIA GPU (AUTUNE_AUDIO_DEVICE=cuda). CTranslate2's Linux
+# wheel loads CUDA 12's cuBLAS at run time and ships nothing of CUDA itself;
+# torch's wheel brings CUDA 13, whose libcublas.so.13 it cannot use. The
+# library directory must be on LD_LIBRARY_PATH (infra/docker/python.Dockerfile).
+# Linux only: Windows and macOS have no use for it here.
+cuda = [
+    "nvidia-cublas-cu12>=12.4,<13; sys_platform == 'linux'",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
