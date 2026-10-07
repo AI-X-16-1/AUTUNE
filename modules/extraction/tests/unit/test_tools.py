@@ -915,6 +915,60 @@ def test_an_item_reopened_after_a_close_is_no_longer_marked_closed(
     ]
 
 
+def test_a_closed_item_is_reported_as_closed_and_a_finished_one_as_done(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """What Report and the chat print is this line: "done" on a closed item
+    would have them say it was finished (review of #979)."""
+    item(session, "act_closed")
+    item(session, "act_finished")
+    assert tools.close_action_item(TEAM, "act_closed")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_finished", "done")["ok"] is True
+
+    listed = rows(tools.meeting_action_items(session, MEETING))
+    (one,) = tools.action_item_status(session, TEAM, "act_closed")["items"]
+    (other,) = tools.action_item_status(session, TEAM, "act_finished")["items"]
+
+    assert listed["act_closed"].endswith(" · closed")
+    assert listed["act_finished"].endswith(" · done")
+    assert " · closed · " in one["body"] and " · done" not in one["body"]
+    assert " · done · " in other["body"]
+
+
+def test_closing_twice_says_it_is_closed_and_closing_a_finished_item_says_it_is_done(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_closed")
+    item(session, "act_finished", status="done")
+    assert tools.close_action_item(TEAM, "act_closed")["ok"] is True
+
+    again = tools.close_action_item(TEAM, "act_closed")
+    finished = tools.close_action_item(TEAM, "act_finished")
+
+    assert (again["ok"], again["summary"]) == (False, "이미 닫힌 액션아이템입니다.")
+    assert (finished["ok"], finished["summary"]) == (False, "이미 완료된 액션아이템입니다.")
+    assert [e.kind for e in session.query(ExtEditEvent)] == ["closed"]
+    assert acting["items"] == ["act_closed"]
+
+
+def test_the_last_status_written_wins_whatever_time_its_row_carries(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """On PostgreSQL an event's time is when its transaction began. A board edit
+    that began before a close and was written after it carries the earlier
+    time, and it is still the last word (review of #979)."""
+    item(session, "act_1")
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+    (close,) = session.query(ExtEditEvent).all()
+    assert tools.set_action_item_status(TEAM, "act_1", "todo")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    for event in session.query(ExtEditEvent).filter(ExtEditEvent.id != close.id):
+        event.created_at = close.created_at - timedelta(seconds=5)
+    session.flush()
+
+    assert service.closed_unfinished(session, ["act_1"]) == set(), "finished, written last"
+
+
 def test_a_closed_item_is_not_counted_as_work_its_holder_finished(
     session: Session, acting: dict[str, list[str]]
 ) -> None:
