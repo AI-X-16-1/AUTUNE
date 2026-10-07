@@ -17,6 +17,7 @@ from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import Tool
 from autune_agent.subagents.followup import SUBAGENT, graph, rules
 from autune_agent.subagents.followup.graph import (
+    DUE_DATES,
     OPEN_GAPS,
     OPEN_ITEM,
     QUESTIONS,
@@ -80,6 +81,9 @@ def tools_for(
     recent_ok: bool = True,
     gaps_ok: bool = True,
     with_open_item: bool = True,
+    due: list[dict[str, Any]] | None = None,
+    due_ok: bool = True,
+    with_due: bool = True,
     calls: list[tuple[str, dict[str, Any]]] | None = None,
 ) -> dict[str, Tool]:
     log = [] if calls is None else calls
@@ -107,6 +111,11 @@ def tools_for(
         log.append((OPEN_ITEM, {}))
         return _result(open_items or [])
 
+    def meeting_due_dates(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
+        log.append((DUE_DATES, {"meeting_id": meeting_id}))
+        rows = [{"title": "기한", "due_dates": due}] if due is not None else []
+        return {"ok": due_ok, "summary": "기한", "items": rows, "evidence": []}
+
     tools = {
         OPEN_GAPS: Tool(name=OPEN_GAPS, description="Use this in tests.", fn=open_gaps),
         RECURRING: Tool(name=RECURRING, description="Use this in tests.", fn=recurring_open_gaps),
@@ -116,6 +125,10 @@ def tools_for(
     if with_open_item:
         tools[OPEN_ITEM] = Tool(
             name=OPEN_ITEM, description="Use this in tests.", fn=open_followup_item
+        )
+    if with_due:
+        tools[DUE_DATES] = Tool(
+            name=DUE_DATES, description="Use this in tests.", fn=meeting_due_dates
         )
     return tools
 
@@ -145,7 +158,7 @@ def names(calls: list[tuple[str, dict[str, Any]]]) -> list[str]:
 def test_it_is_collected_woken_by_intelligence_completed_and_reads_only_its_list() -> None:
     assert collect_subagents()["followup"] is SUBAGENT
     assert SUBAGENT.triggers == (INTELLIGENCE_COMPLETED,)
-    assert set(SUBAGENT.tools) == {OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM}
+    assert set(SUBAGENT.tools) == {OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, DUE_DATES}
 
 
 def test_it_reads_nothing_about_a_person() -> None:
@@ -165,20 +178,20 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     assert (proposal.level, proposal.tool, proposal.kind) == ("L2", WRITE, "followup_meeting")
     # The trigger's meeting is the run's: the action is bound to it when it runs.
     # No meeting days to read, so three business days from Monday.
-    assert proposal.arguments == {"due_date": "2026-10-08"}
+    assert proposal.arguments == {"due_date": "2026-10-08", "basis": "cadence"}
     assert proposal.evidence == ["gap_now"]
     assert "다시 열린 항목 1개" in outcome.result.summary
     assert "10월 8일(목)" in outcome.result.summary
-    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, RECENT]
+    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, DUE_DATES, RECENT]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
-def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_and_a_date() -> None:
+def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_a_date_and_a_basis() -> None:
     """A proposal cannot demote a write, but an L1 one would run with no lead at all.
     And an argument the write does not take fails the approval (``bind_scope``)."""
     write = collect_actions(["extraction"])[WRITE]
     assert write.level == "L2"
-    assert write.parameters == {"team_id", "meeting_id", "due_date"}
+    assert write.parameters == {"team_id", "meeting_id", "due_date", "basis"}
 
 
 def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:
@@ -292,11 +305,15 @@ def test_a_chat_run_takes_the_latest_analysed_meeting(session, team) -> None:
 
     (proposal,) = outcome.proposed
     # A chat run's scope has no meeting, so the proposal names the one it read.
-    assert proposal.arguments == {"meeting_id": team["meeting"], "due_date": "2026-10-08"}
+    assert proposal.arguments == {
+        "meeting_id": team["meeting"],
+        "due_date": "2026-10-08",
+        "basis": "cadence",
+    }
     assert arguments_ok(proposal.arguments)
     # The first open_gaps is refused by the scope (no meeting) before it reaches C.
     # The meeting list it read to pick M also gives the date: no second read.
-    assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM]
+    assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, DUE_DATES]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
@@ -366,7 +383,7 @@ def test_the_date_follows_the_teams_weekly_rhythm(session, team) -> None:
     ).proposed
 
     # Friday meetings a week apart: the Friday after the latest.
-    assert proposal.arguments == {"due_date": "2026-10-09"}
+    assert proposal.arguments == {"due_date": "2026-10-09", "basis": "cadence"}
     assert arguments_ok(proposal.arguments)
     assert "추천 날짜 10월 9일(금)" in proposal.rationale
 
@@ -378,7 +395,7 @@ def test_an_unreadable_meeting_list_still_proposes_with_the_default_date(session
         tools, session=session, team_id=team["team"], meeting=team["meeting"]
     ).proposed
 
-    assert proposal.arguments == {"due_date": "2026-10-08"}
+    assert proposal.arguments == {"due_date": "2026-10-08", "basis": "cadence"}
 
 
 def test_a_meeting_list_with_no_start_times_proposes_with_the_default_date(session, team) -> None:
@@ -389,7 +406,7 @@ def test_a_meeting_list_with_no_start_times_proposes_with_the_default_date(sessi
         tools, session=session, team_id=team["team"], meeting=team["meeting"]
     ).proposed
 
-    assert proposal.arguments == {"due_date": "2026-10-08"}
+    assert proposal.arguments == {"due_date": "2026-10-08", "basis": "cadence"}
 
 
 @pytest.mark.parametrize(
@@ -416,3 +433,216 @@ def test_a_meeting_list_with_no_start_times_proposes_with_the_default_date(sessi
 )
 def test_suggest_date(held_days: list[date], today: date, expected: date) -> None:
     assert rules.suggest_date(held_days, today) == expected
+
+
+# --- The suggested date from M's due dates (spec sections 5 and 8, #963) ------
+
+WEDNESDAY = date(2026, 10, 7)
+"""Spec section 8's fixed day: the earliest suggestion is Thursday 10-08."""
+
+
+def due(day: str, confirmed: bool = True) -> rules.Due:
+    return rules.Due(date.fromisoformat(day), confirmed)
+
+
+def basis_of(items: list[rules.Due]) -> str | None:
+    suggestion = rules.suggest_from_due_dates(items, WEDNESDAY)
+    return suggestion.basis if suggestion else None
+
+
+def test_the_same_items_in_any_order_give_the_same_date() -> None:
+    items = [due("2026-10-09"), due("2026-10-12", confirmed=False), due("2026-10-14")]
+
+    suggestions = {
+        rules.suggest_from_due_dates(order, WEDNESDAY)
+        for order in (items, items[::-1], [items[1], items[2], items[0]])
+    }
+
+    # Three items: the third is the 80% point, Wednesday 10-14, so Thursday.
+    assert suggestions == {rules.Suggestion(date(2026, 10, 15), "draft")}
+
+
+def test_no_due_dates_leave_the_rhythm_to_decide() -> None:
+    assert rules.suggest_from_due_dates([], WEDNESDAY) is None
+
+
+@pytest.mark.parametrize(
+    "items",
+    [
+        # All late.
+        [due("2026-10-01"), due("2026-10-06")],
+        # One late among later ones: work is already late, so it does not wait.
+        [due("2026-10-06"), due("2026-10-13"), due("2026-10-14")],
+        # Late and confirmed, beside a draft.
+        [due("2026-10-05"), due("2026-10-14", confirmed=False)],
+    ],
+)
+def test_a_confirmed_item_past_its_date_makes_it_the_next_business_day(
+    items: list[rules.Due],
+) -> None:
+    assert rules.suggest_from_due_dates(items, WEDNESDAY) == rules.Suggestion(
+        date(2026, 10, 8), "confirmed"
+    )
+
+
+def test_a_drafts_past_date_is_dropped_not_obeyed() -> None:
+    # A date B may have misread minutes after the meeting is not late work.
+    only_late_draft = [due("2026-10-06", confirmed=False)]
+    beside_a_confirmed = [due("2026-10-06", confirmed=False), due("2026-10-09")]
+
+    assert rules.suggest_from_due_dates(only_late_draft, WEDNESDAY) is None
+    # Friday 10-09 is the only date left: Monday, and on confirmed dates only.
+    assert rules.suggest_from_due_dates(beside_a_confirmed, WEDNESDAY) == rules.Suggestion(
+        date(2026, 10, 12), "confirmed"
+    )
+
+
+def test_an_item_due_today_is_not_late() -> None:
+    assert rules.suggest_from_due_dates([due("2026-10-07")], WEDNESDAY) == rules.Suggestion(
+        date(2026, 10, 8), "confirmed"
+    )
+
+
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        # Everything beyond 14 days: no date here, the rhythm decides.
+        ([due("2026-10-22"), due("2026-11-30")], None),
+        # Exactly on the horizon (10-21, a Wednesday) is kept.
+        ([due("2026-10-21")], rules.Suggestion(date(2026, 10, 22), "confirmed")),
+        # A six-week task does not pull the date out: it is dropped, not clamped.
+        (
+            [due("2026-10-09"), due("2026-11-30")],
+            rules.Suggestion(date(2026, 10, 12), "confirmed"),
+        ),
+        # A draft beyond the horizon does not make the date a draft's.
+        (
+            [due("2026-10-09"), due("2026-11-30", confirmed=False)],
+            rules.Suggestion(date(2026, 10, 12), "confirmed"),
+        ),
+    ],
+)
+def test_the_horizon_drops_long_running_work(
+    items: list[rules.Due], expected: rules.Suggestion | None
+) -> None:
+    assert rules.suggest_from_due_dates(items, WEDNESDAY) == expected
+
+
+WEEK = ["2026-10-08", "2026-10-09", "2026-10-12", "2026-10-13", "2026-10-14"]
+
+
+@pytest.mark.parametrize(
+    ("days", "expected"),
+    [
+        # n = 1: the one date, a Friday, so Monday.
+        (["2026-10-09"], date(2026, 10, 12)),
+        # n = 2: k = ceil(1.6) = 2, the later one (Tuesday 10-13).
+        (["2026-10-08", "2026-10-13"], date(2026, 10, 14)),
+        # n = 5: k = 4, Tuesday 10-13.
+        (WEEK, date(2026, 10, 14)),
+        # n = 10, each date twice: k = 8 counts items, not dates -- Tuesday 10-13.
+        (WEEK * 2, date(2026, 10, 14)),
+        # n = 15: k = 12, not 13 (0.8 * 15 is not exactly 12 in floating point).
+        (["2026-10-08"] * 11 + ["2026-10-09"] + ["2026-10-20"] * 3, date(2026, 10, 12)),
+    ],
+)
+def test_the_eighty_percent_point(days: list[str], expected: date) -> None:
+    suggestion = rules.suggest_from_due_dates([due(d) for d in days], WEDNESDAY)
+
+    assert suggestion == rules.Suggestion(expected, "confirmed")
+
+
+@pytest.mark.parametrize(
+    ("day", "today", "expected"),
+    [
+        # Due on a Friday, Saturday or Sunday: the Monday after.
+        ("2026-10-09", WEDNESDAY, date(2026, 10, 12)),
+        ("2026-10-10", WEDNESDAY, date(2026, 10, 12)),
+        ("2026-10-11", WEDNESDAY, date(2026, 10, 12)),
+        # Run on a Friday or a Saturday: the earliest day is Monday.
+        ("2026-10-09", date(2026, 10, 9), date(2026, 10, 12)),
+        ("2026-10-10", date(2026, 10, 10), date(2026, 10, 12)),
+    ],
+)
+def test_weekends_move_to_monday(day: str, today: date, expected: date) -> None:
+    suggestion = rules.suggest_from_due_dates([due(day)], today)
+
+    assert suggestion is not None
+    assert suggestion.day == expected
+
+
+def test_the_date_is_a_drafts_only_while_a_draft_is_counted() -> None:
+    assert basis_of([due("2026-10-09"), due("2026-10-12")]) == "confirmed"
+    assert basis_of([due("2026-10-09", confirmed=False), due("2026-10-12")]) == "draft"
+
+
+def dated(*entries: tuple[str, bool]) -> list[dict[str, Any]]:
+    return [{"date": day, "confirmed": confirmed} for day, confirmed in entries]
+
+
+def test_the_proposal_follows_the_due_dates_and_skips_the_meeting_list(session, team) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        due=dated(("2026-10-07", True), ("2026-10-08", False)),
+        calls=calls,
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    (proposal,) = outcome.proposed
+    # Monday 10-05: two items, the later is Thursday 10-08, so Friday.
+    assert proposal.arguments == {"due_date": "2026-10-09", "basis": "draft"}
+    assert arguments_ok(proposal.arguments)
+    assert "10월 9일(금), 초안 기준" in outcome.result.summary
+    assert RECENT not in names(calls)
+
+
+def test_confirmed_due_dates_say_so(session, team) -> None:
+    tools = tools_for(recurring=[carried("gap_1")], due=dated(("2026-10-07", True)))
+
+    (proposal,) = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).proposed
+
+    assert proposal.arguments == {"due_date": "2026-10-08", "basis": "confirmed"}
+    assert "확정 기한 기준" in proposal.rationale
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        # B has not shipped the read: the toolbox answers "not available".
+        {"with_due": False},
+        # B's read failed.
+        {"due": dated(("2026-10-07", True)), "due_ok": False},
+        # Nothing dated.
+        {"due": []},
+        # Entries that are not a date and a flag are skipped, not guessed at.
+        {"due": [{"date": "다음 주", "confirmed": True}, {"date": "2026-10-07"}, "2026-10-07"]},
+    ],
+)
+def test_without_usable_due_dates_the_rhythm_decides(session, team, setup: dict[str, Any]) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    tools = tools_for(recurring=[carried("gap_1")], calls=calls, **setup)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    (proposal,) = outcome.proposed
+    # No meeting days either: three business days from Monday.
+    assert proposal.arguments == {"due_date": "2026-10-08", "basis": "cadence"}
+    assert outcome.result.ok is True
+    assert "회의 주기 기준" in outcome.result.summary
+    assert names(calls)[-1] == RECENT
+
+
+def test_nothing_about_an_owner_reaches_the_proposal_or_the_answer(session, team) -> None:
+    # Were B's row ever to carry more, only the date and the flag are read.
+    entry = {"date": "2026-10-07", "confirmed": True, "assignee": "박지영", "title": "결제 QA"}
+    tools = tools_for(recurring=[carried("gap_1")], due=[entry])
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.proposed
+    assert "박지영" not in repr(outcome)
+    assert "결제 QA" not in repr(outcome)

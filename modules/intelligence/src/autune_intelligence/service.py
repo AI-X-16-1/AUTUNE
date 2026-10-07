@@ -1597,6 +1597,17 @@ def _deliver_personal(
     slack.send_dm(recipient_user_id, fallback, blocks)
 
 
+def _ratio_dm_label(meeting: Meeting) -> str:
+    """Which meeting the ratio DM is about: "{title} · 10/7", or the date alone
+    when the title holds personal data -- the same test the report header makes,
+    because ``check_outbound`` would refuse the whole DM over one string."""
+    when = (meeting.started_at or meeting.created_at).astimezone(_KST)
+    day = f"{when.month}/{when.day}"
+    if meeting.title and not find_unmasked(meeting.title):
+        return f"{_slack_escape(meeting.title)} · {day}"
+    return f"{day} 회의"
+
+
 def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
     """DM each identified participant their own speaking ratio. Returns the count.
 
@@ -1622,7 +1633,9 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
         return 0
 
     participant_count = _consented_participant_count(session, meeting_id)
-    team_id = session.scalar(sa.select(Meeting.team_id).where(Meeting.id == meeting_id))
+    meeting = session.get(Meeting, meeting_id)
+    team_id = meeting.team_id if meeting is not None else None
+    label = _ratio_dm_label(meeting) if meeting is not None else None
     sent = 0
     for share in shares:
         if share.user_id is None:
@@ -1640,7 +1653,7 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
             )
             continue
         fallback, blocks = build_speaking_ratio_dm(
-            ratio=share.ratio, participant_count=participant_count
+            ratio=share.ratio, participant_count=participant_count, meeting_label=label
         )
         try:
             _deliver_personal(slack, share.user_id, fallback, blocks)

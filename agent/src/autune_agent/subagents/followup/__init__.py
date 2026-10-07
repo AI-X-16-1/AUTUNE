@@ -7,8 +7,9 @@ approver with scope ``followup`` only -- the team lead. Design:
 
 Reads topics, never people or roles: C's open gaps and B's open questions, no
 participation and no ``silent_share`` (spec section 6; in a small team a role
-is a person, privacy.md section 3). The rule is in ``rules.py``, the subgraph
-in ``graph.py``.
+is a person, privacy.md section 3). For the suggested date it reads B's due
+dates and whether each is confirmed, never who owns an item (#963). The rule
+is in ``rules.py``, the subgraph in ``graph.py``.
 """
 
 from __future__ import annotations

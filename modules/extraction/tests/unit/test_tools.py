@@ -6,6 +6,7 @@ SQLite in memory, the way ``test_read_endpoints`` builds B's tables.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -16,6 +17,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from autune_contracts.enums import ActionStatus
 from autune_core import Base, Meeting, TeamMember, User, Utterance
 from autune_extraction import service, tools
 from autune_extraction.config import ExtractionSettings
@@ -35,7 +37,7 @@ from autune_extraction.models import (
     ExtProject,
     ExtSyncFailure,
 )
-from autune_extraction.schemas import ActionItemCreate
+from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
 from autune_extraction.slots import KST
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
@@ -199,6 +201,148 @@ def test_unconfirmed_items_are_counted_never_quoted(session: Session) -> None:
     titles = [i["title"] for i in result["items"]]
     assert titles == ["act_confirmed 할 일"]
     assert "확인 대기 1건" in result["summary"]
+
+
+# --- meeting_due_dates (#966) ----------------------------------------------------------
+
+
+def test_due_dates_of_an_unknown_meeting_are_ok_false_not_an_exception(session: Session) -> None:
+    result = tools.meeting_due_dates(session, "mtg_nope")
+
+    assert result["ok"] is False and "mtg_nope" in result["reason"]
+    assert result["items"] == [] and result["evidence"] == []
+
+
+def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
+    session: Session,
+) -> None:
+    """One row, every date in it, earliest first, a shared day twice -- and no
+    title, assignee or text of any item."""
+    item(session, "act_b", due=TODAY + timedelta(days=5))
+    item(session, "act_a", due=TODAY + timedelta(days=2), status="in_progress")
+    item(session, "act_c", due=TODAY + timedelta(days=5), assignee="user_gone")
+    item(session, "act_late", due=TODAY - timedelta(days=3))
+    item(session, "act_undated")
+    item(session, "act_done", status="done", due=TODAY + timedelta(days=1))
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["ok"] is True
+    (row,) = result["items"]
+    assert row == {
+        "title": "기한",
+        "due_dates": [
+            {"date": (TODAY - timedelta(days=3)).isoformat(), "confirmed": True},
+            {"date": (TODAY + timedelta(days=2)).isoformat(), "confirmed": True},
+            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
+            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
+        ],
+        "dated_open": 4,
+        "dated_confirmed": 4,
+    }
+    assert result["evidence"] == ["act_late", "act_a", "act_b", "act_c"]
+    assert result["summary"] == (
+        "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 대기 0건."
+    )
+    said = str(result)
+    assert "할 일" not in said, "no item's text"
+    assert "박지영" not in said and "이건우" not in said and "user_" not in said, (
+        "and nobody's name"
+    )
+
+
+def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Session) -> None:
+    """#261 rule 3, and the user on #966: confirmed items' dates only. The
+    draft's date is the earliest here, so it would lead the list if it leaked;
+    confirming it -- through the board's own write -- is what lets it out."""
+    draft_day = TODAY + timedelta(days=1)
+    item(session, "act_confirmed", due=TODAY + timedelta(days=4))
+    item(session, "act_draft", status="needs_confirmation", due=draft_day)
+    item(session, "act_draft_undated", status="needs_confirmation")
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    dates = [entry["date"] for entry in result["items"][0]["due_dates"]]
+    assert dates == [(TODAY + timedelta(days=4)).isoformat()]
+    assert draft_day.isoformat() not in str(result)
+    assert result["evidence"] == ["act_confirmed"], "no card can point at a draft"
+    assert "확인 대기 2건" in result["summary"]
+    assert all(entry["confirmed"] is True for entry in result["items"][0]["due_dates"])
+    # The dated draft is in the count and nowhere else; the undated one in neither.
+    assert (result["items"][0]["dated_open"], result["items"][0]["dated_confirmed"]) == (2, 1)
+
+    row = session.get(ExtActionItem, "act_draft")
+    assert row is not None
+    service.update_action_item(session, row, ActionItemUpdate(status=ActionStatus.TODO))
+    session.flush()
+
+    after = tools.meeting_due_dates(session, MEETING)
+    assert [entry["date"] for entry in after["items"][0]["due_dates"]] == [
+        draft_day.isoformat(),
+        (TODAY + timedelta(days=4)).isoformat(),
+    ]
+    assert after["evidence"] == ["act_draft", "act_confirmed"]
+    assert "확인 대기 1건" in after["summary"]
+    assert (after["items"][0]["dated_open"], after["items"][0]["dated_confirmed"]) == (2, 2)
+
+
+def test_only_drafts_have_dates_means_a_row_of_counts_no_date_and_no_evidence(
+    session: Session,
+) -> None:
+    """Right after a meeting nearly everything waits: the caller gets no date
+    and falls back to its own rule, and a card can say "0/2 확정" (#966)."""
+    draft_days = [TODAY + timedelta(days=1), TODAY + timedelta(days=6)]
+    item(session, "act_draft", status="needs_confirmation", due=draft_days[0])
+    item(session, "act_draft_two", status="needs_confirmation", due=draft_days[1])
+    item(session, "act_open")
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["ok"] is True
+    assert result["items"] == [
+        {"title": "기한", "due_dates": [], "dated_open": 2, "dated_confirmed": 0}
+    ]
+    assert result["evidence"] == []
+    assert result["summary"] == (
+        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 대기 2건."
+    )
+    said = str(result)
+    assert not any(day.isoformat() in said for day in draft_days), "a count, never a date"
+    assert "act_draft" not in said, "and never which draft"
+
+
+def test_no_unfinished_item_with_a_date_means_no_row(session: Session) -> None:
+    """Nothing to count: a finished item's date and an undated draft are neither."""
+    item(session, "act_open")
+    item(session, "act_draft", status="needs_confirmation")
+    item(session, "act_done", status="done", due=TODAY + timedelta(days=1))
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["ok"] is True
+    assert result["items"] == [] and result["evidence"] == []
+
+
+def test_every_date_is_in_the_one_row_past_the_five_item_cap(session: Session) -> None:
+    """``_result`` keeps five rows; the rule this feeds needs all the dates."""
+    for n in range(8):
+        item(session, f"act_{n}", due=TODAY + timedelta(days=n))
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert len(result["items"]) == 1 and result["truncated"] is False
+    assert len(result["items"][0]["due_dates"]) == 8
+    assert len(result["evidence"]) == 8
+
+
+def test_another_meetings_dates_are_not_this_meetings(session: Session) -> None:
+    item(session, "act_here", due=TODAY + timedelta(days=2))
+    item(session, "act_there", due=TODAY + timedelta(days=9), meeting=OTHER_MEETING)
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["evidence"] == ["act_here"]
+    assert (TODAY + timedelta(days=9)).isoformat() not in str(result)
 
 
 def test_reassignment_then_overdue_come_first(session: Session) -> None:
@@ -660,6 +804,7 @@ def test_an_action_never_reaches_another_teams_item(
 
     for result in (
         tools.set_action_item_status(TEAM, "act_theirs", "done"),
+        tools.close_action_item(TEAM, "act_theirs"),
         tools.set_action_item_due_date(TEAM, "act_theirs", "2026-10-02"),
         tools.reassign_action_item(TEAM, "act_theirs", "user_in"),
         tools.confirm_action_item(TEAM, "act_theirs"),
@@ -690,6 +835,111 @@ def test_a_status_outside_the_board_is_refused(
     assert tools.set_action_item_status(TEAM, "act_1", "needs_confirmation")["ok"] is False
     assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
     assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
+
+
+# --- close_action_item: closed without being finished (#856) -------------------------
+
+
+def test_closing_an_item_ends_it_and_keeps_it_apart_from_finished_work(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1", status="in_progress")
+    item(session, "act_2")
+
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_2", "done")["ok"] is True
+
+    assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
+    assert acting["items"] == ["act_1", "act_2"], "its copies outside follow, as for any change"
+    assert service.closed_unfinished(session, ["act_1", "act_2"]) == {"act_1"}
+    assert {i.id: i.closed_unfinished for i in service.list_action_items(session)} == {
+        "act_1": True,
+        "act_2": False,
+    }
+    closed, finished = (session.get(ExtActionItem, i) for i in ("act_1", "act_2"))
+    assert closed is not None and finished is not None
+    assert service.read_one(session, closed).closed_unfinished is True
+    assert service.read_one(session, finished).closed_unfinished is False
+    (entry,) = service.edit_history(session, "act_1")
+    assert (entry.kind, entry.fields) == ("closed", []), "no field: it is not an edit of the status"
+
+
+def test_a_close_is_not_a_correction_of_what_the_model_wrote(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+
+    cost = service.edit_cost_for_meeting(session, MEETING)
+    assert (cost.model_items, cost.edited_items, cost.added_items, cost.edits) == (1, 0, 0, 0)
+
+
+def test_only_a_confirmed_open_item_of_the_team_can_be_closed(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_draft", status="needs_confirmation")
+    item(session, "act_done", status="done")
+    item(session, "act_theirs", meeting=OTHER_MEETING)
+
+    for ident in ("act_draft", "act_done", "act_theirs", "act_missing"):
+        assert tools.close_action_item(TEAM, ident)["ok"] is False, ident
+
+    assert {i.id: i.status for i in session.query(ExtActionItem)} == {
+        "act_draft": "needs_confirmation",
+        "act_done": "done",
+        "act_theirs": "todo",
+    }
+    assert session.query(ExtEditEvent).count() == 0
+    assert acting["items"] == []
+    assert service.closed_unfinished(session, ["act_done"]) == set(), "finished, not closed"
+
+
+def test_an_item_reopened_after_a_close_is_no_longer_marked_closed(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+
+    assert tools.set_action_item_status(TEAM, "act_1", "todo")["ok"] is True
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert service.read_one(session, row).closed_unfinished is False
+
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert service.read_one(session, row).closed_unfinished is False, "finished this time"
+    assert [e.kind for e in service.edit_history(session, "act_1")] == [
+        "closed",
+        "edited",
+        "edited",
+    ]
+
+
+def test_a_closed_item_is_not_counted_as_work_its_holder_finished(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    item(session, "act_2")
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert tools.close_action_item(TEAM, "act_2")["ok"] is True
+
+    load = rows(tools.workload_by_owner(session, TEAM))
+
+    assert load["user_in"] == "진행 중 0 · 기한 지남 0 · 완료 1 · 여유"
+
+
+def test_closing_clears_the_recheck_flag_as_any_change_a_person_makes(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    row.needs_recheck = True
+    session.flush()
+
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+
+    assert row.needs_recheck is False
 
 
 def test_a_followup_item_is_followups_fixed_text_and_waits(
@@ -753,6 +1003,47 @@ def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
     assert row.description == tools.FOLLOWUP_DESCRIPTION
     assert acting["items"] == []
     assert session.query(ExtEditEvent).count() == 0
+
+
+@pytest.mark.parametrize("basis", ["confirmed", "draft", "cadence", None, "", "anything else"])
+def test_what_followup_took_its_date_from_is_accepted_and_changes_nothing(
+    session: Session, acting: dict[str, list[str]], basis: str | None
+) -> None:
+    """``basis`` is for the approval card (#963, #966). An approved proposal
+    carries it, and the approval step refuses an argument the tool does not
+    declare -- so B declares it, and does nothing with it: the same item, no
+    value refused, nothing stored or sent."""
+    day = KOREA_TODAY + timedelta(days=3)
+
+    result = tools.add_followup_item(TEAM, MEETING, day.isoformat(), basis)
+
+    (row,) = session.query(ExtActionItem).all()
+    assert result["ok"] is True and result["items"][0]["id"] == row.id
+    assert (row.description, row.due_date, row.assignee_id, row.status, row.origin) == (
+        tools.FOLLOWUP_DESCRIPTION,
+        day,
+        None,
+        "needs_confirmation",
+        "followup",
+    )
+    if basis:
+        assert basis not in str(result), "the answer does not carry it either"
+        kept = [
+            str(getattr(row, column.name))
+            for column in ExtActionItem.__table__.columns
+            if getattr(row, column.name) is not None
+        ]
+        assert not any(basis == value for value in kept), "and no column of the item holds it"
+    assert acting["items"] == []
+    assert session.query(ExtEditEvent).count() == 0
+
+
+def test_the_followup_tool_declares_basis_as_an_optional_argument() -> None:
+    """What the approval step binds against: declared, by that name, optional."""
+    parameters = inspect.signature(tools.add_followup_item).parameters
+
+    assert list(parameters) == ["team_id", "meeting_id", "due_date", "basis"]
+    assert parameters["basis"].default is None
 
 
 def test_a_date_of_today_is_still_a_date(session: Session, acting: dict[str, list[str]]) -> None:

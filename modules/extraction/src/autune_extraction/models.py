@@ -860,6 +860,56 @@ class ExtDailyDigest(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtWorkReport(Base):
+    """That a person was sent the work-report draft for one day,
+    through one team's Slack (``work_report``, the user 2026-10-07). The
+    primary key is the "once", as ``ext_daily_digests``'s is. No text: the
+    message is not kept. Its own table because that one's key is the same
+    three columns and its latest row is where the next morning DM counts
+    from.
+
+    **A row lives for its day only.** The draft goes only on a day something
+    of the person's was finished or moved, so a row kept would say which days
+    a person worked (ADR 0003; mkkim68, review of #954): the sending task
+    deletes every earlier day's row each time it runs
+    (``work_report.forget_past_days``). Goes with the person and with the
+    team before that."""
+
+    __tablename__ = "ext_work_reports"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ExtMeetingNotice(Base):
+    """That a person was told, right after a meeting, that work of it had
+    landed on them (the user, 2026-10-07; ``meeting_notice``). The primary key
+    is the "once": one notice a person and meeting. No text and no count: the
+    message is not kept.
+
+    **Sent or refused.** A notice the outbound check refused keeps its row too
+    (``meeting_notice.settle_refused_notice``), so that it is reported once
+    and not built again; nothing on the row tells the two apart, and
+    ``sent_at`` is then when it was refused. Goes with the meeting -- its
+    retention expiry included -- and with the person."""
+
+    __tablename__ = "ext_meeting_notices"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtNotificationPause(Base):
     """The days a person asked not to get the morning DM or Monday's digest --
     leave, as they set it themselves (the user, 2026-10-05).
@@ -1061,11 +1111,22 @@ class ExtEditEvent(Base):
     The drawer's history (S18) shows "기한 수정됨"; keeping the value before an
     edit would keep the sentence a person chose to replace, a tombstone by
     another name (privacy.md section 4).
+
+    ``closed`` is the one kind that is not a correction: the item was **closed
+    without being finished** (#856, the user 2026-10-07). An item has no
+    cancelled state, so a close leaves it ``done``, and "what a person
+    finished" is read from the status and these rows alone -- this kind is
+    what tells a close from finished work (``service.closed_unfinished``). It
+    says that and when, about an item; like every row here it does not say
+    who. It carries no ``fields``: a reader that looks for an edit of the
+    status must not find one in it. Edit cost does not count it.
     """
 
     __tablename__ = "ext_edit_events"
     __table_args__ = (
-        CheckConstraint("kind IN ('created','deleted','edited')", name="ck_ext_edit_events_kind"),
+        CheckConstraint(
+            "kind IN ('created','deleted','edited','closed')", name="ck_ext_edit_events_kind"
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

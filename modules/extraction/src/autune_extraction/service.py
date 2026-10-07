@@ -1114,12 +1114,14 @@ def read_model(
     meeting_title: str | None = None,
     team_id: str | None = None,
     carried_meetings: int = 0,
+    closed_unfinished: bool = False,
 ) -> ActionItemRead:
     """One item as this module's own screens read it.
 
     ``assignee_departed`` comes from ``departed_assignees``; see
     ``ActionItemRead.needs_reassignment`` for what it changes. ``team_id`` is
-    the item's meeting's team, from ``meeting_teams``.
+    the item's meeting's team, from ``meeting_teams``. ``closed_unfinished``
+    comes from the function of that name, asked about the done items.
 
     Built here rather than by ``from_attributes`` on the schema because five of
     its fields are not columns: the source ids live in the link table, whether
@@ -1182,6 +1184,7 @@ def read_model(
         summary=summary,
         sync_refs=sync_refs or [],
         carried_meetings=carried_meetings,
+        closed_unfinished=closed_unfinished and item.status == ActionStatus.DONE.value,
         sync_failures=sync_failures or [],
     )
 
@@ -1251,6 +1254,7 @@ def read_one(
         meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
         team_id=meeting_teams(session, [item]).get(item.meeting_id),
         carried_meetings=meetings_since(session, [item]).get(item.id, 0),
+        closed_unfinished=item.id in _closed_among(session, [item]),
     )
 
 
@@ -1491,6 +1495,7 @@ def list_action_items(
     titles = meeting_titles(session, items)
     teams = meeting_teams(session, items)
     carried = meetings_since(session, items)
+    closed = _closed_among(session, items)
     return [
         read_model(
             item,
@@ -1502,6 +1507,7 @@ def list_action_items(
             meeting_title=titles.get(item.meeting_id),
             team_id=teams.get(item.meeting_id),
             carried_meetings=carried.get(item.id, 0),
+            closed_unfinished=item.id in closed,
         )
         for item in items
     ]
@@ -1770,6 +1776,7 @@ def read_detail(
             assignee_departed=departed,
             meeting_title=meeting_titles(session, [item]).get(item.meeting_id),
             team_id=meeting_teams(session, [item]).get(item.meeting_id),
+            closed_unfinished=item.id in _closed_among(session, [item]),
         ).model_dump(),
         # Why there is no calendar event, where there is none (#680). What is
         # missing from the item is said to any reader; anything about the
@@ -1978,6 +1985,65 @@ def update_action_item(
     return item
 
 
+def close_without_finishing(session: Session, item: ExtActionItem) -> bool:
+    """Close a confirmed, unfinished item: it becomes ``done`` and the event
+    kept is ``closed``, not an edit of the status (#856; the user, 2026-10-07).
+
+    An item has no cancelled state, so "closed" and "finished" end in the same
+    status, and what a person is told they finished is read from the status
+    and the events (``daily_digest_content``, ``work_report``). The ``closed``
+    event is the only thing that tells the two apart -- ``closed_unfinished``
+    reads it. It names the item and the time and, like every edit event, not
+    who closed it.
+
+    ``False``, and nothing changed, for an item that is not open: one still
+    waiting for confirmation has nothing a person agreed to close, and a
+    finished one is finished.
+    """
+    if item.status not in (ActionStatus.TODO.value, ActionStatus.IN_PROGRESS.value):
+        return False
+    item.status = ActionStatus.DONE.value
+    # As any change a person makes: whatever a corrected source asked them to
+    # check has been in front of the person who decided this (#586).
+    item.needs_recheck = False
+    _record_edit(session, meeting_id=item.meeting_id, action_item_id=item.id, kind="closed")
+    return True
+
+
+def closed_unfinished(session: Session, item_ids: Collection[str]) -> set[str]:
+    """Of ``item_ids``, the items whose latest change of status was a close
+    (``close_without_finishing``) and not an ordinary edit.
+
+    The caller asks about items that are ``done`` now: for those, this is
+    "closed, not finished". An item closed and later re-opened and really
+    finished has an ordinary status edit after its close, and is not here.
+    Events of one transaction share a timestamp, so the id breaks the tie, as
+    in ``edit_history``.
+    """
+    if not item_ids:
+        return set()
+    last: dict[str, str] = {}
+    for item_id, kind, fields in session.execute(
+        select(ExtEditEvent.action_item_id, ExtEditEvent.kind, ExtEditEvent.fields)
+        .where(
+            ExtEditEvent.action_item_id.in_(item_ids),
+            ExtEditEvent.kind.in_(("edited", "closed")),
+        )
+        .order_by(ExtEditEvent.created_at, ExtEditEvent.id)
+    ).tuples():
+        if item_id is not None and (kind == "closed" or "status" in (fields or "").split(",")):
+            last[item_id] = kind
+    return {item_id for item_id, kind in last.items() if kind == "closed"}
+
+
+def _closed_among(session: Session, items: Sequence[ExtActionItem]) -> set[str]:
+    """``closed_unfinished`` for the done ones of ``items``: the only ones it
+    can be true of, and a board of open items asks nothing."""
+    return closed_unfinished(
+        session, [item.id for item in items if item.status == ActionStatus.DONE.value]
+    )
+
+
 def delete_action_item(session: Session, item: ExtActionItem) -> None:
     """Remove an item the model got wrong. The row is gone, not flagged.
 
@@ -2034,9 +2100,10 @@ def _record_edit(
 
 def edit_history(session: Session, action_item_id: str) -> list[EditHistoryEntry]:
     """What happened to one item, oldest first, for the drawer (S18, #109):
-    added by a person, and each edit with the fields it changed. No values and
-    no people -- see ``ExtEditEvent``. An item the model extracted and nobody
-    touched has no entries."""
+    added by a person, each edit with the fields it changed, and a close
+    without finishing (``closed``, no fields). No values and no people -- see
+    ``ExtEditEvent``. An item the model extracted and nobody touched has no
+    entries."""
     rows = session.execute(
         select(ExtEditEvent.kind, ExtEditEvent.fields, ExtEditEvent.created_at)
         .where(ExtEditEvent.action_item_id == action_item_id)
@@ -2055,6 +2122,9 @@ def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:
     deleted, which is why it comes from the events rather than the surviving
     rows. Counting only survivors would score a meeting better the more of its
     items were wrong.
+
+    A ``closed`` event is not counted anywhere here: closing work that will
+    not be done corrects nothing the model wrote (``close_without_finishing``).
     """
     edits = list(
         session.execute(
@@ -2078,7 +2148,7 @@ def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:
         model_items=surviving_model_items + deleted,
         edited_items=len(edited_ids) + deleted,
         added_items=added,
-        edits=len(edits),
+        edits=sum(1 for kind, _ in edits if kind != "closed"),
     )
 
 
@@ -4154,6 +4224,11 @@ def daily_digest_content(
     mark at all and is not seen: an already confirmed item given to a person
     by ``fill_identified_assignees``.
 
+    **Closed is not done.** An item closed without being finished ends in the
+    same status as finished work; ``closed_unfinished`` tells the two apart,
+    and such an item is in ``closed`` and never in ``done`` (#856; the user,
+    2026-10-07) -- the DM must not tell a person they finished what was closed.
+
     **Today** is their open items: late ones, the ones due today, the ones
     nobody has touched for days, then the ones in progress -- each item once,
     in the first that fits -- and the rest only counted. Their own items on
@@ -4180,21 +4255,24 @@ def daily_digest_content(
     # The marks are the team's: which of them are this person's is decided
     # below, where a line is made -- by the assignee here, and by
     # ``_open_items_of`` for the open ones.
-    finished = [item_id for item_id, seen in marks.items() if "status" in seen]
-    done = [
-        reminders.DigestLine(item.description, item.due_date, title)
-        for item, title in session.execute(
-            select(ExtActionItem, Meeting.title)
-            .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
-            .where(
-                ExtActionItem.id.in_(finished),
-                ExtActionItem.assignee_id == owed.user_id,
-                ExtActionItem.status == ActionStatus.DONE.value,
-                or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
-            )
-            .order_by(ExtActionItem.id)
-        ).tuples()
-    ]
+    finished = [item_id for item_id, seen in marks.items() if seen & {"status", "closed"}]
+    not_finished = closed_unfinished(session, finished)
+    done: list[reminders.DigestLine] = []
+    closed: list[reminders.DigestLine] = []
+    for ended, meeting_title in session.execute(
+        select(ExtActionItem, Meeting.title)
+        .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+        .where(
+            ExtActionItem.id.in_(finished),
+            ExtActionItem.assignee_id == owed.user_id,
+            ExtActionItem.status == ActionStatus.DONE.value,
+            or_(Meeting.expires_at.is_(None), Meeting.expires_at > now),
+        )
+        .order_by(ExtActionItem.id)
+    ).tuples():
+        (closed if ended.id in not_finished else done).append(
+            reminders.DigestLine(ended.description, ended.due_date, meeting_title)
+        )
 
     taken_on: list[reminders.DigestLine] = []
     late: list[reminders.DigestLine] = []
@@ -4236,6 +4314,7 @@ def daily_digest_content(
     stalled.sort(key=lambda line: -(line.idle_days or 0))
     return reminders.DailyDigest(
         done=done,
+        closed=closed,
         taken_on=taken_on,
         late=late,
         due_today=due_today,

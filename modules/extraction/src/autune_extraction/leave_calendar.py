@@ -20,7 +20,10 @@ Rules, each tested:
   calendar is told so and nothing is tried.
 - A save that does not say (``on_calendar`` left out -- a screen that drew no
   box) leaves the calendar as it stands: an event there moves with the dates
-  and keeps its id, and where there is none, none is made.
+  and keeps its id, and where there is none, none is made. **It never makes
+  one**: an event the person deleted in Calendar is made again only by a
+  tick, so a save that does not say finds it gone, drops its id and answers
+  ``off`` (lsh2217's and pr's note on #922).
 - A changed range moves the same event; unticking or clearing the dates
   removes it. An event the person deleted in Calendar is made again only by
   another tick.
@@ -85,9 +88,11 @@ Outcome = Literal[
     "off", "added", "removed", "removal_queued", "not_connected", "not_removed", "failed"
 ]
 """What happened on the calendar for one save. ``off``: not asked for and
-nothing was there. ``failed``: asked for and not written -- the dates are saved
-all the same. ``not_connected``: asked for, and there is no calendar to write
-to. ``removal_queued``: the event could not be removed now and will be tried
+nothing was there -- or nothing is there any more: a save that did not say
+found the event deleted in Calendar and did not make it again. ``failed``:
+asked for and not written -- the dates are saved all the same.
+``not_connected``: asked for, and there is no calendar to write to.
+``removal_queued``: the event could not be removed now and will be tried
 again. ``not_removed``: the event could not be removed and will not be tried
 again -- the calendar is no longer connected, and the event stays until the
 person deletes it."""
@@ -121,10 +126,21 @@ def _event_body(starts_on: date, ends_on: date) -> dict[str, Any]:
     }
 
 
-def _write_event(calendar: Any, calendar_id: str, starts_on: date, ends_on: date, old: str) -> str:
+def _write_event(
+    calendar: Any,
+    calendar_id: str,
+    starts_on: date,
+    ends_on: date,
+    old: str,
+    *,
+    may_create: bool = True,
+) -> str | None:
     """The event written over ``old`` when it is still there; otherwise a new
     one, tagged. One deleted by hand -- 404, 410, or kept by Google as
-    ``cancelled`` -- is replaced, never revived (as ``update_all_day_event``)."""
+    ``cancelled`` -- is replaced, never revived (as ``update_all_day_event``).
+
+    With ``may_create`` false nothing is made: ``None`` says ``old`` is gone
+    and no event stands in its place. Only a tick makes an event."""
     body = _event_body(starts_on, ends_on)
     if old:
         try:
@@ -137,6 +153,8 @@ def _write_event(calendar: Any, calendar_id: str, starts_on: date, ends_on: date
             answer = None
         if answer is not None and answer.get("status") != "cancelled":
             return old
+    if not may_create:
+        return None
     body["extendedProperties"] = {"private": {LEAVE_TAG[0]: LEAVE_TAG[1]}}
     made = calendar.request("POST", f"/calendars/{calendar_id}/events", json=body)
     return str(made.get("id", ""))
@@ -211,9 +229,15 @@ def _at_google(
     starts_on: date,
     ends_on: date,
     old: str,
+    *,
+    may_create: bool,
 ) -> tuple[Outcome, str]:
     """Ask the calendar for the event; what happened, and the id the pause
-    should hold afterwards. Touches no row."""
+    should hold afterwards. Touches no row.
+
+    ``may_create`` is whether the save carried the tick. Without it an event
+    that stands is moved, and one that turns out to be gone -- deleted in
+    Calendar by the person -- is not made again: ``off``, and no id."""
     connection = _connection(calendar_for, user_id)
     if connection is None:
         # An event written before the grant went keeps its id: connecting again
@@ -223,10 +247,12 @@ def _at_google(
         return "failed", old
     client, calendar_id = connection
     try:
-        written = _write_event(client, calendar_id, starts_on, ends_on, old)
+        written = _write_event(client, calendar_id, starts_on, ends_on, old, may_create=may_create)
     except IntegrationError as exc:
         log.warning("extraction_leave_event_not_written", error=type(exc).__name__)
         return "failed", old
+    if written is None:
+        return "off", ""
     return ("added" if written else "failed"), written
 
 
@@ -301,6 +327,9 @@ def set_leave(
         return "off"
     _refuse_while_claimed(session, pause, now)
     old = pause.calendar_event_id or ""
+    # Only a save that says so may make an event; one that does not say may
+    # move the one that stands.
+    ticked = on_calendar is True
     if on_calendar is None:
         # Not said: as it stands. Read here, under the row's lock.
         on_calendar = bool(old)
@@ -314,7 +343,9 @@ def set_leave(
     pause.calendar_claimed_at = now
     session.commit()
     try:
-        outcome, event_id = _at_google(calendar_for, user_id, starts_on, ends_on, old)
+        outcome, event_id = _at_google(
+            calendar_for, user_id, starts_on, ends_on, old, may_create=ticked
+        )
     except BaseException:
         # Nothing was learned about the event: the id stays, the claim goes.
         _settle(session, user_id, claim=now, old=old, outcome="failed", event_id=old)

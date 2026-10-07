@@ -25,7 +25,7 @@ from autune_context.models import (
     CtxMeetingStatus,
     CtxTopicLink,
 )
-from autune_core import Participant, Utterance
+from autune_core import Participant, TeamMember, User, Utterance
 from autune_core.ids import new_id
 
 
@@ -66,6 +66,17 @@ def _connect_slack(db_session: Session, team_id: str, config: dict) -> None:
         )
     )
     db_session.flush()
+
+
+def _member(db_session: Session, team_id: str) -> str:
+    """A user on the team: a drift DM goes only to somebody who is on it when
+    the notice is collected."""
+    user = User(email=f"{new_id('usr')}@tasks.test", display_name="태스크 테스트")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(TeamMember(team_id=team_id, user_id=user.id))
+    db_session.flush()
+    return user.id
 
 
 def _status(db_session: Session, meeting_id: str) -> CtxMeetingStatus:
@@ -142,7 +153,7 @@ def test_sends_once_and_a_redelivered_execution_is_a_no_op(
             change_type="modified",
             confidence=0.9,
             nli_version="test",
-            key_stakeholders_absent=["usr_alice"],
+            key_stakeholders_absent=[_member(db_session, team)],
         )
     )
     db_session.flush()
@@ -225,7 +236,7 @@ def test_a_catch_up_owed_skips_drift_here_but_still_sends_topic_links(
             change_type="modified",
             confidence=0.9,
             nli_version="test",
-            key_stakeholders_absent=["usr_alice"],
+            key_stakeholders_absent=[_member(db_session, team)],
         )
     )
     db_session.flush()
@@ -278,7 +289,7 @@ def test_notify_late_drift_sends_only_drift_and_claims_separately_from_notified_
             change_type="modified",
             confidence=0.9,
             nli_version="test",
-            key_stakeholders_absent=["usr_alice"],
+            key_stakeholders_absent=[_member(db_session, team)],
         )
     )
     db_session.flush()
@@ -289,6 +300,55 @@ def test_notify_late_drift_sends_only_drift_and_claims_separately_from_notified_
     assert slack_client_cls.return_value.post_message.call_count == 1
     assert slack_client_cls.return_value.send_dm.call_count == 1
     assert db_session.get(CtxMeetingStatus, meeting).late_drift_notified_at is not None
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_notify_late_drift_does_not_tell_somebody_who_left_since_the_list_was_made(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    """The catch-up warning is the long window: its list was made when the
+    lineage finished, and this runs after B's timeout fallback. Whoever left the
+    team in between gets no DM, and the claim still commits, so a redelivery does
+    not look for somebody else to tell."""
+    db_session.add(
+        CtxMeetingStatus(
+            meeting_id=meeting,
+            topic_linking_done=True,
+            lineage_done=True,
+            extraction_seen=True,
+            published_at=datetime.now(tz=UTC),
+            notified_at=datetime.now(tz=UTC),
+            late_drift_due_at=datetime.now(tz=UTC),
+        )
+    )
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    thread = CtxDecision(team_id=team, topic_label="검색 정렬 기준")
+    db_session.add(thread)
+    db_session.flush()
+    leaver = _member(db_session, team)
+    db_session.add(
+        CtxDecisionVersion(
+            thread_id=thread.id,
+            source_decision_id="dec_direct",
+            meeting_id=meeting,
+            current_statement="최신순으로 정렬한다",
+            change_type="modified",
+            confidence=0.9,
+            nli_version="test",
+            key_stakeholders_absent=[leaver],
+        )
+    )
+    db_session.query(TeamMember).filter_by(team_id=team, user_id=leaver).delete()
+    db_session.flush()
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        tasks.notify_late_drift(meeting)
+
+    slack_client_cls.return_value.send_dm.assert_not_called()
+    slack_client_cls.return_value.post_message.assert_not_called()
+    status = db_session.get(CtxMeetingStatus, meeting)
+    assert status.late_drift_notified_at is not None
+    assert status.late_drift_due_at is None
 
 
 @pytest.mark.usefixtures("use_test_session")

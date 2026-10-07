@@ -13,10 +13,14 @@ approvals-page preview (#562), never through the arguments.
 M is the run's meeting when its scope has one -- the trigger's, or the screen a
 chat was asked from -- and otherwise the team's latest analysed meeting.
 
-**A suggested date.** The proposal carries ``due_date``: the team's usual gap
-between meetings after its latest one (``rules.suggest_date``), read from the
-team's meeting days and nothing else. The lead sees it on the card and moves it
-on the board; the item's due date is what B puts on a calendar (#441).
+**A suggested date.** The proposal carries ``due_date``: just after most of
+M's action items are due (``rules.suggest_from_due_dates``, #963), or, when M
+has no usable due date or B's read fails, the team's usual gap between meetings
+after its latest one (``rules.suggest_date``). ``basis`` says which, so the
+card can mark a date resting on drafts "초안 기준". From B it reads due dates
+and whether each is confirmed, never who owns an item (spec section 6). The
+lead sees the date on the card and moves it on the board; the item's due date
+is what B puts on a calendar (#441).
 """
 
 from __future__ import annotations
@@ -45,7 +49,13 @@ WRITE = "extraction.add_followup_item"
 wording itself, so the proposal carries ids only. Not ``add_action_item``: that
 is L1 since #576 and would run without the lead's approval."""
 
-TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM)
+DUE_DATES = "extraction.meeting_due_dates"
+"""M's open dated action items as due dates and confirmation flags, on one row
+(#963; B's side is #966). B hands over confirmed items only, so right after a
+meeting the date is mostly the rhythm's. Until B ships it the call fails, and
+the date falls back to the team's rhythm -- the proposal never waits on it."""
+
+TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, DUE_DATES)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
 """Meeting statuses after the pipeline's analysis, as Research reads them."""
 KST = ZoneInfo("Asia/Seoul")
@@ -99,6 +109,37 @@ def _held(recent: ToolResult | None) -> list[date]:
         if started <= now:
             days.append(started.astimezone(KST).date())
     return days
+
+
+def _due(result: ToolResult) -> list[rules.Due]:
+    """The due dates on B's row, as ``{"date": ISO, "confirmed": bool}``.
+
+    A failed read, or a row without the list, is no dates, so the suggestion
+    falls back to the rhythm. An entry that is not a date and a flag is
+    skipped rather than guessed at. Any other key on an entry is ignored: the
+    rule takes a day and a flag and nothing else.
+    """
+    if not result.ok:
+        return []
+    due: list[rules.Due] = []
+    for item in result.items:
+        entries = (item.model_extra or {}).get("due_dates")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            raw, confirmed = entry.get("date"), entry.get("confirmed")
+            if not isinstance(raw, str) or not isinstance(confirmed, bool):
+                continue
+            try:
+                due.append(rules.Due(date.fromisoformat(raw), confirmed))
+            except ValueError:
+                continue
+    return due
+
+
+BASIS_NOTE = {"confirmed": "확정 기한 기준", "draft": "초안 기준", "cadence": "회의 주기 기준"}
 
 
 def _day(value: date) -> str:
@@ -157,13 +198,21 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
     def propose(state: FollowupState) -> dict[str, Any]:
         verdict = state["verdict"]
         reason = verdict.reason()
-        # Read here, not in ``read``: a run that proposes nothing does not spend it.
-        recent = state.get("recent") or toolbox.call(RECENT)
-        suggested = rules.suggest_date(_held(recent), _today())
+        # Read here, not in ``read``: a run that proposes nothing does not spend
+        # them. The meeting list only when the due dates leave no date.
+        today = _today()
+        suggestion = rules.suggest_from_due_dates(
+            _due(toolbox.call(DUE_DATES, **state["at"])), today
+        )
+        if suggestion is None:
+            recent = state.get("recent") or toolbox.call(RECENT)
+            suggestion = rules.Suggestion(rules.suggest_date(_held(recent), today), "cadence")
+        suggested, basis = suggestion.day, suggestion.basis
+        when = f"{_day(suggested)}, {BASIS_NOTE[basis]}"
         result = ToolResult(
             ok=True,
             summary=(
-                f"후속 회의를 제안했습니다 ({reason}). 추천 날짜는 {_day(suggested)}입니다. "
+                f"후속 회의를 제안했습니다 ({reason}). 추천 날짜는 {when}입니다. "
                 "팀장이 승인하면 보드에 항목이 생깁니다."
             ),
             items=rules.cited(state["open_gaps"], verdict),
@@ -173,9 +222,11 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             kind="followup_meeting",
             title="후속 회의 제안",
             tool=WRITE,
-            arguments={**state["at"], "due_date": suggested.isoformat()},
+            # ``basis`` is a short enum, so plan mode queues it, and the card
+            # reads it off the row; B's write must declare it (#963).
+            arguments={**state["at"], "due_date": suggested.isoformat(), "basis": basis},
             level="L2",
-            rationale=f"{reason}. 추천 날짜 {_day(suggested)}.",
+            rationale=f"{reason}. 추천 날짜 {when}.",
             evidence=verdict.evidence,
         )
         return {"outcome": SubagentResult(result=result, proposed=[proposal])}

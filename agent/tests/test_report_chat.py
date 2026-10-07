@@ -149,19 +149,80 @@ def test_request_post_in_a_meeting_proposes_the_stored_draft(monkeypatch) -> Non
     assert "요청했습니다" in out.result.summary
 
 
-def test_request_post_in_the_team_view_proposes_nothing_and_points_to_the_meeting(
-    monkeypatch,
-) -> None:
-    tools = _tools()
+def test_request_post_in_the_team_view_names_the_meeting_it_posts(monkeypatch) -> None:
+    """#896 keys a team-view L2 on the meeting its arguments name."""
+    out = _run(
+        "결제 회의 리포트 올려줘",
+        Script([call("request_post", meeting_id=MEETING)]),
+        _tools(),
+        meeting=None,
+        monkeypatch=monkeypatch,
+    )
+    (post,) = out.proposed
+    assert (post.tool, post.level) == (PUBLISH_ACTION, "L2")
+    assert post.arguments == {"meeting_id": MEETING, "draft_id": "rdr_a"}
+    assert "요청했습니다" in out.result.summary
+
+
+def test_request_post_in_the_team_view_without_a_meeting_asks_which(monkeypatch) -> None:
+    """Not a part that failed: the model may find the meeting and call again."""
     out = _run(
         "리포트 올려줘",
-        Script([call("request_post", meeting_id=MEETING)]),
-        tools,
+        Script([call("request_post")]),
+        _tools(),
         meeting=None,
         monkeypatch=monkeypatch,
     )
     assert out.proposed == []
-    assert "회의 화면에서" in out.result.summary
+    assert "어느 회의의 리포트를" in out.result.summary
+    assert "가져오지 못한" not in out.result.summary
+
+
+def test_request_post_in_the_team_view_retried_with_the_meeting_posts_once(monkeypatch) -> None:
+    model = Script([call("request_post")], [call("request_post", meeting_id=MEETING)])
+    out = _run("리포트 올려줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    (post,) = out.proposed
+    assert post.arguments["meeting_id"] == MEETING
+    assert "어느 회의의 리포트를" not in out.result.summary
+
+
+def test_a_correction_from_the_team_view_names_its_meeting(monkeypatch) -> None:
+    awaiting = {
+        "ok": True,
+        "summary": "",
+        "items": [
+            {
+                "title": "리포트 수정본",
+                "kind": "correction",
+                "correction_id": "rcr_1",
+                "id": MEETING,
+            }
+        ],
+    }
+    out = _run(
+        "정정 올려줘",
+        Script([call("request_post", meeting_id=MEETING)]),
+        _tools(body=_body(status="posted"), awaiting=awaiting),
+        meeting=None,
+        monkeypatch=monkeypatch,
+    )
+    (post,) = out.proposed
+    assert (post.tool, post.arguments) == (
+        CORRECTION_ACTION,
+        {"meeting_id": MEETING, "correction_id": "rcr_1"},
+    )
+
+
+def test_a_meeting_page_naming_another_meeting_points_to_that_page(monkeypatch) -> None:
+    """Its approvals are keyed on its own meeting, so the post is not proposed here."""
+    out = _run(
+        "다른 회의 리포트 올려줘",
+        Script([call("request_post", meeting_id="mtg_zz99")]),
+        _tools(),
+        monkeypatch=monkeypatch,
+    )
+    assert out.proposed == []
+    assert "그 회의 화면에서" in out.result.summary
 
 
 def test_request_post_with_a_waiting_correction_proposes_the_correction(monkeypatch) -> None:
@@ -301,21 +362,38 @@ def test_a_model_that_calls_nothing_or_an_unknown_tool_still_answers(monkeypatch
     assert seen == [TEAM] and "C등급" in out.result.summary
 
 
-def test_redraft_in_the_team_view_proposes_the_draft_and_no_post(monkeypatch) -> None:
+def test_redraft_in_the_team_view_proposes_the_draft_and_its_post(monkeypatch) -> None:
+    """Both name the meeting, so the post's approval is keyed and run there (#896)."""
     out = _run(
-        "다시 써줘",
+        "결제 회의 다시 써줘",
         Script([call("redraft", meeting_id=MEETING)]),
         _tools(),
         meeting=None,
         monkeypatch=monkeypatch,
     )
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
+    assert all(p.arguments.get("meeting_id") == MEETING for p in out.proposed)
+
+
+def test_a_meeting_page_redrafting_another_meeting_proposes_no_post(monkeypatch) -> None:
+    out = _run(
+        "다른 회의 다시 써줘",
+        Script([call("redraft", meeting_id="mtg_zz99")]),
+        _tools(),
+        monkeypatch=monkeypatch,
+    )
     assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
 
 
+@pytest.mark.parametrize("meeting", [MEETING, None])
 @pytest.mark.parametrize("action", ["redraft", "request_post"])
-def test_another_teams_meeting_proposes_nothing(monkeypatch, action) -> None:
+def test_another_teams_meeting_proposes_nothing(monkeypatch, action, meeting) -> None:
     out = _run(
-        "해줘", Script([call(action, meeting_id="mtg_other1")]), _tools(), monkeypatch=monkeypatch
+        "해줘",
+        Script([call(action, meeting_id="mtg_other1")]),
+        _tools(),
+        meeting=meeting,
+        monkeypatch=monkeypatch,
     )
     assert out.proposed == []
 
@@ -437,7 +515,8 @@ def test_a_failed_redraft_leaves_the_retry_open_in_the_team_view(monkeypatch) ->
     """The refusal asks for ``meeting_id``; the model's retry with it must go through."""
     model = Script([call("redraft")], [call("redraft", meeting_id=MEETING)])
     out = _run("다시 써줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
-    assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
+    # The named meeting's draft and, from the team view since #896, its post.
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
     assert "이미 요청했습니다" not in out.result.summary
 
 
