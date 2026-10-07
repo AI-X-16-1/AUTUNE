@@ -62,7 +62,9 @@ section 3 is binding.
 - **No small-group distributions.** A distribution over a four-person meeting
   identifies everyone; anonymization does not help.
 - `/api/intelligence/me/speaking-ratio` authorizes on
-  `requester_id == subject_id`, with no admin override.
+  `requester_id == subject_id`, with no admin override, and only while the
+  requester is still on the meeting's team. Someone who left keeps their
+  participant rows (#937) but gets neither the read nor the DM.
 - **The influence map (Phase 2) goes to the person themselves and nobody
   else — decided on #28.** Same delivery as speaking ratio (subject-only,
   by DM); it must never land on the shared dashboard, and no admin override.
