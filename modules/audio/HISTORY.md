@@ -1132,6 +1132,17 @@ had to pick a meaning to ship** — speaker labels, one per diarization label �
 first. Nothing reads the field today, which is the only reason the choice was
 still free.
 
+### Transcription on the dev server's GPU — unmeasured (2026-10-07)
+
+The dev server's one worker took every queue on `--pool=solo`, so one
+transcription (about 1.3× the recording on its i5-9400F) held up every other
+upload and every task of B, C, D and E. It is now two workers, and module A's
+runs Whisper on the host's RTX 3060 (`AUTUNE_AUDIO_DEVICE=cuda`, so
+`large-v3` at float16). **Nothing about CUDA has been measured yet**: not the
+speed, not whether the transcript matches the CPU's, not pyannote sharing 12 GB
+with Whisper. The first run on the server should record all three here, against
+the same recording the CPU numbers came from.
+
 ### Detector gaps
 
 | | |
