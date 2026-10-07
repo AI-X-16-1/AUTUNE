@@ -364,7 +364,7 @@ def test_the_setting_is_off_by_default_and_the_task_then_sends_nothing(
     monkeypatch.setattr(tasks, "get_settings", lambda: SimpleNamespace(after_meeting_notice=False))
     monkeypatch.setattr(tasks, "session_scope", None)  # would fail if it were opened
 
-    assert tasks.send_meeting_notices() == []
+    assert tasks.send_meeting_notices() == 0
 
 
 def test_the_notice_is_a_periodic_task() -> None:
@@ -422,8 +422,10 @@ def test_the_task_tells_each_person_alone_and_once(
     item(session, "act_lee", who="user_lee")
     session.commit()
 
-    assert sorted(tasks.send_meeting_notices()) == ["user_kim", "user_lee"]
-    assert tasks.send_meeting_notices() == []
+    # A count: what a task returns is kept by the result backend, and a list
+    # of who was told would be a record of who was given work in which run.
+    assert tasks.send_meeting_notices() == 2
+    assert tasks.send_meeting_notices() == 0
 
     assert sorted(m.channel for m in checked_slack.sent) == ["user_kim", "user_lee"]
     assert all(m.is_dm for m in checked_slack.sent)
@@ -441,8 +443,12 @@ def test_a_refused_notice_is_raised_after_the_others_go_and_not_tried_again(
     item(session, "act_lee", who="user_lee")
     session.commit()
 
-    with pytest.raises(PrivacyViolationError, match="user_kim"):
+    with pytest.raises(PrivacyViolationError, match="mtg_team_2") as raised:
         tasks.send_meeting_notices()
+    # The refusal names the meeting whose text was refused, and no person: its
+    # message goes where the return value goes.
+    assert "user_" not in str(raised.value)
+    assert "010-1234-5678" not in str(raised.value)
 
     assert [m.channel for m in checked_slack.sent] == ["user_lee"]
     assert not any("010-1234-5678" in m.text for m in checked_slack.sent)
@@ -450,7 +456,37 @@ def test_a_refused_notice_is_raised_after_the_others_go_and_not_tried_again(
         ("mtg_team_1", "user_lee"),
         ("mtg_team_2", "user_kim"),  # refused, settled
     ]
-    assert tasks.send_meeting_notices() == [], "nothing owed, nothing refused, nothing raised"
+    assert tasks.send_meeting_notices() == 0, "nothing owed, nothing refused, nothing raised"
+
+
+def test_a_refused_read_of_a_calendar_is_raised_by_meeting_too_and_claims_nothing(
+    session: Session, checked_slack: CheckedSlack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where out-of-office is read, the question to a person's calendar can be
+    refused instead of the message. That refusal goes where the other goes --
+    into the result backend -- so it names the meeting and no person either;
+    nothing was refused of the notice itself, so nothing is claimed for it."""
+    item(session, "act_1")
+    session.commit()
+    monkeypatch.setattr(
+        tasks,
+        "get_settings",
+        lambda: ExtractionSettings(  # type: ignore[call-arg]
+            _env_file=None, after_meeting_notice=True, leave_from_calendar=True
+        ),
+    )
+
+    def refused(_would_go: object, _user_id: str, _now: datetime) -> bool:
+        raise PrivacyViolationError("the calendar read was refused")
+
+    monkeypatch.setattr(tasks, "_held_back", refused)
+
+    with pytest.raises(PrivacyViolationError, match="mtg_team_1") as raised:
+        tasks.send_meeting_notices()
+
+    assert "user_" not in str(raised.value)
+    assert checked_slack.sent == []
+    assert session.query(ExtMeetingNotice).count() == 0
 
 
 def test_a_notice_slack_did_not_take_stays_owed(
@@ -464,7 +500,7 @@ def test_a_notice_slack_did_not_take_stays_owed(
 
     monkeypatch.setattr(checked_slack, "send_dm", down)
 
-    assert tasks.send_meeting_notices() == []
+    assert tasks.send_meeting_notices() == 0
 
     assert session.query(ExtMeetingNotice).count() == 0
     assert owed(session) == [("mtg_team_1", "user_kim")]
