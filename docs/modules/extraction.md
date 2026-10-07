@@ -604,7 +604,10 @@ other module's tables.
   status: `tools.close_action_item` (an L2 action, run only after a person
   approves; no board control calls it yet) makes a confirmed, open item
   `done` and records an edit event of kind `closed` in place of an edit of
-  the status (`service.close_without_finishing`). That event is all that
+  the status (`service.close_without_finishing`). A closed item is in none
+  of the counts B publishes for E's completion rate (`TeamActionProgress`,
+  `service.team_action_progress`; asked by E's owner on #856) -- neither
+  finished nor left undone, as a deleted item is. That event is all that
   tells a close from finished work -- `service.closed_unfinished`: the
   latest change of the item's status was a close -- and everything that says
   "finished" to or about a person reads it: the morning DM says "끝내지 않고
