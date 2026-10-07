@@ -47,6 +47,18 @@ const CALENDAR_NOTE: Partial<Record<LeaveCalendarOutcome, { text: string; critic
   },
 };
 
+/**
+ * An event of theirs is on the calendar and the calendar is not connected
+ * just now (the user, 2026-10-07). Three true lines used to read crossed
+ * here -- "들어가 있습니다", "연결하면 넣을지 고를 수 있습니다" and, after a
+ * save, "넣지 못했습니다" -- so the state is said once, and the save's line
+ * agrees with it: the event is still there, on the range it had.
+ */
+const STANDS_UNREACHED =
+  "내 Google 캘린더에 넣어 둔 휴가 일정이 있지만, 지금은 캘린더가 연결되어 있지 않아 그 일정을 옮기거나 지울 수 없습니다. 다시 연결한 뒤 저장하면 이 기간으로 옮겨집니다.";
+const SAVED_EVENT_LEFT =
+  "기간은 저장했습니다. 캘린더가 연결되어 있지 않아 캘린더의 휴가 일정은 이전 기간 그대로입니다.";
+
 export function NotificationPauseSetting() {
   const [saved, setSaved] = useState<NotificationPauseRead | null>(null);
   const [first, setFirst] = useState("");
@@ -82,7 +94,14 @@ export function NotificationPauseSetting() {
   const backwards = first !== "" && last !== "" && last < first;
   const ready = first !== "" && last !== "" && !backwards;
   const connected = saved.calendar_connected === true;
-  const calendarNote = saved.calendar ? CALENDAR_NOTE[saved.calendar] : undefined;
+  const stands = saved.on_calendar === true;
+  const baseNote = saved.calendar ? CALENDAR_NOTE[saved.calendar] : undefined;
+  // "넣지 못했습니다" is about an event that is not there. When one stands,
+  // the save could not move it: say that instead.
+  const calendarNote =
+    saved.calendar === "not_connected" && stands && baseNote !== undefined
+      ? { ...baseNote, text: SAVED_EVENT_LEFT }
+      : baseNote;
 
   const send = (pause: NotificationPause) => {
     setSaving(true);
@@ -151,8 +170,9 @@ export function NotificationPauseSetting() {
           ? `${saved.starts_on}부터 ${saved.ends_on}까지 보내지 않습니다. 마감 알림은 그대로 갑니다.`
           : "기간을 정하면 그동안 보내지 않습니다. 마감 알림은 그대로 갑니다."}
         {/* An event of theirs stands. Not "이 기간은": a save the calendar
-            could not follow leaves it on the range it had. */}
-        {saved.on_calendar === true ? " 내 Google 캘린더에도 휴가 일정이 들어가 있습니다." : ""}
+            could not follow leaves it on the range it had. With no calendar
+            connected the line below says it instead, with what that means. */}
+        {stands && connected ? " 내 Google 캘린더에도 휴가 일정이 들어가 있습니다." : ""}
       </span>
       {connected ? (
         <>
@@ -177,7 +197,9 @@ export function NotificationPauseSetting() {
         </>
       ) : (
         <span className="text-[var(--color-ink-muted)]" style={meta}>
-          내 Google 캘린더를 연결하면 이 기간을 캘린더에도 넣을지 고를 수 있습니다.
+          {stands
+            ? STANDS_UNREACHED
+            : "내 Google 캘린더를 연결하면 이 기간을 캘린더에도 넣을지 고를 수 있습니다."}
         </span>
       )}
       {calendarNote !== undefined ? (
