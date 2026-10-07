@@ -364,6 +364,9 @@ def test_through_the_task_on_a_meeting_a_person_edited(
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    # The run ends by publishing its result. Left real, that reaches the broker
+    # in any process where D's or E's consuming task is registered (#940).
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: [])
     for task in (
         "sync_item_copies",
         "sync_decision",
@@ -458,6 +461,9 @@ def test_through_the_task_a_rerun_that_drops_a_decision_queues_its_page_to_retir
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    # The run ends by publishing its result. Left real, that reaches the broker
+    # in any process where D's or E's consuming task is registered (#940).
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: [])
     for task in (
         "sync_item_copies",
         "sync_decision",
