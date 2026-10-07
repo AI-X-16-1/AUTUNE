@@ -18,7 +18,12 @@ team lead was not asked for and is not built.
 which fields, and when -- never a value and never who. So:
 
 - *끝낸 일* is an item of theirs that is done now and whose status was edited
-  today;
+  today -- and was not closed without being finished;
+- *끝내지 않고 닫힌 일* is an item of theirs that was closed today without
+  being finished (``service.close_without_finishing``; the user,
+  2026-10-07). It is said apart so that the draft does not report as the
+  person's finished work what was closed, by them or by somebody else. A
+  close is not work of the day: alone it sends no report;
 - *진행한 일* is one that is in progress now and whose status was edited today.
   That is all "progress" can mean here: an item worked on all day without a
   change on the board is not seen;
@@ -29,7 +34,7 @@ which fields, and when -- never a value and never who. So:
 
 Each item is in one part only. Whoever made an edit is not known and not said:
 an item of theirs somebody else marked done reads as finished, as it does in
-the morning DM.
+the morning DM, and one somebody else closed reads as closed.
 
 **When.** Monday to Friday, 16:00 to 17:00 Korea time, never on a public
 holiday, once per person, team and day (``ext_work_reports``). The user,
@@ -123,6 +128,7 @@ class WorkReport:
     day: date
     team_name: str | None = None
     done: Sequence[reminders.DigestLine] = ()
+    closed: Sequence[reminders.DigestLine] = ()
     moved: Sequence[reminders.DigestLine] = ()
     carried: Sequence[reminders.DigestLine] = ()
     late: Sequence[reminders.DigestLine] = ()
@@ -131,7 +137,8 @@ class WorkReport:
     @property
     def empty(self) -> bool:
         """Nothing was finished and nothing moved today: there is no day to
-        report, whatever is still open."""
+        report, whatever is still open -- or was closed without being
+        finished, which is not work done today."""
         return not (self.done or self.moved)
 
 
@@ -161,6 +168,7 @@ def build_text(report: WorkReport, *, board_url: str) -> str:
     ]
     for heading, lines in (
         ("끝낸 일", report.done),
+        ("끝내지 않고 닫힌 일", report.closed),
         ("진행한 일", report.moved),
         ("내일로 넘어가는 일", report.carried),
         ("늦은 일", report.late),
@@ -192,6 +200,25 @@ def _status_edited(session: Session, *, since: datetime, team_id: str | None = N
         for item_id, fields in session.execute(query).tuples()
         if item_id is not None and "status" in (fields or "").split(",")
     }
+
+
+def _closed_today(session: Session, *, since: datetime, team_id: str) -> set[str]:
+    """Ids of one team's items closed without being finished after ``since``
+    and still so: one closed and then re-opened has a later edit of its
+    status, and ``service.closed_unfinished`` leaves it out."""
+    closed = set(
+        session.scalars(
+            select(ExtEditEvent.action_item_id)
+            .join(Meeting, Meeting.id == ExtEditEvent.meeting_id)
+            .where(
+                ExtEditEvent.kind == "closed",
+                ExtEditEvent.created_at > since,
+                ExtEditEvent.action_item_id.is_not(None),
+                Meeting.team_id == team_id,
+            )
+        )
+    )
+    return service.closed_unfinished(session, {item_id for item_id in closed if item_id})
 
 
 def _finished_or_started(
@@ -263,6 +290,8 @@ def reports_to_send(session: Session, *, now: datetime) -> list[WorkReportOwed]:
         session, day
     )
     edited = _status_edited(session, since=day_start(day))
+    # Moved this morning and closed this afternoon: done now, and not finished.
+    edited -= service.closed_unfinished(session, edited)
     owners = {
         (item.assignee_id, team)
         for item, team, _ in _finished_or_started(
@@ -286,15 +315,23 @@ def report_content(session: Session, owed: WorkReportOwed, *, now: datetime) -> 
     """What this person's work report says, read now: their own items on
     this team, each in the first part it fits (the module docstring says what
     each part can and cannot mean)."""
-    edited = _status_edited(session, since=day_start(owed.day), team_id=owed.team_id)
+    since = day_start(owed.day)
+    not_finished = _closed_today(session, since=since, team_id=owed.team_id)
+    edited = _status_edited(session, since=since, team_id=owed.team_id)
     done: list[reminders.DigestLine] = []
+    closed: list[reminders.DigestLine] = []
     moved: list[reminders.DigestLine] = []
     said: set[str] = set()
     for item, _team, title in _finished_or_started(
-        session, edited, user_id=owed.user_id, team_id=owed.team_id, now=now
+        session, edited | not_finished, user_id=owed.user_id, team_id=owed.team_id, now=now
     ):
         line = reminders.DigestLine(item.description, item.due_date, title)
-        (done if item.status == ActionStatus.DONE.value else moved).append(line)
+        if item.id in not_finished:
+            closed.append(line)
+        elif item.status == ActionStatus.DONE.value:
+            done.append(line)
+        else:
+            moved.append(line)
         said.add(item.id)
 
     carried: list[reminders.DigestLine] = []
@@ -317,6 +354,7 @@ def report_content(session: Session, owed: WorkReportOwed, *, now: datetime) -> 
         day=owed.day,
         team_name=team.name if team is not None else None,
         done=done,
+        closed=closed,
         moved=moved,
         carried=carried,
         late=late,

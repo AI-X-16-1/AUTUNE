@@ -90,6 +90,7 @@ def test_the_text_is_a_line_to_the_person_then_the_draft_headed_by_its_team() ->
             day=WEDNESDAY,
             team_name="플랫폼팀",
             done=[DigestLine("로그인 고치기", None, "주간 회의")],
+            closed=[DigestLine("접은 일", None, "주간 회의")],
             moved=[DigestLine("배포 점검표 <!channel>", date(2026, 10, 9), None)],
             carried=[
                 DigestLine("하던 일", None, "기획 <회의>"),
@@ -106,6 +107,8 @@ def test_the_text_is_a_line_to_the_person_then_the_draft_headed_by_its_team() ->
         "플랫폼팀 업무 보고 (2026-10-07)",
         "끝낸 일",
         "• 로그인 고치기 · 주간 회의",
+        "끝내지 않고 닫힌 일",
+        "• 접은 일 · 주간 회의",
         "진행한 일",
         "• 배포 점검표 &lt;!channel&gt;",
         "내일로 넘어가는 일",
@@ -148,6 +151,7 @@ def test_only_a_day_with_something_finished_or_moved_is_a_day_to_report() -> Non
     assert WorkReport(day=WEDNESDAY, carried=line, late=line, others=4).empty is True
     assert WorkReport(day=WEDNESDAY, done=line).empty is False
     assert WorkReport(day=WEDNESDAY, moved=line).empty is False
+    assert WorkReport(day=WEDNESDAY, closed=line).empty is True, "a close is not work"
 
 
 # --- what is read -----------------------------------------------------------------
@@ -322,6 +326,98 @@ def test_a_draft_confirmed_today_is_not_called_progress(session: Session) -> Non
 
     assert report.done == [] and report.moved == []
     assert report.others == 4
+
+
+# --- closed without being finished (#856; the user, 2026-10-07) --------------------
+
+
+def close(session: Session, item_id: str) -> None:
+    """An item is closed without being finished: the writer of the mark this
+    reads."""
+    item = session.get(ExtActionItem, item_id)
+    assert item is not None
+    assert service.close_without_finishing(session, item) is True
+    session.flush()
+
+
+def test_an_item_closed_without_finishing_is_said_apart_and_never_as_finished(
+    session: Session,
+) -> None:
+    move(session, "act_a", ActionStatus.DONE)
+    close(session, "act_b")
+
+    report = work_report.report_content(session, kim(), now=now())
+
+    assert said(report.done) == ["보고서 쓰기"]
+    assert said(report.closed) == ["배포 점검"]
+    lines = build_text(report, board_url=BOARD).split("\n")
+    assert lines[lines.index("끝낸 일") + 1 : lines.index("끝내지 않고 닫힌 일") + 2] == [
+        "• 보고서 쓰기 · team_1 회의",
+        "끝내지 않고 닫힌 일",
+        "• 배포 점검 · team_1 회의",
+    ]
+
+
+def test_an_item_moved_and_then_closed_today_is_closed_and_neither_finished_nor_moved(
+    session: Session,
+) -> None:
+    move(session, "act_b", ActionStatus.IN_PROGRESS)
+    close(session, "act_b")
+
+    report = work_report.report_content(session, kim(), now=now())
+
+    assert report.done == [] and report.moved == []
+    assert said(report.closed) == ["배포 점검"]
+
+
+def test_an_item_closed_then_reopened_and_finished_is_finished(session: Session) -> None:
+    close(session, "act_b")
+    move(session, "act_b", ActionStatus.TODO)
+    move(session, "act_b", ActionStatus.DONE)
+
+    report = work_report.report_content(session, kim(), now=now())
+
+    assert said(report.done) == ["배포 점검"]
+    assert report.closed == []
+
+
+def test_an_item_closed_before_today_is_not_todays(session: Session) -> None:
+    """The close row is stamped by hand -- nothing writes in the past."""
+    close(session, "act_b")
+    (event,) = session.query(ExtEditEvent).all()
+    event.created_at = work_report.day_start(today()) - timedelta(minutes=1)
+    move(session, "act_a", ActionStatus.DONE)
+
+    report = work_report.report_content(session, kim(), now=now())
+
+    assert report.closed == []
+    assert said(report.done) == ["보고서 쓰기"]
+
+
+def test_a_closed_item_of_somebody_else_or_another_team_is_not_in_it(session: Session) -> None:
+    move(session, "act_a", ActionStatus.DONE)
+    close(session, "act_lee")
+    close(session, "act_other")
+    close(session, "act_gone")
+
+    report = work_report.report_content(session, kim(), now=now())
+
+    assert report.closed == []
+    assert said(work_report.report_content(session, kim(team="team_2"), now=now()).closed) == [
+        "다른 팀 일"
+    ]
+
+
+@pytest.mark.usefixtures("afternoon")
+def test_a_close_alone_is_no_day_to_report_and_nobody_is_owed_one(session: Session) -> None:
+    close(session, "act_b")
+    # Moved in the morning, closed in the afternoon: the edit of its status is
+    # there, and it is not work finished or in hand.
+    move(session, "act_a", ActionStatus.IN_PROGRESS)
+    close(session, "act_a")
+
+    assert work_report.report_content(session, kim(), now=now()).empty is True
+    assert work_report.reports_to_send(session, now=now()) == []
 
 
 def test_it_is_the_persons_own_items_on_that_team_and_nobody_elses(session: Session) -> None:

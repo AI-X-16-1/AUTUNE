@@ -804,6 +804,7 @@ def test_an_action_never_reaches_another_teams_item(
 
     for result in (
         tools.set_action_item_status(TEAM, "act_theirs", "done"),
+        tools.close_action_item(TEAM, "act_theirs"),
         tools.set_action_item_due_date(TEAM, "act_theirs", "2026-10-02"),
         tools.reassign_action_item(TEAM, "act_theirs", "user_in"),
         tools.confirm_action_item(TEAM, "act_theirs"),
@@ -834,6 +835,111 @@ def test_a_status_outside_the_board_is_refused(
     assert tools.set_action_item_status(TEAM, "act_1", "needs_confirmation")["ok"] is False
     assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
     assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
+
+
+# --- close_action_item: closed without being finished (#856) -------------------------
+
+
+def test_closing_an_item_ends_it_and_keeps_it_apart_from_finished_work(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1", status="in_progress")
+    item(session, "act_2")
+
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_2", "done")["ok"] is True
+
+    assert session.get(ExtActionItem, "act_1").status == "done"  # type: ignore[union-attr]
+    assert acting["items"] == ["act_1", "act_2"], "its copies outside follow, as for any change"
+    assert service.closed_unfinished(session, ["act_1", "act_2"]) == {"act_1"}
+    assert {i.id: i.closed_unfinished for i in service.list_action_items(session)} == {
+        "act_1": True,
+        "act_2": False,
+    }
+    closed, finished = (session.get(ExtActionItem, i) for i in ("act_1", "act_2"))
+    assert closed is not None and finished is not None
+    assert service.read_one(session, closed).closed_unfinished is True
+    assert service.read_one(session, finished).closed_unfinished is False
+    (entry,) = service.edit_history(session, "act_1")
+    assert (entry.kind, entry.fields) == ("closed", []), "no field: it is not an edit of the status"
+
+
+def test_a_close_is_not_a_correction_of_what_the_model_wrote(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+
+    cost = service.edit_cost_for_meeting(session, MEETING)
+    assert (cost.model_items, cost.edited_items, cost.added_items, cost.edits) == (1, 0, 0, 0)
+
+
+def test_only_a_confirmed_open_item_of_the_team_can_be_closed(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_draft", status="needs_confirmation")
+    item(session, "act_done", status="done")
+    item(session, "act_theirs", meeting=OTHER_MEETING)
+
+    for ident in ("act_draft", "act_done", "act_theirs", "act_missing"):
+        assert tools.close_action_item(TEAM, ident)["ok"] is False, ident
+
+    assert {i.id: i.status for i in session.query(ExtActionItem)} == {
+        "act_draft": "needs_confirmation",
+        "act_done": "done",
+        "act_theirs": "todo",
+    }
+    assert session.query(ExtEditEvent).count() == 0
+    assert acting["items"] == []
+    assert service.closed_unfinished(session, ["act_done"]) == set(), "finished, not closed"
+
+
+def test_an_item_reopened_after_a_close_is_no_longer_marked_closed(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+
+    assert tools.set_action_item_status(TEAM, "act_1", "todo")["ok"] is True
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert service.read_one(session, row).closed_unfinished is False
+
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert service.read_one(session, row).closed_unfinished is False, "finished this time"
+    assert [e.kind for e in service.edit_history(session, "act_1")] == [
+        "closed",
+        "edited",
+        "edited",
+    ]
+
+
+def test_a_closed_item_is_not_counted_as_work_its_holder_finished(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    item(session, "act_2")
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert tools.close_action_item(TEAM, "act_2")["ok"] is True
+
+    load = rows(tools.workload_by_owner(session, TEAM))
+
+    assert load["user_in"] == "진행 중 0 · 기한 지남 0 · 완료 1 · 여유"
+
+
+def test_closing_clears_the_recheck_flag_as_any_change_a_person_makes(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_1")
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    row.needs_recheck = True
+    session.flush()
+
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+
+    assert row.needs_recheck is False
 
 
 def test_a_followup_item_is_followups_fixed_text_and_waits(

@@ -236,7 +236,9 @@ def previous_morning(day: date) -> datetime:
 class DailyDigest:
     """What one person's morning DM says, already chosen and ordered.
 
-    ``done`` and ``taken_on`` are what changed since their last morning DM;
+    ``done``, ``closed`` and ``taken_on`` are what changed since their last
+    morning DM -- ``closed`` is what was closed without being finished, which
+    is never in ``done``;
     ``late``, ``due_today``, ``stalled`` and ``in_progress`` are today's work,
     each item in the first of the four it fits; ``others`` counts their
     remaining open items, which the board lists. ``stalled`` is what is in
@@ -244,6 +246,7 @@ class DailyDigest:
     more, longest first, each line carrying its ``idle_days``."""
 
     done: Sequence[DigestLine] = ()
+    closed: Sequence[DigestLine] = ()
     taken_on: Sequence[DigestLine] = ()
     late: Sequence[DigestLine] = ()
     due_today: Sequence[DigestLine] = ()
@@ -256,6 +259,7 @@ class DailyDigest:
         """Nothing changed and nothing is open: there is no message to send."""
         return not (
             self.done
+            or self.closed
             or self.taken_on
             or self.late
             or self.due_today
@@ -293,6 +297,7 @@ def build_daily_digest(digest: DailyDigest, *, board_url: str) -> str:
     where to see all of them."""
     out = ["좋은 아침입니다. 지난 진행 상황과 오늘 할 일입니다.", "지난 진행 상황"]
     changed = _daily_lines("완료", digest.done, dated=False)
+    changed += _daily_lines("끝내지 않고 닫힘", digest.closed, dated=False)
     changed += _daily_lines("새로 맡음", digest.taken_on, dated=False)
     out += changed or ["• 바뀐 것이 없습니다."]
     out.append("오늘 할 일")

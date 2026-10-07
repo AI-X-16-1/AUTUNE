@@ -233,6 +233,13 @@ class ActionItemRead(BaseModel):
     #586), and the text shown may still need a person's eye: a summary rewritten
     from the corrected line, or their own wording. Cleared by their next edit."""
 
+    closed_unfinished: bool = False
+    """A ``done`` item that was closed without being finished
+    (``service.close_without_finishing``, #856): the card says 닫힘 so that
+    the 완료 column does not show it as work somebody finished. ``False`` for
+    every other status, and again for one re-opened and then finished. It is
+    about the item; who closed it is not kept."""
+
     needs_reassignment: bool = False
     """An open item (``todo`` or ``in_progress``) whose assignee is no longer a
     member of the meeting's team (ADR 0007, "An open commitment is reassigned,
@@ -312,10 +319,13 @@ class EditHistoryEntry(BaseModel):
     """One thing a person did to an item: which fields, when -- never the value
     before or after, and never who (#109, ADR 0003)."""
 
-    kind: Literal["created", "edited"]
+    kind: Literal["created", "edited", "closed"]
+    """``closed``: the item was closed without being finished
+    (``service.close_without_finishing``) -- not a correction of it."""
     fields: list[str]
     """For ``edited``: the fields changed, e.g. ``["due_date"]``. Empty for
-    ``created`` and for edits recorded before fields were kept."""
+    ``created``, for ``closed``, and for edits recorded before fields were
+    kept."""
     at: datetime
 
 

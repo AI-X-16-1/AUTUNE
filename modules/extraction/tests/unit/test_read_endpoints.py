@@ -1032,6 +1032,32 @@ def test_history_carries_no_person(client: TestClient, session: Session) -> None
     assert set(entry) == {"kind", "fields", "at"}
 
 
+@pytest.mark.usefixtures("no_sync")
+def test_a_close_without_finishing_reaches_the_card_the_drawer_and_the_history(
+    client: TestClient, session: Session
+) -> None:
+    """The card says 닫힘 and the drawer's history says the item was closed --
+    naming no field, and no person (#856). A finished item says neither."""
+    action_item(session, "act_1", status="todo")
+    action_item(session, "act_2", status="todo")
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert service.close_without_finishing(session, row) is True
+    session.flush()
+    client.patch(f"{PREFIX}/action-items/act_2", json={"status": "done"})
+
+    listed = {i["id"]: i["closed_unfinished"] for i in client.get(f"{PREFIX}/action-items").json()}
+    closed = client.get(f"{PREFIX}/action-items/act_1").json()
+    finished = client.get(f"{PREFIX}/action-items/act_2").json()
+
+    assert listed == {"act_1": True, "act_2": False}
+    assert (closed["status"], closed["closed_unfinished"]) == ("done", True)
+    assert (finished["status"], finished["closed_unfinished"]) == ("done", False)
+    (entry,) = closed["history"]
+    assert entry["kind"] == "closed" and entry["fields"] == []
+    assert set(entry) == {"kind", "fields", "at"}
+
+
 # --- a meeting past its retention window (#656) -----------------------------------
 
 EXPIRED = "mtg_expired"
