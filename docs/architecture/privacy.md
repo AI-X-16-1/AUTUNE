@@ -289,10 +289,14 @@ person's, those counts are that person's completion record. So:
   **"Their speech" is the lines whose speaker label is assigned to them.** A
   label nobody assigned, or one whose assignment was undone
   (`DELETE /meetings/{id}/speakers/{label}`), is attributable to no one, and
-  deleting one's own speech does not reach it. Undoing is for a wrong
-  assignment; a voice that diarization split into two labels should have both
-  assigned to the same person, which the speaker picker allows behind a
-  confirmation (#912).
+  deleting one's own speech does not reach it. Any member of the meeting's
+  team may undo an assignment, including one that names somebody else — the
+  same people who may make one — so a person's lines can stop being theirs
+  without their own action. That is deliberate: a wrong assignment has to be
+  correctable by whoever notices it, and the confirmation says what it undoes
+  (#928). Undoing is for a wrong assignment; a voice that diarization split
+  into two labels should have both assigned to the same person, which the
+  speaker picker allows behind a confirmation (#912).
 - When a user leaves a team, their utterances and everything derived from them
   are deleted. **This rule is under review — see ADR 0007**, which argues the
   record belongs to the meeting rather than to its participants, and that
