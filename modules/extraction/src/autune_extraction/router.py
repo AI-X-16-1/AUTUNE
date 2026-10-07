@@ -29,7 +29,16 @@ from autune_core import CurrentUser, Meeting, User, get_session
 from autune_core.errors import ConflictError, NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
-from . import attempts, jira_issues, notion_connect, projects, service, sync_state, tasks
+from . import (
+    attempts,
+    jira_issues,
+    leave_calendar,
+    notion_connect,
+    projects,
+    service,
+    sync_state,
+    tasks,
+)
 from .config import get_settings
 from .notion_setup import NotionSetupError
 from .schemas import (
@@ -693,12 +702,17 @@ def set_my_due_reminders(
     return _reminder_setting(on)
 
 
-def _pause_read(session: Session, user_id: str) -> NotificationPauseRead:
+def _pause_read(
+    session: Session, user_id: str, calendar: leave_calendar.Outcome | None = None
+) -> NotificationPauseRead:
     pause = service.notification_pause(session, user_id)
     return NotificationPauseRead(
         starts_on=pause.starts_on if pause is not None else None,
         ends_on=pause.ends_on if pause is not None else None,
+        on_calendar=pause is not None and bool(pause.calendar_event_id),
         calendar_leave=get_settings().leave_from_calendar,
+        calendar_connected=leave_calendar.connected(session, user_id),
+        calendar=calendar,
     )
 
 
@@ -715,16 +729,24 @@ def set_my_notification_pause(
     payload: NotificationPause, session: SessionDep, reader: CurrentUser
 ) -> NotificationPauseRead:
     """Set, replace or -- with both days ``null`` -- clear the caller's own
-    pause (the user, 2026-10-05)."""
-    service.set_notification_pause(
+    pause (the user, 2026-10-05). With ``on_calendar`` the range also goes onto
+    the caller's own calendar (2026-10-06) -- ``false`` takes an earlier event
+    off, and left out leaves the calendar as it stands -- in the request: they pressed 저장
+    and wait to see whether it went. The dates are saved whatever the calendar
+    answers, and ``calendar`` in the answer says which it was. The dates are
+    committed before Google is asked (``leave_calendar.set_leave``); a save
+    that arrives while an earlier one is still at the calendar is refused
+    with 409 and changes nothing."""
+    outcome = tasks.set_leave(
         session,
         reader.id,
         starts_on=payload.starts_on,
         ends_on=payload.ends_on,
+        on_calendar=payload.on_calendar,
         now=datetime.now(tz=UTC),
     )
     session.commit()
-    return _pause_read(session, reader.id)
+    return _pause_read(session, reader.id, outcome)
 
 
 @router.post("/jira/backfill")
