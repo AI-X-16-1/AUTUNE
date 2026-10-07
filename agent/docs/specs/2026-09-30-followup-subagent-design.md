@@ -166,8 +166,12 @@ is done, or has no due date, is not an input.
 
 1. **Earliest.** `E` = the next business day after `today`. No suggestion is
    ever earlier than `E`.
-2. **Overdue.** If any input item's due date is before `today`, the date is
-   `E`. Work is already late, so the follow-up should not wait for the rest.
+2. **Overdue, confirmed only.** If any *confirmed* item's due date is before
+   `today`, the date is `E`. Work is already late, so the follow-up should
+   not wait for the rest. An *unconfirmed* item whose date is before `today`
+   is dropped from every later step instead. Minutes after the meeting, a
+   draft's past date is more likely a date B misread (#197) than work already
+   late.
 3. **Horizon.** Drop every input item due after `today + DUE_HORIZON_DAYS`
    (14). They are long-running work. A meeting about them is a later
    meeting, not this follow-up. If nothing is left, go to step 5.
@@ -183,11 +187,31 @@ is done, or has no due date, is not an input.
 "Next business day after X" is X plus one day, then moved past Saturday and
 Sunday. Holidays are not known (#964); the lead moves the date on the board.
 
+*What the date rests on: `basis`.* The proposal's arguments carry
+`basis`, one of three short enums, beside `due_date`:
+
+| `basis` | When | Card |
+| --- | --- | --- |
+| `confirmed` | Step 2, or step 4 with only confirmed dates left | the date |
+| `draft` | Step 4 with at least one unconfirmed date among those left | the date, marked "초안 기준" |
+| `cadence` | Step 5 | the date, marked as the team's rhythm |
+
+It is an argument because the pending row stores only `kind`, `arguments` and
+`evidence` (agent/CLAUDE.md rule 8), and the card reads the row. Plan mode
+accepts a short lowercase enum (#556). At approval `bind_scope` refuses an
+argument the write does not declare, so B's `add_followup_item` must take an
+optional `basis` before this ships (section 9).
+
+*When B's read is missing or fails.* Step 5. A failed or unregistered
+`meeting_due_dates`, a row without `due_dates`, or entries that are not an ISO
+date and a boolean all count as "no dates". The proposal still goes out, with
+`basis = cadence`. It never waits on B.
+
 *Why the horizon drops items rather than clamps the date.* Clamping step 4's
 `P` to 14 days would land on a day no item is due on. It would also still let
 a single six-week task pull the date out to the horizon. Dropping keeps the
 date tied to a real deadline. The cost is that a meeting whose work is all
-long-running gets the rhythm fallback; the card says which rule was used. If
+long-running gets the rhythm fallback; `basis` (below) tells the card so. If
 the dropped items are later most of a team's follow-ups, #22's check will show
 it.
 
@@ -198,7 +222,7 @@ finally kept on the board, and the share of its items due by then.
 
 *B's read.* `meeting_action_items` is not used. Its `body` names each item's
 assignee, and it leaves out unconfirmed items. A new read in B's `tools.py`
-(an issue to B's owner) returns:
+(#966) returns:
 
 - one row with `due_dates`: a list of `{"date": ISO, "confirmed": bool}`, one
   per open dated item, ascending. A list on a single row, because `ToolResult`
@@ -284,7 +308,9 @@ text, as settled on #509.
   signals. The main agent can wake a subagent on a timer since #637
   (`Periodic`); Follow-up declares none until it has a rule for that state,
   recorded here first.
-- **Unconfirmed due dates at proposal time** (#963, for the owner to decide).
+- **Unconfirmed due dates at proposal time** (#963). **Decided 2026-10-07: A**,
+  with two refinements. A draft's past date is dropped rather than treated as
+  overdue (section 5, step 2). The mark travels as `basis` in the arguments.
   Follow-up runs on `intelligence.completed`, minutes after B extracted M's
   items. Few of them are confirmed then, so most of the dates section 5 reads
   are B's drafts. Two ways to handle it:
@@ -295,9 +321,9 @@ text, as settled on #509.
   | For | Works today: one run, one proposal, no new trigger. The lead sees a date while the meeting is fresh. The mark is honest about what the date rests on. | The date rests on dates a person accepted. A draft whose date B misread (#197) never moves the suggestion. |
   | Against | A misread draft date moves the suggestion, and the date does not follow when the item is fixed on the board. B must hand Follow-up the dates of unconfirmed items. That is a date and a flag, not text (#261 rule 3), but it is B's owner's call. The card needs the mark (`main/preview.py`, 김민경). | Needs a new trigger. B's confirmation is no `TRIGGER_EVENTS` event, so this is an event in `packages/contracts` (additive) and a `main/` change (김민경). Each confirmation replaces the pending proposal, so the card's date can change while the lead reads it, and each replacement wakes `notify.py`'s DM again unless it is debounced. Once the lead approves, the item's due date is B's and a person's to move. Recompute must stop there. With nothing confirmed yet, the first proposal has only the rhythm fallback. |
 
-  Recommendation: A for stage 1. It needs only B's read and the card's mark.
-  B can follow if #22's check shows draft dates moving many suggestions. With
-  B the confirmation event would also suit other subagents.
+  A needs only B's read and the card's mark. B can follow if #22's check shows
+  draft dates moving many suggestions. B's confirmation event would also suit
+  other subagents.
 - **Stage 2: a model-written reason** (after #963). The card could say why in a
   sentence, for example that two items are due on Thursday and Friday and the
   results can be compared the following Monday. A model writes only that
@@ -322,8 +348,10 @@ text, as settled on #509.
     twice, give one date.
   - *No due dates:* no items, or only undated or done ones → the rhythm
     fallback (#852's cases still pass unchanged).
-  - *All overdue:* every item before `today` → `E`. *One overdue among later
-    ones:* also `E`. *Due today:* not overdue, so step 4 applies.
+  - *All overdue:* every confirmed item before `today` → `E`. *One confirmed
+    overdue among later ones:* also `E`. *A draft overdue:* dropped. Alone it
+    leaves the rhythm fallback; beside a confirmed date it does not move the
+    date. *Due today:* not overdue, so step 4 applies.
   - *Beyond the horizon:* all items after `today + 14` → the rhythm fallback.
     Some beyond, some within → the dropped ones do not move the date. An item
     exactly on `today + 14` is kept.
@@ -331,10 +359,12 @@ text, as settled on #509.
     `d_k`. Duplicate dates count once per item.
   - *Weekends:* `P` on a Friday → Monday; `P` on a Saturday or a Sunday →
     Monday. `today` on a Friday or a Saturday → `E` is Monday.
-  - *Never before `E`:* every item due today or tomorrow → `E`, not earlier.
-  - *Confirmation:* under option A (section 7) a date resting on an
-    unconfirmed item is flagged as such; under option B unconfirmed dates are
-    ignored. Only the chosen option's case is kept.
+  - *Never before `E`:* an item due today → `E`, not earlier.
+  - *`basis`:* only confirmed dates left → `confirmed`. One draft among them →
+    `draft`. A draft dropped by the horizon or as overdue does not make it
+    `draft`. No dates → `cadence`.
+  - *B's read missing, failed or malformed:* the proposal still goes out, with
+    `basis = cadence`, and the meeting list is read only then.
 - **Privacy of the read** (unit, `mock_tool`): the subgraph gets no assignee.
   A tool result carrying a name field fails the test. No date or reason
   string Follow-up builds contains a member's name.
@@ -365,10 +395,14 @@ text, as settled on #509.
 | — | The approvals-page preview for that write (#562) | 김민경 |
 | — | C's by-id read for that preview (#644) | 1 (module C) |
 | ③ | `agent-layer.md` section 3.1 row and section 6: the deviations in section 2 | 5 (`docs/`) |
-| ④ | #963 spec: section 5's date rule, sections 6–8 (this revision) | 김민경 (`agent/docs/`) |
-| — | B's `meeting_due_dates` read (section 5) | B's owner |
-| ⑤ | #963 code: `rules.suggest_date` from due dates, `graph.py` reads B's dates, `__init__.py` allow-list | 1 (`subagents/followup/`) |
-| — | Option A's "초안 기준" mark on the approvals card, or option B's confirmation event (section 7) | 김민경 |
+| ④ | #963: this revision, `rules.suggest_from_due_dates`, `graph.py` reading B's dates and proposing `basis` | 김민경 (`agent/docs/`), 1 (`subagents/followup/`) |
+| — | B's `meeting_due_dates` read, and `add_followup_item` taking an optional `basis` (section 5, #966) | B's owner |
+| — | The card's "초안 기준" mark from `basis` (`main/preview.py`, #967) | 김민경 |
+
+④ merges after B's `basis` parameter. Before it, every approval fails in
+`bind_scope`. `test_the_write_is_one_b_declares_l2_and_takes_the_meeting_a_date_and_a_basis`
+pins the parameter and fails until then. B's read can land later: until it
+does, every date is `cadence`.
 
 Schedule: ① 10/1 · ② 10/2–10/3 · ③ 10/5 · end to end 10/6–10/8. ② builds
 against mock tools for B's two pieces, so it does not wait on #561; end to
