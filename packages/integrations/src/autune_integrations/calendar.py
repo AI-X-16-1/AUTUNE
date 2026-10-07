@@ -1,11 +1,25 @@
 """Google Calendar.
 
-Owned by the Workload subagent's owner (#260, #261 section 3.1) and shared by
-three callers, per #435: Briefing lists a team calendar's upcoming meetings
-(``list_events``, which asks Google for an event's id, title and times only),
-Follow-up and Workload ask when people are busy, and module B puts each
-person's own confirmed action items on their own calendar and reads back a
-date they moved there. Follow-up's approved meeting is ``create_event``.
+Owned by the Workload subagent's owner (#260, #261 section 3.1). Who uses it,
+by what they do (#877):
+
+- **Module B** puts each person's own confirmed action items on their own
+  calendar and reads back a date they moved there (``create_all_day_event``,
+  ``update_all_day_event``, ``delete_event``, ``changed_events``); makes the
+  event of a person's leave, and of a project's minutes, on that person's own
+  calendar with requests of its own (``request``); and asks when a person is
+  out of office (``out_of_office``).
+- **Module C** lists the presser's own upcoming events for them to pick the
+  next meeting from, and adds its lines to the description of the one picked
+  (#824, #872) -- with requests of its own (``request``) that name their own
+  ``fields``, not through a method here.
+- **Module B's local-only dev route** lists a week of one calendar to show
+  that a grant works. It is the caller of ``list_events``, which asks Google
+  for an event's id, title and times only.
+
+``free_busy`` and ``create_event`` have no caller. #435 wrote them, and
+``list_events``, for the agent layer's Briefing, Follow-up and Workload; none
+of the three calls this client.
 
 **Autune's events carry a private tag, and the read-back asks for that tag.**
 ``create_all_day_event`` stores ``private`` in the event's
@@ -14,11 +28,17 @@ date they moved there. Follow-up's approved meeting is ``create_event``.
 Google returns only Autune's own events, so reading a date back never reads
 the rest of a person's calendar.
 
-**One read is of events Autune did not make: when a person is out of office.**
-``out_of_office`` asks Google for out-of-office events only and for their
+**Some reads are of events Autune did not make, and each is narrowed at
+Google.** ``out_of_office`` asks for out-of-office events only and for their
 times only, so module B can hold back that person's own digest while they are
 away. No title or description is requested, and nothing it returns is about
-anybody but the calendar's owner.
+anybody but the calendar's owner. Module C's picker asks for a person's own
+upcoming events -- id, title, start, end and status -- for that person to
+choose from, and its write asks the picked event for its description and its
+attendees' addresses, to refuse one shared outside the team; both are C's own
+requests (``autune_gap.calendar_writes``). ``list_events`` reads whatever is
+on the calendar it is pointed at, which is why it asks for ``EVENT_FIELDS``
+only. Which calendar any of them may read is in privacy.md.
 
 **Availability is busy windows only** -- never event titles, attendees or
 places, which are other people's data. ``free_busy`` is the only read that
@@ -189,9 +209,10 @@ class CalendarClient(HttpClient):
         private tag, and nothing else of it.
 
         Unlike ``changed_events`` this is not filtered to Autune's events: on
-        a team's shared calendar it lists the team's meetings (Briefing's
-        "which meeting starts next", #435), and on a person's own it would
-        list everything of theirs in the window, titles included. So the
+        a team's shared calendar it lists the team's meetings (what #435
+        wrote it for; nothing asks that today), and on a person's own it
+        lists everything of theirs in the window, titles included. Its caller
+        is module B's local-only dev route, showing that a grant works. So the
         answer is narrowed at Google (``EVENT_FIELDS``) -- no description, no
         place, no attendee is returned to be mishandled -- and which calendar
         it may be pointed at is the caller's to justify, in privacy.md, not
@@ -271,7 +292,7 @@ class CalendarClient(HttpClient):
         """When the calendar's owner is marked out of office between two
         instants: the start and end of each such event, and nothing else.
 
-        The one read of a person's own calendar that is not of Autune's own
+        A read of a person's own calendar that is not of Autune's own
         events, so it is narrowed twice at Google: ``eventTypes=outOfOffice``
         returns no other kind of event, and ``fields`` asks for the times
         only -- no title, no description, no attendee is in the answer to be
