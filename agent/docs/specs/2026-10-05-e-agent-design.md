@@ -34,7 +34,7 @@ chat ─▶ main agent ─(routes on the description)─▶ E agent ─▶ E's t
 | First version | **Reads and actions.** Actions keep section 8's levels: L1 runs and the person is told after; L2 waits for an approver. |
 | RAG | Yes, where it makes answers better: a **metric glossary** that the agent retrieves from, so a meaning or a formula is quoted, not made up (section 5). A search over report text is a later step (section 8). |
 | A rejected approval | It leaves E's draft as it was. A person changes something on the dashboard to ask again, or asks the E agent in chat to propose the post again. |
-| A post asked for outside a meeting | Proposed only from a run scoped to that meeting. From the team view the agent finds the meeting and links its screen (section 4, "Posting from the team view"). |
+| A post asked for outside a meeting | From the team view, proposed with the meeting it names in `meeting_id`, so plan mode keys and runs the approval there (#896). A meeting page that names another meeting points to that meeting's page (section 4, "Posting from the team view"; "Changes during implementation", 16). |
 | The glossary's language | Korean, as user-facing response content (section 5, "Language"). |
 
 ### Out of scope
@@ -177,7 +177,8 @@ name (`subagents.py`); anything else is chat.
     screen, where the request is meeting-scoped (#733).
   - **Later, with 김민경:** `queue_l2` supersedes by the proposal's own
     `meeting_id` argument when the run has none. Then posting from the team
-    view can be allowed.
+    view can be allowed. *(Landed as #896; posting from the team view is
+    allowed since "Changes during implementation", 16.)*
   - A duplicate card would not post twice either way: E's post is claimed
     once (`sent_at`). The cost is only noise for approvers.
 - **When L1 fails after the answer:**
@@ -458,11 +459,8 @@ The sections above are left as designed; each affected one points here.
       pipeline's pending card for that meeting, so neither card above stays
       live.
     - **#896:** a team-scoped run's L2 is keyed on the meeting its arguments
-      name. E still proposes a post only from a meeting-scoped run, though:
-      `request_post` from the team view points to the meeting screen.
-      `publish_meeting_report`'s arguments carry the `draft_id` only, so
-      lifting that is an E change. The post proposal would have to name its
-      `meeting_id`.
+      name. E then still proposed a post only from a meeting-scoped run; item
+      16 lifts that.
 11. **Links (section 4).** The answers name the meeting screen and the
     dashboard card in words. They do not link them, unlike section 4's
     "links".
@@ -515,3 +513,18 @@ The sections above are left as designed; each affected one points here.
     not reported as a missing part; if no call ever fits, the reply asks for a
     weekday and an hour 0-23. The reply spells out 오전/오후, because "6시"
     may mean either and the model picks one.
+16. **Posting from the team view (section 4, after #896).** In a run about no
+    meeting, `request_post` and `redraft` name the meeting in `meeting_id`,
+    and the post and correction proposals carry it next to `draft_id` /
+    `correction_id`. Plan mode keys the approval on that meeting and runs it
+    there.
+    - Asked without a meeting, `request_post` goes back to the model (find it
+      with `meeting_reports`). It is not reported as a missing part. If no call
+      names one, the reply asks which meeting.
+    - A meeting page that names *another* meeting still points to that page,
+      because its approvals are keyed on its own meeting. A redraft from there
+      proposes the other meeting's draft but no post.
+    - Checked with the real model on the synthetic team: "Mock meeting 11 리포트
+      올려줘" and "다시 써서 올려줘" from the team view proposed the post, the
+      second also the draft (L1). The pending cards were keyed on that
+      meeting, and asking again replaced the earlier card.
