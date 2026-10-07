@@ -474,8 +474,13 @@ the feature needs.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
-    hold -- made, given to them, or confirmed since) and today's work (late, due today, in progress; the rest as a
-    count). It carries what a reminder carries about each item -- its
+    hold -- made, given to them, or confirmed since) and today's work (late,
+    due today, untouched for five days or more, in progress; the rest as a
+    count). An untouched item's line says how many days it has stood: the
+    time since the item was made or last edited, read from the same edit
+    record as "what changed" and worked out each morning, not stored. It is
+    how long an item has waited, said to the person who holds it. It carries
+    what a reminder carries about each item -- its
     description, a late item's due date, the meeting's title -- and a link to
     the board; no utterance, and nobody else's items. "What changed" is read
     from `ext_edit_events`, which holds that an item was edited, which fields

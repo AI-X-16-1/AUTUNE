@@ -4138,10 +4138,17 @@ def daily_digest_content(
     mark at all and is not seen: an already confirmed item given to a person
     by ``fill_identified_assignees``.
 
-    **Today** is their open items: late ones, the ones due today, then the
-    ones in progress -- each item once, in the first that fits -- and the
-    rest only counted. Their own items on this team, as the weekly digest
-    reads them: a meeting past its retention window is left out."""
+    **Today** is their open items: late ones, the ones due today, the ones
+    nobody has touched for days, then the ones in progress -- each item once,
+    in the first that fits -- and the rest only counted. Their own items on
+    this team, as the weekly digest reads them: a meeting past its retention
+    window is left out.
+
+    **Untouched for days** (``_idle_days``; the user, 2026-10-07) is read from
+    the same record as "what changed": when the item was made and when it was
+    last edited, never what the edit was or who made it. So it says how long
+    the *item* has stood, to the person who holds it, and nothing is kept of
+    it -- it is worked out again each morning."""
     marks: dict[str, set[str]] = {}
     for item_id, kind, fields in session.execute(
         select(ExtEditEvent.action_item_id, ExtEditEvent.kind, ExtEditEvent.fields)
@@ -4173,9 +4180,11 @@ def daily_digest_content(
     taken_on: list[reminders.DigestLine] = []
     late: list[reminders.DigestLine] = []
     due_today: list[reminders.DigestLine] = []
+    stalled: list[reminders.DigestLine] = []
     in_progress: list[reminders.DigestLine] = []
     others = 0
     open_rows = _open_items_of(session, user_id=owed.user_id, team_id=owed.team_id, now=now)
+    idle = _idle_days(session, [item for item, _team, _title in open_rows], now=now)
     confirmed = _confirmed_since(
         session,
         [
@@ -4193,18 +4202,59 @@ def daily_digest_content(
             late.append(line)
         elif item.due_date == owed.day:
             due_today.append(line)
+        elif item.id in idle:
+            stalled.append(replace(line, idle_days=idle[item.id]))
         elif item.status == ActionStatus.IN_PROGRESS.value:
             in_progress.append(line)
         else:
             others += 1
+    # Longest first; the stable sort keeps the board's order among equals.
+    stalled.sort(key=lambda line: -(line.idle_days or 0))
     return reminders.DailyDigest(
         done=done,
         taken_on=taken_on,
         late=late,
         due_today=due_today,
+        stalled=stalled,
         in_progress=in_progress,
         others=others,
     )
+
+
+def _idle_days(
+    session: Session, items: Sequence[ExtActionItem], *, now: datetime
+) -> dict[str, int]:
+    """Whole days since each of these items was last touched, for the ones
+    that have stood ``reminders.STALLED_AFTER_DAYS`` or more.
+
+    Touched is made or edited: the row's own ``created_at`` and the latest
+    ``ext_edit_events`` row of the item, whichever is later. A model's draft
+    has no ``created`` event, so the row's time is its start; a person's
+    confirmation is an edit, so an item confirmed yesterday is not old. One
+    thing changes an item and leaves no mark: ``fill_identified_assignees``
+    giving it to somebody -- such an item can read as standing since before
+    its holder had it.
+    """
+    if not items:
+        return {}
+    last_edit = {
+        item_id: at
+        for item_id, at in session.execute(
+            select(ExtEditEvent.action_item_id, func.max(ExtEditEvent.created_at))
+            .where(ExtEditEvent.action_item_id.in_([item.id for item in items]))
+            .group_by(ExtEditEvent.action_item_id)
+        ).tuples()
+    }
+    idle: dict[str, int] = {}
+    for item in items:
+        touched = _aware(item.created_at)
+        edit = last_edit.get(item.id)
+        if edit is not None:
+            touched = max(touched, _aware(edit))
+        days = (now - touched).days
+        if days >= reminders.STALLED_AFTER_DAYS:
+            idle[item.id] = days
+    return idle
 
 
 def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: datetime) -> set[str]:

@@ -157,6 +157,9 @@ class DigestLine:
     description: str
     due_date: date | None
     meeting_title: str | None
+    idle_days: int | None = None
+    """On a line of the morning DM's "그대로" group: whole days since the item
+    was last touched. ``None`` everywhere else."""
 
 
 def build_weekly_digest(lines: Sequence[DigestLine], *, today: date, board_url: str) -> str:
@@ -202,6 +205,12 @@ until the afternoon does not send "good morning" at four."""
 DAILY_MAX_LINES = 5
 """Items listed under each heading; the rest are counted."""
 
+STALLED_AFTER_DAYS = 5
+"""An open item nobody has touched for this many days or more is named in its
+holder's morning DM with how long it has stood (the user, 2026-10-07: "5일 넘게
+변화 없는 일"). Days on the calendar, weekends included: a constant, not a
+setting -- nothing was asked for per team."""
+
 DAILY_LOOKBACK = timedelta(days=7)
 """How far back "since the last one" may reach, for someone whose last morning
 DM was long ago or never: a week of changes, not a history."""
@@ -227,14 +236,17 @@ class DailyDigest:
     """What one person's morning DM says, already chosen and ordered.
 
     ``done`` and ``taken_on`` are what changed since their last morning DM;
-    ``late``, ``due_today`` and ``in_progress`` are today's work, each item in
-    the first of the three it fits; ``others`` counts their remaining open
-    items, which the board lists."""
+    ``late``, ``due_today``, ``stalled`` and ``in_progress`` are today's work,
+    each item in the first of the four it fits; ``others`` counts their
+    remaining open items, which the board lists. ``stalled`` is what has not
+    been touched for ``STALLED_AFTER_DAYS`` or more, longest first, each line
+    carrying its ``idle_days``."""
 
     done: Sequence[DigestLine] = ()
     taken_on: Sequence[DigestLine] = ()
     late: Sequence[DigestLine] = ()
     due_today: Sequence[DigestLine] = ()
+    stalled: Sequence[DigestLine] = ()
     in_progress: Sequence[DigestLine] = ()
     others: int = 0
 
@@ -246,6 +258,7 @@ class DailyDigest:
             or self.taken_on
             or self.late
             or self.due_today
+            or self.stalled
             or self.in_progress
             or self.others
         )
@@ -262,6 +275,17 @@ def _daily_lines(label: str, lines: Sequence[DigestLine], *, dated: bool) -> lis
     return out
 
 
+def _stalled_lines(lines: Sequence[DigestLine]) -> list[str]:
+    """How long each has stood, in its own words: the label is the count."""
+    out: list[str] = []
+    for line in lines[:DAILY_MAX_LINES]:
+        where = f" · {slack_escape(line.meeting_title)}" if line.meeting_title else ""
+        out.append(f"• {line.idle_days}일째 그대로: {slack_escape(line.description)}{where}")
+    if len(lines) > DAILY_MAX_LINES:
+        out.append(f"• 그대로인 일 외 {len(lines) - DAILY_MAX_LINES}개")
+    return out
+
+
 def build_daily_digest(digest: DailyDigest, *, board_url: str) -> str:
     """The morning DM as plain text: what changed since the last one, then
     today's work -- late first -- then how many other items are open, and
@@ -273,6 +297,7 @@ def build_daily_digest(digest: DailyDigest, *, board_url: str) -> str:
     out.append("오늘 할 일")
     today = _daily_lines("기한 지남", digest.late, dated=True)
     today += _daily_lines("오늘 기한", digest.due_today, dated=False)
+    today += _stalled_lines(digest.stalled)
     today += _daily_lines("진행 중", digest.in_progress, dated=False)
     out += today or ["• 오늘 기한이거나 진행 중인 항목이 없습니다."]
     if digest.others:
