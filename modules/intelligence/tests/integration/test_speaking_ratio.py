@@ -13,6 +13,7 @@ above/below band mirrors just the same.
 from __future__ import annotations
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -61,7 +62,33 @@ def _participant(
     )
     session.add(row)
     session.flush()
+    if user_id is not None:
+        _join_team(session, meeting_id, user_id)
     return row.id
+
+
+def _join_team(session: Session, meeting_id: str, user_id: str) -> None:
+    """A participant with an account is on the meeting's team, as in production."""
+    from autune_core import Meeting, TeamMember
+
+    team_id = session.get(Meeting, meeting_id).team_id
+    exists = session.scalar(
+        sa.select(TeamMember.id).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    if exists is None:
+        session.add(TeamMember(team_id=team_id, user_id=user_id))
+        session.flush()
+
+
+def _leave_team(session: Session, meeting_id: str, user_id: str) -> None:
+    """What #937's ``leave_team`` does to E: the membership goes, the participant rows stay."""
+    from autune_core import Meeting, TeamMember
+
+    team_id = session.get(Meeting, meeting_id).team_id
+    session.execute(
+        sa.delete(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    session.flush()
 
 
 def _utter(
@@ -92,6 +119,23 @@ def _three_consenting(session: Session, meeting_id: str) -> dict[str, str]:
 
 
 # --- endpoint -------------------------------------------------------------
+
+
+def test_someone_who_left_the_team_reads_their_ratio_no_more(
+    app_for, db_session: Session, meeting: str
+) -> None:
+    """#937: the participant row stays, the membership goes, and the read is the
+    same 404 as a meeting they were never in."""
+    who = _three_consenting(db_session, meeting)
+    for i, name in enumerate(("alice", "bob", "carol")):
+        _utter(db_session, meeting, who[f"p_{name}"], i * 10.0, i * 10.0 + 10.0)
+    _leave_team(db_session, meeting, who["alice"])
+
+    response = app_for(who["alice"]).get(f"/api/intelligence/me/speaking-ratio/{meeting}")
+
+    assert response.status_code == 404
+    assert service.speaking_ratio_for_user(db_session, meeting, who["alice"]) is None
+    assert service.speaking_ratio_for_user(db_session, meeting, who["bob"]) is not None
 
 
 def test_returns_the_requesters_own_ratio(app_for, db_session: Session, meeting: str) -> None:

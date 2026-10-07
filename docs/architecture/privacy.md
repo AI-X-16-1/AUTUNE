@@ -519,6 +519,49 @@ the feature needs.
     they can read or write it, no screen or route shows it to a teammate or
     an admin, nothing is derived from it, and it is deleted once its last
     day has passed. Due-date reminders do not read it.
+  - **Those dates on the person's own calendar, by their own tick** (the
+    user, 2026-10-06): the one way the dates leave Autune. A person whose own
+    Google Calendar is connected is shown a box beside the dates, "내 Google
+    캘린더에도 추가", **off until they tick it**; nobody else can tick it for
+    them and no setting of a team or a deployment does. Ticked and saved, the
+    range goes onto that person's own calendar through their own grant as one
+    all-day event: the two dates, the fixed title "휴가" and a fixed line
+    saying where it came from -- no meeting, no item, no other person, no
+    attendee, so nobody is invited or notified. **Who can see an event on a
+    calendar is decided by that calendar's sharing, not by Autune**, so it is
+    written `visibility: private`: someone the person shares the calendar
+    with sees that they are busy on those days and not why. That is still
+    more than "theirs alone", and it is why it happens only on the person's
+    own press and is said before they press -- under the box, and beside the
+    calendar's connect button, to somebody already connected as well.
+    Autune keeps the event's id on the pause row
+    (`ext_notification_pauses.calendar_event_id`) and, only while a save is at
+    the calendar, the time that save began (`calendar_claimed_at`, cleared
+    when it returns; it keeps a second save out and is shown nowhere) -- and
+    nothing else: a changed range moves the
+    same event, and a save with the box unticked, or clearing the dates,
+    removes it (a removal Google does not answer is queued and tried again
+    with the person's grant, as a due-date event's is). A save that says
+    neither -- the box was not drawn, the calendar not being connected just
+    then -- leaves the event and its id as they stand, and makes no event
+    where there is none. Once the last day has passed
+    the row is deleted as before, the id with it, and **the event stays** on
+    the calendar as the person's own record; Autune can no longer reach it.
+    A calendar disconnected while the event stands cannot be reached either:
+    the event stays there, where the person can delete it, and the save that
+    would have removed it tells them so.
+    A deleted account has an event that still stands removed first, by B's
+    user hook. Autune never reads the calendar for any of this: a leave the
+    person wrote there themselves is not looked for, and the out-of-office
+    read below asks Google for out-of-office events only, which this plain
+    event is not. No log line carries the dates. Like an item's due date
+    (#435) and a project's minutes a person chose to send (#788,
+    `ext_minutes_events`), it goes onto the writer's own calendar and nobody
+    else's. Unlike a due date, which follows from the connection, it is
+    about the person and not the team's work, so connecting a calendar is
+    never enough: a range goes only when the box is ticked at that save.
+    Still true of everything inside Autune: no screen, route or message
+    shows one person's dates to another.
   - **Out-of-office time, from a person's own calendar:** where a deployment
     turns it on (`AUTUNE_EXTRACTION_LEAVE_FROM_CALENDAR`, off by default), a
     person who connected Google Calendar is not sent the morning DM or
@@ -562,8 +605,13 @@ the feature needs.
     the grant is revoked at Google (#763), and the row goes with the account
     (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
     unreachable Google leaves the events on the calendar and the grant listed
-    under the person's third-party access, and the deletion goes on. Each event is only the item's
+    under the person's third-party access, and the deletion goes on. Each of those events is only the item's
     description and date, with no attendees and nothing from the transcript.
+    B writes two other kinds of event on a person's own calendar, each only
+    by that person's own act and each removed by the same user hook: a
+    project's minutes they chose to send (#788, `ext_minutes_events`) and
+    their own leave dates ("Those dates on the person's own calendar",
+    above).
   - **Google Calendar, S20's 다음 회의 잡기 (module C, #824):** the presser's
     own calendar only, with their own grant (`user_integrations`). A line
     carries a gap's title and suggested question -- both stored masked, or
