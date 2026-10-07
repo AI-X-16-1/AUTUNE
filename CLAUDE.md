@@ -166,7 +166,7 @@ above modules A–E in a top-level `agent/` (`autune_agent`), and three
 invariants above read with this exception:
 
 - **2** — `autune_agent` may import every module. No module may import it,
-  modules still may not import one another, the five subagents under
+  modules still may not import one another, the subagents under
   `autune_agent.subagents` may not import one another, and a subagent may not
   import a module — it reads modules only through tools. import-linter
   enforces all of it.

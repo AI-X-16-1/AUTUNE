@@ -111,7 +111,7 @@ export type MeetingSummary = {
 };
 
 /** `pinned`: the caller put this team at the top of their own list. */
-export type TeamSummary = { team_id: string; name: string; pinned?: boolean };
+export type TeamSummary = { team_id: string; name: string; pinned: boolean };
 
 /**
  * Module A's own speaker endpoints — `/api/audio/meetings/{id}/speakers` and

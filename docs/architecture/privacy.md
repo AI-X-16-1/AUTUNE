@@ -297,11 +297,28 @@ person's, those counts are that person's completion record. So:
   (#928). Undoing is for a wrong assignment; a voice that diarization split
   into two labels should have both assigned to the same person, which the
   speaker picker allows behind a confirmation (#912).
-- When a user leaves a team, their utterances and everything derived from them
-  are deleted. **This rule is under review — see ADR 0007**, which argues the
-  record belongs to the meeting rather than to its participants, and that
-  leaving is an access change rather than a data change. Until that ADR is
-  accepted or rejected, this line is what the code follows.
+- When a user leaves a team, **their membership goes and nothing else does**
+  (decided with the user, 2026-10-06, #552). They can no longer read the
+  team's meetings or anything derived from them. Their utterances, the items
+  assigned to them and the decisions they took part in stay with the team, and
+  their name stays on what they said. **Their participant rows keep their
+  `user_id`**, so deleting their own speech (`DELETE /api/audio/me/speech`,
+  above) still reaches every line of theirs after they have left: leaving
+  does not delete a person's words, and it does not take away their way to
+  delete them. That deletion is not per team -- it removes their speech
+  everywhere at once -- and somebody who has left can no longer open the
+  meetings to look first; the screen says both before they leave.
+  A member leaves only by their own act
+  (`DELETE /api/audio/teams/{team_id}/members/me`), and the last member of a
+  team cannot leave it.
+  This is ADR 0007's ownership rule -- the record belongs to the meeting, and
+  leaving is an access change rather than a data change -- **without that
+  ADR's mechanism**, which clears `participants.user_id` on departure and
+  would end the departed person's deletion with it. The ADR is still Proposed
+  and its legal review has not happened (#92); what a "no" there would change
+  is written in the ADR, under *Not taken yet*. Until 2026-10-06 this line
+  read "their utterances and everything derived from them are deleted", and
+  nothing did that: there was no way to leave a team.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -326,7 +343,9 @@ has not signed up -- and it does not wait for the analysis window: the row
 is deleted when the invitation is accepted, when it lapses (seven days; the
 retention sweep, and the next invitation made for that team), when a new
 invitation to the same address replaces it, when a member of the team
-cancels it, when the team or the inviter's account is deleted, and when the
+cancels it, when the inviter leaves the team (somebody who is no longer on a
+team brings nobody onto it, so their pending invitations to it go with
+them), when the team or the inviter's account is deleted, and when the
 invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
 ids, never the address.
@@ -347,14 +366,17 @@ and making another ends the earlier one; it is never mailed by Autune; and
 it is in the same pending list, as a link with no address, where any member
 of the team can cancel it. Its token is stored as a hash like any other,
 and log lines carry ids. Nobody is told when somebody joins by it -- the
-member list shows them. **Somebody who joins by it stays.** Nothing takes a
-member off a team today: leaving is held until ADR 0007 is reviewed (#92),
-removing another member was never built, and a `team_members` row goes only
+member list shows them. **Somebody who joins by it stays for as long as
+they choose to.** A member can leave a team by their own act (section 4,
+the departure rule), and nobody can take another member off: removing
+another member was never built, and otherwise a `team_members` row goes only
 with the account or the team. So a link that reaches the wrong person admits
-them for good, with everything the team can read, and the limits above are
-all there is against it -- they make it one person within one hour, they do
-not undo it. This is accepted for now, knowingly; a way to remove a member
-is what would change it. An invitation for an address is unchanged and is
+them, with everything the team can read, until they themselves leave -- the
+team cannot put them out -- and the limits above are all there is against
+it: they make it one person within one hour, they do not undo it. This is
+accepted for now, knowingly; a way to remove a member is what would change
+it. A link somebody made goes when they leave the team, like their other
+pending invitations. An invitation for an address is unchanged and is
 still only for that address.
 
 The inviter may have the link **mailed from their own Gmail** (#552), when

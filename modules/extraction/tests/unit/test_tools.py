@@ -19,7 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import ActionStatus
 from autune_core import Base, Meeting, TeamMember, User, Utterance
-from autune_extraction import service, tools
+from autune_extraction import days_off, service, tools
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import (
     ExtActionItem,
@@ -35,6 +35,7 @@ from autune_extraction.models import (
     ExtExternalRef,
     ExtNotionTarget,
     ExtProject,
+    ExtPublicHoliday,
     ExtSyncFailure,
 )
 from autune_extraction.schemas import ActionItemCreate, ActionItemUpdate
@@ -66,6 +67,8 @@ TABLES = [
     ExtNotionTarget.__table__,
     # ``open_item_owners`` checks a project is the team's.
     ExtProject.__table__,
+    # ``public_holidays`` reads the calendar B keeps.
+    ExtPublicHoliday.__table__,
 ]
 
 
@@ -159,6 +162,7 @@ ARGS = {
     tools.action_item_status: (TEAM, "act_missing"),
     tools.open_followup_item: (TEAM,),
     tools.open_item_owners: (TEAM,),
+    tools.public_holidays: ("2026-10-01", "2026-10-31"),
 }
 
 
@@ -530,6 +534,103 @@ def test_review_state_counts_what_waits_and_quotes_none_of_it(session: Session) 
     assert {i["id"] for i in result["items"]} == {"dec_1", "act_draft"}
     assert all(i["body"] == "" for i in result["items"])
     assert result["evidence"] == ["utt_d"]
+
+
+# --- public_holidays (#985, Follow-up's suggested date) -----------------------------
+
+
+def test_public_holidays_are_one_row_of_iso_days_both_ends_included(session: Session) -> None:
+    """The calendar B keeps answers while its read is fresh -- a day declared
+    after the table in code was made is there, and the table is not mixed in."""
+    declared = date(2026, 10, 8)
+    days_off.store_public_holidays(
+        session,
+        {date(2026, 10, 5), declared, date(2026, 11, 19), date(2026, 11, 20)},
+        now=datetime.now(UTC),
+    )
+
+    result = tools.public_holidays(session, "2026-10-05", "2026-11-19")
+
+    assert set(result) == KEYS and result["ok"] is True
+    assert result["items"] == [
+        {"title": "공휴일", "days": ["2026-10-05", "2026-10-08", "2026-11-19"]}
+    ]
+    assert result["summary"] == "2026-10-05 ~ 2026-11-19 공휴일 3일."
+    assert result["evidence"] == [] and result["truncated"] is False
+
+
+def test_public_holidays_come_from_the_table_when_the_calendar_was_not_read_lately(
+    session: Session,
+) -> None:
+    """Nothing read, or a read older than two weeks: the table in code, with
+    its substitute day (개천절 fell on a Saturday in 2026)."""
+    october = ["2026-10-03", "2026-10-05", "2026-10-09"]
+
+    (row,) = tools.public_holidays(session, "2026-10-01", "2026-10-31")["items"]
+    assert row["days"] == october
+
+    old = datetime.now(UTC) - days_off.FRESH_FOR - timedelta(hours=1)
+    days_off.store_public_holidays(session, {date(2026, 10, 8)}, now=old)
+
+    (row,) = tools.public_holidays(session, "2026-10-01", "2026-10-31")["items"]
+    assert row["days"] == october
+
+
+def test_a_range_with_no_public_holiday_is_an_empty_list_and_not_a_refusal(
+    session: Session,
+) -> None:
+    result = tools.public_holidays(session, "2026-11-02", "2026-11-06")
+
+    assert result["ok"] is True
+    assert result["items"] == [{"title": "공휴일", "days": []}]
+    assert result["summary"] == "2026-11-02 ~ 2026-11-06 공휴일 0일."
+
+
+def test_one_day_is_a_range_and_a_year_is_the_longest(session: Session) -> None:
+    (one,) = tools.public_holidays(session, "2026-10-09", "2026-10-09")["items"]
+    assert one["days"] == ["2026-10-09"]
+
+    year = tools.public_holidays(session, "2026-01-01", "2026-12-31")
+    assert year["ok"] is True
+    (row,) = year["items"]
+    assert len(row["days"]) > 5, "all of them in the one row: a row a day would stop at five"
+    assert row["days"] == sorted(row["days"])
+
+    leap = tools.public_holidays(session, "2028-01-01", "2028-12-31")
+    assert leap["ok"] is True, "366 days, a leap year whole"
+    assert tools.public_holidays(session, "2026-01-01", "2027-01-02")["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "reason"),
+    [
+        ("다음 주", "2026-10-31", "start is not a date"),
+        ("2026-10-01", "10/31", "end is not a date"),
+        ("2026-02-30", "2026-03-01", "start is not a date"),
+        ("2026-10-31", "2026-10-01", "end is before start"),
+        ("2026-01-01", "2028-01-01", "the range is longer than 366 days"),
+        (None, "2026-10-31", "start is not a date"),
+    ],
+)
+def test_a_range_that_cannot_be_answered_is_refused_without_repeating_it(
+    session: Session, start: Any, end: Any, reason: str
+) -> None:
+    result = tools.public_holidays(session, start, end)
+
+    assert set(result) == KEYS
+    assert (result["ok"], result["reason"], result["items"]) == (False, reason, [])
+    assert "다음 주" not in str(result) and "10/31" not in str(result), (
+        "what was written is not echoed"
+    )
+
+
+def test_public_holidays_ask_about_no_team_and_no_person() -> None:
+    """Dates of public record: the tool takes a range and nothing that names
+    a team, a meeting or a person, so no scope is bound to it."""
+    import inspect
+
+    assert list(inspect.signature(tools.public_holidays).parameters) == ["session", "start", "end"]
+    assert tools.public_holidays in tools.TOOLS and tools.public_holidays not in tools.ACTIONS
 
 
 # --- workload_by_owner (#261 section 3.1, Workload) ----------------------------------
@@ -913,6 +1014,60 @@ def test_an_item_reopened_after_a_close_is_no_longer_marked_closed(
         "edited",
         "edited",
     ]
+
+
+def test_a_closed_item_is_reported_as_closed_and_a_finished_one_as_done(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """What Report and the chat print is this line: "done" on a closed item
+    would have them say it was finished (review of #979)."""
+    item(session, "act_closed")
+    item(session, "act_finished")
+    assert tools.close_action_item(TEAM, "act_closed")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_finished", "done")["ok"] is True
+
+    listed = rows(tools.meeting_action_items(session, MEETING))
+    (one,) = tools.action_item_status(session, TEAM, "act_closed")["items"]
+    (other,) = tools.action_item_status(session, TEAM, "act_finished")["items"]
+
+    assert listed["act_closed"].endswith(" · closed")
+    assert listed["act_finished"].endswith(" · done")
+    assert " · closed · " in one["body"] and " · done" not in one["body"]
+    assert " · done · " in other["body"]
+
+
+def test_closing_twice_says_it_is_closed_and_closing_a_finished_item_says_it_is_done(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    item(session, "act_closed")
+    item(session, "act_finished", status="done")
+    assert tools.close_action_item(TEAM, "act_closed")["ok"] is True
+
+    again = tools.close_action_item(TEAM, "act_closed")
+    finished = tools.close_action_item(TEAM, "act_finished")
+
+    assert (again["ok"], again["summary"]) == (False, "이미 닫힌 액션아이템입니다.")
+    assert (finished["ok"], finished["summary"]) == (False, "이미 완료된 액션아이템입니다.")
+    assert [e.kind for e in session.query(ExtEditEvent)] == ["closed"]
+    assert acting["items"] == ["act_closed"]
+
+
+def test_the_last_status_written_wins_whatever_time_its_row_carries(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """On PostgreSQL an event's time is when its transaction began. A board edit
+    that began before a close and was written after it carries the earlier
+    time, and it is still the last word (review of #979)."""
+    item(session, "act_1")
+    assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+    (close,) = session.query(ExtEditEvent).all()
+    assert tools.set_action_item_status(TEAM, "act_1", "todo")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    for event in session.query(ExtEditEvent).filter(ExtEditEvent.id != close.id):
+        event.created_at = close.created_at - timedelta(seconds=5)
+    session.flush()
+
+    assert service.closed_unfinished(session, ["act_1"]) == set(), "finished, written last"
 
 
 def test_a_closed_item_is_not_counted_as_work_its_holder_finished(

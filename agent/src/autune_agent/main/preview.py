@@ -62,8 +62,39 @@ def preview(
         return {"title": "후속 회의 잡기", "body": body}
     if row.tool == "intelligence.publish_meeting_report":
         return {"title": "리포트 게시", "body": _report_draft(session, row, tools)}
+    if row.tool == "extraction.set_action_item_due_date":
+        # What Tracker proposes (#856), and the card of anything else that
+        # names this write: the item as it stands now, then the date an
+        # approval would give it.
+        when = _suggested_date(args.get("due_date"))
+        line = _item_line(session, row, tools)
+        if line is None or when is None:
+            return {"title": "기한 옮기기", "body": GONE}
+        return {"title": "기한 옮기기", "body": f"{line}\n→ 새 기한: {when}"}
     ids = ", ".join(f"{k}={v}" for k, v in args.items())
     return {"title": row.kind, "body": ids}
+
+
+def _item_line(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str | None:
+    """The item a proposal would change, as B's ``action_item_status`` gives it
+    now: its text, who holds it, its date and status -- or ``None`` when it is
+    gone or not this team's (B checks the team, as ``bind_scope`` does on
+    approval).
+
+    Read when the card is read, so the approver sees the item as it stands,
+    not as it stood when the proposal was made. An item still waiting for
+    confirmation comes back from B without its text (rule 3).
+    """
+    read = tools.get("extraction.action_item_status")
+    if read is None:
+        return None
+    result = read(
+        session, team_id=row.team_id, action_item_id=row.arguments.get("action_item_id", "")
+    )
+    if not result.ok or not result.items:
+        return None
+    item = result.items[0]
+    return f"{item.title} · {item.body}"
 
 
 def _followup_gaps(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:

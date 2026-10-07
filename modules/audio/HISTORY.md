@@ -1132,16 +1132,49 @@ had to pick a meaning to ship** — speaker labels, one per diarization label �
 first. Nothing reads the field today, which is the only reason the choice was
 still free.
 
-### Transcription on the dev server's GPU — unmeasured (2026-10-07)
+### Transcription on the dev server's GPU — 0.30× against 1.7× on its CPU (2026-10-07)
 
 The dev server's one worker took every queue on `--pool=solo`, so one
-transcription (about 1.3× the recording on its i5-9400F) held up every other
-upload and every task of B, C, D and E. It is now two workers, and module A's
-runs Whisper on the host's RTX 3060 (`AUTUNE_AUDIO_DEVICE=cuda`, so
-`large-v3` at float16). **Nothing about CUDA has been measured yet**: not the
-speed, not whether the transcript matches the CPU's, not pyannote sharing 12 GB
-with Whisper. The first run on the server should record all three here, against
-the same recording the CPU numbers came from.
+transcription held up every other upload and every task of B, C, D and E. It is
+now two workers, and module A's runs Whisper on the host's RTX 3060
+(`AUTUNE_AUDIO_DEVICE=cuda`, so `large-v3` at float16).
+
+The same 352 s recording, uploaded through the stored path on the dev site on
+each side of the change:
+
+| Run | Device | Took | ×audio |
+| --- | --- | --- | --- |
+| 2026-10-06 12:02 KST | CPU, i5-9400F, int8 | 603 s | 1.71× |
+| 2026-10-06 12:36 KST | CPU, i5-9400F, int8 | 611 s | 1.74× |
+| 2026-10-07 12:41 KST | GPU, RTX 3060, float16 | 104 s | **0.30×** |
+
+**About 5.8× faster, and inside the 1.5× target the server's CPU was
+missing.** This section first said a transcription took "about 1.3×" on that
+CPU. That was the laptop's figure (the 1.32–1.35× above, diarization on MPS),
+not the server's: measured there, the CPU was 1.7×, over target.
+
+What the numbers are, and are not:
+
+- **"Took" is `aud_jobs.finished_at − created_at`**, from the upload to the
+  last write, so queue time is inside it. The two CPU runs agree within 8 s,
+  which suggests neither waited behind another job; the GPU run is the only
+  job its worker had.
+- **No second clock to check them against.** The rows above that carry a
+  "Clock" column compare Celery's monotonic duration with wall time. Celery's
+  duration for these runs was in the workers' logs, which a restart of Docker
+  on the server at 14:20 KST discarded. The server is a desktop that does not
+  sleep, which makes a stalled clock unlikely; it is not ruled out.
+- **One GPU success.** The same recording failed twice on the GPU before it:
+  at 11:27 (after 123 s) and at 12:23 (after 80 s, while the server's C: drive
+  was full). `aud_jobs` keeps no reason and the logs are gone, so why is not
+  known. Two later jobs also stopped in diarization: one failed after 1 s at
+  13:24, one sat `running` from 14:30. Until those are explained this is a
+  speed, not a reliability, result.
+- **The device itself is inferred, not logged.** The `whisper_loading` line
+  that names it went with the logs; 5.8× is not something the same CPU does.
+- **Still unmeasured:** whether the GPU's transcript matches the CPU's
+  (float16 against int8), and how much of the 12 GB Whisper and pyannote take
+  together. Record both, and the next run's `whisper_loading` line, here.
 
 ### Detector gaps
 
@@ -1188,6 +1221,8 @@ Ordered by what the measurements say, not by what is pleasant.
    in #186. Still second on this list: the six-week number passes only on an
    11-minute file with a thin margin, and the three-month one does not pass
    at all without the GPU.
+   On the dev server's GPU the whole stored path is now 0.30× (2026-10-07,
+   §6), inside both; a single run, with failures beside it still unexplained.
 
 3. **An evaluation set.** Every threshold in this module is a placeholder chosen
    from one recording: the masking thresholds, the repetition guard, the glossary

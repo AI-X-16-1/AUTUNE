@@ -13,19 +13,22 @@ it is finally used. Each database touch here is short and scoped.
 from __future__ import annotations
 
 from contextlib import suppress
+from typing import Annotated
 
 import anyio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
 
 from autune_audio import masking_rules, service
 from autune_audio.config import get_settings
-from autune_audio.live import protocol, registry
+from autune_audio.live import protocol, registry, tickets
 from autune_audio.live.embedder import Embedder
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import LiveSession, TranscribeFailed
 from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber
-from autune_core import get_logger
+from autune_audio.schemas import LiveTicket
+from autune_core import CurrentUser, get_logger, get_session
 from autune_core.auth import SESSION_COOKIE
 from autune_core.db import session_scope
 from autune_core.errors import (
@@ -81,6 +84,20 @@ def build_session() -> LiveSession:
     )
 
 
+@router.post("/live/{meeting_id}/ticket", response_model=LiveTicket)
+def live_ticket(
+    meeting_id: str, user: CurrentUser, session: Annotated[Session, Depends(get_session)]
+) -> LiveTicket:
+    """A one-use ticket for ``hello``, for a socket on another host.
+
+    Asked over the page's own origin, where the session cookie goes; the
+    socket itself may be on the API's address (``NEXT_PUBLIC_LIVE_URL`` on the
+    web side), where it does not. See ``live/tickets.py``.
+    """
+    ticket = service.live_ticket(session, user=user, meeting_id=meeting_id)
+    return LiveTicket(token=ticket, expires_in=tickets.TTL_S)
+
+
 @router.websocket("/live/{meeting_id}")
 async def live(websocket: WebSocket, meeting_id: str) -> None:
     settings = get_settings()
@@ -115,7 +132,10 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         if not token:
             raise PermissionDeniedError("no token in hello and no session cookie")
         with session_scope() as db:
-            service.authenticate_live(db, token=token, meeting_id=meeting_id)
+            if tickets.is_ticket(token):
+                service.authenticate_live_ticket(db, ticket=token, meeting_id=meeting_id)
+            else:
+                service.authenticate_live(db, token=token, meeting_id=meeting_id)
             if registry.is_open(meeting_id):
                 raise _AlreadyLiveError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)

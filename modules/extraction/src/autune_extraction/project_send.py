@@ -89,9 +89,6 @@ MINUTES_TAG = ("autune_minutes", "1")
 """The private property on a minutes event. Not ``calendar_sync.TAG``: the
 due-date read-back asks Google for that one, and must not see these."""
 
-NOTION_TEXT_LIMIT = 2000
-"""Notion's limit on one text object; a longer line is cut, never sent whole."""
-
 REQUEST_BUDGET = MAX_OUTBOUND_CHARS - 1000
 """Text one request carries, under the outbound check's limit with room for the
 title, the meeting id and Slack's or Jira's own fields. Longer minutes go to
@@ -235,7 +232,7 @@ def minutes(session: Session, meeting_id: str) -> tuple[list[Minutes], int]:
 
 
 def _text(content: str) -> list[dict[str, Any]]:
-    return [{"type": "text", "text": {"content": content[:NOTION_TEXT_LIMIT]}}]
+    return [{"type": "text", "text": {"content": content[: service.NOTION_TEXT_LIMIT]}}]
 
 
 def _notion_blocks(m: Minutes) -> list[dict[str, Any]]:

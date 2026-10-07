@@ -26,6 +26,7 @@
 /agent/src/autune_agent/subagents/followup/    @PARKJAEKYUNG0525
 /agent/src/autune_agent/subagents/workload/    @kjfcvx12
 /agent/src/autune_agent/subagents/report/      @lsh2217
+/agent/src/autune_agent/subagents/tracker/     @kjfcvx12
 
 # Frontend is cut along the same axis; one person owns both halves.
 /apps/web/src/features/transcript/  @mkkim68

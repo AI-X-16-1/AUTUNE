@@ -49,7 +49,7 @@ from sqlalchemy.orm import Session
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 
-from . import service, tasks
+from . import days_off, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
@@ -141,9 +141,11 @@ def _item_finding(item: ActionItemRead, today: date) -> dict[str, Any]:
         who = "재배정 필요"
     due = item.due_date.isoformat() if item.due_date else "기한 없음"
     overdue = _overdue(item, today)
+    # ``done`` would have the reader say it was finished (review of #979).
+    status = "closed" if item.closed_unfinished else item.status
     return {
         "title": item.description,
-        "body": f"{who} · {due}{' · 기한 지남' if overdue else ''} · {item.status}",
+        "body": f"{who} · {due}{' · 기한 지남' if overdue else ''} · {status}",
         "score": _urgency(item, today),
         "id": item.id,
         "meeting_id": item.meeting_id,
@@ -184,7 +186,9 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
 
     Returns the meeting's confirmed action items, most urgent first (at most
     five), and in ``summary`` how many are still waiting for confirmation.
-    Unconfirmed items are counted, never quoted.
+    Unconfirmed items are counted, never quoted. Each item's line ends with its
+    status; ``closed`` is an item closed without being finished -- do not
+    report it as done.
     """
     if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
@@ -837,7 +841,8 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
     tools return ids.
 
     Returns the item as one finding. An item still waiting for confirmation is
-    reported as waiting, without its text (#261 rule 3).
+    reported as waiting, without its text (#261 rule 3). A status of ``closed``
+    is an item closed without being finished -- not done.
     """
     row = session.get(ExtActionItem, action_item_id)
     if row is None or _team_of(session, row.meeting_id) != team_id:
@@ -917,6 +922,67 @@ def open_followup_item(session: Session, team_id: str) -> dict[str, Any]:
     )
 
 
+MAX_HOLIDAY_RANGE_DAYS = 366
+"""The longest range ``public_holidays`` answers, from its first day to its
+last. A year, leap day included: nothing here plans further ahead, and a wider
+one is a wrong argument rather than a question."""
+
+
+def _not_a_range(reason: str, summary: str) -> dict[str, Any]:
+    """The refusal for a range ``public_holidays`` cannot answer. It names the
+    argument and never repeats the value, as ``_not_a_day_count`` does."""
+    return _result(ok=False, reason=reason, summary=summary, items=[], evidence=[], confidence=0.0)
+
+
+def public_holidays(session: Session, start: str, end: str) -> dict[str, Any]:
+    """Use this when a day has to be chosen and must not fall on a public holiday
+    -- a follow-up meeting's suggested date (#964, #985). Do not use it to learn
+    whether a person is away or a team is off: nothing here is about a person
+    or a team, and it takes neither.
+
+    ``start`` and ``end`` are ``YYYY-MM-DD``; both days are in the range, which
+    may be at most ``MAX_HOLIDAY_RANGE_DAYS`` days long.
+
+    Returns one row, ``공휴일``, whose ``days`` lists Korea's public holidays in
+    the range as ISO dates, earliest first -- substitute holidays and election
+    days among them, and a holiday that falls on a weekend too. One row holding
+    them all, because a row a day would be cut at five. The row is there with
+    an empty list when the range has none: that is an answer, and not the same
+    thing as a refusal.
+
+    They are the days B holds its own digests back on
+    (``days_off.is_public_holiday``): Google's public calendar of Korea's
+    holidays as it was last read and stored, or the table in code while there
+    is no read from the last two weeks. Dates of public record -- no call
+    leaves when this is asked, and nothing is read or said about anybody.
+
+    ``ok: false`` for a date that is not one, an ``end`` before ``start``, or a
+    longer range.
+    """
+    try:
+        first = date.fromisoformat(start)
+    except (TypeError, ValueError):
+        return _not_a_range("start is not a date", "시작일이 날짜 형식이 아닙니다 (YYYY-MM-DD).")
+    try:
+        last = date.fromisoformat(end)
+    except (TypeError, ValueError):
+        return _not_a_range("end is not a date", "종료일이 날짜 형식이 아닙니다 (YYYY-MM-DD).")
+    if last < first:
+        return _not_a_range("end is before start", "종료일이 시작일보다 앞입니다.")
+    if (last - first).days >= MAX_HOLIDAY_RANGE_DAYS:
+        return _not_a_range(
+            f"the range is longer than {MAX_HOLIDAY_RANGE_DAYS} days",
+            f"기간은 {MAX_HOLIDAY_RANGE_DAYS}일 이내여야 합니다.",
+        )
+    days = days_off.public_holidays_between(session, first, last, now=datetime.now(UTC))
+    return _result(
+        summary=f"{first.isoformat()} ~ {last.isoformat()} 공휴일 {len(days)}일.",
+        items=[{"title": "공휴일", "days": [day.isoformat() for day in days]}],
+        # Public dates cite no utterance: evidence is for what was said.
+        evidence=[],
+    )
+
+
 def _team_of(session: Session, meeting_id: str) -> str | None:
     """The meeting's team -- ``None`` for a meeting that is not there or is past
     its retention window (``service.within_retention``, #656), so every tool
@@ -952,6 +1018,7 @@ TOOLS = [
     person_action_items,
     action_item_status,
     open_followup_item,
+    public_holidays,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
@@ -1096,14 +1163,18 @@ def close_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
 
     L2 -- runs only after a person approves. For work that was done use
     ``set_action_item_status`` with ``done``. Refused for an item still
-    waiting for confirmation and for one already done.
+    waiting for confirmation, for one already done and for one already closed.
     """
     with session_scope() as session:
-        row = session.get(ExtActionItem, action_item_id)
+        # Held to the commit: a second close, or an edit of the status, waits
+        # and then reads what this one left (review of #979).
+        row = session.get(ExtActionItem, action_item_id, with_for_update=True)
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
         if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
             return _refused("not confirmed", "확정되지 않은 액션아이템은 닫을 수 없습니다.")
+        if row.status == ActionStatus.DONE.value and service.closed_unfinished(session, [row.id]):
+            return _refused("already closed", "이미 닫힌 액션아이템입니다.")
         if not service.close_without_finishing(session, row):
             return _refused("already done", "이미 완료된 액션아이템입니다.")
     # Its copies outside follow as they follow any change of status.
