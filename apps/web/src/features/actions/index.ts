@@ -7,5 +7,6 @@
  */
 export { ActionItemsScreen } from "./components/ActionItemsScreen";
 export { IntegrationSettingsScreen } from "./components/IntegrationSettingsScreen";
+export { MaterialsScreen } from "./components/MaterialsScreen";
 export { MeetingSummaryScreen } from "./components/MeetingSummaryScreen";
 export { TeamActionsScreen } from "./components/TeamActionsScreen";

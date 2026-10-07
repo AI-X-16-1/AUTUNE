@@ -333,6 +333,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
+| `ext_materials` | The Google Drive files a team keeps on its 자료 screen (#817): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`). Not the file and not the link as pasted -- Autune reads nothing of the file, holds no Drive permission, and builds Google's address from the id where it is shown. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 a team; any member deletes one; goes with the team |
 | `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
 | `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
@@ -476,6 +477,9 @@ other module's tables.
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
+| GET | `/materials?team_id=` | The Drive files the team keeps on its 자료 screen, the newest first (#817). Members of the team only |
+| POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
+| DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf. Any member; the Drive file is not touched |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order (S15 shows them beneath the statement), plus the same `context` |
@@ -840,6 +844,17 @@ versions.
 
 ## Privacy notes
 
+- A team's materials (`ext_materials`, #817) are a title and a Drive file id,
+  by the decision on #817 to stop at the link and the preview: no text of a
+  file is read, stored, embedded or sent to a model, no Drive permission is
+  asked for, and no agent tool reads the table. The preview is Google's page
+  under the viewer's own sign-in, so registering a file shows its title to the
+  team and the file to nobody Google would not show it to. A row names no
+  person -- not who registered it, not who opened it. The title is typed by a
+  member and stored as typed, so it can hold a name; it and the file id stay
+  out of logs and error messages, and neither goes to any outside service.
+  The rows are not an analysis result and have no retention window: a member
+  deletes one at any time, and they go with the team.
 - Only what an issue needs goes to Notion or Jira: the action description,
   assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
