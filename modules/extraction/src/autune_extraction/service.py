@@ -4017,13 +4017,21 @@ def set_notification_pause(
 ) -> ExtNotificationPause | None:
     """Replace this person's pause with ``starts_on``..``ends_on``, both days
     included, or clear it when both are ``None``. One range a person: setting
-    another replaces the first, nothing is kept of it. Only the caller's own --
-    the route passes the signed-in person and there is no way to name another.
+    another replaces the first, and nothing is kept of the first's dates. Only
+    the caller's own -- the route passes the signed-in person and there is no
+    way to name another.
+
+    The row is replaced in place and comes back locked. The one thing it
+    carries over is ``calendar_event_id`` -- the event the person asked for on
+    their own calendar -- which ``leave_calendar.set_leave`` moves or removes
+    next. The lock covers the dates and that id; the calendar itself is asked
+    after the commit, and a double press is kept to one event there by
+    ``calendar_claimed_at``.
     """
     if (starts_on is None) != (ends_on is None):
         raise ValidationError("a pause needs both its first and its last day, or neither")
-    session.execute(delete(ExtNotificationPause).where(ExtNotificationPause.user_id == user_id))
     if starts_on is None or ends_on is None:
+        session.execute(delete(ExtNotificationPause).where(ExtNotificationPause.user_id == user_id))
         session.flush()
         return None
     if ends_on < starts_on:
@@ -4035,10 +4043,18 @@ def set_notification_pause(
         raise ValidationError("a pause that has already ended would change nothing")
     if (starts_on - today).days > MAX_PAUSE_AHEAD_DAYS:
         raise ValidationError(f"a pause may start {MAX_PAUSE_AHEAD_DAYS} days ahead at most")
-    pause = ExtNotificationPause(
-        user_id=user_id, starts_on=starts_on, ends_on=ends_on, created_at=now
+    session.execute(
+        _insert_if_absent_into(session, ExtNotificationPause)
+        .values(user_id=user_id, starts_on=starts_on, ends_on=ends_on, created_at=now)
+        .on_conflict_do_nothing(index_elements=["user_id"])
     )
-    session.add(pause)
+    pause = session.execute(
+        select(ExtNotificationPause)
+        .where(ExtNotificationPause.user_id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalar_one()
+    pause.starts_on, pause.ends_on, pause.created_at = starts_on, ends_on, now
     session.flush()
     return pause
 

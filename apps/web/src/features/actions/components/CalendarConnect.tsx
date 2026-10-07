@@ -44,6 +44,12 @@ import { getNotificationPause } from "../api";
  * about what is *not* read is about one read
  * only: "no title, no other event" is true of the out-of-office read and
  * false of the picker.
+ *
+ * **What a ticked 휴가 기간 writes is said here as well** (the user,
+ * 2026-10-06): the same grant puts the person's own leave on their calendar
+ * when they tick "내 Google 캘린더에도 추가" in that setting, and only then.
+ * On every server, connected or not, for the reason above -- it is a use of
+ * the grant, so it is said where the grant is asked for.
  */
 /** The person's own calendar: Google shows whichever account the browser is
  * signed in to, which is where a connected person's due dates were put. */
@@ -160,6 +166,15 @@ export function CalendarConnect() {
         그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
         이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느
         일정에 적었는지만 나중에 지울 수 있도록 기록합니다.
+      </span>
+      <span
+        className="basis-full text-[var(--color-ink-muted)]"
+        style={{ fontSize: "var(--text-metaSmall)" }}
+      >
+        &lsquo;휴가 기간&rsquo;에서 &lsquo;내 Google 캘린더에도 추가&rsquo;를 직접 체크하고
+        저장할 때에만, 그 기간을 내 캘린더에 &lsquo;휴가&rsquo;라는 비공개 종일 일정으로
+        넣습니다. 체크를 풀거나 기간을 해제하면 그 일정을 지우며, 기간이 지난 일정은 내
+        캘린더에 남습니다. 이를 위해 내 캘린더의 다른 일정을 읽지는 않습니다.
       </span>
       {note ? (
         <span
