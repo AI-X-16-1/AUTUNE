@@ -23,7 +23,7 @@ from autune_contracts import (
 
 from .registry import Toolbox, is_personal_only
 
-SUBAGENT_NAMES = ("research", "briefing", "followup", "workload", "report")
+SUBAGENT_NAMES = ("research", "briefing", "followup", "workload", "report", "tracker")
 
 TRIGGER_EVENTS = (TRANSCRIPT_READY, INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED)
 """The pipeline events the main agent listens to on everyone's behalf -- section
