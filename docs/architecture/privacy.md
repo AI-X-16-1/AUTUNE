@@ -582,7 +582,9 @@ the feature needs.
     with the person's grant, as a due-date event's is). A save that says
     neither -- the box was not drawn, the calendar not being connected just
     then -- leaves the event and its id as they stand, and makes no event
-    where there is none. Once the last day has passed
+    where there is none; an event the person deleted in Calendar is not
+    made again by such a save either -- the id is dropped, and only a tick
+    makes one. Once the last day has passed
     the row is deleted as before, the id with it, and **the event stays** on
     the calendar as the person's own record; Autune can no longer reach it.
     A calendar disconnected while the event stands cannot be reached either:
