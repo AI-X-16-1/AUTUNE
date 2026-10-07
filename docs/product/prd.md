@@ -143,7 +143,7 @@ reports) → VP/CTO (dashboard).
 
 A chat assistant that moves first: it tells the team what is due and what is
 stuck before anyone asks, and answers questions about any meeting the team has
-held. One **main agent** talks to people and routes; five **subagents**, one
+held. One **main agent** talks to people and routes; six **subagents**, one
 per feature and one owner each, do the work. Design and ownership:
 `../architecture/agent-layer.md` section 3.
 
@@ -155,6 +155,7 @@ per feature and one owner each, do the work. Design and ownership:
 | Follow-up | 박재경 | When progress and unresolved topics say another meeting is needed, a proposal to the team lead only |
 | Workload | 강민구 | When one person is overloaded and another is free, a redistribution proposal to the manager only; Gmail, Google Calendar and Jira integration (Jira per #82) |
 | Report | 이승환 | After a meeting, the summary minutes report |
+| Tracker ("할 일 챙김") | 강민구 | The sixth, added on #856: when a confirmed action item is past its due date, a proposal to the manager to move the date. Closing a long-carried item is accepted and not built yet |
 
 What holds for all of them:
 
@@ -290,7 +291,7 @@ keep the team building real models rather than prompt chains.
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
 | External | Notion API, Jira REST API, Google Calendar API, Gmail API (proposed) | Action item, schedule and mail sync |
-| Agent (#260) | LangGraph, Gemini | Supervisor graph over five subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
+| Agent (#260) | LangGraph, Gemini | Supervisor graph over six subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
 | Infra | Vercel (frontend); a self-hosted desktop server (RTX 3060) running Docker Compose behind Cloudflare Tunnel (backend) | STT inference on our own GPU; HTTPS and WebSocket without opening a port |
 | Desktop (Phase 2) | Electron | System audio capture |
 
@@ -331,7 +332,8 @@ linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
 **Added by #260, and no larger:** the main agent with chat and the
 morning briefing; five subagents — Research, Briefing, Follow-up, Workload,
-Report (5.7); work-item state with self-scheduled checks; the L0–L3 action
+Report (5.7) — and a sixth, Tracker, added on #856 by its owner with the main
+agent owner's acceptance; work-item state with self-scheduled checks; the L0–L3 action
 permission model with approval on anything that moves a person. Explicitly
 *not* in it: a subagent per module, a subagent calling another, web search,
 sending mail, and autonomous external writes.
