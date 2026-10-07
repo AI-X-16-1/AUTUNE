@@ -51,8 +51,9 @@ is L1 since #576 and would run without the lead's approval."""
 
 DUE_DATES = "extraction.meeting_due_dates"
 """M's open dated action items as due dates and confirmation flags, on one row
-(#963; B's side is #966). Until B ships it the call fails, and the date falls
-back to the team's rhythm -- the proposal itself never waits on it."""
+(#963; B's side is #966). B hands over confirmed items only, so right after a
+meeting the date is mostly the rhythm's. Until B ships it the call fails, and
+the date falls back to the team's rhythm -- the proposal never waits on it."""
 
 TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, DUE_DATES)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")

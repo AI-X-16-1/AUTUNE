@@ -225,11 +225,18 @@ assignee, and it leaves out unconfirmed items. A new read in B's `tools.py`
 (#966) returns:
 
 - one row with `due_dates`: a list of `{"date": ISO, "confirmed": bool}`, one
-  per open dated item, ascending. A list on a single row, because `ToolResult`
-  cuts `items` at five and the rule needs every date.
+  per open, dated **and confirmed** item, ascending. A list on a single row,
+  because `ToolResult` cuts `items` at five and the rule needs every date.
 - in `summary`: the counts of open items, undated items and unconfirmed items.
-- no title, no assignee, no item text, confirmed or not. Evidence is the item
-  ids.
+- no title, no assignee, no item text. Evidence is the confirmed items' ids.
+
+**Unconfirmed dates stay in B** (B's owner on #966, 2026-10-07). B's outbound
+rule (#246, #261 rule 3) lets nothing of an unconfirmed item leave B but a
+count, and a date the card's suggestion is built from would be the first
+exception. The after-meeting DM (#953) holds the same line. `confirmed` stays
+in each entry, always `true` for now, so the rule and its tests stay as they
+are. If B ever hands over draft dates, they count as `draft` with no change
+here.
 
 Titles are not read in this stage. Stage 2 (section 7) may read the titles of
 confirmed items only, under B's outbound rule (#261 rule 3).
@@ -311,6 +318,8 @@ text, as settled on #509.
 - **Unconfirmed due dates at proposal time** (#963). **Decided 2026-10-07: A**,
   with two refinements. A draft's past date is dropped rather than treated as
   overdue (section 5, step 2). The mark travels as `basis` in the arguments.
+  B then chose to hand over confirmed dates only; see "What A gives in
+  practice" below.
   Follow-up runs on `intelligence.completed`, minutes after B extracted M's
   items. Few of them are confirmed then, so most of the dates section 5 reads
   are B's drafts. Two ways to handle it:
@@ -324,6 +333,15 @@ text, as settled on #509.
   A needs only B's read and the card's mark. B can follow if #22's check shows
   draft dates moving many suggestions. B's confirmation event would also suit
   other subagents.
+
+  **What A gives in practice** (#966, 2026-10-07). B hands over confirmed
+  dates only (section 5, "Unconfirmed dates stay in B"). At
+  `intelligence.completed` few items are confirmed, so most proposals made
+  right after a meeting carry `basis = cadence`, and `draft` does not occur
+  until B changes that. The code and the card's mark (#967) stay as built:
+  they cost nothing idle and need no change if it does. A date that follows
+  confirmations as they happen is option B, still open. #22's check records
+  how often a proposal was `cadence` because nothing was confirmed yet.
 - **Stage 2: a model-written reason** (after #963). The card could say why in a
   sentence, for example that two items are due on Thursday and Friday and the
   results can be compared the following Monday. A model writes only that
