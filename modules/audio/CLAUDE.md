@@ -44,11 +44,16 @@ Contract: `/docs/architecture/contracts.md`.
   `team_members` row. The address is a third party's; what removes it is
   listed in `invitations.py`. The link may also be mailed from the inviter's
   own Gmail (`invitation_mail.py`), inside the request that made it. The
-  team's members can list what is pending and cancel it; a member leaves a
-  team only by their own act (`service.leave_team`), and the last one cannot.
-  Leaving deletes that membership and the pending invitations they sent to
-  the team, and nothing else: their participant rows keep their `user_id`
-  (`privacy.md` section 4).
+  team's members can list what is pending and cancel it. A link may be made
+  for no address: then whoever opens it signed in joins, so it works once
+  and for an hour, and an inviter has one open for a team. That limits a
+  mistake and does not undo one: a member can leave a team by their own act
+  and nobody can take another member off it
+  (`docs/architecture/privacy.md`), so do not widen the link.
+  A member leaves only by their own act (`service.leave_team`), and the last
+  one cannot. Leaving deletes that membership and the pending invitations
+  they sent to the team -- a link for no address among them -- and nothing
+  else: their participant rows keep their `user_id` (`privacy.md` section 4).
 - `aud_speaker_names` — a name typed for a speaker with no account on the
   team, for that one meeting. No user id and no voice; it never reaches the
   published transcript. Cascades with the meeting.

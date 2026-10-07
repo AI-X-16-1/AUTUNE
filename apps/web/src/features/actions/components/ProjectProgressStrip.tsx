@@ -7,13 +7,19 @@ import type { ProjectProgress } from "../projectProgress";
  * A line per project above the team board (the user, 2026-10-04): how much of
  * the agreed work is done and how much is late. Choosing a project filters the
  * board to it; choosing it again clears the filter. Not drawn when no project has a confirmed item.
+ *
+ * `teams` is the team to say beside a project's name (`projectTeams`): two
+ * teams' projects of one name would otherwise be two lines nobody can tell
+ * apart.
  */
 export function ProjectProgressStrip({
   lines,
+  teams,
   value,
   onChoose,
 }: {
   lines: ProjectProgress[];
+  teams?: Map<string, string>;
   value: ProjectChoice;
   onChoose: (choice: ProjectChoice) => void;
 }) {
@@ -24,6 +30,7 @@ export function ProjectProgressStrip({
       {lines.map(({ project, total, done, overdue }) => {
         const percent = Math.round((done / total) * 100);
         const chosen = value === project.id;
+        const team = teams?.get(project.id);
         return (
           <li key={project.id} style={{ listStyle: "none" }}>
             <button
@@ -44,10 +51,22 @@ export function ProjectProgressStrip({
                 style={{ fontWeight: 600 }}
               >
                 {project.name}
+                {team !== undefined ? (
+                  <span
+                    className="text-[var(--color-ink-muted)]"
+                    style={{ fontWeight: 400 }}
+                  >
+                    {` · ${team}`}
+                  </span>
+                ) : null}
               </span>
               <span
                 role="progressbar"
-                aria-label={`${project.name} 완료율`}
+                aria-label={
+                  team !== undefined
+                    ? `${project.name} · ${team} 완료율`
+                    : `${project.name} 완료율`
+                }
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={percent}

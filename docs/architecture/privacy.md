@@ -351,6 +351,30 @@ to nobody else, with when the link lapses and who invited
 it reads the same for an address with an account and one without, and it
 never carries the token or its hash. Any member of the team may cancel one.
 
+**An invitation may also be made for no address** (#552, 2026-10-06). It
+holds nobody's address -- there is none to hold -- and for the same reason
+nothing but the link says who may use it: **whoever has the link joins the
+team by signing in.** That is the one place the read boundary of a team
+rests on a link alone, so it is kept small: the link admits one person and
+is then gone; it **lapses one hour** after it is made (seven days is for an
+invitation with an address); a person has one open for a team at a time,
+and making another ends the earlier one; it is never mailed by Autune; and
+it is in the same pending list, as a link with no address, where any member
+of the team can cancel it. Its token is stored as a hash like any other,
+and log lines carry ids. Nobody is told when somebody joins by it -- the
+member list shows them. **Somebody who joins by it stays for as long as
+they choose to.** A member can leave a team by their own act (section 4,
+the departure rule), and nobody can take another member off: removing
+another member was never built, and otherwise a `team_members` row goes only
+with the account or the team. So a link that reaches the wrong person admits
+them, with everything the team can read, until they themselves leave -- the
+team cannot put them out -- and the limits above are all there is against
+it: they make it one person within one hour, they do not undo it. This is
+accepted for now, knowingly; a way to remove a member is what would change
+it. A link somebody made goes when they leave the team, like their other
+pending invitations. An invitation for an address is unchanged and is
+still only for that address.
+
 The inviter may have the link **mailed from their own Gmail** (#552), when
 they ask and only through their own `gmail.send` grant -- Autune runs no mail
 server and holds no shared sender. That hands the address and the link to
@@ -493,8 +517,14 @@ the feature needs.
   - **Slack, the morning DM:** on a Tuesday-to-Friday morning in Korea, a
     direct message to a person about their own items on one team: what
     changed since the last one (items of theirs now done, items they newly
-    hold -- made, given to them, or confirmed since) and today's work (late, due today, in progress; the rest as a
-    count). It carries what a reminder carries about each item -- its
+    hold -- made, given to them, or confirmed since) and today's work (late;
+    due today; standing untouched for five days or more, when the item is in
+    progress or has no due date; in progress; the rest as a count). A
+    standing item's line says how many days it has stood: the
+    time since the item was made or last edited, read from the same edit
+    record as "what changed" and worked out each morning, not stored. It is
+    how long an item has waited, said to the person who holds it. It carries
+    what a reminder carries about each item -- its
     description, a late item's due date, the meeting's title -- and a link to
     the board; no utterance, and nobody else's items. "What changed" is read
     from `ext_edit_events`, which holds that an item was edited, which fields

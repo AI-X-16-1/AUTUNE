@@ -786,8 +786,9 @@ A person can delete their own utterances without deleting the meeting
 `@on_speech_deleted("context")` (`service.forget_deleted_speech`), which runs
 before A deletes the utterances and clears what D copied from them. The two
 kinds of copy follow different rules, because they hold different things. A
-**topic** is cleared only when **every** line it was cut from is deleted (C's
-rule): its label is a name several people gave, so it is still the meeting's,
+**topic** is cleared only when **every** line it was cut from is deleted, in this
+call or an earlier one, so a line already gone from `utterances` counts (#900):
+its label is a name several people gave, so it is still the meeting's,
 said in someone else's words too. A **decision statement** is cleared when
 **any** line it was drawn from is deleted: B sends the lines it cited joined
 word for word, and B itself drops that sentence on the same signal, so a
@@ -795,7 +796,7 @@ deleted line's words would otherwise stay in the decision history.
 
 | Row | When it goes | What happens |
 | --- | --- | --- |
-| `ctx_embeddings` (`kind='topic'`) and the `ctx_topic_links` carrying its label | `utterance_ids` all deleted, or `NULL` (no record) | deleted |
+| `ctx_embeddings` (`kind='topic'`) and the `ctx_topic_links` carrying its label | no line in `utterance_ids` still exists once this batch is deleted, or `NULL` (no record) | deleted |
 | `ctx_decision_versions.current_statement` | any of `source_utterance_ids` deleted, or `NULL` (no record) | reads `삭제된 발화에서 만든 항목`; the version, its `change_type` and its place in the thread stay |
 | a later version's `previous_statement`, and the thread's `topic_label`, when they copy a cleared statement | follows the statement | read the same |
 | `ctx_team_agendas` of the meeting's team | always | dropped; B republishes it every few minutes with its own titles already rewritten |

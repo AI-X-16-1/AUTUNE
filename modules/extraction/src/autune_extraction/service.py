@@ -411,6 +411,13 @@ def answer_from_slack(response: ConfirmationResponse) -> None:
     the workspace the meeting's team installed Autune into -- the same "only
     the speaker" the web path checks in ``answer_confirmation`` (#610 review).
     Anything else is logged by id and dropped, like an orphaned click.
+
+    **And when the speaker is still on the meeting's team** (the user,
+    2026-10-07). A DM sent while they were a member stays in their Slack after
+    they leave, buttons and all; "약속입니다" on it would draft an item on a
+    board they can no longer open. The web refuses the same act with its 404
+    (``require_readable_meeting``); here the click is dropped, which is all a
+    click that does not count ever gets -- the message does not change.
     """
     with session_scope() as session:
         allowed = _clicked_by_the_speaker(session, response)
@@ -435,7 +442,9 @@ def _clicked_by_the_speaker(session: Session, response: ConfirmationResponse) ->
     ):
         return False
     team_id = session.scalar(select(Meeting.team_id).where(Meeting.id == row.meeting_id))
-    slack = load_integration(session, team_id, "slack") if team_id else None
+    if not team_id or not _is_team_member(session, user_id=speaker, team_id=team_id):
+        return False
+    slack = load_integration(session, team_id, "slack")
     return (
         slack is not None
         and bool(response.workspace_id)
@@ -2436,14 +2445,39 @@ def consented_utterance_ids(session: Session, meeting_id: str) -> set[str]:
 
 
 def team_roster(session: Session, meeting_id: str) -> list[str]:
-    """Display names of the members of the team that held this meeting -- what
-    an outbound classifier replaces before sending (#411). Read only."""
+    """The display names an outbound model is not sent for this meeting (#411):
+    the members of the team that held it, and the accounts named on the
+    meeting's own participant rows. Read only.
+
+    **The second half is for somebody who has left the team** (the user,
+    2026-10-06). Membership alone made a name replaceable only for as long as
+    its owner stayed: a meeting extracted again afterwards -- a failed run's
+    retry, "다시 추출", the consent sweep -- would have sent the name of a
+    person who spoke in it as it was said. Leaving a team (#552) removes the
+    membership and leaves the participant row's ``user_id`` alone, so the
+    people who were in the room are still found from the meeting.
+
+    Not covered, and not coverable from what is stored: somebody who has left
+    and is named in a meeting they did not speak in, or spoke in without ever
+    being identified -- nothing records that they were once on the team; and
+    a deleted account, whose participant rows lose their ``user_id`` and whose
+    display name is gone with it. Like any name that is on neither list, these
+    go as they were said.
+
+    By ``users.id``, so the same meeting gets the same list on every run.
+    """
+    on_the_team = (
+        select(TeamMember.user_id)
+        .join(Meeting, Meeting.team_id == TeamMember.team_id)
+        .where(Meeting.id == meeting_id)
+    )
+    in_the_meeting = select(Participant.user_id).where(
+        Participant.meeting_id == meeting_id, Participant.user_id.is_not(None)
+    )
     return list(
         session.scalars(
             select(User.display_name)
-            .join(TeamMember, TeamMember.user_id == User.id)
-            .join(Meeting, Meeting.team_id == TeamMember.team_id)
-            .where(Meeting.id == meeting_id)
+            .where(or_(User.id.in_(on_the_team), User.id.in_(in_the_meeting)))
             .order_by(User.id)
         )
     )
@@ -4104,10 +4138,20 @@ def daily_digest_content(
     mark at all and is not seen: an already confirmed item given to a person
     by ``fill_identified_assignees``.
 
-    **Today** is their open items: late ones, the ones due today, then the
-    ones in progress -- each item once, in the first that fits -- and the
-    rest only counted. Their own items on this team, as the weekly digest
-    reads them: a meeting past its retention window is left out."""
+    **Today** is their open items: late ones, the ones due today, the ones
+    nobody has touched for days, then the ones in progress -- each item once,
+    in the first that fits -- and the rest only counted. Their own items on
+    this team, as the weekly digest reads them: a meeting past its retention
+    window is left out.
+
+    **Untouched for days** (``_idle_days``; the user, 2026-10-07) is read from
+    the same record as "what changed": when the item was made and when it was
+    last edited, never what the edit was or who made it. So it says how long
+    the *item* has stood, to the person who holds it, and nothing is kept of
+    it -- it is worked out again each morning. **Only an item in progress, or
+    one with no due date, is named** (the user, the same day): a not-started
+    item whose date is still ahead is not stalled, it is not due yet, and it
+    stays in the count."""
     marks: dict[str, set[str]] = {}
     for item_id, kind, fields in session.execute(
         select(ExtEditEvent.action_item_id, ExtEditEvent.kind, ExtEditEvent.fields)
@@ -4139,9 +4183,11 @@ def daily_digest_content(
     taken_on: list[reminders.DigestLine] = []
     late: list[reminders.DigestLine] = []
     due_today: list[reminders.DigestLine] = []
+    stalled: list[reminders.DigestLine] = []
     in_progress: list[reminders.DigestLine] = []
     others = 0
     open_rows = _open_items_of(session, user_id=owed.user_id, team_id=owed.team_id, now=now)
+    idle = _idle_days(session, [item for item, _team, _title in open_rows], now=now)
     confirmed = _confirmed_since(
         session,
         [
@@ -4159,18 +4205,64 @@ def daily_digest_content(
             late.append(line)
         elif item.due_date == owed.day:
             due_today.append(line)
+        elif item.id in idle and (
+            item.status == ActionStatus.IN_PROGRESS.value or item.due_date is None
+        ):
+            # Begun and left, or with no date to say when: work that has
+            # stopped. A not-started item whose date is still ahead is waiting
+            # for that date, and naming it every morning would only repeat.
+            stalled.append(replace(line, idle_days=idle[item.id]))
         elif item.status == ActionStatus.IN_PROGRESS.value:
             in_progress.append(line)
         else:
             others += 1
+    # Longest first; the stable sort keeps the board's order among equals.
+    stalled.sort(key=lambda line: -(line.idle_days or 0))
     return reminders.DailyDigest(
         done=done,
         taken_on=taken_on,
         late=late,
         due_today=due_today,
+        stalled=stalled,
         in_progress=in_progress,
         others=others,
     )
+
+
+def _idle_days(
+    session: Session, items: Sequence[ExtActionItem], *, now: datetime
+) -> dict[str, int]:
+    """Whole days since each of these items was last touched, for the ones
+    that have stood ``reminders.STALLED_AFTER_DAYS`` or more.
+
+    Touched is made or edited: the row's own ``created_at`` and the latest
+    ``ext_edit_events`` row of the item, whichever is later. A model's draft
+    has no ``created`` event, so the row's time is its start; a person's
+    confirmation is an edit, so an item confirmed yesterday is not old. One
+    thing changes an item and leaves no mark: ``fill_identified_assignees``
+    giving it to somebody -- such an item can read as standing since before
+    its holder had it.
+    """
+    if not items:
+        return {}
+    last_edit = {
+        item_id: at
+        for item_id, at in session.execute(
+            select(ExtEditEvent.action_item_id, func.max(ExtEditEvent.created_at))
+            .where(ExtEditEvent.action_item_id.in_([item.id for item in items]))
+            .group_by(ExtEditEvent.action_item_id)
+        ).tuples()
+    }
+    idle: dict[str, int] = {}
+    for item in items:
+        touched = _aware(item.created_at)
+        edit = last_edit.get(item.id)
+        if edit is not None:
+            touched = max(touched, _aware(edit))
+        days = (now - touched).days
+        if days >= reminders.STALLED_AFTER_DAYS:
+            idle[item.id] = days
+    return idle
 
 
 def _confirmed_since(session: Session, item_ids: Sequence[str], *, since: datetime) -> set[str]:
@@ -4295,6 +4387,16 @@ def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> li
     speaker and nobody else (``send_confirmation_dm``), so a line with no
     account behind it has nobody to go to: it waits, and is asked if the
     speaker is identified inside the window (#360).
+
+    **And the speaker is on the meeting's team now** (the user, 2026-10-07).
+    The question goes out through that team's Slack bot and links to a meeting
+    only its members can open, and its answer writes to that team's board.
+    Somebody who has left keeps their participant row and their ``user_id`` on
+    it (#552), so the speaker link alone would still find them -- for a
+    question recorded just before they left, or one a later run of the meeting
+    records. Their row is left as it is, not asked: the team sees it
+    unanswered, the same as for a speaker who never linked Slack. Reminders
+    and digests make the same test of an assignee (``_open_items_of``).
     """
     moment = now or datetime.now(UTC)
     rows = session.execute(
@@ -4308,6 +4410,13 @@ def confirmations_to_ask(session: Session, *, now: datetime | None = None) -> li
         .join(Utterance, Utterance.id == ExtConfirmation.utterance_id)
         .join(Participant, Participant.id == Utterance.participant_id)
         .join(User, User.id == Participant.user_id)
+        .join(
+            TeamMember,
+            and_(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == Participant.user_id,
+            ),
+        )
         .where(
             ExtConfirmation.sent_at.is_(None),
             ExtConfirmation.created_at >= moment - CONFIRMATION_TIMEOUT,
@@ -4513,6 +4622,7 @@ def meeting_summary(
 def project_read(row: ExtProject) -> ProjectRead:
     return ProjectRead(
         id=row.id,
+        team_id=row.team_id,
         name=row.name,
         aliases=[a for a in row.aliases.split("\n") if a],
         jira_project_key=row.jira_project_key,

@@ -23,6 +23,19 @@ its SHA-256 is stored, so the table cannot be turned back into links. Accepting
 needs a signed-in account whose email is the invited address, compared without
 case.
 
+**A link made for no address is the exception, and is kept small** (the
+module owner's conditions on #552, 2026-10-06; the one hour is also what the
+person who asked for the link set). It is a bearer link: whoever opens it
+signed in joins the team -- there is no address to hold it to. So it adds one
+person, once (the
+row goes on acceptance, like any other); it lapses ``LINK_LIFETIME`` after it
+is made, not after seven days; an inviter has one open for a team at a time,
+and making another replaces it; and the team's members see it in the pending
+list as a link with no address and can take it back (``pending``, ``cancel``).
+An invitation for an address stays the default and is unchanged: its address
+check, its lifetime, its mail. Nobody is told when somebody joins by either
+kind; the member list shows them.
+
 **Every refusal is one answer.** An unknown token, a used one, an expired one
 and one opened by another account all get ``InvitationUnusableError`` with the
 same status and the same words. The reason goes to the log, by id.
@@ -71,6 +84,10 @@ TOKEN_BYTES = 32
 LIFETIME = timedelta(days=7)
 """How long a link works. Not set on #552; proposed in the PR and ours to change."""
 
+LINK_LIFETIME = timedelta(hours=1)
+"""How long a link made for no address works (#552, 2026-10-06). Short because
+nothing but the link itself says who may use it."""
+
 MAX_PENDING = 50
 """Pending invitations one team may hold. A bound on how many third-party
 addresses a team can park here, not a product limit anybody should meet."""
@@ -101,22 +118,31 @@ def _digest(token: str) -> str:
 
 
 def invite(
-    session: Session, *, team_id: str, email: str, by: User, now: datetime | None = None
+    session: Session, *, team_id: str, email: str | None, by: User, now: datetime | None = None
 ) -> tuple[str, datetime]:
     """Make a pending invitation; the token for its link, and when it lapses.
 
     Only a member of the team may invite to it. A second invitation to the same
     address replaces the first, so an address has one live link per team and
     the earlier one stops working.
+
+    With no ``email`` the link is for no address (see the module's notes): it
+    lapses after ``LINK_LIFETIME``, and it replaces the one this inviter
+    already had open for this team -- theirs only, never a teammate's.
     """
     require_team_member(session, user_id=by.id, team_id=team_id)
     now = now or datetime.now(tz=UTC)
-    address = normalise(email)
+    address = normalise(email) if email is not None else None
+    replaced = (
+        AudTeamInvitation.email == address
+        if address is not None
+        else sa.and_(AudTeamInvitation.email.is_(None), AudTeamInvitation.invited_by == by.id)
+    )
 
     session.execute(
         sa.delete(AudTeamInvitation).where(
             AudTeamInvitation.team_id == team_id,
-            sa.or_(AudTeamInvitation.expires_at <= now, AudTeamInvitation.email == address),
+            sa.or_(AudTeamInvitation.expires_at <= now, replaced),
         )
     )
     pending = session.scalar(
@@ -133,7 +159,7 @@ def invite(
         email=address,
         token_hash=_digest(token),
         invited_by=by.id,
-        expires_at=now + LIFETIME,
+        expires_at=now + (LIFETIME if address is not None else LINK_LIFETIME),
     )
     try:
         with session.begin_nested():
@@ -142,7 +168,13 @@ def invite(
     except IntegrityError as exc:
         # Two requests inviting the same address at once: the other one won.
         raise ConflictError("this invitation could not be made; try again") from exc
-    log.info("team_invitation_created", team_id=team_id, invitation_id=row.id, invited_by=by.id)
+    log.info(
+        "team_invitation_created",
+        team_id=team_id,
+        invitation_id=row.id,
+        invited_by=by.id,
+        addressed=address is not None,
+    )
     return token, row.expires_at
 
 
@@ -163,8 +195,10 @@ def accept(session: Session, *, token: str, user: User, now: datetime | None = N
         if row is None
         else "expired"
         if row.expires_at <= now
+        # A row with an address is for that address and no other. Only a row
+        # made for no address has nothing to compare.
         else "other_account"
-        if row.email != normalise(user.email)
+        if row.email is not None and row.email != normalise(user.email)
         else None
     )
     team = session.get(Team, row.team_id) if row is not None and reason is None else None
@@ -183,6 +217,7 @@ def accept(session: Session, *, token: str, user: User, now: datetime | None = N
     if already is None:
         session.add(TeamMember(team_id=team.id, user_id=user.id))
     invitation_id = row.id
+    addressed = row.email is not None
     session.delete(row)
     session.flush()
     log.info(
@@ -191,6 +226,7 @@ def accept(session: Session, *, token: str, user: User, now: datetime | None = N
         user_id=user.id,
         invitation_id=invitation_id,
         already_member=already is not None,
+        addressed=addressed,
     )
     return team
 

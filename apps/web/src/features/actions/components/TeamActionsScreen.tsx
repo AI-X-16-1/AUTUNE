@@ -11,7 +11,12 @@ import { ProjectFilter } from "./ProjectFilter";
 import { ProjectProgressStrip } from "./ProjectProgressStrip";
 import { bulkActionItems, listMyProjects, listMyTeams } from "../api";
 import { isOverdue, localToday } from "../dates";
-import { byProject, byTeam, type BoardView } from "../groups";
+import {
+  byProject,
+  byTeam,
+  projectTeams,
+  type BoardView,
+} from "../groups";
 import { useActionItems } from "../hooks/useActionItems";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import { projectProgress } from "../projectProgress";
@@ -104,6 +109,12 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
     () => projectProgress(items, projects, today),
     [items, projects, today],
   );
+  // Two teams can each have a project of one name: the filter and the strip
+  // say the team, as the 프로젝트별 groups do.
+  const projectTeam = useMemo(
+    () => projectTeams(projects, teams),
+    [projects, teams],
+  );
   const selected = items.find((item) => item.id === selectedId);
 
   // One board of `list`: the whole screen's under 한번에, a group's otherwise.
@@ -152,10 +163,20 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
               </ChipToggle>
             ))}
           </div>
-          <ProjectFilter projects={projects} value={project} onChange={setProject} />
+          <ProjectFilter
+            projects={projects}
+            teams={projectTeam}
+            value={project}
+            onChange={setProject}
+          />
         </div>
 
-        <ProjectProgressStrip lines={progress} value={project} onChoose={setProject} />
+        <ProjectProgressStrip
+          lines={progress}
+          teams={projectTeam}
+          value={project}
+          onChoose={setProject}
+        />
 
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (

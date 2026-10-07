@@ -50,4 +50,44 @@ describe("ProjectProgressStrip", () => {
     fireEvent.click(screen.getByRole("button", { name: /알파/ }));
     expect(onChoose).toHaveBeenLastCalledWith("all");
   });
+
+  it("says the team beside two projects of one name", () => {
+    const twin = { id: "prj_b", name: "알파", aliases: [] } as unknown as Project;
+    render(
+      <ProjectProgressStrip
+        lines={[
+          { project: A, total: 4, done: 1, overdue: 0 },
+          { project: twin, total: 2, done: 2, overdue: 0 },
+        ]}
+        teams={
+          new Map([
+            ["prj_a", "플랫폼"],
+            ["prj_b", "디자인"],
+          ])
+        }
+        value="all"
+        onChoose={() => {}}
+      />,
+    );
+    expect(
+      screen.getAllByRole("button").map((button) => button.textContent),
+    ).toEqual(["알파 · 플랫폼완료 1/4", "알파 · 디자인완료 2/2"]);
+    expect(
+      screen
+        .getByRole("progressbar", { name: "알파 · 디자인 완료율" })
+        .getAttribute("aria-valuenow"),
+    ).toBe("100");
+  });
+
+  it("says no team where none was given", () => {
+    render(
+      <ProjectProgressStrip
+        lines={[{ project: A, total: 4, done: 1, overdue: 0 }]}
+        teams={new Map()}
+        value="all"
+        onChoose={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button").textContent).toBe("알파완료 1/4");
+  });
 });

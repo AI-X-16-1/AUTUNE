@@ -35,7 +35,7 @@ from autune_extraction.models import (
 from autune_extraction.projects import Project, choose
 from autune_extraction.router import router
 
-from .conftest import sign_in
+from .conftest import READER, sign_in
 
 MEETING = "mtg_1"
 TEAM = "team_1"
@@ -371,6 +371,34 @@ def test_team_members_and_people_addressed_are_never_suggested(
     assert words == {"결제"}, words
 
 
+def test_somebody_who_spoke_and_has_left_the_team_is_not_suggested_either(
+    client: TestClient, session: Session
+) -> None:
+    """No membership, and a participant row in each meeting that still names
+    them: the meeting's roster has them, the team's member list does not."""
+    session.add(User(id="usr_gone", email="gone@example.com", display_name="한서윤"))
+    for n in range(3):
+        _meeting_saying(
+            session, f"mtg_g{n}", ["서윤이 결제 맡아주세요", "서윤이 할게요", "서윤 자료 참고"]
+        )
+        session.add(
+            Participant(
+                id=f"par_mtg_g{n}_gone",
+                meeting_id=f"mtg_g{n}",
+                speaker_label="g",
+                consented=True,
+                user_id="usr_gone",
+            )
+        )
+    session.flush()
+
+    suggested = client.get(f"{PREFIX}/projects/suggestions?team_id={TEAM}").json()
+
+    words = {s["word"] for s in suggested}
+    assert not any(word.startswith("서윤") for word in words), words
+    assert "결제" in words
+
+
 def test_meetings_not_yet_held_or_failed_are_not_read(client: TestClient, session: Session) -> None:
     # Ten meetings booked ahead would otherwise fill the latest ten.
     for n in range(10):
@@ -396,3 +424,22 @@ def test_mine_lists_the_projects_of_my_teams_only(client: TestClient, session: S
     mine = client.get(f"{PREFIX}/projects/mine").json()
 
     assert [p["id"] for p in mine] == ["prj_a", "prj_b"]
+
+
+def test_a_project_says_its_team_so_two_of_one_name_can_be_told_apart(
+    client: TestClient, session: Session
+) -> None:
+    """A name is unique within a team, not across them; the reader of
+    ``/projects/mine`` is on several."""
+    first = session.get(ExtProject, "prj_a")
+    assert first is not None
+    session.add(TeamMember(team_id="team_2", user_id=READER))
+    session.add(ExtProject(id="prj_twin", team_id="team_2", name=first.name, aliases=""))
+    session.flush()
+
+    mine = client.get(f"{PREFIX}/projects/mine").json()
+
+    twins = {p["id"]: p["team_id"] for p in mine if p["name"] == first.name}
+    assert twins == {"prj_a": TEAM, "prj_twin": "team_2"}
+    one = client.get(f"{PREFIX}/projects?team_id={TEAM}").json()
+    assert {p["team_id"] for p in one} == {TEAM}

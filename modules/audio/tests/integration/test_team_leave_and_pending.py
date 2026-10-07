@@ -447,6 +447,25 @@ def test_an_invitation_sent_by_somebody_who_then_left_is_gone_and_its_link_stops
     assert members(db_session, team) == {host.id}
 
 
+def test_a_link_for_no_address_goes_with_the_member_who_made_it(
+    db_session: Session, client_for, host: User, mate: User, team: str
+) -> None:
+    """The bearer link is the invitation that matters most here: after its
+    maker has left, whoever holds it must not get in."""
+    made = client_for(mate).post(f"/api/audio/teams/{team}/invitations", json={})
+    assert made.status_code == 201, made.text
+    token = made.json()["token"]
+    assert [row.email for row in rows(db_session, team)] == [None]
+    holder = person(db_session, "holder@example.com", "링크를 가진 사람")
+
+    leave(client_for, mate, team)
+
+    assert rows(db_session, team) == []
+    with pytest.raises(invitations.InvitationUnusableError):
+        invitations.accept(db_session, token=token, user=holder)
+    assert members(db_session, team) == {host.id}
+
+
 def test_leaving_withdraws_only_their_own_invitations_to_that_team(
     db_session: Session, client_for, host: User, mate: User, team: str
 ) -> None:

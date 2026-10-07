@@ -186,7 +186,7 @@ def invite_to_team(
     somebody's inbox has to work."""
     token, expires_at = invitations.invite(session, team_id=team_id, email=body.email, by=user)
     emailed = False
-    if body.send_email:
+    if body.send_email and body.email is not None:
         session.commit()
         emailed = invitation_mail.send(
             session,

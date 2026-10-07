@@ -135,8 +135,11 @@ agreement, and sync the result to Notion and Jira.
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
    minutes `ask_confirmations` asks each one recorded within the 72-hour window
-   whose speaker is identified and consented, through the team's Slack bot to
-   the account that person linked (#255, #478), and to nobody else. A team
+   whose speaker is identified, consented and is on the meeting's team now,
+   through the team's Slack bot to the account that person linked (#255,
+   #478), and to nobody else. A speaker who has left the team is not asked,
+   and a button pressed on a DM they were sent before leaving is not recorded
+   -- the web refuses them the same answer. A team
    without Slack, or a speaker who has not linked, is looked at again on the
    next run until the window closes.
    **Where the speaker answers** (decided with the user, 2026-10-01; #585). The
@@ -214,7 +217,12 @@ agreement, and sync the result to Notion and Jira.
    calendar. Every ten minutes `pull_calendar_changes` reads back Autune's own
    tagged events on each connected calendar, and a date the person moved there
    becomes the due date through the board's edit path (`ext_calendar_events`,
-   `ext_calendar_polls`).
+   `ext_calendar_polls`). An event on the calendar of somebody who has since
+   left the meeting's team is taken off by a sweep every ten minutes
+   (`take_back_departed_calendar_events`): leaving a team starts no sync of
+   its own, and the event's title is the item's text. The sweep deletes and
+   never writes an event -- an item that has a new assignee gets theirs from
+   its own sync.
    A confirmed item is also one issue in the team's Jira project (#82, #458),
    and every ten minutes `pull_jira_changes` reads back the status people moved
    their issues to: an issue dragged to Done makes its item done, through the
@@ -460,7 +468,7 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
-| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these |
+| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
@@ -495,7 +503,12 @@ other module's tables.
 - A DM to each person on a Tuesday-to-Friday morning (09:00–12:00 Korea time):
   what changed on their own items since the last one and what is theirs to do
   today (`reminders.build_daily_digest`,
-  `autune.extraction.periodic.send_daily_digests`). Monday has the weekly
+  `autune.extraction.periodic.send_daily_digests`). Today's part names, after
+  what is late and what is due today, each item of theirs that is in progress
+  or has no due date and that nobody has touched for five days or more
+  ("6일째 그대로"), longest first -- `reminders.STALLED_AFTER_DAYS`, counted
+  from when the item was made or last edited. A not-started item whose date
+  is still ahead is not named. Monday has the weekly
   digest instead and a weekend has nothing. Not sent to a person who turned
   their reminders off, or on a day inside their own leave dates
   (`/me/notification-pause`), which stop Monday's digest too. Off by default:

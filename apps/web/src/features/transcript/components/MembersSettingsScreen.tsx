@@ -191,11 +191,13 @@ function Members({ teamId }: { teamId: string }) {
                   className="text-[var(--color-ink-strong)]"
                   style={{ fontSize: "var(--text-rowBody)" }}
                 >
-                  {invitation.email}
+                  {invitation.email ?? "주소 없는 링크"}
                 </span>
                 <span style={META}>
                   {invitation.invited_by_name ? `${invitation.invited_by_name} 님이 초대 · ` : ""}
-                  {lapses(invitation.expires_at)}까지
+                  {invitation.email === null
+                    ? `${clock(invitation.expires_at)}까지, 한 번만`
+                    : `${lapses(invitation.expires_at)}까지`}
                 </span>
                 <span className="ml-auto">
                   <Button
@@ -203,7 +205,7 @@ function Members({ teamId }: { teamId: string }) {
                     size="compact"
                     loading={cancelling === invitation.id}
                     onClick={() => cancel(invitation.id)}
-                    aria-label={`${invitation.email} 초대 취소`}
+                    aria-label={`${invitation.email ?? "주소 없는 링크"} 초대 취소`}
                   >
                     초대 취소
                   </Button>
@@ -255,6 +257,14 @@ function Members({ teamId }: { teamId: string }) {
       </section>
     </>
   );
+}
+
+/** `14:05`: when a link that lasts an hour stops working -- a date would say "today". */
+function clock(expiresAt: string): string {
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return expiresAt;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
 /** The day a link lapses, as a date: the hour says little a week ahead. */

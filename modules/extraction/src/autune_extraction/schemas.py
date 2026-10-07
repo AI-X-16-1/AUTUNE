@@ -328,9 +328,14 @@ class TeamRead(BaseModel):
 
 
 class ProjectRead(BaseModel):
-    """One of a team's projects (``ext_projects``)."""
+    """One of a team's projects (``ext_projects``).
+
+    ``team_id`` is the team it belongs to. A name is unique within a team and
+    not across them, and ``GET /projects/mine`` lists every team's the reader
+    is on: the team is what tells two projects of one name apart."""
 
     id: str
+    team_id: str
     name: str
     aliases: list[str]
     jira_project_key: str | None = None
