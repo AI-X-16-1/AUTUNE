@@ -2223,7 +2223,8 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
 
     Decided with the user (2026-10-01): the work stays, their words go. In D:
 
-    - **A topic goes only when every utterance it was cut from goes** -- its
+    - **A topic goes only when every utterance it was cut from goes** -- in this
+      batch or an earlier one, so a line already deleted counts as gone -- its
       embedding, which is a vector of that text, and the topic links carrying its
       label. A topic somebody else also named is still the meeting's topic, said
       in their words too, so it stays (as in C). A topic with no record of what it
@@ -2267,13 +2268,27 @@ def forget_speech(session: Session, utterance_ids: Sequence[str]) -> SpeechForgo
     # Topics: an embedding, and the links named after it.
     topic_ids: list[int] = []
     gone_labels: dict[str, set[str]] = {}
-    for embedding in session.scalars(
+    embeddings = session.scalars(
         select(CtxEmbedding).where(
             CtxEmbedding.meeting_id.in_(meetings), CtxEmbedding.kind == "topic"
         )
-    ):
+    ).all()
+    # Lines a topic was cut from that are not in this batch: a topic stays only
+    # while one of them still exists, so an earlier round's deletions count.
+    others = {
+        line
+        for embedding in embeddings
+        for line in (embedding.utterance_ids or ())
+        if line not in gone
+    }
+    still_said = (
+        set(session.scalars(select(Utterance.id).where(Utterance.id.in_(others))))
+        if others
+        else set()
+    )
+    for embedding in embeddings:
         cut_from = embedding.utterance_ids
-        if cut_from is None or (cut_from and set(cut_from) <= gone):
+        if cut_from is None or (cut_from and not (set(cut_from) - gone) & still_said):
             topic_ids.append(embedding.id)
             gone_labels.setdefault(embedding.meeting_id, set()).add(embedding.ref_label)
     links_deleted = 0

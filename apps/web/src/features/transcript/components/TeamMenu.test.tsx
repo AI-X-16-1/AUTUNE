@@ -195,15 +195,18 @@ describe("TeamMenu, three teams", () => {
     expect(chosen()).toEqual(["마 팀"]);
   });
 
-  it("brings in a team chosen in a screen's row, and stays at three", async () => {
+  it("brings in a team chosen from a screen's row, and stays at three", async () => {
+    // The row lists three as well now; a fourth is picked from its own "더보기".
     open([A, B, C, D, E], true);
     await waitFor(() => expect(shown()).toBe("team_a"));
-    const row = screen
-      .getAllByRole("button", { name: "라 팀" })
+    const rowMore = screen
+      .getAllByRole("button", { name: "팀 더보기" })
       .find((b) => !menu().contains(b)) as HTMLElement;
+    fireEvent.click(rowMore);
 
-    fireEvent.click(row);
+    fireEvent.click(windowEntry("라 팀"));
 
+    expect(shown()).toBe("team_d");
     expect(names()).toEqual(["가 팀", "나 팀", "라 팀"]);
     expect(chosen()).toEqual(["라 팀"]);
     // Back to one of the first three: the first three again.
@@ -211,16 +214,15 @@ describe("TeamMenu, three teams", () => {
     expect(names()).toEqual(["가 팀", "나 팀", "다 팀"]);
   });
 
-  it("the screen's own row still offers every team", async () => {
+  it("the screen's own row lists the same three", async () => {
+    // The user, 2026-10-07: "내부의 팀 목록들도 사이드바처럼 3개만 보이고 더보기로".
     open([A, B, C, D, E], true);
     await waitFor(() => expect(shown()).toBe("team_a"));
 
-    for (const team of [A, B, C, D, E]) {
-      const outside = screen
-        .getAllByRole("button", { name: team.name })
-        .filter((b) => !menu().contains(b));
-      expect(outside).toHaveLength(1);
-    }
+    const inRow = (name: string) =>
+      screen.queryAllByRole("button", { name }).filter((b) => !menu().contains(b));
+    for (const team of [A, B, C]) expect(inRow(team.name)).toHaveLength(1);
+    for (const team of [D, E]) expect(inRow(team.name)).toHaveLength(0);
   });
 });
 
@@ -473,14 +475,25 @@ describe("TeamMenu, making a team", () => {
     fireEvent.change(screen.getByLabelText("팀 이름"), { target: { value } });
   const makeButton = () => screen.getByRole("button", { name: "팀 만들기" }) as HTMLButtonElement;
 
-  it("opens a small window over the page from + beside the heading", async () => {
+  it("opens a small window in the middle of the screen, over a dimmed page", async () => {
+    // The user, 2026-10-07: "팀 추가버튼의 경우 액션처럼 작은 화면 띄워줘".
     open([A, B]);
     await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
     expect(maker()).toBeNull();
 
     fireEvent.click(plus());
 
-    expect((maker() as HTMLElement).style.position).toBe("fixed");
+    const dimmed = screen.getByTestId("new-team-backdrop");
+    // Over the whole page and centring what is in it, as the action item's does.
+    expect(dimmed.className).toContain("fixed inset-0");
+    expect(dimmed.className).toContain("items-center justify-center");
+    expect(dimmed.style.background).not.toBe("");
+    expect(dimmed.contains(maker())).toBe(true);
+    // Not placed from the "+" any more, and not drawn inside the sidebar.
+    expect((maker() as HTMLElement).style.left).toBe("");
+    expect((maker() as HTMLElement).style.top).toBe("");
+    expect(dimmed.parentElement).toBe(document.body);
+    expect((maker() as HTMLElement).getAttribute("aria-modal")).toBe("true");
     expect(plus().getAttribute("aria-expanded")).toBe("true");
     expect(makeButton().disabled).toBe(true);
     expect(create).not.toHaveBeenCalled();
@@ -588,7 +601,8 @@ describe("TeamMenu, making a team", () => {
     expect(maker()).toBeNull();
 
     fireEvent.click(plus());
-    fireEvent.mouseDown(screen.getByTestId("shown"));
+    // Outside it is the dimmed page now.
+    fireEvent.mouseDown(screen.getByTestId("new-team-backdrop"));
     expect(maker()).toBeNull();
     expect(create).not.toHaveBeenCalled();
 
