@@ -237,6 +237,8 @@ def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
             {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
             {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
         ],
+        "dated_open": 4,
+        "dated_confirmed": 4,
     }
     assert result["evidence"] == ["act_late", "act_a", "act_b", "act_c"]
     assert result["summary"] == (
@@ -266,6 +268,8 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
     assert result["evidence"] == ["act_confirmed"], "no card can point at a draft"
     assert "확인 대기 2건" in result["summary"]
     assert all(entry["confirmed"] is True for entry in result["items"][0]["due_dates"])
+    # The dated draft is in the count and nowhere else; the undated one in neither.
+    assert (result["items"][0]["dated_open"], result["items"][0]["dated_confirmed"]) == (2, 1)
 
     row = session.get(ExtActionItem, "act_draft")
     assert row is not None
@@ -279,21 +283,44 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
     ]
     assert after["evidence"] == ["act_draft", "act_confirmed"]
     assert "확인 대기 1건" in after["summary"]
+    assert (after["items"][0]["dated_open"], after["items"][0]["dated_confirmed"]) == (2, 2)
 
 
-def test_only_drafts_have_dates_means_no_row_and_no_evidence(session: Session) -> None:
-    """Right after a meeting nearly everything waits: the caller gets counts
-    and falls back to its own rule."""
-    item(session, "act_draft", status="needs_confirmation", due=TODAY + timedelta(days=1))
+def test_only_drafts_have_dates_means_a_row_of_counts_no_date_and_no_evidence(
+    session: Session,
+) -> None:
+    """Right after a meeting nearly everything waits: the caller gets no date
+    and falls back to its own rule, and a card can say "0/2 확정" (#966)."""
+    draft_days = [TODAY + timedelta(days=1), TODAY + timedelta(days=6)]
+    item(session, "act_draft", status="needs_confirmation", due=draft_days[0])
+    item(session, "act_draft_two", status="needs_confirmation", due=draft_days[1])
     item(session, "act_open")
 
     result = tools.meeting_due_dates(session, MEETING)
 
     assert result["ok"] is True
-    assert result["items"] == [] and result["evidence"] == []
+    assert result["items"] == [
+        {"title": "기한", "due_dates": [], "dated_open": 2, "dated_confirmed": 0}
+    ]
+    assert result["evidence"] == []
     assert result["summary"] == (
-        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 대기 1건."
+        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 대기 2건."
     )
+    said = str(result)
+    assert not any(day.isoformat() in said for day in draft_days), "a count, never a date"
+    assert "act_draft" not in said, "and never which draft"
+
+
+def test_no_unfinished_item_with_a_date_means_no_row(session: Session) -> None:
+    """Nothing to count: a finished item's date and an undated draft are neither."""
+    item(session, "act_open")
+    item(session, "act_draft", status="needs_confirmation")
+    item(session, "act_done", status="done", due=TODAY + timedelta(days=1))
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    assert result["ok"] is True
+    assert result["items"] == [] and result["evidence"] == []
 
 
 def test_every_date_is_in_the_one_row_past_the_five_item_cap(session: Session) -> None:

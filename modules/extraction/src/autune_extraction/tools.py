@@ -218,8 +218,15 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     earliest first -- one entry an item, so a day two items share is there
     twice. A date and nothing else: no title, no assignee, no text. With an
     assignee beside it a date would say who is late; without one it says only
-    when the meeting's work falls due. ``evidence`` holds those items' ids. No
-    row at all when no such item has a date.
+    when the meeting's work falls due. ``evidence`` holds those items' ids.
+
+    The row also counts, for a card that says how much of the dated work is
+    settled ("기한 있는 항목 0/5 확정", #966, #967): ``dated_open`` is how many
+    items of the meeting are not done and have a date, confirmed or not, and
+    ``dated_confirmed`` how many of those are confirmed -- the length of
+    ``due_dates``. So the row is there whenever any unfinished item has a
+    date, with an empty ``due_dates`` when none of them is confirmed, and
+    there is no row at all when none has one.
 
     **An unconfirmed item's date does not come out** (#246, #261 rule 3: B's
     unconfirmed content is counted, never quoted; the user, 2026-10-07, asked
@@ -227,7 +234,10 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     text, but it is content of a draft nobody has accepted, and a date
     recommended to a team from it would be built on that draft. Unconfirmed
     items are in ``summary`` as a count, with how many confirmed open items
-    there are and how many of those have no date. ``confirmed`` is therefore
+    there are and how many of those have no date, and in ``dated_open`` as a
+    count of the dated ones (decided on #966, 2026-10-07: a number is still
+    "counted, never quoted") -- never as a date, an id or an entry of
+    ``evidence``. ``confirmed`` is therefore
     always ``true``; it is in each entry because the caller asked for the
     shape, so nothing has to change there if a draft's date is ever allowed.
 
@@ -237,12 +247,14 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
     rows = service.list_action_items(session, meeting_id=meeting_id)
-    waiting = sum(i.status == ActionStatus.NEEDS_CONFIRMATION.value for i in rows)
+    waiting = [i for i in rows if i.status == ActionStatus.NEEDS_CONFIRMATION.value]
     opened = [i for i in rows if i.status in {status.value for status in _OPEN}]
     dated = sorted((i for i in opened if i.due_date is not None), key=lambda i: (i.due_date, i.id))
+    # Counted and nothing more: which drafts, and their dates, stay in B.
+    dated_open = len(dated) + sum(i.due_date is not None for i in waiting)
     summary = (
         f"확정된 열린 액션아이템 {len(opened)}건 중 기한 있음 {len(dated)}건, "
-        f"기한 없음 {len(opened) - len(dated)}건. 확인 대기 {waiting}건."
+        f"기한 없음 {len(opened) - len(dated)}건. 확인 대기 {len(waiting)}건."
     )
     items = (
         [
@@ -255,9 +267,11 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
                     for i in dated
                     if i.due_date is not None
                 ],
+                "dated_open": dated_open,
+                "dated_confirmed": len(dated),
             }
         ]
-        if dated
+        if dated_open
         else []
     )
     return _result(summary=summary, items=items, evidence=[i.id for i in dated])
