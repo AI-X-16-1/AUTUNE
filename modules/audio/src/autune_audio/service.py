@@ -1417,9 +1417,12 @@ def unassign_speaker(
 
     No event goes out, as none goes out for an assignment. The other modules
     follow by reading ``Participant.user_id`` again: E's own speaking ratio at
-    once, on request; B's action-item assignees within its ten-minute fill
-    (#936); C's participation and D's ``key_stakeholders_absent`` on their own
-    periodic recompute (``refresh_absence``, #360).
+    once, on request; C's participation on the next read of its report, and
+    its stored risk scores on its ten-minute rescore (#415); B's assignee on a
+    model-made item nobody reassigned, within its ten-minute fill (#936), while
+    an item a person assigned, or one that is done, keeps its assignee and is
+    corrected on the board; D's ``key_stakeholders_absent`` within ten
+    minutes, for meetings of the last 30 days (``refresh_absence``, #360).
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:

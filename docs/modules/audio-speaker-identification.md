@@ -187,10 +187,16 @@ confirmation:
 A label nobody is put to → 204, so a retried press does not fail. An unknown
 label → 404, a caller outside the team → 403. No event goes out, as none goes
 out for an assignment. The other modules follow by reading `Participant.user_id`
-again: E's own speaking ratio at once, on request; B's action-item assignees
-within its ten-minute fill, back to the speaker label (#936); C's participation
-and D's `key_stakeholders_absent` on their own periodic recompute
-(`refresh_absence`, #360).
+again:
+
+- E's own speaking ratio at once, on request.
+- C's participation on the next read of its report, and its stored risk
+  scores on its ten-minute rescore (#415).
+- B's assignee on a model-made item nobody reassigned, within its ten-minute
+  fill, back to the speaker label (#936). An item a person assigned, or one
+  that is done, keeps its assignee and is corrected on the board.
+- D's `key_stakeholders_absent` within ten minutes, for meetings of the last
+  30 days (`refresh_absence`, #360).
 
 ### `PUT /meetings/{meeting_id}/speakers/{speaker_label}/name`
 
