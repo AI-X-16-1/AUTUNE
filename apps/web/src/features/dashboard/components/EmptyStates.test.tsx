@@ -25,7 +25,7 @@ describe("dashboard empty states", () => {
     render(<AlignmentHeatmap cells={[]} />);
 
     const message = screen.getByText(/^표본이 충분한 직무 쌍이 아직 없습니다\./);
-    expect(message.textContent).toMatch(/3명 이상 참석한 회의/);
+    expect(message.textContent).toMatch(/3명 이상이 화자로 확인된 회의/);
     expect(message.textContent).toMatch(/회의 3회 이상/);
     expect(message.textContent).not.toMatch(/#\d/);
   });
