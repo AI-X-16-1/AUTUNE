@@ -21,6 +21,20 @@ vi.mock("../api", () => ({
 
 const A: TeamSummary = { team_id: "team_a", name: "가 팀", pinned: false };
 const B: TeamSummary = { team_id: "team_b", name: "나 팀", pinned: false };
+const C: TeamSummary = { team_id: "team_c", name: "다 팀", pinned: false };
+const D: TeamSummary = { team_id: "team_d", name: "라 팀", pinned: false };
+const E: TeamSummary = { team_id: "team_e", name: "마 팀", pinned: false };
+
+const more = () => screen.queryByRole("button", { name: "팀 더보기" });
+const win = () => screen.queryByRole("dialog", { name: "팀" });
+// The teams the row itself lists: its chips, not what the window lists.
+const rowTeams = () =>
+  screen
+    .getAllByRole("button")
+    .filter((b) => b.hasAttribute("aria-pressed") && !b.closest('[role="dialog"]'))
+    .map((b) => b.textContent);
+const windowTeams = () =>
+  [...(win()?.querySelectorAll("button[aria-pressed]") ?? [])].map((b) => b.textContent);
 
 const shown = () => screen.getByTestId("shown").textContent;
 const chips = () => screen.getAllByRole("button", { pressed: undefined }).map((b) => b.textContent);
@@ -151,6 +165,73 @@ describe("TeamScope", () => {
     expect(shown()).toBe("team_b");
     refuse.mockRestore();
     refuseWrite.mockRestore();
+  });
+
+  // The user, 2026-10-07: "내부의 팀 목록들도 사이드바처럼 3개만 보이고 더보기로".
+  it("lists three teams and 더보기 to somebody on more than three", async () => {
+    open([A, B, C, D, E]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    expect(rowTeams()).toEqual(["가 팀", "나 팀", "다 팀"]);
+    expect(more()).not.toBeNull();
+    expect(win()).toBeNull();
+  });
+
+  it("shows every team and no 더보기 to somebody on three or fewer", async () => {
+    open([A, B, C]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    expect(rowTeams()).toEqual(["가 팀", "나 팀", "다 팀"]);
+    expect(more()).toBeNull();
+  });
+
+  it("더보기 opens every team, and one picked there is the team on screen, in the row", async () => {
+    open([A, B, C, D, E]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    fireEvent.click(more() as HTMLElement);
+    expect(windowTeams()).toEqual(["가 팀", "나 팀", "다 팀", "라 팀", "마 팀"]);
+    expect(rowTeams()).toEqual(["가 팀", "나 팀", "다 팀"]);
+
+    fireEvent.click(
+      [...(win() as HTMLElement).querySelectorAll("button[aria-pressed]")].find(
+        (b) => b.textContent === "마 팀",
+      ) as HTMLElement,
+    );
+
+    expect(shown()).toBe("team_e");
+    expect(win()).toBeNull();
+    // Still three, the team on screen among them, in the last place.
+    expect(rowTeams()).toEqual(["가 팀", "나 팀", "마 팀"]);
+  });
+
+  it("opens with the team chosen elsewhere among the three", async () => {
+    window.localStorage.setItem("autune.team", "team_d");
+    open([A, B, C, D, E]);
+
+    await waitFor(() => expect(shown()).toBe("team_d"));
+    expect(rowTeams()).toEqual(["가 팀", "나 팀", "라 팀"]);
+  });
+
+  it("the window closes on Escape and on a press outside it", async () => {
+    open([A, B, C, D]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    fireEvent.click(more() as HTMLElement);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(win()).toBeNull();
+
+    fireEvent.click(more() as HTMLElement);
+    fireEvent.mouseDown(screen.getByTestId("shown"));
+    expect(win()).toBeNull();
+    expect(shown()).toBe("team_a");
+  });
+
+  it("keeps the pin button in the row beside 더보기", async () => {
+    open([A, B, C, D]);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+
+    expect(screen.getByRole("button", { name: "맨 위에 고정" })).toBeTruthy();
   });
 
   it("offers no pin to somebody on one team", async () => {

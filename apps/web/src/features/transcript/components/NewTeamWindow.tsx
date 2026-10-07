@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 
 import { Button, ChipToggle } from "@/shared/ui";
 
@@ -8,7 +9,6 @@ import { createTeam, listTeams } from "../api";
 import { announceTeams, rememberTeam } from "../selectedTeam";
 
 import { TeamInvite } from "./TeamInvite";
-import { type Place } from "./TeamsWindow";
 import { ROLES } from "./WorkspaceScreen";
 
 /**
@@ -33,9 +33,17 @@ import { ROLES } from "./WorkspaceScreen";
  * somebody who has just made a team and is inviting people to it is looking
  * at that team.
  *
- * It closes on "닫기", on Escape and on a press outside it. Before the team
- * is made that loses only a name; after, the team exists and the invitations
- * made so far stand -- more can be made under 설정 › 구성원.
+ * **It opens in the middle of the screen, over a dimmed page** (the user,
+ * 2026-10-07: "팀 추가버튼의 경우 액션처럼 작은 화면 띄워줘") -- the way an
+ * action item's window does (`ActionDetailDrawer`), and no longer hung beside
+ * the sidebar at the height of the "+". It is drawn on `document.body`, not
+ * inside the sidebar: the sidebar is its own layer, and a dimming drawn in it
+ * would lie under whatever the page itself raises.
+ *
+ * It closes on "닫기", on Escape and on a press outside it -- which is now a
+ * press on the dimmed page. Before the team is made that loses only a name;
+ * after, the team exists and the invitations made so far stand -- more can be
+ * made under 설정 › 구성원.
  */
 
 const INPUT =
@@ -52,15 +60,10 @@ const LABEL = {
 } as const;
 const META = { fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" } as const;
 
-/** About how tall the window is, for a place that keeps it on the page. */
-export const NEW_TEAM_ROWS = 12;
-
 export function NewTeamWindow({
-  at,
   opener,
   onClose,
 }: {
-  at: Place;
   /** The control that opened this: a press on it is not a press outside. */
   opener: RefObject<HTMLElement | null>;
   onClose: () => void;
@@ -114,20 +117,17 @@ export function NewTeamWindow({
     }
   };
 
-  return (
+  const panel = (
     <div
       ref={box}
       role="dialog"
+      aria-modal
       aria-label="새 팀 만들기"
       className="flex flex-col gap-3 rounded-[var(--radius)] border border-[var(--color-hairline)] bg-[var(--color-paper)]"
       style={{
-        position: "fixed",
-        left: at.left,
-        top: at.top,
-        zIndex: 50,
         width: 380,
-        maxWidth: "calc(100vw - 24px)",
-        maxHeight: "calc(100vh - 16px)",
+        maxWidth: "100%",
+        maxHeight: "calc(100vh - 2 * var(--space-page))",
         overflowY: "auto",
         padding: "16px 18px",
         boxShadow: "var(--shadow-overlay)",
@@ -210,5 +210,17 @@ export function NewTeamWindow({
         </>
       )}
     </div>
+  );
+
+  return createPortal(
+    <div
+      data-testid="new-team-backdrop"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      // The action item window's own dimming and margin.
+      style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-page)" }}
+    >
+      {panel}
+    </div>,
+    document.body,
   );
 }
