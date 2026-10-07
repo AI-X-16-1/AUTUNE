@@ -16,7 +16,8 @@ chat was asked from -- and otherwise the team's latest analysed meeting.
 **A suggested date.** The proposal carries ``due_date``: just after most of
 M's action items are due (``rules.suggest_from_due_dates``, #963), or, when M
 has no usable due date or B's read fails, the team's usual gap between meetings
-after its latest one (``rules.suggest_date``). ``basis`` says which, so the
+after its latest one (``rules.suggest_date``). Business days skip weekends
+and Korea's public holidays as B knows them (#964). ``basis`` says which, so the
 card can mark a date resting on drafts "초안 기준". From B it reads due dates
 and whether each is confirmed, never who owns an item (spec section 6). The
 lead sees the date on the card and moves it on the board; the item's due date
@@ -25,7 +26,7 @@ is what B puts on a calendar (#441).
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -55,7 +56,17 @@ DUE_DATES = "extraction.meeting_due_dates"
 meeting the date is mostly the rhythm's. Until B ships it the call fails, and
 the date falls back to the team's rhythm -- the proposal never waits on it."""
 
-TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, DUE_DATES)
+HOLIDAYS = "extraction.public_holidays"
+"""Korea's public holidays in a range of days, from B's own source (Google's
+public holiday calendar, B's table in code when it has not been read; #964,
+#985). Dates of public record, nothing about anybody. Until B ships it the
+call fails and business days skip weekends only."""
+
+HOLIDAYS_AHEAD = timedelta(days=45)
+"""How far from today the holidays are read: past the 14-day horizon and the
+longest run of days off (설 or 추석 with a weekend and a substitute day)."""
+
+TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, DUE_DATES, HOLIDAYS)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
 """Meeting statuses after the pipeline's analysis, as Research reads them."""
 KST = ZoneInfo("Asia/Seoul")
@@ -139,6 +150,30 @@ def _due(result: ToolResult) -> list[rules.Due]:
     return due
 
 
+def _holidays(result: ToolResult) -> frozenset[date]:
+    """The days on B's row, as ISO dates under ``days``.
+
+    A failed read, or a row without the list, is no holidays: weekends are
+    still skipped, so the date is no worse than before #964. An entry that is
+    not an ISO date is skipped.
+    """
+    if not result.ok:
+        return frozenset()
+    days: set[date] = set()
+    for item in result.items:
+        entries = (item.model_extra or {}).get("days")
+        if not isinstance(entries, list):
+            continue
+        for raw in entries:
+            if not isinstance(raw, str):
+                continue
+            try:
+                days.add(date.fromisoformat(raw))
+            except ValueError:
+                continue
+    return frozenset(days)
+
+
 BASIS_NOTE = {"confirmed": "확정 기한 기준", "draft": "초안 기준", "cadence": "회의 주기 기준"}
 
 
@@ -201,12 +236,19 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         # Read here, not in ``read``: a run that proposes nothing does not spend
         # them. The meeting list only when the due dates leave no date.
         today = _today()
+        off = _holidays(
+            toolbox.call(
+                HOLIDAYS,
+                start=today.isoformat(),
+                end=(today + HOLIDAYS_AHEAD).isoformat(),
+            )
+        )
         suggestion = rules.suggest_from_due_dates(
-            _due(toolbox.call(DUE_DATES, **state["at"])), today
+            _due(toolbox.call(DUE_DATES, **state["at"])), today, off
         )
         if suggestion is None:
             recent = state.get("recent") or toolbox.call(RECENT)
-            suggestion = rules.Suggestion(rules.suggest_date(_held(recent), today), "cadence")
+            suggestion = rules.Suggestion(rules.suggest_date(_held(recent), today, off), "cadence")
         suggested, basis = suggestion.day, suggestion.basis
         when = f"{_day(suggested)}, {BASIS_NOTE[basis]}"
         result = ToolResult(

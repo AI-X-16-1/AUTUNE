@@ -184,8 +184,14 @@ is done, or has no due date, is not an input.
    before `E`. With fewer than two meeting days, or an unreadable list, it is
    three business days from today.
 
-"Next business day after X" is X plus one day, then moved past Saturday and
-Sunday. Holidays are not known (#964); the lead moves the date on the board.
+"Next business day after X" is X plus one day, then moved past Saturdays,
+Sundays and Korea's public holidays (#964). The holidays are B's:
+`extraction.public_holidays(start, end)` (#985) returns them from the source
+B's digests already use -- Google's public holiday calendar, B's table in code
+when it has not been read (#838) -- so the two never disagree about a day off.
+Follow-up reads today to 45 days on, once, when it proposes. A failed or
+missing read means weekends only, as before #964; the proposal never waits on
+it. Holidays are dates of public record and say nothing about anybody.
 
 *What the date rests on: `basis`.* The proposal's arguments carry
 `basis`, one of three short enums, beside `due_date`:
@@ -383,8 +389,9 @@ text, as settled on #509.
   every model call and falls back to the rule's own wording when the call
   fails or is refused. This changes section 6's "nothing leaves Autune" and is
   decided here before it is built.
-- **Holidays** (#964). Business days skip weekends only. A Korean holiday list
-  is a separate change to every "next business day" in section 5.
+- **Holidays** (#964). Settled: business days skip B's public holidays
+  (section 5). A team's own days off (a company holiday) are not known; the
+  lead moves the date on the board.
 
 ## 8. Testing
 
