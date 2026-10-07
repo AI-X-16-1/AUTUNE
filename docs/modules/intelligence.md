@@ -359,7 +359,10 @@ meeting record does.
 
 - Weekly insight report to the team channel
 - Prediction warnings when misalignment risk crosses a threshold
-- Personal speaking-ratio DM: "이번 회의에서 당신의 발언 비중은 12%였습니다"
+- Personal speaking-ratio DM: "이번 회의 발언 비중 · 결제 회의 · 10/7 · 12%". The
+  meeting is named in the DM body (#945; B's post-meeting DM may arrive beside
+  it), never in the notification preview, and by its date alone when the title
+  holds personal data.
 
 ## AI stack
 
