@@ -95,6 +95,9 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
                 arguments={
                     "action_item_id": m.item.action_item_id,
                     "due_date": m.due_date.isoformat(),
+                    # The item's meeting, so the waiting row and its card
+                    # are that meeting's (#959).
+                    **({"meeting_id": m.item.meeting_id} if m.item.meeting_id else {}),
                 },
                 level="L2",
                 rationale=m.rationale,
