@@ -18,9 +18,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from autune_audio.live import registry as live_registry
+from autune_audio.live import tickets as live_tickets
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
-from autune_core.auth import issue_token, user_for_token
+from autune_core.auth import user_for_token
 from autune_core.deletion import on_user_deleted
 from autune_core.entities import team_order
 from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
@@ -1165,30 +1166,40 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
     return user
 
 
-LIVE_TICKET_TTL = timedelta(seconds=60)
-"""How long a live ticket opens a socket. The page asks for one right before
-it connects; a minute covers a slow handshake and leaves little to steal."""
-
-
 def live_ticket(session: Session, *, user: User, meeting_id: str) -> str:
-    """A short-lived token for ``user`` to open the live socket of a meeting.
+    """A one-use ticket for ``user`` to open the live socket of a meeting.
 
     For a browser whose session is an HttpOnly cookie on another host than the
-    socket's: the cookie does not reach the socket, and the page cannot read it
-    to put in ``hello``. The same checks as ``authenticate_live``, so a ticket
-    is refused here exactly where the socket would refuse the cookie.
-
-    The ticket is an ordinary session token with a minute to live -- the
-    socket reads it through ``user_for_token`` like any other, and signing out
-    ends it too (#727). It is readable by the page's JavaScript for that
-    minute, which the cookie never is; that is the cost of a socket on another
-    origin, kept to sixty seconds.
+    socket's (``live/tickets.py``). Refused where the socket would refuse the
+    person: no meeting, not a member.
     """
     meeting = session.get(Meeting, meeting_id)
     if meeting is None:
         raise NotFoundError("meeting", meeting_id)
     require_team_member(session, user_id=user.id, team_id=meeting.team_id)
-    return issue_token(user.id, ttl=LIVE_TICKET_TTL)
+    return live_tickets.issue(
+        user_id=user.id, meeting_id=meeting_id, sessions_valid_from=user.sessions_valid_from
+    )
+
+
+def authenticate_live_ticket(session: Session, *, ticket: str, meeting_id: str) -> User:
+    """``authenticate_live`` for a ticket: spend it, then the same membership
+    check. ``PermissionDeniedError`` for a ticket that opens nothing here --
+    unknown, spent, expired, another meeting's, or its person signed out
+    since it was issued."""
+    held = live_tickets.redeem(ticket, meeting_id=meeting_id)
+    if held is None:
+        raise PermissionDeniedError("ticket is not good for this meeting")
+    user = session.get(User, held.user_id)
+    if user is None:
+        raise PermissionDeniedError("ticket names nobody")
+    if user.sessions_valid_from != held.sessions_valid_from:
+        raise PermissionDeniedError("signed out since the ticket was issued")
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return user
 
 
 _ACCEPTS_A_LIVE_SESSION = frozenset({"scheduled", "recording"})

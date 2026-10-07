@@ -381,7 +381,7 @@ export function liveSocketUrl(meetingId: string): string {
 }
 
 /**
- * A minute-long token for the live socket's `hello`, asked for over the
+ * A one-use ticket for the live socket's `hello`, asked for over the
  * page's own origin, where the session cookie goes. Only for a socket on
  * another host (`liveIsCrossOrigin`), which the cookie does not reach.
  */

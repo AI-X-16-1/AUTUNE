@@ -472,9 +472,16 @@ def test_a_live_ticket_in_hello_opens_the_socket_without_a_cookie(
     client: TestClient, db_session: Session, meeting: str, member: User
 ) -> None:
     """A socket on the API's own host gets no session cookie; the ticket the
-    page fetched over its own origin stands in for it."""
+    page fetched over its own origin stands in for it, once."""
     from autune_audio import service
 
+    ticket = service.live_ticket(db_session, user=member, meeting_id=meeting)
     with connect(client, meeting) as ws:
-        hello(ws, service.live_ticket(db_session, user=member, meeting_id=meeting))
+        hello(ws, ticket)
         assert ws.receive_json() == {"type": "ready"}
+        ws.send_text(json.dumps({"type": "stop"}))
+        assert ws.receive_json() == {"type": "ended"}
+
+    with connect(client, meeting) as ws:
+        hello(ws, ticket)
+        assert close_code(ws) == 4401

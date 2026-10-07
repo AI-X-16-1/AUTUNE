@@ -141,18 +141,19 @@ class MeetingState(BaseModel):
 
 
 class LiveTicket(BaseModel):
-    """A token for one live socket, from ``POST /live/{meeting_id}/ticket``.
+    """A ticket for one live socket, from ``POST /live/{meeting_id}/ticket``.
 
     The socket is opened on the API's own address where the page's address
-    cannot carry a WebSocket (the dev server), and the session cookie
-    belongs to the page's host, not the API's. The page asks for this over
-    its own origin, where the cookie does go, and puts it in ``hello``.
+    cannot carry a WebSocket (the dev server), and the session cookie belongs
+    to the page's host, not the API's. The page asks for this over its own
+    origin, where the cookie does go, and puts it in ``hello``. Not a session
+    token: it opens that meeting's socket once and nothing else
+    (``live/tickets.py``).
     """
 
     token: str
     expires_in: int
-    """Seconds. Enough to open the socket, not to keep it: the socket checks
-    the token once, at ``hello``."""
+    """Seconds until it can no longer open the socket."""
 
 
 class MeetingDetail(MeetingState):
