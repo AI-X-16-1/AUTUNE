@@ -860,6 +860,33 @@ class ExtDailyDigest(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ExtWorkReport(Base):
+    """That a person was sent the work-report draft for one day,
+    through one team's Slack (``work_report``, the user 2026-10-07). The
+    primary key is the "once", as ``ext_daily_digests``'s is. No text: the
+    message is not kept. Its own table because that one's key is the same
+    three columns and its latest row is where the next morning DM counts
+    from.
+
+    **A row lives for its day only.** The draft goes only on a day something
+    of the person's was finished or moved, so a row kept would say which days
+    a person worked (ADR 0003; mkkim68, review of #954): the sending task
+    deletes every earlier day's row each time it runs
+    (``work_report.forget_past_days``). Goes with the person and with the
+    team before that."""
+
+    __tablename__ = "ext_work_reports"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ExtNotificationPause(Base):
     """The days a person asked not to get the morning DM or Monday's digest --
     leave, as they set it themselves (the user, 2026-10-05).

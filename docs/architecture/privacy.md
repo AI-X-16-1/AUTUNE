@@ -517,6 +517,40 @@ the feature needs.
     A morning DM or a Monday DM the outbound check refuses is not sent, is
     reported once, and keeps that day's (or week's) row so it is not tried
     again every ten minutes.
+  - **Slack, the work-report draft:** on a Monday-to-Friday afternoon
+    in Korea (16:00-17:00, and not later), a direct message to a person about their own items on one
+    team, when something of theirs was finished or moved to in progress that
+    day: a short report -- finished, moved, going on to tomorrow, late, and
+    the rest as a count -- headed by the team's name and worded so that the
+    person can paste it to that team. **Autune sends it to that person and to
+    nobody else**: no channel, no lead, no admin, and no collected version of
+    several people's days; whether anybody else reads it is the person's own
+    paste. It carries what the morning DM carries about each item -- its
+    description, a due date that is today's or past, the meeting's title --
+    and a link to the board; no utterance, and nobody else's items. "Today"
+    is read from `ext_edit_events` as the morning DM's "what changed" is, so
+    it never says who made a change, and it counts nothing about a person
+    beyond the number of their own open items it did not list. The text is
+    made from the rows; no model reads or rewrites it. **That it went is
+    kept for its own day and no longer** (mkkim68, review of #954). Unlike
+    the morning DM, this one goes only on a day the person finished or
+    started something, so the row that says it went (`ext_work_reports`:
+    person, team, day) says by itself that they worked on that team that
+    day; kept, the rows would be a calendar of a person's working days --
+    the per-person record of conduct ADR 0003 forbids. The row has one use,
+    not sending twice in a day, so the sending task deletes every earlier
+    day's row each time it runs: every ten minutes, also where the feature
+    is switched off and outside its hour. A row is therefore gone within
+    about ten minutes of the next midnight in Korea while the worker runs,
+    and at the worker's first run if it was down; until then it goes with
+    the account or the team. For the same reason nothing else names a
+    person beside a day: the task's result is a count, a failed send is
+    logged by team and error type, and a refused text is raised by team.
+    The run's log line keeps how many went, not to whom. Not its text
+    either. The reminder switch above stops it, and so do the person's own
+    leave dates and a public holiday below; a draft the outbound check
+    refuses is not sent, is reported once, and keeps that day's row -- which
+    is deleted with the others.
   - **A person's own leave dates:** a person may set one range of days on
     which the morning DM and Monday's DM are not sent
     (`ext_notification_pauses`). When someone is away is theirs alone: only

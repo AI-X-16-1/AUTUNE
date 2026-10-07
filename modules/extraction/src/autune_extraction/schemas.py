@@ -450,8 +450,9 @@ class DueReminderSetting(BaseModel):
     """The caller's own due-date reminders (review of #751).
 
     ``on`` is their choice: on unless they turned it off. It is one switch
-    for three messages -- the due-date reminder, the Monday digest and the
-    morning DM -- and a deployment turns each of the three on by itself, so
+    for four messages -- the due-date reminder, the Monday digest, the
+    morning DM and the work-report draft (``work_report_here``,
+    ``..._WORK_REPORT``) -- and a deployment turns each on by itself, so
     the screen is told which of them this one sends: ``sent_here`` for the
     reminder (``AUTUNE_EXTRACTION_DUE_REMINDERS``), ``weekly_here`` for the
     Monday digest (``..._WEEKLY_DIGEST``), ``daily_here`` for the morning DM
@@ -462,6 +463,7 @@ class DueReminderSetting(BaseModel):
     sent_here: bool
     weekly_here: bool = False
     daily_here: bool = False
+    work_report_here: bool = False
 
 
 class DueReminderSettingIn(BaseModel):
