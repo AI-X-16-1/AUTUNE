@@ -44,7 +44,9 @@ same status and the same words. The reason goes to the log, by id.
 anything.** It goes when the invitation is accepted, when it lapses (the
 retention sweep, and the next invitation made for that team), when it is
 replaced by a new invitation to the same address, when a member of the team
-cancels it (``cancel``), when the team or the inviter's account is deleted
+cancels it (``cancel``), when the inviter leaves the team
+(``service.leave_team``: nobody joins a team on the word of somebody who is
+no longer on it), when the team or the inviter's account is deleted
 (``ON DELETE CASCADE``), and when the invited person deletes their own
 account (``forget_address``). Log lines carry ids only: never the address,
 the token or its hash.

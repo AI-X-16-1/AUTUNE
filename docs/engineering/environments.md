@@ -453,7 +453,11 @@ often spaced ("박 재경", "재경 박"), so a Hangul name of two words is also
 joined and swapped ("박재경", "재경박") and by its given name ("재경") — the word
 of two syllables or more beside a one-syllable surname; with two longer words
 only the joined forms. Whichever form matched, the same person gets the same number
-within one meeting's requests. The classifier's placeholders are never stored. Its
+within one meeting's requests. **Whose names:** the members of the team that
+held the meeting, and the accounts identified as speakers in that meeting
+(`service.team_roster`) — so somebody who has since left the team is still
+replaced in the meetings they spoke in, when one is extracted again.
+The classifier's placeholders are never stored. Its
 answer is a label for each line and, for a line it labels a commitment or a
 decision, one line saying what it is; a label carries no text, and a summary has
 each `[사람N]` restored to the name it stood for before it is kept, the way the
@@ -463,7 +467,9 @@ a summary with a number or a name that the lines of its request did not hold.
 
 What still goes out, and is the exposure #392 and #92 ask about:
 
-- names not on the team's roster — people outside the team, nicknames, English
+- names not on the team's roster — people outside the team, somebody who left
+  the team and is named in a meeting they did not speak in (or spoke in
+  without being identified), an account that was deleted, nicknames, English
   names and names the speech recogniser misheard;
 - a roster name that is also an ordinary word ("하늘", "보람") is replaced where
   it is only a word — the cost is classification accuracy, not data;
