@@ -16,7 +16,7 @@ Owner: 강민구. Apply with `alembic upgrade heads` (plural).
 See docs/engineering/migrations.md.
 
 Revision ID: 8e5c1a7d3f94
-Revises: 4d7b1e9a2c58
+Revises: 6e3b8d1f5a27
 Create Date: 2026-10-07 09:00:00.000000
 """
 
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "8e5c1a7d3f94"
-down_revision: str | None = "4d7b1e9a2c58"  # extraction: decision statement resolved
+down_revision: str | None = "6e3b8d1f5a27"  # extraction: the leave event on a calendar (#922)
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
