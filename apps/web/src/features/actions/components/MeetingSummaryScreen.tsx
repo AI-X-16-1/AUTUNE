@@ -104,6 +104,16 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             </Meta>
           </p>
         </section>
+      ) : summary.generated_too_long ? (
+        <section aria-label="AI 요약">
+          <Heading>AI 요약</Heading>
+          <p>
+            <Meta>
+              회의가 길어 AI 요약을 만들지 못했습니다. 아래 결정·액션은
+              그대로입니다.
+            </Meta>
+          </p>
+        </section>
       ) : null}
 
       <section aria-label="개요">

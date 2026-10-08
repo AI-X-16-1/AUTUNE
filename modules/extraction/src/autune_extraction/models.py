@@ -1465,7 +1465,7 @@ class ExtMeetingNote(Base):
 class ExtMeetingSummary(Base):
     """A meeting's summary written by a cloud model (#421 v2, ``summary_impl=llm``).
 
-    Model output over the meeting's consented, masked lines, names put back --
+    Model output over the meeting's consented, masked lines, naming no person --
     meeting content, shown to the team on the 요약 tab. ``source_digest`` is
     ``service.source_digest`` over the lines it was written from: a summary
     whose lines have changed since (a correction, a deletion, a change of
@@ -1479,6 +1479,8 @@ class ExtMeetingSummary(Base):
     keeps the meeting's retention.
 
     ``points`` holds one sentence per line: each was checked to be one line.
+
+    A row can also say that no summary could be written (``too_long``).
     """
 
     __tablename__ = "ext_meeting_summaries"
@@ -1490,6 +1492,16 @@ class ExtMeetingSummary(Base):
     points: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    too_long: Mapped[bool] = mapped_column(nullable=False, default=False, server_default=false())
+    """No summary was written because the meeting, as the lines of
+    ``source_digest``, needs more model calls than one meeting is allowed
+    (``summary.MAX_CALLS``). ``overview`` and ``points`` are then empty: the
+    row holds no text, only that this was tried. It is what lets the tab say
+    why there is no summary, and what keeps a rerun over the same lines from
+    spending the calls again to learn the same thing. It follows the rules of
+    any other row here: lines that change delete it, and so does deleted
+    speech. A later, higher limit does not revisit it -- the lines have to
+    change."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )

@@ -637,6 +637,10 @@ class MeetingSummary(BaseModel):
     generated: GeneratedSummary | None = None
     """v2: a model's summary of the whole meeting, or ``None`` when none is
     written or the meeting has changed since."""
+    generated_too_long: bool = False
+    """v2: no summary was written because the meeting is too long for one, and
+    its lines have not changed since that was found. The tab says so instead of
+    showing nothing. ``generated`` is then ``None``."""
     projects: list[ProjectRead] = Field(default_factory=list)
     """The team's projects, for grouping ``decisions`` and ``action_items`` by
     their ``project_id`` -- one that is ``None`` is 미분류."""
