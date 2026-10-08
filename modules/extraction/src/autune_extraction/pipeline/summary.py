@@ -168,6 +168,12 @@ _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _DIGIT_RUN = re.compile(r"\d+")
 
 
+def _numbers(text: str) -> set[str]:
+    """The numbers ``text`` says, each a whole run of digits without the zeros
+    in front: "20일" says 20 and does not say 2, and "09시" says 9."""
+    return {run.lstrip("0") or "0" for run in _DIGIT_RUN.findall(text)}
+
+
 class TooLongError(RuntimeError):
     """The meeting needs more than ``MAX_CALLS`` calls. Carries no text."""
 
@@ -249,6 +255,10 @@ def _kept(
     a string, blank, several lines, too long, a placeholder never sent, or a
     number the meeting never said.
 
+    A number is compared whole (``_numbers``). Looked for as text it was
+    found inside any longer one: "10월 2일" passed for a meeting that said
+    "10월 20일" (2026-10-09, an answer written by hand).
+
     ``shown`` is a sentence of the last answer, the one a person reads: it is
     not kept when it names someone either. A section's point may keep its
     placeholder: it goes to the next call and is never stored."""
@@ -261,7 +271,7 @@ def _kept(
         return None
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
         return None
-    if any(number not in said for number in _DIGIT_RUN.findall(text)):
+    if not _numbers(text) <= _numbers(said):
         return None
     return text
 
