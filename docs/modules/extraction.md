@@ -483,8 +483,9 @@ sentence the line was (`excerpt.quoted`); what is recorded is the same two
 offsets and no word. Words that are not there -- reworded, shortened, another
 line's -- are not used, and neither are words that are all of the line: the
 part is then the sentence, and for an utterance that was not cut, the whole of
-it. A decision whose members name words in two places has one span, and a
-member that names none makes it the whole utterance. The `local` and `fake`
+it. A decision whose members name words in two places has one span, from the
+first of them to the last. A member that names no words contributes its
+sentence, or the whole utterance when it was not cut. The `local` and `fake`
 classifiers name no words. Measured on invented meetings only, the numbers in
 `INSTRUCTIONS`' docstring: every part returned was in its line (282 of 282),
 and a turn of about 360 characters was quoted as about 38 where its sentence
