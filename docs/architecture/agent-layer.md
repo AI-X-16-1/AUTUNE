@@ -120,7 +120,7 @@ and keeps their module's `tools.py`.
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
 | **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a document shown to the team in the app after an approver with scope `research` approves it — L2; a Slack DM to participants follows #478 |
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; lists the team's open Jira issues (B's `TeamAgenda`, #436) | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), the team's open Jira issues as B reported them (`brief_agenda`) | D's pre-meeting brief — D's own surface, rule 2 |
-| **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
+| **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open; the meeting's due dates, `meeting_due_dates` — each confirmed, unfinished item's date and, since #1038, its title when the description carries no unmasked personal data, an unconfirmed item only as a count; Korea's public holidays, #985), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no assignee, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
 | **Tracker** ("할 일 챙김", #856) | 강민구 | Finds confirmed action items that are past their due date and proposes moving the date a week on — to the manager only (`any`; no approval scope of its own). Closing an item carried through three or more meetings is accepted on #856 and not built yet: it waits for B to mark a close apart from finished work | `@periodic`, weekly; `autune.intelligence.completed`; a chat request | B (`stalled_action_items`) | a proposal on the manager's approval screen; the due date changes only after approval — L2 |
 | **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them. A chat request is answered about all of E through a Gemini tool loop (`chat.py`); the template path (no LLM) is unchanged | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade. The chat path also reads E's own tools and `explain_metric` | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
@@ -132,7 +132,7 @@ Three things in that table are decisions, not descriptions:
   proposal lands on the lead's approval screen (section 8, plan mode), and what
   it proposes — a follow-up item on the board, a reassignment, a message to
   the people affected — happens only when the lead approves it item by item.
-- **Workload and Follow-up read counts of work, never speech.** How many open
+- **Workload and Follow-up read the state of work, never speech.** How many open
   items a person owns and how late they are is work state, which a manager
   already sees on a task board. How much a person spoke, or whether they were
   silent on a topic, is not: privacy.md section 3 keeps a speaking ratio with
@@ -145,6 +145,33 @@ Three things in that table are decisions, not descriptions:
   meeting a share of one-half says a lot about one person, and Follow-up's rule
   does not need it (its spec, section 6). No speaking-ratio tool is registered
   at all (section 4, `PERSONAL_ONLY_TOOLS`).
+
+  **Of B's work Follow-up reads dates, not people** (#963, #970). For the day
+  it suggests, it reads `meeting_due_dates`: the due date of each confirmed,
+  unfinished item of the meeting, and never an assignee — with an owner beside
+  it a date would tell the lead who is late. An item nobody has confirmed comes
+  out only as a count (section 8, rule 3). It also reads Korea's public
+  holidays from B (#985), which are dates of public record.
+
+  Since #1038 a confirmed entry also carries the item's `title`, its
+  description, on two conditions that B's docstring states and a caller keeps.
+  *Screened*: a description a person typed or edited never passed module A's
+  masker, so B leaves the title off an entry whose description carries
+  personal data, and a caller has to work without one. *Shown, not kept*: the
+  title fills a sentence at the moment it is shown and is not written into an
+  `agent_` row, so a deleted item or a meeting past its retention takes its
+  title with it; a card that shows the sentence later reads the tool again.
+  A title is the name of a piece of work, so it is still work state — but it
+  is text a person may have written, which a count is not, and that is why the
+  conditions exist.
+
+  **Where a title can reach a model.** In a chat turn the main agent's compose
+  step sends a subagent's `summary` and items to the model (`main/gemini.py`,
+  through `check_outbound`), so a title a subagent writes into its summary goes
+  to the model there, as a title from `meeting_action_items` already does. A
+  run started by an event composes nothing: its summary is returned as it is.
+  Follow-up's own wording call (`explain.py`) sends counts and days, and no
+  title.
 - **Tracker is about items, never people, and only confirmed ones.** It
   reads which items have stopped moving and proposes one change for one
   item; nothing counts or ranks what a person has left undone. An item still
