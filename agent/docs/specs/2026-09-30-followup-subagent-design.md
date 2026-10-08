@@ -484,6 +484,24 @@ text, as settled on #509.
     same standard, so a failed call costs little.
   - *Still open.* Where the sentence is kept and how the card shows it
     (`main/`, 김민경); B handing over confirmed items' titles (B, 강민구).
+- **Days people picked for the next meeting** (decided 2026-10-08 by the
+  owner). "다음 회의 잡기" on the gap report (#824) puts a meeting's gaps on a
+  calendar event somebody picks, and that event's day is a day a person
+  chose. The approvals card offers every such day and the rule's day, and the
+  approver picks one; two people who picked different days give two choices,
+  and nothing chooses between them for the approver.
+  - *Read when the card is read.* Follow-up proposes at
+    `intelligence.completed`, usually before anybody presses "다음 회의
+    잡기", so the days are not part of the proposal. The card reads C's
+    `gap.next_meeting_days` (days only, never whose) and calls
+    `followup.date_choices(rule_day, picked_days(result))`: each picked day
+    once, earliest first, then the rule's day, one choice saying both when
+    they are the same.
+  - *Approving a picked day* runs the proposal with that day as `due_date`,
+    which needs the approval to take a changed date. That and the card's list
+    are `main/`'s (김민경).
+  - The reason sentence (Stage 2) explains the rule's day only; a picked day
+    is labelled as picked, not explained.
 - **Holidays** (#964). Settled: business days skip B's public holidays
   (section 5). A team's own days off (a company holiday) are not known; the
   lead moves the date on the board.
