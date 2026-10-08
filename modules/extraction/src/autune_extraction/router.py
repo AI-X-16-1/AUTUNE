@@ -19,13 +19,13 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
-from autune_core import CurrentUser, Meeting, User, get_session
+from autune_core import CurrentUser, Meeting, SessionDep, User
 from autune_core.errors import ConflictError, NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
@@ -80,8 +80,6 @@ from .schemas import (
 )
 
 router = APIRouter()
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def dev_routes_enabled() -> bool:

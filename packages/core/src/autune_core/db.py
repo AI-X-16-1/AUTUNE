@@ -10,7 +10,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -37,7 +39,11 @@ def get_sessionmaker() -> sessionmaker[Session]:
 
 
 def get_session() -> Iterator[Session]:
-    """FastAPI dependency. Commits on success, rolls back on failure."""
+    """FastAPI dependency. Commits on success, rolls back on failure.
+
+    Its commit runs after the response has been sent. A route takes
+    ``SessionDep`` below instead, which commits before it.
+    """
     session = get_sessionmaker()()
     try:
         yield session
@@ -47,6 +53,29 @@ def get_session() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def committed_session(session: Annotated[Session, Depends(get_session)]) -> Iterator[Session]:
+    """The request's session, committed as the route returns.
+
+    ``get_session`` commits after its ``yield``, and FastAPI (0.118 and later)
+    runs that part *after the response has been sent*. A client that acts on a
+    2xx at once can then read before the write exists, and a commit that fails
+    there fails after the client was told it worked (#1041).
+
+    It takes the session from ``get_session`` itself, so ``CurrentUser`` and
+    the route share one session and one transaction; ``get_session``'s own
+    commit then finds nothing left to do. When the route raises, the exception
+    arrives at this ``yield``, the commit is skipped, and ``get_session`` rolls
+    back as before.
+    """
+    yield session
+    session.commit()
+
+
+# ``scope="function"`` is what moves the commit: the teardown runs as soon as
+# the route function returns, before the response is built.
+SessionDep = Annotated[Session, Depends(committed_session, scope="function")]
 
 
 @contextmanager
