@@ -448,6 +448,25 @@ def test_a_rerun_gives_a_decision_from_before_the_offsets_its_part(wired: Sessio
     assert [s.excerpt for s in service.read_decision_detail(wired, decision).sources] == [DECIDED]
 
 
+def test_a_rerun_that_finds_no_part_drops_the_one_recorded_before(wired: Session) -> None:
+    """Offsets a run did not write are not that run's: left on the row they
+    would cut the decision's quotation at a place nothing chose."""
+    event = meeting(wired, DECIDED, SURVEY)
+    tasks.on_transcript_ready(event)
+    wired.execute(update(ExtDecisionSource).values(excerpt_start=0, excerpt_end=3))
+    wired.commit()
+
+    tasks.on_transcript_ready(event)
+
+    wired.expire_all()
+    (row,) = wired.query(ExtDecisionSource).all()
+    assert (row.excerpt_start, row.excerpt_end) == (None, None)
+    (decision,) = wired.query(ExtDecision).all()
+    assert [(s.text, s.excerpt) for s in service.read_decision_detail(wired, decision).sources] == [
+        (DECIDED, None)
+    ]
+
+
 def test_a_card_shows_the_part_beneath_a_summary_and_nothing_beneath_the_line_itself(
     session: Session,
 ) -> None:
