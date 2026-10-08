@@ -381,6 +381,9 @@ export interface GeneratedSummary {
 
 export interface MeetingSummary {
   meeting_id: string;
+  /** What the page of minutes is headed with: the meeting's title and start. */
+  meeting_title?: string | null;
+  meeting_started_at?: string | null;
   /** Confirmed first, then pending; a rejected decision is not listed. */
   decisions: SummaryDecision[];
   /** Every item of the meeting, whatever its status. */

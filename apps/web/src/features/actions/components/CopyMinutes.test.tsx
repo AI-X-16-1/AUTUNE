@@ -57,19 +57,65 @@ describe("minutesText", () => {
       [
         "회의록 — 주간 회의",
         "",
-        "결정",
-        "- 배포는 다음 주 화요일에 한다",
-        "- 검색 개편은 2주 미룬다 (자동 추출)",
+        "결정 사항",
+        "1. 배포는 다음 주 화요일에 한다",
+        "2. 검색 개편은 2주 미룬다 (자동 추출)",
         "",
         "액션",
-        "- [진행 중] 스펙 초안 공유 — 김민경 · 2026-10-09",
-        "- [확인 필요] QA 일정 확인 — 민구 · 기한 없음",
-        "- [완료] 회고 자료 정리 — 담당 미지정 · 기한 없음",
+        "1. 스펙 초안 공유 — 김민경 · 2026-10-09 (진행 중)",
+        "2. QA 일정 확인 — 민구 · 기한 없음 (확인 필요)",
+        "3. 회고 자료 정리 — 담당 미지정 · 기한 없음 (완료)",
         "",
-        "팀 메모",
+        "메모",
         "다음 회의는 목요일.",
       ].join("\n"),
     );
+  });
+
+  it("is headed with the meeting's own title and day, and says nothing after an item not begun", () => {
+    const text = minutesText(
+      {
+        ...SUMMARY,
+        meeting_title: "10월 2주차 점검",
+        meeting_started_at: "2026-10-08T03:00:00Z",
+        decisions: [],
+        action_items: [item({ id: "a5", assignee_name: "박재경", status: "todo" })],
+        note: null,
+      },
+      "10월 2주차 점검",
+    );
+
+    expect(text.split("\n").slice(0, 2)).toEqual([
+      "회의록 — 10월 2주차 점검",
+      "2026년 10월 8일 (목)",
+    ]);
+    expect(text).toContain("1. 스펙 초안 공유 — 박재경 · 기한 없음");
+    expect(text).not.toContain("진행 전");
+  });
+
+  it("puts a model's summary on top, under a heading that says a model wrote it", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      generated: {
+        overview: "배포를 다음 주로 미루기로 했습니다.",
+        points: ["QA 일정은 민구가 확인합니다"],
+        model_version: "llm:first",
+        created_at: "2026-10-08T03:30:00Z",
+      },
+    });
+
+    expect(text.split("\n").slice(0, 5)).toEqual([
+      "회의록",
+      "",
+      "요약 (AI 작성)",
+      "배포를 다음 주로 미루기로 했습니다.",
+      "- QA 일정은 민구가 확인합니다",
+    ]);
+  });
+
+  it("names the meeting by its own title before a row's", () => {
+    expect(titleOf({ ...SUMMARY, meeting_title: "10월 2주차 점검" })).toBe("10월 2주차 점검");
+    expect(titleOf(SUMMARY)).toBe("주간 회의");
   });
 
   it("carries no utterance: not the quotation an item was drawn from", () => {
@@ -86,7 +132,9 @@ describe("minutesText", () => {
   it("says so when the meeting settled nothing", () => {
     const empty = { ...SUMMARY, decisions: [], action_items: [], note: null };
 
-    expect(minutesText(empty)).toBe(["회의록", "", "결정", "- 없음", "", "액션", "- 없음"].join("\n"));
+    expect(minutesText(empty)).toBe(
+      ["회의록", "", "결정 사항", "없음", "", "액션", "없음"].join("\n"),
+    );
     expect(titleOf(empty)).toBeNull();
   });
 });
