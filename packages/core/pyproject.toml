@@ -22,7 +22,9 @@ dependencies = [
     "redis>=5.2",
     # auth.py wires FastAPI dependencies (current_user) and, from W2, the
     # /api/auth router lives here — the auth layer is core's, not a module's.
-    "fastapi>=0.115",
+    # 0.121 is the first release with `Depends(..., scope=...)`, which
+    # `SessionDep` in db.py is built on (#1041); an older one fails at import.
+    "fastapi>=0.121",
     # Server-to-server call to Google's OAuth token endpoint.
     "httpx>=0.28",
 ]
