@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { Button, MaskedText, Quote, StatusDot, type StatusVariant } from "@/shared/ui";
+import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
@@ -171,9 +172,7 @@ function DecisionRow({
                 원본 발화
               </p>
               {quotation.sources.map((source) => (
-                <Quote key={source.id}>
-                  <MaskedText>{source.text}</MaskedText>
-                </Quote>
+                <SourceQuote key={source.id} source={source} />
               ))}
             </div>
           ) : quotation.error ? (

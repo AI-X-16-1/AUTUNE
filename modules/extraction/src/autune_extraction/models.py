@@ -415,6 +415,13 @@ class ExtActionItem(Base, TimestampMixin):
     )
 
 
+_EXCERPT_CHECK = (
+    "(excerpt_start IS NULL AND excerpt_end IS NULL) "
+    "OR (excerpt_start >= 0 AND excerpt_end > excerpt_start)"
+)
+"""Both offsets or neither, and a part that has something in it."""
+
+
 class ExtActionItemSource(Base):
     """Which utterances an item came from.
 
@@ -435,6 +442,7 @@ class ExtActionItemSource(Base):
     __tablename__ = "ext_action_item_sources"
     __table_args__ = (
         UniqueConstraint("action_item_id", "utterance_id", name="uq_ext_action_item_sources"),
+        CheckConstraint(_EXCERPT_CHECK, name="ck_ext_action_item_sources_excerpt"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -452,6 +460,12 @@ class ExtActionItemSource(Base):
         index=True,
     )
     """NULL once the utterance is deleted. Never written NULL by this module."""
+
+    excerpt_start: Mapped[int | None] = mapped_column(Integer)
+    excerpt_end: Mapped[int | None] = mapped_column(Integer)
+    """Which part of the utterance the item was made from, as two offsets into
+    its stored text -- no words (``excerpt``). Both NULL for the whole utterance,
+    for a row from before these columns, and once the utterance was corrected."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
@@ -738,6 +752,7 @@ class ExtDecisionSource(Base):
     __tablename__ = "ext_decision_sources"
     __table_args__ = (
         UniqueConstraint("decision_id", "utterance_id", name="uq_ext_decision_sources"),
+        CheckConstraint(_EXCERPT_CHECK, name="ck_ext_decision_sources_excerpt"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -748,6 +763,10 @@ class ExtDecisionSource(Base):
         String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
     )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    excerpt_start: Mapped[int | None] = mapped_column(Integer)
+    excerpt_end: Mapped[int | None] = mapped_column(Integer)
+    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision."""
 
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 
