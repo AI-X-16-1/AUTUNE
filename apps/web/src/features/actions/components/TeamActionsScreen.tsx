@@ -82,7 +82,7 @@ export function TeamActionsScreen({
   /** Back to every team, from the line that names the one team. */
   onEveryTeam?: () => void;
 }) {
-  const { items: every, settled, error, edit, remove, reload } = useActionItems({});
+  const { items: every, settled, error, edit, close, remove, reload } = useActionItems({});
   const items = useMemo(
     () => (teamId === null ? every : every.filter((item) => item.team_id === teamId)),
     [every, teamId],
@@ -292,6 +292,9 @@ export function TeamActionsScreen({
           onClose={() => setSelectedId(undefined)}
           onStatusChange={async (status) => {
             await edit(selected.id, { status });
+          }}
+          onCloseUnfinished={async () => {
+            await close(selected.id);
           }}
           onAssigneeChange={async (change) => {
             await edit(selected.id, change);

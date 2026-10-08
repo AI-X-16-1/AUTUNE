@@ -375,6 +375,38 @@ def delete_action_item(
     background.add_task(tasks.refresh_project_minutes, meeting_id)
 
 
+@router.post("/action-items/{action_item_id}/close", response_model=ActionItemRead)
+def close_action_item(
+    action_item_id: str, session: SessionDep, reader: CurrentUser, background: BackgroundTasks
+) -> ActionItemRead:
+    """Close a confirmed item that will not be finished -- dropped, overtaken,
+    no longer needed (#856). The board's way to what ``tools.close_action_item``
+    does after an approval, with the same refusals: an item still waiting for
+    confirmation has nothing a person agreed to close, a finished one is
+    finished, and one already closed is not closed twice.
+
+    Not a ``PATCH`` of the status: the item ends ``done`` either way, and what
+    tells a close from finished work is the event kept
+    (``service.close_without_finishing``), which a status edit does not write.
+    Moving the status back re-opens it, as it does a finished item.
+    """
+    item = service.readable_action_item(session, action_item_id, reader)
+    # Held to the commit, as the tool holds it: a second close, or an edit of
+    # the status, waits and then reads what this one left (review of #979).
+    session.refresh(item, with_for_update=True)
+    if item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        raise ConflictError("an item waiting for confirmation cannot be closed")
+    if item.status == ActionStatus.DONE.value and service.closed_unfinished(session, [item.id]):
+        raise ConflictError("this item is already closed")
+    if not service.close_without_finishing(session, item):
+        raise ConflictError("this item is already done")
+    response = service.read_one(session, item, reader_id=reader.id)
+    session.commit()
+    # Its copies outside follow as they follow any change of status.
+    background.add_task(tasks.sync_after_confirmation, item.id)
+    return response
+
+
 @router.get("/reviews/{meeting_id}", response_model=MeetingReview)
 def get_review(meeting_id: str, session: SessionDep, reader: CurrentUser) -> MeetingReview:
     """What needs a person in this meeting before anything is sent (S15, #246)."""
