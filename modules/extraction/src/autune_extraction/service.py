@@ -71,7 +71,6 @@ from .decisions import (
     ClassifiedUtterance,
     group_decisions,
     identified,
-    needs_write_up,
 )
 from .edit_cost import EditCost
 from .excerpt import cut, joined, quoted
@@ -3330,16 +3329,20 @@ def resolve_decision_summaries(
     decided, and whatever the resolver is: the owner asked for each decision as
     one line. The lines it took a word from are its citations
     (``related.drawn_on``). **Otherwise a resolver that can cite**
-    (``resolve_with_evidence``) writes one, and only for a decision whose
-    settling turn does not say what was decided (``decisions.needs_write_up``);
-    for any other this has no entry and the decision keeps the assembled,
-    tidied line. That limit is still the resolver's alone: asked about every
-    decision it rewrote all of them for nothing (the measurement in
-    ``needs_write_up``), which is a reason not to ask it, not a reason to hide
-    a line that came with the label at no further request. Like
-    ``resolve_commitment_summaries`` it runs before any session -- it is model
-    inference -- and reads only ``classified``: ordered, and with a non-consenting
-    speaker's turn already blank.
+    (``resolve_with_evidence``) is asked about the decision, whatever its
+    settling turn says. Until 2026-10-08 it was asked only when that turn was
+    short or pointed at something said before, since for the others it mostly
+    changed the ending (measured 2026-09-30) -- but those were then the rows
+    that stayed as they were said, or were tidied into "…할 예정" when the
+    meeting had decided. The owner asked for every row as a written sentence
+    (2026-10-08), and on twelve invented decisions with no line of the
+    classifier's, all twelve of the resolver's passed its checks and read
+    right: one meeting, one run, not a rate. The cost is a request for about
+    every six such decisions. An answer that fails a check, and a resolver
+    that cannot cite, leave the decision the assembled, tidied line as before.
+    Like ``resolve_commitment_summaries`` it runs before any session -- it is
+    model inference -- and reads only ``classified``: ordered, and with a
+    non-consenting speaker's turn already blank.
 
     What the model is given for a decision: the turn that carries its substance
     (``DecisionGroup.core_text``) as the target; the lines around the whole run of
@@ -3361,7 +3364,7 @@ def resolve_decision_summaries(
     }
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
         return written
-    groups = [(id_, group) for id_, group in found if id_ not in written and needs_write_up(group)]
+    groups = [(id_, group) for id_, group in found if id_ not in written]
     if not groups:
         return written
 

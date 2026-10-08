@@ -108,16 +108,35 @@ def test_a_meeting_already_analysed_refuses_a_live_session(
         service.begin_live(db_session, meeting_id=meeting)
 
 
-def test_an_upload_is_refused_while_a_live_session_is_open(
+def test_an_upload_is_refused_while_someone_else_s_live_session_is_open(
     db_session: Session, meeting: str, member: User
 ) -> None:
     db_session.get(Meeting, meeting).status = "recording"
     db_session.flush()
-    registry.claim(meeting, object())  # type: ignore[arg-type]
+    session = object()
+    registry.claim(meeting, session, user_id="user_somebody_else")  # type: ignore[arg-type]
     try:
         with pytest.raises(ConflictError, match="live session"):
             service.start_transcription(db_session, meeting_id=meeting, uploader=member)
     finally:
-        registry.release(meeting)
+        registry.release(meeting, session)  # type: ignore[arg-type]
     # The browser's own upload, after ``stop``, once the claim is gone.
     service.start_transcription(db_session, meeting_id=meeting, uploader=member)
+
+
+def test_the_live_session_s_own_person_can_upload_over_it(
+    db_session: Session, meeting: str, member: User
+) -> None:
+    """The dev server, 2026-10-08: the first live session after a deploy sat in
+    the model's warm-up, which reads no message, so the browser's ``stop`` was
+    never read; 15 s later it uploaded and was refused 409 by its own claim.
+    The claim is there to stop *another* upload landing under a live socket.
+    The person who holds it is the one whose recording this is."""
+    db_session.get(Meeting, meeting).status = "recording"
+    db_session.flush()
+    registry.claim(meeting, object(), user_id=member.id)  # type: ignore[arg-type]
+
+    service.start_transcription(db_session, meeting_id=meeting, uploader=member)
+
+    assert not registry.is_open(meeting)
+    assert db_session.get(Meeting, meeting).status == "analyzing"
