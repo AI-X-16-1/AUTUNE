@@ -959,7 +959,8 @@ lands, the one `send_task` call here moves behind it.
   "just now" regardless of when the meeting actually happened. Omits the date
   when the meeting has none set (see PR #263's discussion, issue #257). Says that
   a key stakeholder was absent, **not how many**: in a small team "1 was absent"
-  points at one person (#339). Each of them hears it by DM.
+  points at one person (#339). Each of them hears it by DM. The statement is printed once: the thread's label is its head
+  statement, so for the head version it is the same sentence (#282).
 - **Pre-meeting brief** — `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` (default 10)
   before a scheduled meeting, to the team channel. The past meeting's topic
   labels and decision statements, and the issues this meeting takes up; never

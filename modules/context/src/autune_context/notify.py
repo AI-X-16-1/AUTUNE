@@ -148,12 +148,13 @@ def build_decision_drift_channel_notice(
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"● *결정 {verb}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{thread_label}*"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": current_statement}},
-        {
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": absence_note}],
-        },
     ]
+    # The label is the thread's head statement, so for the version that is the
+    # head the two are the same sentence and the notice would print it twice
+    # (#282).
+    if current_statement != thread_label:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": current_statement}})
+    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": absence_note}]})
     return fallback, blocks
 
 
