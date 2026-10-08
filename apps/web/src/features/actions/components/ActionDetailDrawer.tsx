@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { SourceQuote } from "./SourceQuote";
 import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
@@ -325,9 +326,7 @@ export function ActionDetailDrawer({
                   )}
                 />
                 {quotation.sources.map((source) => (
-                  <Quote key={source.id}>
-                    <MaskedText>{source.text}</MaskedText>
-                  </Quote>
+                  <SourceQuote key={source.id} source={source} />
                 ))}
                 {item.deleted_source_count > 0 ? (
                   <p

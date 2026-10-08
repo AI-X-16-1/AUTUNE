@@ -14,6 +14,7 @@ import re
 from datetime import date
 
 import pytest
+from sqlalchemy import Integer
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.decisions import (
@@ -383,16 +384,26 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
     }
 
 
-def test_decision_sources_hold_a_link_and_a_position_only() -> None:
+def test_decision_sources_hold_a_link_a_position_and_where_the_part_is() -> None:
     """No copy of the utterance text.
 
     The quotation is read by joining ``utterances``, so a deleted meeting takes
     it along. Denormalising the text here would leave transcript content behind a
-    cascade that no longer reaches it.
+    cascade that no longer reaches it. The part a decision was made from is two
+    numbers into that text for the same reason, and never the words.
     """
-    columns = {column.name for column in ExtDecisionSource.__table__.columns}
+    columns = ExtDecisionSource.__table__.columns
 
-    assert columns == {"id", "decision_id", "utterance_id", "position"}
+    assert {column.name for column in columns} == {
+        "id",
+        "decision_id",
+        "utterance_id",
+        "position",
+        "excerpt_start",
+        "excerpt_end",
+    }
+    assert isinstance(columns["excerpt_start"].type, Integer)
+    assert isinstance(columns["excerpt_end"].type, Integer)
 
 
 def test_both_tables_are_deleted_with_their_meeting() -> None:

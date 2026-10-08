@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -42,6 +42,7 @@ from autune_extraction.decisions import (
 )
 from autune_extraction.models import (
     ExtActionItem,
+    ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
@@ -385,3 +386,119 @@ def test_a_decision_that_is_a_piece_is_always_worth_a_write_up() -> None:
 
     assert not needs_write_up(whole)
     assert needs_write_up(piece)
+
+
+# --- which part of the turn a row was made from --------------------------------------
+
+
+def test_a_row_made_from_a_piece_quotes_that_piece_and_keeps_only_where_it_is(
+    wired: Session,
+) -> None:
+    """The reader is shown the sentence, not the minute it was said in (the
+    user, 2026-10-08) -- cut from the stored turn, of which no word is copied."""
+    tasks.on_transcript_ready(meeting(wired, CHAT, LONG))
+
+    items = wired.query(ExtActionItem).order_by(ExtActionItem.due_text).all()
+    quoted = [service.source_utterances(wired, item.id) for item in items]
+    assert [[(s.id, s.excerpt) for s in sources] for sources in quoted] == [
+        [("utt_2", SURVEY)],
+        [("utt_2", QUOTE)],
+    ]
+    # The whole turn is still beside it for a reader who asks.
+    assert all(s.text == LONG for sources in quoted for s in sources)
+    assert [
+        LONG[row.excerpt_start : row.excerpt_end]
+        for row in wired.query(ExtActionItemSource).order_by(ExtActionItemSource.excerpt_start)
+    ] == [SURVEY, QUOTE]
+
+    (decision,) = wired.query(ExtDecision).all()
+    detail = service.read_decision_detail(wired, decision)
+    assert [(s.id, s.excerpt, s.text) for s in detail.sources] == [("utt_2", DECIDED, LONG)]
+    # And the 요약 tab has the same sentence beneath the decision's line.
+    assert [d.summary for d in service.meeting_summary(wired, MEETING).decisions] == [DECIDED]
+
+
+def test_a_turn_that_was_not_cut_has_no_part_and_is_quoted_whole(wired: Session) -> None:
+    tasks.on_transcript_ready(meeting(wired, DECIDED, SURVEY))
+
+    (item,) = wired.query(ExtActionItem).all()
+    assert [(s.text, s.excerpt) for s in service.source_utterances(wired, item.id)] == [
+        (SURVEY, None)
+    ]
+    (decision,) = wired.query(ExtDecision).all()
+    assert [s.excerpt for s in service.read_decision_detail(wired, decision).sources] == [None]
+    assert wired.query(ExtActionItemSource).one().excerpt_start is None
+    assert wired.query(ExtDecisionSource).one().excerpt_start is None
+
+
+def test_a_rerun_gives_a_decision_from_before_the_offsets_its_part(wired: Session) -> None:
+    """A decision keeps its id and its source rows across runs, so the part is
+    written for every decision of a run and not only for a new one."""
+    event = meeting(wired, CHAT, LONG)
+    tasks.on_transcript_ready(event)
+    wired.execute(update(ExtDecisionSource).values(excerpt_start=None, excerpt_end=None))
+    wired.commit()
+    (before,) = wired.query(ExtDecision.id).all()
+
+    tasks.on_transcript_ready(event)
+
+    (decision,) = wired.query(ExtDecision).all()
+    assert (decision.id,) == tuple(before)
+    wired.expire_all()
+    assert [s.excerpt for s in service.read_decision_detail(wired, decision).sources] == [DECIDED]
+
+
+def test_a_card_shows_the_part_beneath_a_summary_and_nothing_beneath_the_line_itself(
+    session: Session,
+) -> None:
+    """``summary`` is the words a model's sentence stands for. An item whose
+    description is the line itself has nothing to add beneath it."""
+    spoken = TranscriptReady.model_validate(meeting(session, CHAT, LONG)).utterances
+    read = in_pieces(
+        [
+            turn("utt_1", None, CHAT),
+            turn(
+                "utt_2",
+                K.COMMITMENT,
+                LONG,
+                pieces=((DECIDED, K.DECISION), (SURVEY, K.COMMITMENT), (QUOTE, K.COMMITMENT)),
+            ),
+        ]
+    )
+
+    summarised, as_said = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=spoken,
+        classified=read,
+        resolved={"utt_2#2": "설문 문항을 금요일까지 다시 쓰기"},
+    )
+
+    assert summarised.description_resolved and not as_said.description_resolved
+    assert service.action_item_summaries(session, [summarised, as_said]) == {summarised.id: SURVEY}
+
+
+def test_a_summary_from_before_the_offsets_shows_the_start_of_the_whole_turn(
+    session: Session,
+) -> None:
+    """No backfill (the user, 2026-10-08): an older row is quoted as it always
+    was, and the card cuts it short."""
+    long_turn = CUT.join([DECIDED, SURVEY, CHAT, QUOTE, LATER])
+    spoken = TranscriptReady.model_validate(meeting(session, long_turn)).utterances
+    read = in_pieces(
+        [turn("utt_1", K.COMMITMENT, long_turn, pieces=((DECIDED, None), (SURVEY, K.COMMITMENT)))]
+    )
+    (item,) = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=spoken,
+        classified=read,
+        resolved={"utt_1#2": "설문 문항을 금요일까지 다시 쓰기"},
+    )
+    item.sources[0].excerpt_start = item.sources[0].excerpt_end = None
+    session.flush()
+
+    preview = service.action_item_summaries(session, [item])[item.id]
+
+    assert len(long_turn) > service.SUMMARY_MAX_CHARS
+    assert preview == long_turn[: service.SUMMARY_MAX_CHARS - 1].rstrip() + "…"
