@@ -366,9 +366,13 @@ person's, those counts are that person's completion record. So:
       and takes none back at a meeting's expiry either.
     - E's meeting reports, their corrections and the weekly reports in the
       team's Slack channel, which E never takes back.
+    - D's messages in the team's Slack channel: the topic-link notice, the
+      decision-drift warning and the pre-meeting brief, which quotes the
+      decisions of the meeting it recaps. D keeps no message id and takes
+      none back at a meeting's expiry either.
     - What was sent to a person's own Slack DM -- a confirmation request, a
-      reminder, a digest, their own speaking ratio -- stays in that person's
-      DM, as at a meeting's expiry.
+      reminder, a digest, a decision-drift warning, their own speaking
+      ratio -- stays in that person's DM, as at a meeting's expiry.
     - A `TranscriptReady` message already published and not yet consumed
       stays in the broker until a consumer takes it. It holds the masked
       transcript, and nothing removes it earlier.
