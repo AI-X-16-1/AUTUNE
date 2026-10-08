@@ -84,11 +84,15 @@ INSTRUCTIONS = (
     "그 외(설명·잡담·맞장구·투표·예상 수치)는 적지 마세요.\n"
     "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람N]은 가린 사람 이름입니다. "
     'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}, '
-    '"summaries": {"줄번호": "요약", ...}}. 해당 없으면 {"labels": {}}. '
-    "summaries에는 commitment와 decision 줄만, 그 줄의 내용을 한 문장으로 적으세요"
+    '"summaries": {"줄번호": "요약", ...}, "parts": {"줄번호": "옮긴 부분", ...}}. '
+    '해당 없으면 {"labels": {}}. '
+    "summaries에는 commitment와 decision 줄만, 그 줄의 내용을 60자 안팎의 짧은 한 문장으로 "
+    "적으세요"
     "(약속: 무엇을 언제까지 하는지, 결정: 무엇을 하기로 했는지). "
     "'그거' 같은 말은 문맥이 가리키는 것으로 바꾸되, 줄과 문맥에 없는 날짜·숫자·이름은 "
-    "쓰지 말고 [사람N]은 그대로 두세요."
+    "쓰지 말고 [사람N]은 그대로 두세요. parts에는 같은 줄마다, 그 약속·결정을 말한 "
+    "부분만 줄에서 글자 그대로 옮겨 적으세요(고치거나 줄이지 말고, 줄 전체가 그 "
+    "내용이면 줄 전체)."
     "\n예시(다른 회의):\n"
     "1 [문맥] 이 설문 결과는 누가 정리해 주실래요?\n"
     "2 [대상] 제가 할게요, 목요일까지요. → commitment\n"
@@ -146,7 +150,26 @@ calls it a commitment, which is what accepting a request is. The rewrites
 that made the first case nothing also made the second one nothing, or lost
 EVAL_03. So the first case is a fixed rule after this classifier and not a
 line of this prompt: ``service.drop_bare_acknowledgements``. Scripts and logs:
-``dataset/experiments/2026-10-06-summary-with-labels`` (local)."""
+``dataset/experiments/2026-10-06-summary-with-labels`` (local).
+
+``parts`` and "60자 안팎의 짧은" (2026-10-08) are here because the user asked
+for the part of an utterance an item is about and not the utterance (the same
+day), and a sentence is as narrow as cutting can get (``excerpt``). Measured
+that day, this prompt and the one before it in turn. On the four meetings
+above, two runs a cell: commitment F1 0.941 -> 0.947 (precision 0.906 ->
+0.964, recall 0.985 -> 0.934) -- no difference two runs can show, the
+direction being fewer lines labelled; one more request on two of the four.
+On one invented meeting of twelve turns of 317-412 characters with one promise
+or decision planted in each, three runs: the planted sentence labelled 36 of
+36 by both. **Every part returned was in its line character for character**
+(282 of 282 over both), and on the long turns each held the planted words
+whole: a turn of about 360 characters is quoted as a sentence of about 65
+without ``parts`` and as about 38 with. Summaries were short before the
+wording (mean 28 characters) and are with it (31); the wording is kept because
+it is the prompt these numbers are of. Not measured: a transcript without
+sentence ends, and a real meeting. What comes back is used only when it is in
+the line (``usable_part``); a quotation is never a model's words. Scripts and
+logs: ``dataset/experiments/2026-10-08-quoted-part`` (local)."""
 
 _KINDS = {kind.value: kind for kind in UtteranceKind}
 _RETRY_BACKOFF_SEC = (2.0, 5.0, 10.0)
@@ -537,11 +560,21 @@ _PLACEHOLDER = re.compile(r"\[사람\d+\]")
 def parse_summaries(answer: str) -> dict[int, str]:
     """``{"summaries": {"3": "..."}}`` -> ``{3: "..."}``, each on one line.
     Anything else is dropped rather than guessed at, as in ``parse``."""
+    return _written(answer, "summaries")
+
+
+def parse_parts(answer: str) -> dict[int, str]:
+    """``{"parts": {"3": "..."}}`` -> ``{3: "..."}``, read as
+    ``parse_summaries`` reads its own."""
+    return _written(answer, "parts")
+
+
+def _written(answer: str, key: str) -> dict[int, str]:
     match = re.search(r"\{.*\}", answer, re.S)
     if not match:
         return {}
     try:
-        written = json.loads(match.group(0)).get("summaries", {})
+        written = json.loads(match.group(0)).get(key, {})
     except (json.JSONDecodeError, AttributeError):
         return {}
     if not isinstance(written, dict):
@@ -579,12 +612,51 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     return restored if _grounded(restored, window) else ""
 
 
+def usable_part(written: str, line: str, names: re.Pattern[str] | None) -> str:
+    """The words of ``line`` the model says carry the promise or the decision,
+    as they stand in ``line`` -- or "" when there are none to use.
+
+    ``written`` is what came back for the line; ``line`` is the line as it was
+    said, which is not quite what was sent: the roster's ``names`` went as
+    placeholders. So ``written`` is looked for in ``line`` character for
+    character, whitespace aside, with a placeholder standing for a name of the
+    roster, and what is returned is **cut from ``line``**, never taken from the
+    answer. A part the model reworded, shortened, or took from another line is
+    not found and gives "", and so does one that is all of the line: there is
+    then nothing narrower than the line to quote.
+
+    A person shown a quotation is shown what was said (``excerpt``). This is
+    the one place a model's choice of words could become one, so it only ever
+    chooses where to cut.
+    """
+    text = written.strip().strip("\"'“”‘’").strip()
+    if not text:
+        return ""
+    pattern: list[str] = []
+    for token in re.split(r"(\[사람\d+\])", text):
+        if _PLACEHOLDER.fullmatch(token):
+            if names is None:
+                # No name was replaced, so no placeholder was sent.
+                return ""
+            pattern.append(f"(?:{names.pattern})")
+        else:
+            pattern.extend(re.escape(char) for char in token if not char.isspace())
+    if not pattern:
+        return ""
+    found = re.search(r"\s*".join(pattern), line)
+    if found is None:
+        return ""
+    return "" if found.group(0).strip() == line.strip() else found.group(0)
+
+
 def _prediction(
     kind: UtteranceKind | None,
     pieces: tuple[tuple[str, UtteranceKind | None], ...] = (),
     *,
     summary: str = "",
     piece_summaries: tuple[str, ...] = (),
+    part: str = "",
+    piece_parts: tuple[str, ...] = (),
 ) -> Prediction:
     if kind is None:
         return Prediction(
@@ -594,6 +666,7 @@ def _prediction(
             none_score=LLM_CONFIDENCE,
             pieces=pieces,
             piece_summaries=piece_summaries,
+            piece_parts=piece_parts,
         )
     scores = dict.fromkeys(UtteranceKind, 0.0)
     scores[kind] = LLM_CONFIDENCE
@@ -605,6 +678,8 @@ def _prediction(
         pieces=pieces,
         summary=summary,
         piece_summaries=piece_summaries,
+        part=part,
+        piece_parts=piece_parts,
     )
 
 
@@ -699,10 +774,12 @@ class LlmClassifier(GeminiClient):
         # counted on it. No cut falls inside a name (``said_lines``), so every
         # name is whole on the line it is replaced in.
         budget = MAX_OUTBOUND_CHARS - _BODY_OVERHEAD
-        owners, said = _in_pieces(texts, _names(_forms(self._roster)))
+        names = _names(_forms(self._roster))
+        owners, said = _in_pieces(texts, names)
         lines, surface = substitute_names_mapped(said, self._roster)
         labels: list[UtteranceKind | None] = [None] * len(lines)
         summaries = [""] * len(lines)
+        chosen = [""] * len(lines)
         for index, (context, start, end) in enumerate(windows(lines, budget)):
             text, targets = render(lines, context, start, end)
             body = {
@@ -725,6 +802,12 @@ class LlmClassifier(GeminiClient):
                 if at is not None and labels[at] in SUMMARISED:
                     window = " ".join(said[max(context, at - CONTEXT_LINES) : at + 1])
                     summaries[at] = usable_summary(written, surface, window)
+            # The part of a line is kept the same way, and only as words that
+            # are in the line as it was said (``usable_part``).
+            for line, written in parse_parts(answer).items():
+                at = targets.get(line)
+                if at is not None and labels[at] in SUMMARISED:
+                    chosen[at] = usable_part(written, said[at], names)
         parts: list[list[int]] = [[] for _ in texts]
         for line, owner in enumerate(owners):
             parts[owner].append(line)
@@ -734,6 +817,8 @@ class LlmClassifier(GeminiClient):
                 tuple((said[line], labels[line]) for line in own) if len(own) > 1 else (),
                 summary=summaries[own[0]] if len(own) == 1 else "",
                 piece_summaries=tuple(summaries[line] for line in own) if len(own) > 1 else (),
+                part=chosen[own[0]] if len(own) == 1 else "",
+                piece_parts=tuple(chosen[line] for line in own) if len(own) > 1 else (),
             )
             for own in parts
         ]
@@ -744,6 +829,7 @@ class LlmClassifier(GeminiClient):
             labelled=sum(p.kind is not None for p in predictions),
             in_pieces=sum(len(own) > 1 for own in parts),
             summarised=sum(bool(written) for written in summaries),
+            narrowed=sum(bool(words) for words in chosen),
         )
         return predictions
 
