@@ -37,6 +37,7 @@ from . import (
     notion_connect,
     projects,
     service,
+    sync_log,
     sync_state,
     tasks,
 )
@@ -76,6 +77,7 @@ from .schemas import (
     ProjectSendResult,
     ProjectWrite,
     ReviewDecision,
+    SyncLogRead,
     TeamRead,
 )
 
@@ -540,6 +542,15 @@ def my_teams(session: SessionDep, reader: CurrentUser) -> list[TeamRead]:
     """The reader's own teams, by name -- for the board across meetings, which
     shows the items team by team and has only each item's ``team_id``."""
     return service.reader_teams(session, reader.id)
+
+
+@router.get("/sync-log", response_model=SyncLogRead)
+def team_sync_log(team_id: str, session: SessionDep, reader: CurrentUser) -> SyncLogRead:
+    """S28's "동기화 기록": the copies of the team's items that failed and still
+    stand, and the latest that were made. Any member; a calendar row only to
+    the person it is about. See ``sync_log``."""
+    team = _member_team(session, reader, None, team_id)
+    return sync_log.team_sync_log(session, team_id=team, reader_id=reader.id)
 
 
 @router.get("/projects", response_model=list[ProjectRead])

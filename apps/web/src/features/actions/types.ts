@@ -70,6 +70,38 @@ export interface SyncFailure {
   failed_at: string;
 }
 
+/** A failure standing for an item, with the item and its meeting beside it. */
+export interface SyncLogFailure extends SyncFailure {
+  action_item_id: string;
+  meeting_id: string;
+  meeting_title: string;
+  description: string;
+}
+
+/**
+ * A copy of an item that was made, and when it first was. `url` is the Notion
+ * page or the Jira issue; an event on the reader's own calendar has none.
+ */
+export interface SyncLogCopy {
+  action_item_id: string;
+  meeting_id: string;
+  meeting_title: string;
+  description: string;
+  system: SyncFailure["system"];
+  url: string | null;
+  copied_at: string;
+}
+
+/**
+ * S28's "동기화 기록" for a team: the failures standing and the latest copies
+ * made, each newest first. Read from what the board already keeps -- not a
+ * log of every attempt.
+ */
+export interface SyncLog {
+  failures: SyncLogFailure[];
+  copies: SyncLogCopy[];
+}
+
 /**
  * What this reader may be told about the item and its assignee's calendar.
  * The four reasons about the item go to any reader; `sent`, a bare `none` and

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { getSession, type SessionUser } from "@/shared/api/auth";
+import { Button } from "@/shared/ui";
 
 import { CalendarConnect } from "./CalendarConnect";
 import { DueReminderSetting } from "./DueReminderSetting";
@@ -13,6 +14,7 @@ import { NotificationPauseSetting } from "./NotificationPauseSetting";
 import { NotionConnect } from "./NotionConnect";
 import { ProjectSettings } from "./ProjectSettings";
 import { SlackConnect } from "./SlackConnect";
+import { SyncLogDrawer } from "./SyncLogDrawer";
 
 type Team = SessionUser["teams"][number];
 
@@ -26,6 +28,8 @@ type Team = SessionUser["teams"][number];
  * feature does not import another: the route joins the two. The person's own Slack
  * link (DM 받기) is under the team's Slack, shown once that is connected. Any
  * member may connect a team's integration: there is no admin role yet (#592).
+ * Under the three, "동기화 기록" opens what the team's action items did on
+ * their way out lately (`SyncLogDrawer`).
  *
  * The same components the 액션 tab shows, given the team instead of a meeting;
  * the server checks membership either way.
@@ -53,6 +57,11 @@ export function IntegrationSettingsScreen({
   // without an effect; the first team when nothing names one of theirs.
   const teamId = own ?? known(chosenTeamId) ?? mine[0]?.id ?? null;
   const setTeamId = onChooseTeam ?? setPicked;
+  // The team whose log is open, not a flag: a team chosen while it is open
+  // closes it, so the window never shows one team under another's name --
+  // and closes it for good, so it does not come back with the first team.
+  const [logOf, setLogOf] = useState<string | null>(null);
+  if (logOf !== null && logOf !== teamId) setLogOf(null);
 
   useEffect(() => {
     let alive = true;
@@ -128,6 +137,14 @@ export function IntegrationSettingsScreen({
             <SlackConnect key={`slack-${teamId}`} teamId={teamId} />
             <JiraConnect key={`jira-${teamId}`} teamId={teamId} />
             <NotionConnect key={`notion-${teamId}`} teamId={teamId} />
+            <div>
+              <Button tone="text" size="compact" onClick={() => setLogOf(teamId)}>
+                동기화 기록
+              </Button>
+            </div>
+            {logOf === teamId ? (
+              <SyncLogDrawer teamId={teamId} onClose={() => setLogOf(null)} />
+            ) : null}
             <h3
               className="mt-4 text-[var(--color-ink-strong)]"
               style={heading}
