@@ -1,6 +1,5 @@
 "use client";
 
-import type { Route } from "next";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -21,6 +20,7 @@ import {
 import { COPY_NOTICE } from "../legal/content";
 import { Text } from "../legal/LegalDocumentView";
 import { ConsentForm } from "./ConsentForm";
+import { nextPath } from "./nextPath";
 
 /**
  * Where a signed-in person agrees to the terms and the privacy policy before
@@ -34,14 +34,14 @@ import { ConsentForm } from "./ConsentForm";
  * meets a changed document is shown that document, not both again.
  *
  * `?next=` is where the gate found the person. Only a path on this site is
- * followed; anything else goes to the home screen.
+ * followed; anything else goes to the home screen (`./nextPath`).
  */
 
-/** A path on this site, never another origin and never this page again. */
-function nextPath(): Route {
-  const next = new URLSearchParams(window.location.search).get("next") ?? "/";
-  const local = next.startsWith("/") && !next.startsWith("//");
-  return (local && !next.startsWith("/consent") ? next : "/") as Route;
+function next() {
+  return nextPath(
+    new URLSearchParams(window.location.search).get("next"),
+    window.location.origin,
+  );
 }
 
 export default function ConsentPage() {
@@ -63,7 +63,7 @@ export default function ConsentPage() {
       // agrees, and if the record cannot be written either the form says so.
       const left =
         given === null ? [...REQUIRED_CONSENTS] : missingConsents(given);
-      if (left.length === 0) router.replace(nextPath());
+      if (left.length === 0) router.replace(next());
       else setMissing(left);
     })();
     return () => {
@@ -128,7 +128,7 @@ export default function ConsentPage() {
             required={missing}
             onAgree={async (consents) => {
               await agreeToConsents(consents);
-              router.replace(nextPath());
+              router.replace(next());
             }}
             onLeave={async () => {
               await logout();
