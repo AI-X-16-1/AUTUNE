@@ -571,6 +571,14 @@ def _acted(summary: str, meeting_id: str) -> dict[str, Any]:
     )
 
 
+NO_SLACK = (
+    "Slack이 연결되어 있지 않아 게시하지 못했습니다. "
+    "설정에서 Slack과 채널을 연결한 뒤 다시 요청해 주세요."
+)
+"""An approved post with nowhere to go. Said at approval, because the delivery
+task can only log it, and "예약했습니다" would tell the approver it is on its way."""
+
+
 def _not_found() -> dict[str, Any]:
     # Unknown and other-team read the same, so the answer does not reveal which,
     # and it never echoes the id: the model wrote it. #449's scope check says the
@@ -645,8 +653,9 @@ def publish_meeting_report(
     draft is another one, the approval posts nothing: a later run replaced it,
     or this run's draft was never stored (refused for personal data or length)
     and an earlier one is still there. Refused for another team's meeting, a
-    meeting with no draft, a draft that is not the approved one, or a report
-    already posted.
+    meeting with no draft, a draft that is not the approved one, a report
+    already posted, or a team with no Slack channel to post to. The draft stays
+    stored, so it can be approved again once Slack is connected.
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -665,6 +674,8 @@ def publish_meeting_report(
                 "승인한 초안이 지금 저장된 초안이 아닙니다. "
                 "새 초안으로 바뀌었거나 저장되지 않았습니다.",
             )
+        if not service._slack_connected(session, team_id):
+            return _refused("slack not connected", NO_SLACK)
     # The transaction has committed: a worker that picks this up finds the row.
     try:
         # The draft can still be replaced before the task claims it; the claim checks again.
@@ -687,8 +698,10 @@ def publish_meeting_report_correction(
     L2 -- runs only after a person approves (#674). Posts the correction
     ``correction_id`` names, once, as a reply under the original post (or a new
     message when that thread is out of reach). When a later correction replaced
-    it, the approval posts nothing. Refused for another team's meeting and for
-    a report with no such correction waiting.
+    it, the approval posts nothing. Refused for another team's meeting, for
+    a report with no such correction waiting, and for a team whose Slack went
+    away after the report was posted: the correction is then marked failed, as
+    the delivery task does (#698), rather than left "승인 대기".
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -701,6 +714,9 @@ def publish_meeting_report_correction(
                 "승인한 수정본이 지금 기다리는 수정본이 아닙니다. "
                 "새 수정본으로 바뀌었거나 이미 보냈습니다.",
             )
+        if not service._slack_connected(session, team_id):
+            service.fail_meeting_report_correction(session, meeting_id, correction_id=correction_id)
+            return _refused("slack not connected", NO_SLACK)
     try:
         # The correction can still be replaced before the task claims it; the claim checks again.
         tasks.deliver_meeting_report_correction.apply_async((meeting_id, correction_id))

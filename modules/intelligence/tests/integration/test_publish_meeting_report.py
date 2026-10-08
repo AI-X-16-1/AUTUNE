@@ -41,6 +41,22 @@ def events(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> list[tuple[s
     return recorded
 
 
+@pytest.fixture
+def slack(db_session: Session, team: str) -> None:
+    """The team's Slack with a channel: a post is refused without one."""
+    _link_slack(db_session, team, {"channel": "C123"})
+
+
+def _link_slack(db_session: Session, team_id: str, config: dict[str, str]) -> None:
+    from autune_core import TeamIntegration
+
+    # Never decrypted here: the action checks only that a token and a channel are there.
+    db_session.add(
+        TeamIntegration(team_id=team_id, service="slack", config=config, secret="stored-token")
+    )
+    db_session.flush()
+
+
 def _enqueued(events: list[tuple[str, str]]) -> list[str]:
     return [ident for kind, ident in events if kind == "enqueue"]
 
@@ -158,6 +174,7 @@ def test_a_draft_with_personal_data_is_refused_by_category_not_raised(
 # --- publish (L2): post the stored draft -----------------------------------------
 
 
+@pytest.mark.usefixtures("slack")
 def test_publish_enqueues_after_the_commit_with_the_id_only(
     db_session: Session, team: str, events: list[tuple[str, str]]
 ) -> None:
@@ -220,6 +237,7 @@ def test_publish_after_this_runs_draft_was_refused_posts_nothing(
     assert _enqueued(events) == []
 
 
+@pytest.mark.usefixtures("slack")
 def test_publish_hands_the_task_the_draft_id_it_was_approved_for(
     db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -239,6 +257,41 @@ def test_publish_hands_the_task_the_draft_id_it_was_approved_for(
 
     assert result["ok"] is True
     assert sent == [(meeting, "rdr_first")]
+
+
+def test_publish_without_slack_is_refused_and_the_draft_waits(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    """The delivery task could only log "no channel", so the approver was told
+    "예약했습니다" for a post that never went out. Said at approval instead."""
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    tools.draft_meeting_report(team, meeting, BODY, draft_id="rdr_first")
+
+    result = tools.publish_meeting_report(team, meeting, draft_id="rdr_first")
+
+    assert result["ok"] is False and result["reason"] == "slack not connected"
+    assert result["summary"] == tools.NO_SLACK
+    assert _enqueued(events) == []
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.sent_at is None and row.draft_id == "rdr_first"
+
+    # Connected later, the same draft can be approved again.
+    _link_slack(db_session, team, {"channel": "C123"})
+    assert tools.publish_meeting_report(team, meeting, draft_id="rdr_first")["ok"] is True
+    assert _enqueued(events) == [meeting]
+
+
+def test_publish_to_a_slack_with_no_channel_is_refused(
+    db_session: Session, team: str, events: list[tuple[str, str]]
+) -> None:
+    meeting = _meeting(db_session, team, "결제 기능 기획")
+    service.save_meeting_report(db_session, meeting, BODY)
+    _link_slack(db_session, team, {})
+
+    result = tools.publish_meeting_report(team, meeting)
+
+    assert result["ok"] is False and result["reason"] == "slack not connected"
+    assert _enqueued(events) == []
 
 
 def test_publish_without_a_draft_is_refused(
@@ -277,6 +330,7 @@ def test_publish_for_another_teams_meeting_is_refused(
     assert _enqueued(events) == []
 
 
+@pytest.mark.usefixtures("slack")
 def test_a_broker_failure_is_logged_not_raised(
     db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
