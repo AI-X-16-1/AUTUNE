@@ -473,6 +473,25 @@ before the columns existed: those are quoted whole, as they were, until the
 meeting is extracted again. A decision settled over two sentences of a turn has
 one span, from the first to the second.
 
+With `classifier_impl=llm` the part can be narrower than a sentence, and an
+utterance too short to be cut has one as well. The request that labels a line
+also asks which of its words carry the promise or the decision (`parts`,
+2026-10-08), and the answer only chooses where the cut falls. The words are
+looked for in the line as it was said, character for character, whitespace
+aside (`llm.usable_part`), and again in the stored utterance, inside the
+sentence the line was (`excerpt.quoted`); what is recorded is the same two
+offsets and no word. Words that are not there -- reworded, shortened, another
+line's -- are not used, and neither are words that are all of the line: the
+part is then the sentence, and for an utterance that was not cut, the whole of
+it. A decision whose members name words in two places has one span, from the
+first of them to the last. A member that names no words contributes its
+sentence, or the whole utterance when it was not cut. The `local` and `fake`
+classifiers name no words. Measured on invented meetings only, the numbers in
+`INSTRUCTIONS`' docstring: every part returned was in its line (282 of 282),
+and a turn of about 360 characters was quoted as about 38 where its sentence
+is about 65. A transcript without sentence ends and a real meeting were not
+measured.
+
 The offsets are counted on one text and are dropped when it changes. A
 transcript correction (#586) clears an item's, since the item is kept and the
 line it cites was rewritten; a decision's are written again on every run, and
