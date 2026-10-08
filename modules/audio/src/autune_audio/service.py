@@ -520,11 +520,15 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
             f"submitted for a meeting that is {' or '.join(sorted(_ACCEPTS_A_RECORDING))}"
         )
 
-    if meeting.status == "recording" and live_registry.is_open(meeting_id):
-        # The browser that owns the live session uploads after ``ended``,
-        # when the claim is already gone. Anyone else uploading now would
-        # flip the meeting to analyzing under a socket that is still
-        # streaming, and the real recording would be refused when it comes.
+    if (
+        meeting.status == "recording"
+        and live_registry.is_open(meeting_id)
+        and not live_registry.give_up_for_upload(meeting_id, user_id=uploader.id)
+    ):
+        # The live session's own person may upload over it
+        # (``give_up_for_upload``). Anyone else uploading now would flip the
+        # meeting to analyzing under a socket that is still streaming, and the
+        # real recording would be refused when it comes.
         raise ConflictError(
             f"meeting {meeting_id} has a live session open; stop it before uploading"
         )
