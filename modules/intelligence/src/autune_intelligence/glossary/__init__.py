@@ -49,7 +49,6 @@ CONSTANTS: dict[str, str] = {
     "gap.high_ceiling": f"{service.HIGH_GAP_CEILING}건",
     "heatmap.min_meetings": f"{service.MIN_MEETINGS_PER_HEATMAP_CELL}건",
     "prediction.horizon": f"{prediction.MISALIGNMENT_HORIZON_DAYS}일",
-    "prediction.min_history": _span(prediction.MIN_HISTORY),
     "prediction.min_meetings": f"{prediction.MIN_MEETINGS}건",
     "action.window": _span(service.ACTION_COMPLETION_WINDOW),
     "action.min_meetings": f"{service.ACTION_PROGRESS_MIN_MEETINGS}건",
