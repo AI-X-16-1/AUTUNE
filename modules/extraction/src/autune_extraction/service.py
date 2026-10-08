@@ -1202,6 +1202,20 @@ def live_source_ids(item: ExtActionItem) -> list[str]:
     return [source.utterance_id for source in item.sources if source.utterance_id is not None]
 
 
+def live_decision_source_ids(decision: ExtDecision) -> list[str]:
+    """The decision's source utterances that still exist, in the order they
+    were spoken.
+
+    A link row outlives its utterance with ``utterance_id`` NULL (see
+    ``ExtDecisionSource``); those are counted, never listed.
+    """
+    return [
+        source.utterance_id
+        for source in sorted(decision.sources, key=lambda s: s.position)
+        if source.utterance_id is not None
+    ]
+
+
 def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[str]:
     """Ids of the items whose assignee is not a member of the meeting's team.
 
@@ -1932,7 +1946,7 @@ def decision_summaries(session: Session, decisions: Sequence[ExtDecision]) -> di
     literally said beside it.
     """
     texts = _summary_texts(
-        session, {source.utterance_id for decision in decisions for source in decision.sources}
+        session, {u for decision in decisions for u in live_decision_source_ids(decision)}
     )
     summaries: dict[str, str] = {}
     for decision in decisions:
@@ -2481,9 +2495,7 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
         Decision(
             id=row.id,
             statement=_lineage_statement(row, reviews.get(row.id)),
-            source_utterance_ids=[
-                source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
-            ],
+            source_utterance_ids=live_decision_source_ids(row),
             confidence=row.confidence,
         )
         for row in rows
@@ -3506,7 +3518,7 @@ def apply_source_corrections(
         .where(ExtDecision.meeting_id == meeting_id)
         .options(selectinload(ExtDecision.sources))
     ):
-        ids = [s.utterance_id for s in sorted(decision.sources, key=lambda s: s.position)]
+        ids = live_decision_source_ids(decision)
         texts = [spoken.get(u) for u in ids]
         if not ids or any(t is None for t in texts):
             continue
@@ -4641,6 +4653,7 @@ def _review_decision_row(
     or a meeting's worth fetched in batches -- build the same row the same way
     without either one re-running the other's queries (#296).
     """
+    source_ids = live_decision_source_ids(decision)
     return ReviewDecision(
         id=decision.id,
         statement=_confirmed_statement(decision, review),
@@ -4650,9 +4663,8 @@ def _review_decision_row(
         needs_recheck=bool(decision.needs_recheck),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
-        source_utterance_ids=[
-            source.utterance_id for source in sorted(decision.sources, key=lambda s: s.position)
-        ],
+        source_utterance_ids=source_ids,
+        deleted_source_count=len(decision.sources) - len(source_ids),
         sync_refs=[
             ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
             for ref in refs
@@ -4714,8 +4726,9 @@ def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDet
     """One decision with the utterances it was settled in, in spoken order.
 
     Reads ``utterances``, which module A owns and this module may only read. An
-    utterance that has been deleted takes its link row with it, so a missing
-    quotation means the speech is gone.
+    utterance that has been deleted leaves its link row with no id (#400): the
+    join skips it, and ``deleted_source_count`` says a quotation is missing
+    because the speech is gone.
     """
     row = _read_decision(session, decision)
     quoted = session.execute(
@@ -5892,12 +5905,14 @@ def decision_notion_properties(
 
     ``statement`` is the person's rewording when there is one -- what they
     confirmed -- and the model's sentence otherwise. The source utterances stay in
-    Autune; the page carries only how many there were.
+    Autune; the page carries only how many there are. One that was deleted is not
+    counted, as it was not while the link went with it (#400): what leaves Autune
+    is unchanged by the link's outliving the utterance.
     """
     fields: dict[str, Any] = {
         "title": {"title": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]},
         "confidence": {"number": round(decision.confidence, 3)},
-        "sources": {"number": len(decision.sources)},
+        "sources": {"number": len(live_decision_source_ids(decision))},
     }
     if meeting_title:
         fields["meeting"] = {

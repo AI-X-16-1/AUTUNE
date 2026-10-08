@@ -73,6 +73,36 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
   );
 }
 
+/**
+ * What a row says of where its decision came from.
+ *
+ * A source whose utterance was deleted is said, in the words the action card
+ * uses (#400): "근거 발화 0건" would read as if the model had made the decision
+ * up, and a hand-added decision that pointed at a line would read as one that
+ * never had.
+ */
+export function decisionSourceLine(
+  decision: Pick<
+    ReviewDecision,
+    "origin" | "summary" | "confidence" | "source_utterance_ids" | "deleted_source_count"
+  >,
+): string {
+  const sources = decision.source_utterance_ids.length;
+  const deleted = decision.deleted_source_count ?? 0;
+  if (decision.origin === "user") {
+    if (deleted === 0) return "직접 추가";
+    return sources === 0
+      ? "직접 추가 · 근거 발화 삭제됨"
+      : `직접 추가 · 근거 발화 ${deleted}건 삭제됨`;
+  }
+  const from =
+    sources === 0 && deleted > 0
+      ? "근거 발화 삭제됨"
+      : (decision.summary ?? `근거 발화 ${sources}건`) +
+        (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
+  return `${from} · 신뢰도 ${Math.round(decision.confidence * 100)}%`;
+}
+
 const ORDER: Record<DecisionStatus, number> = { pending: 0, confirmed: 1, rejected: 2 };
 
 function byStatus(a: ReviewDecision, b: ReviewDecision): number {
@@ -183,9 +213,7 @@ function DecisionRow({
           <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
             {decision.needs_recheck ? "출처 발화가 정정됨 · 확인 필요 · " : null}
             {status.label} ·{" "}
-            {decision.origin === "user"
-              ? "직접 추가"
-              : `${decision.summary ?? `근거 발화 ${decision.source_utterance_ids.length}건`} · 신뢰도 ${Math.round(decision.confidence * 100)}%`}
+            {decisionSourceLine(decision)}
           </p>
           {decision.sync_refs?.length ? (
             <div

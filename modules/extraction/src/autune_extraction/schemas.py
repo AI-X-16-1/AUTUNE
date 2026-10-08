@@ -794,6 +794,13 @@ class ReviewDecision(BaseModel):
 
     source_utterance_ids: list[str]
 
+    deleted_source_count: int = 0
+    """Sources whose utterance was deleted since -- by module A's rerun of the
+    meeting or by a person deleting their own data (#400). They are not in
+    ``source_utterance_ids``; the count lets the screen say "근거 발화 삭제됨"
+    instead of showing a decision that never had a source, as
+    ``ActionItemRead.deleted_source_count`` does for an item."""
+
     sync_refs: list[ExternalRefRead]
     """One entry per system this decision has been claimed for -- today, at
     most ``notion`` (#30). No drawer exists for a decision (S15 is the whole
@@ -839,7 +846,8 @@ class DecisionDetail(ReviewDecision):
 
     sources: list[SourceUtterance]
     """In the order they were spoken -- the proposal first, the sentence that
-    settled it last. Empty for a decision a person added, which has none."""
+    settled it last. Empty for a decision a person added without pointing at a
+    line, and for one whose every source was deleted (``deleted_source_count``)."""
 
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence
