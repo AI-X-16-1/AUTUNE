@@ -25,6 +25,13 @@ def test_a_rate_question_finds_the_rate_not_every_completion_passage() -> None:
     assert "actions.confirmation_vs_completion" in top
 
 
+def test_a_question_about_a_closed_item_gets_the_answer() -> None:
+    """B leaves an item closed without being finished out of its counts (#993)."""
+    [top] = _bm25().search("끝내지 않고 닫은 항목도 완료율에 들어가?", k=1)
+    assert top.key == "actions.confirmation_vs_completion"
+    assert "닫은 항목은 확정된 항목으로 세지 않아서" in top.text
+
+
 def test_rrf_rewards_agreement_between_rankings() -> None:
     # "b" is second in both lists (2 / 62); "a" and "c" are first in one each (1 / 61).
     assert retrieval.rrf([["a", "b"], ["c", "b"]]) == ["b", "a", "c"]
