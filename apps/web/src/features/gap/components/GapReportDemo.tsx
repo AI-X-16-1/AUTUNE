@@ -5,7 +5,6 @@ import { useState } from "react";
 import {
   DEMO_COMPARISON,
   DEMO_EXPLANATIONS,
-  DEMO_GRAPH,
   DEMO_MEETING_ID,
   DEMO_REPORT,
   DEMO_TEMPLATES,
@@ -17,7 +16,7 @@ import { GapReportScreen } from "./GapReportScreen";
  * design before a database is running locally.
  *
  * **The screen is the real one.** The seam is a `fetch` stub for `/api/gap`
- * installed before the first render, so `GapReportScreen`, its three hooks and
+ * installed before the first render, so `GapReportScreen`, its hooks and
  * their loading and error states all run exactly as they do against the API —
  * a preview that rendered the components directly with props would be a fourth
  * copy of the screen's wiring, and the wiring is most of what there is to
@@ -75,7 +74,6 @@ function demoBody(url: string, method: string): unknown {
   if (url.endsWith("/api/gap/templates")) return DEMO_TEMPLATES;
   if (url.includes(`/api/gap/reports/${DEMO_MEETING_ID}`)) return DEMO_REPORT;
   if (url.includes(`/api/gap/explanations/${DEMO_MEETING_ID}`)) return DEMO_EXPLANATIONS;
-  if (url.includes(`/api/gap/topics/${DEMO_MEETING_ID}`)) return DEMO_GRAPH;
   if (url.includes(`/api/gap/templates/${DEMO_MEETING_ID}`)) return DEMO_COMPARISON;
   return undefined;
 }

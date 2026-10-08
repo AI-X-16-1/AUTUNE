@@ -22,11 +22,12 @@ from autune_contracts import (
 )
 from autune_core import Base, Meeting
 from autune_extraction import service, tasks
-from autune_extraction.models import ExtActionItem
+from autune_extraction.models import ExtActionItem, ExtEditEvent
+from autune_extraction.schemas import ActionItemUpdate
 
 NOW = datetime(2026, 10, 2, 0, 0, tzinfo=UTC)
 TODAY = date(2026, 10, 2)
-TABLES = [Meeting.__table__, ExtActionItem.__table__]
+TABLES = [Meeting.__table__, ExtActionItem.__table__, ExtEditEvent.__table__]
 
 
 class ClockAtNow(datetime):
@@ -96,6 +97,64 @@ def test_each_meeting_counts_confirmed_done_and_overdue(session: Session) -> Non
         ("mtg_1", 3, 1, 1),
         ("mtg_2", 1, 1, 0),
     ]
+
+
+def close(session: Session, item_id: str) -> None:
+    """Closed without being finished, through the write the board and the
+    agent's action use."""
+    row = session.get(ExtActionItem, item_id)
+    assert row is not None
+    assert service.close_without_finishing(session, row) is True
+    session.flush()
+
+
+def test_an_item_closed_without_being_finished_is_in_no_count(session: Session) -> None:
+    """lsh2217 on #856: neither finished work nor work left undone -- out of
+    ``confirmed`` and ``done`` alike, as a deleted item is."""
+    item(session, "a1", "mtg_1", "todo", due=TODAY - timedelta(days=1))  # overdue
+    item(session, "a2", "mtg_1", "done")  # finished
+    item(session, "a3", "mtg_1", "todo", due=TODAY - timedelta(days=4))  # late, then closed
+    item(session, "a4", "mtg_1", "in_progress")  # closed
+    item(session, "b1", "mtg_2", "todo")  # the meeting's only item, closed
+    for closed in ("a3", "a4", "b1"):
+        close(session, closed)
+
+    progress = service.team_action_progress(session, "team_1", now=NOW)
+
+    # Six confirmed rows and four of them done in the table; two and one here.
+    assert [(m.meeting_id, m.confirmed, m.done, m.overdue) for m in progress.meetings] == [
+        ("mtg_1", 2, 1, 1),
+    ], "and a meeting with nothing else confirmed is left out"
+
+
+def test_a_closed_item_reopened_and_finished_is_counted_again(session: Session) -> None:
+    item(session, "a1", "mtg_1", "todo")
+    close(session, "a1")
+    assert service.team_action_progress(session, "team_1", now=NOW).meetings == []
+
+    row = session.get(ExtActionItem, "a1")
+    assert row is not None
+    service.update_action_item(session, row, ActionItemUpdate(status="todo"))
+    session.flush()
+    reopened = service.team_action_progress(session, "team_1", now=NOW)
+    assert [(m.confirmed, m.done) for m in reopened.meetings] == [(1, 0)]
+
+    service.update_action_item(session, row, ActionItemUpdate(status="done"))
+    session.flush()
+    finished = service.team_action_progress(session, "team_1", now=NOW)
+    assert [(m.confirmed, m.done) for m in finished.meetings] == [(1, 1)]
+
+
+def test_another_teams_close_does_not_touch_this_teams_counts(session: Session) -> None:
+    item(session, "a1", "mtg_1", "done")
+    item(session, "x1", "mtg_x", "todo")
+    close(session, "x1")
+
+    ours = service.team_action_progress(session, "team_1", now=NOW)
+    theirs = service.team_action_progress(session, "team_other", now=NOW)
+
+    assert [(m.meeting_id, m.confirmed, m.done) for m in ours.meetings] == [("mtg_1", 1, 1)]
+    assert theirs.meetings == []
 
 
 def test_a_meeting_with_nothing_confirmed_or_outside_the_window_is_left_out(

@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from autune_agent.main import Subagent, SubagentState, Toolbox
 from autune_agent.main.actions import KEPT_FOR_APPROVAL, Action
-from autune_agent.main.pending import ARGUMENT_REFUSED, arguments_ok, queue_l2, scope_for
+from autune_agent.main.pending import (
+    ARGUMENT_REFUSED,
+    MEETING_NOT_FOUND,
+    arguments_ok,
+    queue_l2,
+    scope_for,
+)
 from autune_agent.main.store import run_and_record
 from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
@@ -572,3 +578,91 @@ def test_a_team_chat_naming_another_teams_meeting_is_refused(
 
     assert session.scalars(select(AgentPendingAction)).all() == []
     assert [r["reason"] for r in refused] == ["meeting not found"]
+
+
+# --- a team-wide proposal is its item's meeting's (#959) ------------------------------
+
+
+def _rows(session: Session) -> list[AgentPendingAction]:
+    return list(session.scalars(select(AgentPendingAction)))
+
+
+def test_a_team_wide_proposal_is_the_meeting_it_names_not_the_one_that_woke_the_run(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The approval card names the row's meeting (#854, #959). A team-wide
+    subagent judges the team: the meeting that woke its run is not what a
+    proposal is about, the item's meeting is, and the proposal names it."""
+    items_meeting = _another_meeting(session, team)
+    woken = _run(session, team, "workload", team["meeting"])
+    proposal = _l2(
+        "extraction.reassign_action_item",
+        action_item_id="act_1",
+        assignee_id="user_2",
+        meeting_id=items_meeting,
+    )
+
+    assert queue_l2(session, run=woken, proposed=[proposal], actions={}, team_wide=True) == []
+
+    (row,) = _rows(session)
+    assert row.meeting_id == items_meeting
+    assert (row.run_id, woken.meeting_id) == (woken.id, team["meeting"]), "the run is unchanged"
+
+
+def test_a_team_wide_proposal_that_names_no_meeting_is_the_runs_as_before(
+    session: Session, team: dict[str, str]
+) -> None:
+    woken = _run(session, team, "workload", team["meeting"])
+
+    queue_l2(session, run=woken, proposed=[_reassign()], actions={}, team_wide=True)
+
+    (row,) = _rows(session)
+    assert row.meeting_id == team["meeting"]
+
+
+def test_a_proposal_of_a_run_about_its_meeting_stays_that_meetings_whatever_it_names(
+    session: Session, team: dict[str, str]
+) -> None:
+    """Not team-wide: the run is about its meeting, and so are its proposals.
+    #959 changes nothing here."""
+    named = _another_meeting(session, team)
+    run = _run(session, team, "followup", team["meeting"])
+
+    queue_l2(
+        session,
+        run=run,
+        proposed=[_l2("extraction.add_followup_item", meeting_id=named)],
+        actions={},
+    )
+
+    (row,) = _rows(session)
+    assert row.meeting_id == team["meeting"]
+
+
+def test_a_team_wide_proposal_cannot_name_a_meeting_outside_the_team(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The model writes a proposal's arguments. A woken run's own meeting is
+    the team's by construction; a meeting the proposal names is checked, as it
+    already is for a run about no meeting (#862)."""
+    elsewhere = Team(name="다른 팀")
+    session.add(elsewhere)
+    session.flush()
+    theirs = Meeting(team_id=elsewhere.id, title="남의 회의")
+    session.add(theirs)
+    session.flush()
+    woken = _run(session, team, "workload", team["meeting"])
+
+    refused = queue_l2(
+        session,
+        run=woken,
+        proposed=[
+            _l2("extraction.reassign_action_item", action_item_id="act_1", meeting_id=theirs.id),
+            _l2("extraction.reassign_action_item", action_item_id="act_2", meeting_id="mtg_nobody"),
+        ],
+        actions={},
+        team_wide=True,
+    )
+
+    assert [r["reason"] for r in refused] == [MEETING_NOT_FOUND, MEETING_NOT_FOUND]
+    assert _rows(session) == []

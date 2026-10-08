@@ -604,20 +604,29 @@ other module's tables.
   status: `tools.close_action_item` (an L2 action, run only after a person
   approves; no board control calls it yet) makes a confirmed, open item
   `done` and records an edit event of kind `closed` in place of an edit of
-  the status (`service.close_without_finishing`). That event is all that
+  the status (`service.close_without_finishing`). A closed item is in none
+  of the counts B publishes for E's completion rate (`TeamActionProgress`,
+  `service.team_action_progress`; asked by E's owner on #856) -- neither
+  finished nor left undone, as a deleted item is. That event is all that
   tells a close from finished work -- `service.closed_unfinished`: the
   latest change of the item's status was a close -- and everything that says
   "finished" to or about a person reads it: the morning DM says "끝내지 않고
   닫힘" apart from 완료, the work-report draft has its own part, the
   assignee's calendar event is titled `[닫힘]` and not `[완료]`, the card in
   완료 is marked 닫힘 (`closed_unfinished` on the item read), the drawer's
-  history says so, and `workload_by_owner` does not count it as work its
-  holder finished. The event says that and when, about the item, and never
-  who closed it; edit cost leaves it out, since a close corrects nothing the
-  model wrote. An item re-opened and then finished is finished. **Not told
-  apart outside:** the Notion page and the Jira issue of a closed item read
-  완료 / a `done` status, and the minutes list it with the finished ones --
-  none of them has a closed state here
+  history says so, `workload_by_owner` does not count it as work its
+  holder finished, and the agent's reads of an item (`meeting_action_items`,
+  `action_item_status`) give its status as `closed`, not `done`, so Report
+  and the chat do not call it finished. The event says that and when, about
+  the item, and never who closed it; edit cost leaves it out, since a close
+  corrects nothing the model wrote. An item re-opened and then finished is
+  finished: the events are read in the order they were written (by id --
+  on PostgreSQL an event's time is when its transaction began), and the
+  close holds the item's row, so two closes at once leave one and the
+  second is told the item is already closed. **Not told apart:** the Notion
+  page and the Jira issue of a closed item read 완료 / a `done` status, and
+  the minutes list it with the finished ones -- none of them has a closed
+  state here
 - Role-specific reports (Phase 2)
 
 ## AI stack

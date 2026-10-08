@@ -96,7 +96,13 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
                 title=m.title,
                 body=m.rationale,
                 tool=REASSIGN,
-                arguments={"action_item_id": m.item.action_item_id, "assignee_id": m.taker.user_id},
+                arguments={
+                    "action_item_id": m.item.action_item_id,
+                    "assignee_id": m.taker.user_id,
+                    # The item's meeting, so the waiting row and its card
+                    # are that meeting's (#959).
+                    **({"meeting_id": m.item.meeting_id} if m.item.meeting_id else {}),
+                },
                 level="L2",
                 rationale=m.rationale,
                 evidence=[m.item.action_item_id],
