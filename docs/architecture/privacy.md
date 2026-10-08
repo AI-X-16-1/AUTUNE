@@ -750,11 +750,14 @@ the feature needs.
       the meeting, the gap, whose calendar and which event -- the calendar's
       owner is also who pressed, kept because the line can only be removed
       with their grant, as B keeps an item's assignee; no screen, route or
-      tool reads whose. It also keeps the day the event starts, which
-      `gap.next_meeting_days` hands the Follow-up approval card as a
-      candidate day for the follow-up meeting -- the day alone, never whose
-      calendar it came from. The event's attendees, all on the team by the
-      refusal above, already see that day on the event. Taking a gap back removes its line and its record. A
+      tool reads it but the one below. It also keeps the day the event
+      starts, which `gap.next_meeting_days` hands the Follow-up approval card
+      as a candidate day for the follow-up meeting, with the display name of
+      who picked it -- the name the team Slack notice below already posts for
+      the same press -- and nothing else of the calendar or the event. Only
+      members still on the meeting's team are named. The event's attendees,
+      all on the team by the refusal above, already see that day on the
+      event. Taking a gap back removes its line and its record. A
       meeting deleted or expired has its records copied to
       `gap_agenda_cleanup` by C's meeting hook, and the worker takes the lines
       out with each owner's grant (`drain_agenda_cleanup`, every ten minutes,

@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import delete, select
 
-from autune_core import Meeting, Participant, Team, User, session_scope
+from autune_core import Meeting, Participant, Team, TeamMember, User, session_scope
 from autune_gap import service, tools
 from autune_gap.models import GapAgendaEvent, GapGap, GapParticipation, GapTopic
 
@@ -408,7 +408,7 @@ def test_a_rerun_keeps_a_question_a_member_rewrote(team_id: str) -> None:
 
 
 @pytest.fixture
-def pickers(db_engine: object) -> Iterator[list[str]]:
+def pickers(team_id: str) -> Iterator[list[str]]:
     with session_scope() as s:
         people = [
             User(email=f"picker{i}@gap-tools.example", display_name=f"P{i}") for i in range(3)
@@ -416,6 +416,7 @@ def pickers(db_engine: object) -> Iterator[list[str]]:
         s.add_all(people)
         s.flush()
         ids = [p.id for p in people]
+        s.add_all([TeamMember(team_id=team_id, user_id=i) for i in ids])
     yield ids
     with session_scope() as s:
         s.execute(delete(User).where(User.id.in_(ids)))
@@ -451,21 +452,33 @@ def test_next_meeting_days_offers_each_picked_day_once_earliest_first(
 
     (row,) = result["items"]
     assert row["days"] == [
-        (today + timedelta(days=10)).isoformat(),
-        (today + timedelta(days=12)).isoformat(),
+        {"day": (today + timedelta(days=10)).isoformat(), "picked_by": ["P1"]},
+        {"day": (today + timedelta(days=12)).isoformat(), "picked_by": ["P0", "P2"]},
     ]
     assert result["evidence"] == []
 
 
-def test_next_meeting_days_names_nobody(team_id: str, pickers: list[str]) -> None:
+def test_next_meeting_days_names_who_picked_and_nothing_else(
+    team_id: str, pickers: list[str]
+) -> None:
     m = meeting(team_id, COVERS_TWO, started=T0)
     picked(m, pickers[0], "evt_a", datetime.now(ZoneInfo("Asia/Seoul")).date() + timedelta(days=3))
 
     result = call(tools.next_meeting_days, team_id, m)
 
     text = repr(result)
+    assert "P0" in text
     assert not any(user_id in text for user_id in pickers)
-    assert "P0" not in text and "primary" not in text and "evt_a" not in text
+    assert "primary" not in text and "evt_a" not in text
+
+
+def test_next_meeting_days_leaves_out_who_left_the_team(team_id: str, pickers: list[str]) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    picked(m, pickers[0], "evt_a", datetime.now(ZoneInfo("Asia/Seoul")).date() + timedelta(days=3))
+    with session_scope() as s:
+        s.execute(delete(TeamMember).where(TeamMember.user_id == pickers[0]))
+
+    assert call(tools.next_meeting_days, team_id, m)["items"] == []
 
 
 def test_next_meeting_days_with_none_picked_is_no_row(team_id: str) -> None:

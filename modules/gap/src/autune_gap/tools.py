@@ -15,7 +15,8 @@ registry validates these dicts when it collects them.
 
 What holds for all five:
 
-- **Topics, never people or roles.** No result carries participation, a
+- **Topics, never people or roles** -- with one exception, below. No result
+  carries participation, a
   participant id or a ``silent_share``. In a small team a role is a person, and
   whoever reads a Follow-up proposal is the team lead (agent-layer.md section
   3.1, privacy.md section 3). A gap's ``title`` is a template's item name
@@ -23,6 +24,10 @@ What holds for all five:
   names no topic. Topic labels reach a caller only through ``body`` (the
   suggested question) and ``topics``, and a topic label is masked transcript
   text, so no raw utterance leaves here.
+  The exception is ``next_meeting_days``: it names who picked each day for the
+  next meeting, by display name. That is an act a member took for the team,
+  which C's team Slack notice already names (privacy.md), not anything they
+  said or how they took part.
 - **Undismissed gaps only.** A dismissal is a person saying the gap is wrong,
   and C's own report leaves those out too (``service.build_report``).
 - ``evidence`` is gap ids. ``items`` holds at most five, most risky first, and
@@ -43,7 +48,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting
+from autune_core import Meeting, TeamMember, User
 
 from .models import GapAgendaEvent, GapGap, GapRelatedTopic, GapTopic
 
@@ -330,31 +335,51 @@ def next_meeting_days(session: Session, team_id: str, meeting_id: str) -> dict[s
     Do not use it to learn which gaps were sent on: that is ``carried_gaps``.
 
     Returns one row, ``다음 회의 날짜``, whose ``days`` lists each such day
-    once, earliest first, from today on in Korea; there is no row when there is
-    none. Days only: never whose calendar, who pressed, or anything else of the
-    event. Two people who picked the same day are one day; two who picked
-    different days are two, for the person deciding to choose between.
+    once, earliest first, from today on in Korea, as ``{"day": ISO,
+    "picked_by": [display name, ...]}``; there is no row when there is none.
+    Two people who picked the same day are one day with both names; two who
+    picked different days are two, for the person deciding to choose between.
+
+    ``picked_by`` names who pressed, so the approver knows whose day it is --
+    the name C's team Slack notice already posts for the same press. Only
+    members still on the meeting's team are named, and a day nobody on it
+    picked is left out. Nothing else of the event or the calendar: no user id,
+    no calendar or event id, no title.
 
     A day is the event's as it was when the line was written: an event moved
     since keeps its old day until somebody presses again.
     """
-    if _meeting(session, team_id, meeting_id) is None:
+    meeting = _meeting(session, team_id, meeting_id)
+    if meeting is None:
         return _missing(meeting_id)
     today = datetime.now(ZoneInfo("Asia/Seoul")).date()
-    days = list(
-        session.scalars(
-            select(GapAgendaEvent.event_day)
-            .where(
-                GapAgendaEvent.meeting_id == meeting_id,
-                GapAgendaEvent.event_day.is_not(None),
-                GapAgendaEvent.event_day >= today,
-            )
-            .distinct()
-            .order_by(GapAgendaEvent.event_day)
+    rows = session.execute(
+        select(GapAgendaEvent.event_day, User.display_name)
+        .join(User, User.id == GapAgendaEvent.user_id)
+        .join(
+            TeamMember,
+            (TeamMember.user_id == GapAgendaEvent.user_id)
+            & (TeamMember.team_id == meeting.team_id),
         )
+        .where(
+            GapAgendaEvent.meeting_id == meeting_id,
+            GapAgendaEvent.event_day.is_not(None),
+            GapAgendaEvent.event_day >= today,
+        )
+        .distinct()
     )
+    by_day: dict[str, set[str]] = defaultdict(set)
+    for day, name in rows:
+        if day is not None:
+            by_day[day.isoformat()].add(name)
+    days = sorted(by_day)
     items = (
-        [{"title": "다음 회의 날짜", "days": [d.isoformat() for d in days if d is not None]}]
+        [
+            {
+                "title": "다음 회의 날짜",
+                "days": [{"day": d, "picked_by": sorted(by_day[d])} for d in days],
+            }
+        ]
         if days
         else []
     )
