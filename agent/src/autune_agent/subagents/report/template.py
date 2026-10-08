@@ -29,14 +29,22 @@ import logging
 import re
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 from autune_contracts import INTELLIGENCE_COMPLETED, INTELLIGENCE_MEETING_REPORT_CHANGED
 from autune_core import new_id
+from autune_core.errors import PrivacyViolationError
 
 from .render import has_pending, render
 
 log = logging.getLogger(__name__)
+
+RAISED = (PrivacyViolationError, BudgetExceededError, SQLAlchemyError)
+"""Never swallowed as one tool's failure: the run's budget stop, a privacy guard
+("never caught and downgraded"), and a database error that leaves the session
+unusable for the run's own writes. The chat path's ``read`` re-raises the same."""
 
 ACTIONS_TOOL = "extraction.meeting_action_items"
 REVIEW_TOOL = "extraction.review_state"
@@ -85,8 +93,8 @@ def _read(toolbox: Toolbox, name: str, meeting: dict[str, Any]) -> ToolResult | 
         return toolbox.call(name, **meeting)
     try:
         return toolbox.call(name, **meeting)
-    except BudgetExceededError:
-        raise  # the run's stop, not this tool's failure
+    except RAISED:
+        raise  # not this tool's failure: see RAISED
     except Exception as exc:  # a bug in C's or D's tool costs its section only
         log.warning("report_optional_tool_failed tool=%s error=%s", name, type(exc).__name__)
         return None
@@ -111,7 +119,7 @@ def _channel(toolbox: Toolbox) -> ToolResult | None:
         return None
     try:
         return toolbox.call(CHANNEL_TOOL)
-    except BudgetExceededError:
+    except RAISED:
         raise
     except Exception as exc:  # a broken check costs nothing: the post is proposed as before
         log.warning("report_channel_check_failed error=%s", type(exc).__name__)
