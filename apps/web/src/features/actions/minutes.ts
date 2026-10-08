@@ -111,9 +111,17 @@ export function minutesText(summary: MeetingSummary, title?: string | null): str
   return lines.join("\n");
 }
 
-/** Who, by when, and where it stands -- the same words on the tab and in the copy. */
+/**
+ * Who, by when, and where it stands -- the same words on the tab and in the
+ * copy, each set off by a dot: "김민경 · 10월 13일 (화) · 진행 중".
+ *
+ * The state is not in brackets (the user, 2026-10-09): a due date ends with
+ * its weekday in them, and "10월 13일 (화) (진행 중)" read as two asides in a
+ * row. One mark for every part, so the line has the same shape with or
+ * without a date.
+ */
 export function actionMeta(item: MinutesAction): string {
-  return [item.who, item.due ?? "기한 없음"].join(" · ") + (item.state ? ` (${item.state})` : "");
+  return [item.who, item.due ?? "기한 없음", ...(item.state ? [item.state] : [])].join(" · ");
 }
 
 function action(item: ActionItemRead, began: Date | null): MinutesAction {
