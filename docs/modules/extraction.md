@@ -64,7 +64,9 @@ agreement, and sync the result to Notion and Jira.
    or an ending the list does not know, is kept as it was said. The original
    utterances stay in `ext_*_sources` and are shown beneath the line — the
    drawer's "근거 발화" for an item, the row's "원본 발화" for a decision — so
-   the person confirming reads one against the other. Only the tidied line, as
+   the person confirming reads one against the other. A row made from one
+   sentence of a long turn is shown that sentence and not the turn (*The part
+   of a turn*, under Tables). Only the tidied line, as
    the person confirmed or reworded it, leaves Autune: an item goes out only
    after it leaves *needs confirmation*, a decision only once confirmed, and
    never the original utterance. With `resolver_impl=llm` the description is also
@@ -303,7 +305,7 @@ confirmation DM's quotation is #586's second part.
 | --- | --- |
 | `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
 | `ext_action_items` | Assignee, description, due date, status, origin |
-| `ext_action_item_sources` | Which utterances an item came from |
+| `ext_action_item_sources` | Which utterances an item came from, and for a row made from one sentence of a long turn, where that sentence is in the utterance: two character offsets (`excerpt_start`, `excerpt_end`), never the words |
 | `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
 | `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
 | `ext_edit_events` | One row per correction, and one per close without finishing (`closed`, which is not a correction and is left out of edit cost). Counts only — no person on it |
@@ -320,7 +322,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결), and Monday's DM of their own open items with them (#792): one switch for both. On unless a row says off; the person and when, nothing else. Goes with the account |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
-| `ext_decision_sources` | Which utterances a decision was settled in, in order |
+| `ext_decision_sources` | Which utterances a decision was settled in, in order, and the same two offsets for a decision settled in part of a long turn |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
 | `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
@@ -345,7 +347,8 @@ uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
 open questions were asked and how many ambiguous agreements still wait for
 their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
 memo, blank removes it). The tab reads it in three levels -- counts, then the
-decisions and items, then their source lines on the 액션 tab. Nothing leaves,
+decisions and items, each with what was said beneath it (`summary`, one line),
+then their source lines on the 액션 tab. Nothing leaves,
 so it serves real meetings whatever #392 decides. v2 adds a prose summary by
 a cloud model over the whole meeting -- section summaries under the outbound
 limit, then a summary of those -- stored in `ext_meeting_summaries` and shown
@@ -453,6 +456,36 @@ order without a second join. The order carries the argument — the proposal
 first, the sentence that settles it last — and the statement is taken from the
 last one.
 
+**The part of a turn.** One person talking for a minute is one utterance. The
+classifier reads a turn over 300 characters sentence by sentence
+(`pipeline.llm.said_lines`), and each promise or decision in it becomes a row
+of its own, made from that sentence and citing the utterance. Both source
+tables say where the sentence is: `excerpt_start` and `excerpt_end`, character
+offsets into the text module A stored in `utterances.text`, already masked. No
+word is copied into an `ext_` table — the reason the tables hold links and not
+text — so deleting the utterance leaves nothing to cut, and no second copy to
+find. What a reader is shown is cut from the stored text when they ask
+(`excerpt.cut`), which makes it what was said and nothing a model wrote; offsets
+that do not fit the text they are read against show no part rather than a wrong
+one. Both are NULL for an utterance used whole, and for every row written
+before the columns existed: those are quoted whole, as they were, until the
+meeting is extracted again. A decision settled over two sentences of a turn has
+one span, from the first to the second.
+
+The offsets are counted on one text and are dropped when it changes. A
+transcript correction (#586) clears an item's, since the item is kept and the
+line it cites was rewritten; a decision's are written again on every run, and
+cleared when the run finds no part.
+
+Three screens show the part and nothing outside Autune does. The detail drawer
+(S18) and the decision list (S15) quote it as the evidence, with "전체 발화 보기"
+opening the whole turn in place. The card's line beneath the description
+(`ActionItemRead.summary`) is what was said -- the part, when one is recorded --
+whenever the description is a model's sentence, so the sentence has the words
+it stands for under it; a card is two lines at most for each. The 요약 tab
+shows the same line beneath each decision and item. Notion, Slack, Jira and the
+copied minutes carry what they carried before.
+
 Rebuilding a meeting's decisions replaces them, but a decision's `dec_` id is
 derived from the meeting and the utterances it was settled in, so a rebuild over
 the same labels and the same utterance ids keeps the same ids (#171). A decision
@@ -471,14 +504,14 @@ other module's tables.
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
 | GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
-| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order, up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
+| GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order (each with `excerpt`, the part of it the item was made from, when one is recorded), up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
-| GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order (S15 shows them beneath the statement), plus the same `context` |
+| GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order, each with the same `excerpt` (S15 shows them beneath the statement), plus the same `context` |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
 | GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
