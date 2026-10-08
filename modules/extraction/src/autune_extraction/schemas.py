@@ -660,6 +660,12 @@ class MeetingSummary(BaseModel):
     """
 
     meeting_id: str
+    meeting_title: str | None = None
+    meeting_started_at: datetime | None = None
+    """What the tab heads its page of minutes with (2026-10-09): the meeting's
+    own title and day, read from the shared ``meetings`` row. Before, the page
+    took its title from the first action item, and a meeting with none had no
+    title."""
     decisions: list[SummaryDecision]
     """Confirmed first, then pending, each in the order they were settled.
     A rejected one is not a decision of the meeting and is left out."""
