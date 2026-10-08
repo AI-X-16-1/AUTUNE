@@ -69,6 +69,8 @@ from .confirmations import (
 from .decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
+    DecisionGroup,
+    decision_of,
     group_decisions,
     identified,
 )
@@ -2198,6 +2200,125 @@ def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:
 # --- decisions ---------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _MarkedDecisions:
+    """The model's decisions of a meeting that a person confirmed, rejected or
+    reworded and whose source lines can all still be read -- the rows a
+    rebuild does not regroup (``build_decisions``)."""
+
+    unchanged: frozenset[str]
+    """Ids of the rows whose lines read as they did: left exactly as they are."""
+    corrected: Mapping[str, DecisionGroup]
+    """A row one of whose lines was corrected since, with the decision read
+    again from its own lines: the model's text follows the line (#586)."""
+    held: frozenset[str]
+    """Ids of the entries of the run's sequence these rows are made of."""
+
+    @property
+    def ids(self) -> frozenset[str]:
+        return self.unchanged | self.corrected.keys()
+
+
+def _held_entries(
+    source: ExtDecisionSource, lines: Sequence[ClassifiedUtterance], whole: str | None
+) -> list[ClassifiedUtterance]:
+    """Which entries of the run's sequence one stored source of a decision is:
+    the utterance, or -- for a turn now read in pieces -- the pieces inside the
+    part the row was made from. With no part recorded, or a piece that cannot
+    be found in the stored text, the whole turn."""
+    start, end = source.excerpt_start, source.excerpt_end
+    if start is None or end is None or whole is None or not any(line.part_of for line in lines):
+        return list(lines)
+    inside = [
+        line
+        for line in lines
+        if (span := quoted(whole, line.text, line.part)) is None
+        or (span[0] < end and start < span[1])
+    ]
+    return inside or list(lines)
+
+
+def _marked_decisions(
+    session: Session,
+    meeting_id: str,
+    utterances: Sequence[ClassifiedUtterance],
+    *,
+    day: date | None,
+) -> _MarkedDecisions:
+    """See ``_MarkedDecisions``. A row is in it only while every line it was
+    made from is there and readable: a deleted utterance leaves its source
+    link without an id, and a speaker who has not consented is a turn with no
+    text in ``utterances``. Such a row is rebuilt like any other, which is to
+    say it goes.
+
+    Whether its lines read as they did is the digest the last run stored
+    (``apply_source_corrections``). A row with none was never compared, so it
+    is read again rather than trusted to hold no word masked since.
+    """
+    marked = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                or_(
+                    ExtDecisionReview.status.in_(("confirmed", "rejected")),
+                    and_(
+                        ExtDecisionReview.statement.is_not(None),
+                        ExtDecisionReview.statement != "",
+                    ),
+                ),
+            )
+        )
+    )
+    if not marked:
+        return _MarkedDecisions(frozenset(), {}, frozenset())
+    rows = list(
+        session.scalars(
+            select(ExtDecision)
+            .options(selectinload(ExtDecision.sources))
+            .where(
+                ExtDecision.id.in_(marked),
+                ExtDecision.meeting_id == meeting_id,
+                ExtDecision.origin == "model",
+            )
+        )
+    )
+    entries: dict[str, list[ClassifiedUtterance]] = {}
+    for utterance in utterances:
+        entries.setdefault(utterance.source_id, []).append(utterance)
+    texts = _summary_texts(
+        session, {s.utterance_id for row in rows for s in row.sources if s.utterance_id}
+    )
+
+    unchanged: set[str] = set()
+    corrected: dict[str, DecisionGroup] = {}
+    held: set[str] = set()
+    for row in rows:
+        sources = sorted(row.sources, key=lambda s: s.position)
+        members: list[ClassifiedUtterance] = []
+        said: list[ClassifiedUtterance] = []
+        for source in sources:
+            lines = entries.get(source.utterance_id or "", [])
+            if not any(line.text for line in lines):
+                members = []
+                break
+            mine = _held_entries(source, lines, texts.get(source.utterance_id or ""))
+            members.extend(mine)
+            # Of a turn read in pieces, the pieces that are decisions. A line
+            # no longer called one is still the row's.
+            said.extend([m for m in mine if m.kind is UtteranceKind.DECISION] or mine)
+        if not members:
+            continue
+        ids = [source.utterance_id for source in sources if source.utterance_id is not None]
+        if row.source_digest is not None and row.source_digest == stored_digest(session, ids):
+            unchanged.add(row.id)
+        elif (group := decision_of(utterances, {m.id for m in said}, day=day)) is not None:
+            corrected[row.id] = group
+        else:
+            continue
+        held.update(m.id for m in members)
+    return _MarkedDecisions(frozenset(unchanged), corrected, frozenset(held))
+
+
 def build_decisions(
     session: Session,
     *,
@@ -2236,6 +2357,21 @@ def build_decisions(
     matching an old decision to a reworded new one is the same-decision
     question, and #25 gave that to D.
 
+    **A decision a person confirmed, rejected or reworded is not rebuilt**
+    (the owner, 2026-10-09; ``_marked_decisions``). While the lines it was made
+    from can all be read it keeps its id, its sentence, its sources, its review
+    and its page, however this run would group those lines; and no new row is
+    made from a line it holds (``group_decisions``'s ``held``). Before, a row
+    whose grouping changed -- one label the classifier gave differently, a
+    corrected line, a grouping rule that changed -- was deleted with its
+    review, and the person was asked again about a sentence they had
+    answered. Two things still move such a row. A line of it corrected since
+    (#586): its text is read again from its own lines, so a word masked since
+    does not stay in it, and ``apply_source_corrections`` flags a rewording
+    as before. A line of it deleted, or its speaker's consent withdrawn: it is
+    a row like any other again, and goes. A row nobody marked is rebuilt as
+    described above.
+
     Sources are only written for a row this call inserts. A surviving id
     proves its sources are the same set in the same order -- that is what
     produced the id -- so there is nothing to update there; only ``statement``
@@ -2273,10 +2409,30 @@ def build_decisions(
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
 
+    kept = _marked_decisions(session, meeting_id, utterances, day=day)
     fresh = dict(
-        identified(meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances)
+        identified(
+            meeting_id,
+            group_decisions(utterances, max_gap=max_gap, day=day, held=kept.held),
+            utterances,
+            taken=kept.ids,
+        )
     )
-    summaries = summaries or {}
+    summaries = dict(summaries or {})
+    if kept.corrected:
+        # A summary is found by id, and an id can outlive the lines it named
+        # (two decisions of one turn, ``identified``): a kept row is given one
+        # only if it was written about exactly the row's lines.
+        alone = dict(
+            identified(
+                meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances
+            )
+        )
+        for id_, group in kept.corrected.items():
+            other = alone.get(id_)
+            if other is None or other.source_utterance_ids != group.source_utterance_ids:
+                summaries.pop(id_, None)
+        fresh.update(kept.corrected)
     # ``utterances`` may be the sequence read in pieces (``in_pieces``).
     # Two decisions of one long turn are two rows (``identified``); what is
     # stored as a source or a related line is always the utterance itself.
@@ -2337,7 +2493,7 @@ def build_decisions(
     model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
     existing_ids = set(session.scalars(select(ExtDecision.id).where(*model_made)))
 
-    gone = existing_ids - fresh.keys()
+    gone = existing_ids - fresh.keys() - kept.unchanged
     if gone:
         session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
         session.execute(
@@ -2442,7 +2598,7 @@ def build_decisions(
             select(ExtDecision).options(selectinload(ExtDecision.sources)).where(*model_made)
         )
     }
-    decisions = [rows[id_] for id_ in fresh]
+    decisions = [rows[id_] for id_ in (*fresh, *sorted(kept.unchanged)) if id_ in rows]
     session.flush()
 
     # Ids only. A statement is meeting content and a log line is a store.
