@@ -21,6 +21,7 @@ import type {
   ProjectSendReport,
   TeamName,
   SendTarget,
+  SyncLog,
 } from "./types";
 
 export { api };
@@ -204,6 +205,10 @@ export const putSummaryNote = (meetingId: string, body: string) =>
 /** The team's projects, named by one of its meetings or by the team. */
 export const listProjects = (scope: IntegrationScope) =>
   api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
+
+/** S28's "동기화 기록": the team's standing failures and its latest copies. */
+export const getSyncLog = (teamId: string) =>
+  api.extraction<SyncLog>(`/sync-log?team_id=${encodeURIComponent(teamId)}`);
 
 /** Words said often in the team's meetings that no project has yet. */
 export const listProjectSuggestions = (teamId: string) =>

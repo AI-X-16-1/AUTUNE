@@ -120,6 +120,44 @@ class SyncFailureRead(BaseModel):
     failed_at: datetime
 
 
+class SyncLogFailure(BaseModel):
+    """A copy of an item that failed and still stands, on S28's "동기화 기록".
+
+    ``SyncFailureRead`` with the item and its meeting beside it, because the
+    drawer has no card to hang the failure on. ``description`` is the item's
+    text as the board shows it."""
+
+    action_item_id: str
+    meeting_id: str
+    meeting_title: str
+    description: str
+    system: Literal["notion", "jira", "calendar"]
+    kind: Literal["privacy", "reconnect", "unreachable", "rejected"]
+    failed_at: datetime
+
+
+class SyncLogCopy(BaseModel):
+    """A copy of an item that was made: a Notion page, a Jira issue, or an
+    event on the reader's own calendar. ``copied_at`` is when it was first
+    made. ``url`` is the page or issue; a calendar event has none."""
+
+    action_item_id: str
+    meeting_id: str
+    meeting_title: str
+    description: str
+    system: Literal["notion", "jira", "calendar"]
+    url: str | None
+    copied_at: datetime
+
+
+class SyncLogRead(BaseModel):
+    """What a team's copies outside Autune did lately (``sync_log``): the
+    failures standing and the latest copies made, each newest first."""
+
+    failures: list[SyncLogFailure]
+    copies: list[SyncLogCopy]
+
+
 class CalendarState(BaseModel):
     """Whether the item is on its assignee's calendar, and if not, why not.
 
