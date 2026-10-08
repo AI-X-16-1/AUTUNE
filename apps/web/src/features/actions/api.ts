@@ -402,6 +402,12 @@ export interface ExtractionState {
    * would be false.
    */
   not_published: boolean;
+  /**
+   * The last run stored its rows and could not read part of the transcript:
+   * the board's rows are this run's and some may be missing. Counted in
+   * `failures`, so the worker tries again.
+   */
+  partly_unread: boolean;
   requested: boolean;
   requested_at: string | null;
   /** A transcript is stored and its first run has left nothing yet. */

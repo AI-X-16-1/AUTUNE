@@ -23,6 +23,7 @@ const FINE: ExtractionState = {
   failed_at: null,
   will_retry: false,
   not_published: false,
+  partly_unread: false,
   requested: false,
   requested_at: null,
   in_progress: false,
@@ -41,6 +42,15 @@ const SPENT: ExtractionState = { ...RETRYING, failures: 3, will_retry: false };
 const RUNNING: ExtractionState = { ...FINE, extracted_at: null, in_progress: true };
 const OVERDUE: ExtractionState = { ...RUNNING, in_progress: false, overdue: true };
 const GOING = /추출하고 있습니다/;
+// The run stored what it read, and a part of the transcript it could not read.
+const PARTLY: ExtractionState = {
+  ...FINE,
+  failures: 1,
+  failed_at: "2026-10-08T07:00:00Z",
+  will_retry: true,
+  partly_unread: true,
+};
+const UNREAD = /^이 회의의 일부 구간을 읽지 못했습니다/;
 
 const extracted = vi.fn();
 const settle = async (ms = 0) => {
@@ -304,6 +314,76 @@ describe("ReExtract", () => {
 
     expect(screen.getByRole("status").textContent).toContain("자동으로 다시 시도하고 있습니다");
     expect(screen.queryByText(/녹음 동의/)).toBeNull();
+  });
+
+  describe("a run that could not read part of the transcript", () => {
+    it("says a part was not read and that it is being tried again, not that it failed", async () => {
+      await open(PARTLY);
+
+      const line = screen.getByText(UNREAD);
+      expect(line.getAttribute("role")).toBe("status");
+      expect(line.textContent).toContain("빠진 항목이 있을 수 있습니다");
+      expect(line.textContent).toContain("자동으로 다시 시도하고 있습니다");
+      expect(screen.queryByText(/추출하지 못/)).toBeNull();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("keeps saying it once the tries are spent, with the button", async () => {
+      await open({ ...PARTLY, failures: 3, will_retry: false });
+
+      const line = screen.getByRole("alert");
+      expect(line.textContent).toMatch(UNREAD);
+      expect(line.textContent).toContain("자동으로는 더 시도하지 않습니다");
+      expect(screen.queryByText(/추출하지 못/)).toBeNull();
+      expect(button().disabled).toBe(false);
+    });
+
+    it("reads the board after a pressed run that left a part unread again", async () => {
+      const spent = { ...PARTLY, failures: 3, will_retry: false };
+      await open(spent);
+      post.mockResolvedValue({ ...spent, requested: true });
+
+      fireEvent.click(button());
+      await settle();
+      expect(screen.queryByText(UNREAD)).toBeNull(); // waiting says its own line
+      get.mockResolvedValueOnce({ ...spent, failures: 4, extracted_at: "2026-10-08T08:00:00Z" });
+      await settle(POLL_MS);
+
+      expect(extracted).toHaveBeenCalledOnce();
+      expect(screen.queryByText(/다시 추출하지 못했습니다/)).toBeNull();
+      expect(screen.getByText(UNREAD)).toBeTruthy();
+    });
+
+    it("says a pressed run failed when it stored nothing new", async () => {
+      const spent = { ...PARTLY, failures: 3, will_retry: false };
+      await open(spent);
+      post.mockResolvedValue({ ...spent, requested: true });
+
+      fireEvent.click(button());
+      await settle();
+      // One more failure, and the stored run is the one from before.
+      get.mockResolvedValueOnce({ ...spent, failures: 4 });
+      await settle(POLL_MS);
+
+      expect(extracted).not.toHaveBeenCalled();
+      expect(screen.getByText(/다시 추출하지 못했습니다/)).toBeTruthy();
+      expect(screen.getByText(UNREAD)).toBeTruthy();
+    });
+
+    it("says nothing of it once a run read everything", async () => {
+      const spent = { ...PARTLY, failures: 3, will_retry: false };
+      await open(spent);
+      post.mockResolvedValue({ ...spent, requested: true });
+
+      fireEvent.click(button());
+      await settle();
+      get.mockResolvedValueOnce({ ...FINE, extracted_at: "2026-10-08T08:00:00Z" });
+      await settle(POLL_MS);
+
+      expect(extracted).toHaveBeenCalledOnce();
+      expect(screen.queryByText(UNREAD)).toBeNull();
+      expect(screen.getByText("다시 추출했습니다.")).toBeTruthy();
+    });
   });
 
   it("hands each state it reads to its parent", async () => {

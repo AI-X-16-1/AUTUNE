@@ -20,10 +20,16 @@ from autune_extraction.config import ExtractionSettings
 from autune_extraction.pipeline import llm as llm_module
 from autune_extraction.pipeline import registry
 from autune_extraction.pipeline.llm import (
+    BLOCKED,
     CONTEXT_LINES,
+    EMPTY,
     INSTRUCTIONS,
     LLM_CONFIDENCE,
+    NO_CANDIDATE,
+    UNPARSEABLE,
+    UNREADABLE_ASKS,
     LlmClassifier,
+    UnreadableAnswerError,
     parse,
     pieces,
     sentences,
@@ -110,11 +116,210 @@ def test_parse_drops_what_it_cannot_read() -> None:
     assert parse('{"labels": ["commitment"]}') == {}
 
 
-def test_a_blocked_or_empty_answer_labels_nothing(slept) -> None:
-    provider = Provider()
-    provider.request = lambda *a, **k: {"candidates": []}  # type: ignore[method-assign]
-    predictions = classifier(provider).classify(meeting(10))
+# An answer that says nothing is not "nothing found" (the user, 2026-10-08). A
+# refused or broken answer used to label no line, which is what a meeting with no
+# commitment and no decision looks like, so the run went through with nothing.
+
+
+def said(text: str) -> dict:
+    """A response whose one candidate says ``text``."""
+    return {"candidates": [{"content": {"parts": [{"text": text}]}, "finishReason": "STOP"}]}
+
+
+class Scripted(Provider):
+    """Gives back the responses it was handed, in order, and then answers as
+    ``Provider`` does."""
+
+    def __init__(self, *responses: dict) -> None:
+        super().__init__()
+        self.responses = list(responses)
+
+    def request(self, method: str, path: str, *, json: dict) -> dict:  # noqa: A002 - httpx's name
+        answer = super().request(method, path, json=json)
+        return self.responses.pop(0) if self.responses else answer
+
+
+QUOTING = "그 일정 얘기를 좀 해 보면 제가 금요일까지 정리할게요"
+UNREADABLE = [
+    ({"candidates": []}, NO_CANDIDATE),
+    ({}, NO_CANDIDATE),
+    ({"promptFeedback": {"blockReason": "SAFETY"}}, BLOCKED),
+    ({"promptFeedback": {"blockReason": "OTHER"}, "candidates": []}, BLOCKED),
+    ({"candidates": [{"finishReason": "SAFETY"}]}, EMPTY),
+    ({"candidates": [{"content": {"parts": [{"text": "  "}]}}]}, EMPTY),
+    (said(f"죄송하지만 답할 수 없습니다: {QUOTING}"), UNPARSEABLE),
+    (said('{"labels": {"0": "commitment", "5": "commi'), UNPARSEABLE),
+    (said('["commitment"]'), UNPARSEABLE),
+    (said('{"labels": ["commitment"]}'), UNPARSEABLE),
+    (said('{"labels": "commitment"}'), UNPARSEABLE),
+]
+
+
+@pytest.mark.parametrize(("response", "cause"), UNREADABLE)
+def test_an_answer_that_cannot_be_read_fails_the_call_after_a_second_ask(
+    slept, response: dict, cause: str
+) -> None:
+    provider = Scripted(*[response] * UNREADABLE_ASKS)
+
+    with capture_logs() as logs, pytest.raises(UnreadableAnswerError) as raised:
+        classifier(provider).classify(meeting(10))
+
+    assert raised.value.cause == cause
+    assert len(provider.bodies) == UNREADABLE_ASKS
+    assert provider.bodies[0] == provider.bodies[1]  # the same question, asked again
+    assert slept == []  # nothing was busy
+    # The busy-model word: whatever retries a 503 retries this.
+    assert isinstance(raised.value, TransientIntegrationError)
+    # Neither the error nor a log line carries a word of the answer.
+    assert str(raised.value) == f"the model's answer could not be read ({cause})"
+    assert raised.value.to_dict()["error"]["details"] == {"cause": cause}
+    noted = [entry for entry in logs if entry["event"] == "extraction_llm_unreadable"]
+    assert [(entry["ask"], entry["cause"]) for entry in noted] == [(1, cause), (2, cause)]
+    assert "정리할게요" not in repr(logs)
+
+
+READABLE_AND_EMPTY = [
+    '{"labels": {}}',
+    '해당 없습니다. {"labels": {}}',
+    '{"labels": {}, "summaries": {}, "parts": {}}',
+    "{}",
+    '{"labels": []}',
+    '{"labels": null}',
+    '{"labels": {"0": "vote", "x": "decision"}}',
+]
+
+
+@pytest.mark.parametrize("answer", READABLE_AND_EMPTY)
+def test_an_answer_that_says_there_is_nothing_is_read_and_asked_for_once(
+    slept, answer: str
+) -> None:
+    """``{"labels": {}}`` is what the instructions ask for when no line is a
+    commitment or a decision. Failing it would retry a quiet meeting for ever."""
+    provider = Scripted(said(answer))
+
+    with capture_logs() as logs:
+        predictions = classifier(provider).classify(meeting(10))
+
     assert [p.kind for p in predictions] == [None] * 10
+    assert len(provider.bodies) == 1
+    assert "extraction_llm_unreadable" not in {entry["event"] for entry in logs}
+
+
+def test_a_second_ask_that_can_be_read_is_the_answer(slept) -> None:
+    provider = Scripted({"candidates": [{"finishReason": "RECITATION"}]})
+
+    with capture_logs() as logs:
+        predictions = classifier(provider).classify(meeting(10))
+
+    assert [p.kind for p in predictions][:6] == [UtteranceKind.COMMITMENT] + [None] * 4 + [
+        UtteranceKind.COMMITMENT
+    ]
+    assert len(provider.bodies) == 2
+    noted = [entry for entry in logs if entry["event"] == "extraction_llm_unreadable"]
+    assert [(e["ask"], e["cause"], e["finish"], e["window"]) for e in noted] == [
+        (1, EMPTY, "RECITATION", 0)
+    ]
+
+
+def refusing(provider: Provider, refused: set[int]) -> None:
+    """Makes ``provider`` answer the windows in ``refused`` (by the order they
+    are first asked in) with nothing, however often they are asked."""
+    answer = provider.request
+    seen: list[str] = []
+
+    def request(method: str, path: str, *, json: dict) -> dict:  # noqa: A002 - httpx's name
+        read = answer(method, path, json=json)
+        asked = json["contents"][0]["parts"][0]["text"]
+        if asked not in seen:
+            seen.append(asked)
+        return {"candidates": []} if seen.index(asked) in refused else read
+
+    provider.request = request  # type: ignore[method-assign]
+
+
+def test_a_window_that_cannot_be_read_costs_its_own_lines_and_is_counted(slept) -> None:
+    """What the other windows hold is kept (the user, 2026-10-08): the windows
+    after the unread one are still asked, and the call says how many were not
+    read -- its lines carry no label, which is not "nothing was said there"."""
+    whole = Provider()
+    reader = classifier(whole)
+    full = [p.kind for p in reader.classify(meeting(300))]
+    asked = len(whole.bodies)
+    assert asked > 2
+    assert reader.unread_windows == 0
+
+    provider = Provider()
+    refusing(provider, {1})
+    partly = classifier(provider)
+    with capture_logs() as logs:
+        read = [p.kind for p in partly.classify(meeting(300))]
+
+    assert partly.unread_windows == 1
+    # Every window was asked, the unread one ``UNREADABLE_ASKS`` times.
+    assert len(provider.bodies) == asked + UNREADABLE_ASKS - 1
+    lost = [i for i, (was, now) in enumerate(zip(full, read, strict=True)) if was != now]
+    assert lost and all(read[i] is None for i in lost)
+    # The lost lines are one stretch -- the unread window -- with read lines on both sides.
+    assert lost == [i for i in range(lost[0], lost[-1] + 1) if full[i] is not None]
+    assert any(read[: lost[0]]) and any(read[lost[-1] + 1 :])
+    done = next(entry for entry in logs if entry["event"] == "extraction_llm_classified")
+    assert (done["windows"], done["unread"]) == (asked, 1)
+
+    # The count is the last call's: the classifier is kept between meetings,
+    # and the next one may have no line it is allowed to read.
+    assert partly.classify([]) == []
+    assert partly.unread_windows == 0
+
+
+def test_a_meeting_none_of_whose_windows_can_be_read_fails_after_asking_them_all(slept) -> None:
+    whole = Provider()
+    classifier(whole).classify(meeting(300))
+    asked = len(whole.bodies)
+
+    provider = Provider()
+    refusing(provider, set(range(asked)))
+    unread = classifier(provider)
+    with pytest.raises(UnreadableAnswerError) as raised:
+        unread.classify(meeting(300))
+
+    assert raised.value.cause == NO_CANDIDATE
+    assert len(provider.bodies) == asked * UNREADABLE_ASKS
+
+
+def test_every_window_but_one_unread_is_still_a_result(slept) -> None:
+    whole = Provider()
+    classifier(whole).classify(meeting(300))
+    asked = len(whole.bodies)
+
+    provider = Provider()
+    refusing(provider, set(range(1, asked)))
+    partly = classifier(provider)
+    read = [p.kind for p in partly.classify(meeting(300))]
+
+    assert partly.unread_windows == asked - 1
+    assert read[0] is UtteranceKind.COMMITMENT
+
+
+@pytest.mark.parametrize(
+    ("response", "logged"),
+    [
+        ({"candidates": [{"finishReason": "MAX_TOKENS"}]}, "MAX_TOKENS"),
+        ({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}, "PROHIBITED_CONTENT"),
+        # Not a reason word: it could be anything, so it is not passed on.
+        ({"candidates": [{"finishReason": f"stopped at: {QUOTING}"}]}, ""),
+        ({"candidates": [{"finishReason": {"why": QUOTING}}]}, ""),
+        ({"candidates": []}, ""),
+    ],
+)
+def test_only_the_providers_reason_word_reaches_the_log(slept, response: dict, logged: str) -> None:
+    provider = Scripted(*[response] * UNREADABLE_ASKS)
+
+    with capture_logs() as logs, pytest.raises(UnreadableAnswerError):
+        classifier(provider).classify(meeting(10))
+
+    noted = [entry for entry in logs if entry["event"] == "extraction_llm_unreadable"]
+    assert {entry["finish"] for entry in noted} == {logged}
+    assert "정리할게요" not in repr(logs)
 
 
 def test_no_texts_no_request(slept) -> None:

@@ -64,6 +64,15 @@ class CheckedClassifier:
             return joined
         return f"checked:{hashlib.sha256(joined.encode('utf-8')).hexdigest()[:16]}"
 
+    @property
+    def unread_windows(self) -> int:
+        """The windows either classifier could not read
+        (``LlmClassifier.unread_windows``); one that reads everything, or has
+        no windows, counts none."""
+        return int(getattr(self._proposer, "unread_windows", 0)) + int(
+            getattr(self._checker, "unread_windows", 0)
+        )
+
     def use_roster(self, names: Sequence[str]) -> None:
         """Only the proposer sends text out (#411); the checker runs here."""
         give_roster(self._proposer, names)

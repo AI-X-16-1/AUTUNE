@@ -219,3 +219,14 @@ def test_llm_checked_is_the_llm_checked_by_local_deberta(configured) -> None:
 
 def test_llm_checked_is_not_a_resolver() -> None:
     assert "llm_checked" not in registry._RESOLVERS
+
+
+def test_the_windows_the_proposer_could_not_read_are_the_pairs() -> None:
+    """``llm_checked`` wraps the classifier that has windows: a run under it
+    must still learn that part of the transcript went unread."""
+    proposer, checker = Scripted([None]), Scripted([None])
+    pair = CheckedClassifier(proposer, checker)
+    assert pair.unread_windows == 0  # neither reads in windows
+
+    proposer.unread_windows = 2  # type: ignore[attr-defined]
+    assert pair.unread_windows == 2
