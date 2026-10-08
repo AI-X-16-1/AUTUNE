@@ -212,6 +212,8 @@ def _points(value: Any, surface: dict[str, str], said: str) -> list[str]:
 class LlmSummarizer(GeminiClient):
     """Gemini's ``generateContent`` over a meeting's masked lines, in sections."""
 
+    step = "summary"
+
     def summarize(
         self, lines: Sequence[str], *, board: Sequence[str] = ()
     ) -> WrittenSummary | None:

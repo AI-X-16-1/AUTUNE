@@ -950,6 +950,8 @@ class LlmResolver(GeminiClient):
     downgraded.
     """
 
+    step = "resolver"
+
     def __init__(
         self,
         *,
