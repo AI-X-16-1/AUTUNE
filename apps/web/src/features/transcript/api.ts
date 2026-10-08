@@ -155,6 +155,19 @@ export const leaveTeam = (teamId: string) =>
   });
 
 /**
+ * Delete a team, by the one person left on it (#1007). Answers with the
+ * teams they are still on. The name is the team's, typed by the person, and
+ * goes in the body: a team's name can name a client, and an address is
+ * logged. Refused: 409 `team_has_other_members`, 409
+ * `team_meeting_in_progress`, 422 `team_name_mismatch`.
+ */
+export const deleteTeam = (teamId: string, name: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ name }),
+  });
+
+/**
  * Join the team an invitation link names, as the signed-in owner of the
  * invited address. Every refusal is the same 404; show one sentence for it.
  */

@@ -307,6 +307,14 @@ class InvitationAccept(BaseModel):
     token: str = Field(min_length=1, max_length=512)
 
 
+class TeamDeletion(BaseModel):
+    """The team's name, typed by the person deleting it (#1007). In the body,
+    never the address: a team's name can name a client, and addresses are
+    logged."""
+
+    name: str = Field(min_length=1, max_length=200)
+
+
 class TeamSummary(BaseModel):
     """A team the caller may open a meeting for. Id and name; nothing else a
     browser needs to fill ``MeetingCreate.team_id``."""

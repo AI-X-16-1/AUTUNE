@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui";
 
 import {
   cancelInvitation,
+  deleteTeam,
   leaveTeam,
   listPendingInvitations,
   listTeamMembers,
@@ -42,8 +43,24 @@ import { TeamScope } from "./TeamScope";
  * are still theirs to delete afterwards (설정 › 개인정보 · 보관; the right does
  * not go with the membership), though only everywhere at once and without
  * being able to open this team's meetings first -- and a second press does it.
- * The last member
- * is refused by the server and told why.
+ *
+ * **The one person left on a team is offered "팀 삭제" in its place** (#1007;
+ * the user and the four other owners, 2026-10-09). They cannot leave -- a team
+ * with nobody on it could be neither read nor deleted -- so what the section
+ * holds for them is the team's deletion. One press opens what it means, and
+ * the order of that text is the decision's: what goes (everything Autune keeps
+ * for the team, the lines of people who left it earlier among them, and what
+ * Autune put on their own calendar), then what stays because it is outside
+ * Autune -- the minutes, pages and issues in the team's Notion, Slack and
+ * Jira, the gap notices and the reports in the team's Slack channel -- and
+ * that after this nothing in Autune can take those back. Then the team's name
+ * is typed. The server compares it; the button only waits for something to
+ * have been typed, so there is one rule for what counts as the same name.
+ *
+ * Which of the two the section shows follows the member list. Until that list
+ * has been read it shows leaving, and the server's own refusal moves it: a
+ * last member who presses leave is shown the deletion, and a deletion refused
+ * because somebody joined reads the list again.
  */
 
 const SECTION_TITLE = {
@@ -52,6 +69,23 @@ const SECTION_TITLE = {
   color: "var(--color-ink-body)",
 } as const;
 const META = { fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" } as const;
+const INPUT =
+  "w-full rounded-[var(--radius)] bg-[var(--color-surface-panel)] px-3 text-[var(--color-ink-strong)] focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]";
+const INPUT_STYLE = {
+  height: "var(--control-h-default)",
+  fontSize: "var(--text-rowBody)",
+  border: "1px solid var(--color-hairline)",
+} as const;
+
+/** What the server said, as the person can act on it. */
+const DELETE_REFUSED: Record<string, string> = {
+  team_name_mismatch:
+    "입력한 이름이 팀 이름과 다릅니다. 띄어쓰기와 대소문자까지 그대로 입력해 주세요.",
+  team_meeting_in_progress:
+    "전사 중이거나 실시간으로 진행 중인 회의가 있어 팀을 삭제할 수 없습니다. 끝난 뒤에 다시 시도해 주세요. 전사가 멈춰 있다면 그 회의에서 전사를 취소한 뒤 삭제할 수 있습니다.",
+  team_has_other_members:
+    "이 팀에 다른 구성원이 있어 삭제할 수 없습니다. 팀은 혼자 남은 사람만 삭제할 수 있습니다.",
+};
 
 export function MembersSettingsScreen() {
   return (
@@ -81,6 +115,11 @@ function Members({ teamId }: { teamId: string }) {
   const [asking, setAsking] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [leaveNote, setLeaveNote] = useState<string | null>(null);
+  // The server said so, whatever the list on screen says.
+  const [toldAlone, setToldAlone] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteNote, setDeleteNote] = useState<string | null>(null);
 
   const readPending = useCallback(() => {
     listPendingInvitations(teamId)
@@ -116,28 +155,70 @@ function Members({ teamId }: { teamId: string }) {
       if (next) rememberTeam(next);
       window.location.assign(next ? "/" : "/workspace/new");
     } catch (error) {
-      setLeaveNote(
-        error instanceof ApiError && error.code === "last_team_member"
-          ? "이 팀에 남은 구성원이 나뿐이라 나갈 수 없습니다. 다른 사람을 초대해 그 사람이 들어온 뒤에 나갈 수 있습니다."
-          : "팀에서 나가지 못했습니다. 잠시 후 다시 시도해 주세요.",
-      );
+      if (error instanceof ApiError && error.code === "last_team_member") {
+        // The section becomes the deletion; what it means is not yet shown.
+        setToldAlone(true);
+        setAsking(false);
+        setLeaveNote(
+          "이 팀에 남은 구성원이 나뿐이라 나갈 수 없습니다. 다른 사람을 초대해 그 사람이 들어온 뒤에 나가거나, 팀을 삭제할 수 있습니다.",
+        );
+      } else {
+        setLeaveNote("팀에서 나가지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      }
       setLeaving(false);
+    }
+  };
+
+  const readMembers = useCallback(
+    (current: () => boolean = () => true) => {
+      listTeamMembers(teamId)
+        .then((list) => {
+          if (current()) setMembers(list);
+        })
+        .catch(() => {
+          if (current()) setFailed(true);
+        });
+    },
+    [teamId],
+  );
+
+  const remove = async () => {
+    setDeleting(true);
+    setDeleteNote(null);
+    setLeaveNote(null);
+    try {
+      const left = await deleteTeam(teamId, typed);
+      // As after leaving: go where the person now belongs.
+      const next = left[0]?.team_id;
+      if (next) rememberTeam(next);
+      window.location.assign(next ? "/" : "/workspace/new");
+    } catch (error) {
+      const code = error instanceof ApiError ? error.code : null;
+      if (code === "team_has_other_members") {
+        // Somebody joined: the list on screen is old, and so is this section.
+        setToldAlone(false);
+        setAsking(false);
+        setTyped("");
+        readMembers();
+      }
+      // Not "nothing was deleted": a request that did not come back may
+      // have been carried out.
+      setDeleteNote(
+        (code && DELETE_REFUSED[code]) ?? "팀을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      );
+      setDeleting(false);
     }
   };
 
   useEffect(() => {
     let current = true;
-    listTeamMembers(teamId)
-      .then((list) => {
-        if (current) setMembers(list);
-      })
-      .catch(() => {
-        if (current) setFailed(true);
-      });
+    readMembers(() => current);
     return () => {
       current = false;
     };
-  }, [teamId]);
+  }, [readMembers]);
+
+  const alone = toldAlone || members?.length === 1;
 
   return (
     <>
@@ -223,9 +304,75 @@ function Members({ teamId }: { teamId: string }) {
 
       <section className="mt-8" aria-labelledby="leave-title">
         <h2 id="leave-title" className="mb-2" style={SECTION_TITLE}>
-          팀 나가기
+          {alone ? "팀 삭제" : "팀 나가기"}
         </h2>
-        {asking ? (
+        {alone ? (
+          asking ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (typed.trim() && !deleting) void remove();
+              }}
+            >
+              <p style={META}>
+                이 팀에 남은 구성원이 나뿐이라 나갈 수는 없고, 팀을 삭제할 수 있습니다. 삭제하면
+                이 팀과 팀의 모든 회의, 전사, 액션 아이템, 결정 사항, 갭 리포트, 리포트, 자료
+                목록을 비롯해 Autune이 이 팀에 대해 보관하는 것이 모두 삭제됩니다. 먼저 팀에서
+                나간 사람들이 이 팀 회의에서 한 말도 함께 삭제되며, 그 사람들에게 알림은 가지
+                않습니다. 팀에 연결한 Slack, Notion, Jira 연동과 아직 수락되지 않은 초대도
+                삭제되고, Autune이 내 Google Calendar에 넣은 일정은 삭제를 요청합니다. 삭제한
+                뒤에는 되돌릴 수 없습니다.
+              </p>
+              <p className="mt-2" style={META}>
+                팀의 도구에 이미 보낸 것은 삭제되지 않고 그 도구에 남습니다. Notion, Slack,
+                Jira에 보낸 프로젝트별 회의록과 액션 아이템·결정 사항의 Notion 페이지와 Jira
+                이슈, 팀 Slack 채널에 올라간 갭 질문과 다음 회의 안내, 팀 Slack 채널에 올라간
+                회의 리포트와 주간 팀 리포트가 그렇습니다. 각자 Slack 개인 메시지로 받은 알림도
+                남고, 자료로 등록한 Google Drive 파일도 Drive에 그대로 있습니다. 팀을 삭제하면 Autune에서는 이것들을 더 지울 수 없으니,
+                지워야 하는 것이 있으면 그 도구에서 직접 지워 주세요.
+              </p>
+              <label className="mt-3 block" style={META}>
+                삭제하려면 이 팀의 이름을 입력해 주세요.
+                <input
+                  type="text"
+                  value={typed}
+                  onChange={(event) => setTyped(event.target.value)}
+                  maxLength={200}
+                  autoComplete="off"
+                  className={`${INPUT} mt-1 block max-w-[360px]`}
+                  style={INPUT_STYLE}
+                />
+              </label>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  tone="primary"
+                  size="compact"
+                  type="submit"
+                  loading={deleting}
+                  disabled={!typed.trim()}
+                >
+                  이 팀 삭제
+                </Button>
+                <Button
+                  tone="quiet"
+                  size="compact"
+                  type="button"
+                  onClick={() => {
+                    setAsking(false);
+                    setTyped("");
+                    setDeleteNote(null);
+                  }}
+                >
+                  취소
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <Button tone="destructiveText" size="compact" onClick={() => setAsking(true)}>
+              이 팀 삭제
+            </Button>
+          )
+        ) : asking ? (
           <>
             <p style={META}>
               나가면 이 팀의 회의와 기록을 더 볼 수 없습니다. 이 팀 회의에서 내가 한 말과 내가
@@ -249,9 +396,9 @@ function Members({ teamId }: { teamId: string }) {
             이 팀에서 나가기
           </Button>
         )}
-        {leaveNote ? (
+        {(deleteNote ?? leaveNote) ? (
           <p role="alert" className="mt-2" style={META}>
-            {leaveNote}
+            {deleteNote ?? leaveNote}
           </p>
         ) : null}
       </section>
