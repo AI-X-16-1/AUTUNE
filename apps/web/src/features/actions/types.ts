@@ -142,11 +142,11 @@ export interface ActionItemRead extends ActionItem {
    */
   sync_failures?: SyncFailure[];
   /**
-   * A one-line preview of the item's sources beyond `description` itself.
-   * Rule-based, not a model: the longest source utterance, truncated, and only
-   * when there is more than one source — with a single one `description`
-   * already is that sentence. `null` otherwise; the card falls back to the
-   * source count.
+   * A one-line preview of what the item was made from, beyond `description`
+   * itself: the words as said, cut to the part the item is about when the run
+   * recorded one. Rule-based, not a model: the longest source, truncated.
+   * `null` when `description` already is that line (one source, no model's
+   * sentence); the card falls back to the source count.
    */
   summary: string | null;
   /**
@@ -194,6 +194,12 @@ export interface ActionItemRead extends ActionItem {
 export interface SourceUtterance {
   id: string;
   text: string;
+  /**
+   * The part of `text` the item or decision was made from, cut from it as
+   * stored — never reworded. Absent or null when it was made from the whole
+   * utterance, for a row older than this field, and for a context line.
+   */
+  excerpt?: string | null;
 }
 
 /**
@@ -273,6 +279,8 @@ export interface SummaryDecision {
   id: string;
   statement: string;
   status: "pending" | "confirmed";
+  /** `ReviewDecision.summary`: what was said, beneath the statement. */
+  summary?: string | null;
   /** The team's project it is about, or null for none (미분류). */
   project_id?: string | null;
 }
@@ -290,6 +298,23 @@ export interface Project {
   /** Other names people say for it, matched in what was said. */
   aliases: string[];
   jira_project_key: string | null;
+}
+
+/**
+ * A Google Drive file a team keeps on its 자료 screen -- `MaterialRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py` (`ext_materials`,
+ * #817). A title and which file it is: no address, which the screen builds
+ * from the id (`@/shared/drive`), and no person.
+ */
+export interface Material {
+  id: string;
+  team_id: string;
+  /** Typed by a member, shown as typed. */
+  title: string;
+  drive_file_id: string;
+  drive_kind: "file" | "document" | "presentation" | "spreadsheets";
+  /** ISO 8601, when it was registered. */
+  created_at: string;
 }
 
 /**

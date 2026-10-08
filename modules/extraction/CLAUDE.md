@@ -61,7 +61,7 @@ built from it.
 `ext_extraction_attempts`, `ext_extraction_runs`, `ext_meeting_notes`, `ext_meeting_summaries`,
 `ext_forgotten_utterances`, `ext_weekly_digests`, `ext_daily_digests`,
 `ext_work_reports`, `ext_meeting_notices`,
-`ext_notification_pauses`, `ext_public_holidays`, `ext_projects`,
+`ext_notification_pauses`, `ext_public_holidays`, `ext_projects`, `ext_materials`,
 `ext_project_sends`, `ext_project_send_cleanup`, `ext_project_refresh_owed`,
 `ext_minutes_events`.
 

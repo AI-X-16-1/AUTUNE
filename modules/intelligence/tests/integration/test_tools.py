@@ -65,9 +65,39 @@ def test_the_tool_list_is_exactly_these_reads() -> None:
         "weekly_reports",
         "weekly_report_schedule",
         "explain_metric",
+        "report_channel",  # the Report subagent's check before it proposes a post
     ]
     for fn in tools.TOOLS:
         assert fn.__doc__ and fn.__doc__.strip().startswith("Use this")
+
+
+# --- report_channel -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "secret", "connected"),
+    [
+        ({"channel": "C123"}, "stored-token", True),
+        ({}, "stored-token", False),  # connected, no channel picked
+        ({"channel": "C123"}, None, False),  # no token
+        (None, None, False),  # never connected
+    ],
+    ids=["connected", "no-channel", "no-token", "never"],
+)
+def test_report_channel_says_whether_a_post_could_go_out(
+    db_session: Session, team: str, config: dict | None, secret: str | None, connected: bool
+) -> None:
+    from autune_core import TeamIntegration
+
+    if config is not None:
+        db_session.add(TeamIntegration(team_id=team, service="slack", config=config, secret=secret))
+        db_session.flush()
+
+    result = tools.report_channel(db_session, team)
+
+    assert result["ok"] is True and result["items"][0]["connected"] is connected
+    # Whether, never which: no channel, workspace or token in the answer.
+    assert "C123" not in str(result) and "stored-token" not in str(result)
 
 
 # --- meeting_quality ----------------------------------------------------------

@@ -294,7 +294,17 @@ refusing the post. Report text is
 escaped for Slack (`&`, `<`, `>`), so a mention or a disguised link in it goes
 out as plain text, and the 3,000-character cap counts the escaped text. A
 posted copy in Slack is outside Autune: deleting an account or a meeting does
-not recall it.
+not recall it. An approved post is refused at approval (`slack not connected`)
+while the team has no Slack token or channel: the delivery task could only log
+that, and the approver would have read "예약했습니다" for a post that never
+went out. The draft stays, and can be approved again after connecting. So the
+Report subagent asks first (`report_channel`, whether, never which channel) and,
+without a channel, proposes the draft alone and says why; a person's edit or
+correction proposes nothing. Those runs have no chat, and a run keeps no
+answer (agent-layer.md section 5), so the reason is not shown anywhere; the card
+shows the draft as not posted. A meeting that passed
+without Slack gets no card later: once Slack is connected, its post is asked for
+in chat ("리포트 올려줘") and approved as usual.
 
 **A correction to a posted report (#658, #674).** A posted report is never
 changed in place. A member writes a correction on the card; it goes the same
@@ -325,8 +335,9 @@ announcement covered; one meeting's failure does not stop the rest. A save that
 changes only trailing spaces or blank edges counts as unchanged. A correction is
 refused while the team has no Slack token or channel, and an approved one whose
 team lost Slack after the post reads as
-failed (`correction_failed_at`) rather than waiting forever; the next
-correction, after reconnecting, clears it.
+failed (`correction_failed_at`) rather than waiting forever -- refused at
+approval when Slack was gone by then, marked by the delivery task when it went
+after; the next correction, after reconnecting, clears it.
 Only the text, its id and `corrected_by` are stored; the name is joined when it
 is read or sent, as for an edit. The approval card can read it through
 `meeting_report_correction(correction_id)`. Deleting a post from Slack is not

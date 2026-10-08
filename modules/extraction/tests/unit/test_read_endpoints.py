@@ -504,8 +504,8 @@ def test_the_detail_quotes_its_sources_in_the_order_they_were_spoken(
     body = client.get(f"{PREFIX}/action-items/act_1").json()
 
     assert body["sources"] == [
-        {"id": "utt_early", "text": "배포 스크립트 누가 정리하죠?"},
-        {"id": "utt_late", "text": "제가 금요일까지 할게요"},
+        {"id": "utt_early", "text": "배포 스크립트 누가 정리하죠?", "excerpt": None},
+        {"id": "utt_late", "text": "제가 금요일까지 할게요", "excerpt": None},
     ]
     assert body["source_utterance_ids"] == ["utt_late", "utt_early"], "insertion order"
 

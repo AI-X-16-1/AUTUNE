@@ -98,14 +98,19 @@ export function ActionCard({
           {item.meeting_title}
         </div>
       ) : null}
+      {/* Two lines at most, whatever came (the user, 2026-10-08): a card is a
+          line to recognise the item by, and the detail window has all of it.
+          The mark stays beside the lines so a cut never takes it. */}
       <div
-        className="text-[var(--color-ink-strong)]"
+        className="flex items-start gap-1.5 text-[var(--color-ink-strong)]"
         style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
       >
-        {item.description}
+        <span className="line-clamp-2 min-w-0" title={item.description}>
+          {item.description}
+        </span>
         {item.description_resolved ? (
           <span
-            className="ml-1.5 text-[var(--color-ink-muted)]"
+            className="shrink-0 whitespace-nowrap text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)", fontWeight: 400 }}
             title="AI가 발화 속 지시어(그거, 저희 팀 등)를 풀어 다시 쓴 설명입니다. 원문과 다를 수 있어 확인이 필요합니다."
           >
@@ -131,7 +136,7 @@ export function ActionCard({
       ) : null}
 
       <div
-        className="mt-1 text-[var(--color-ink-muted)]"
+        className="mt-1 line-clamp-2 text-[var(--color-ink-muted)]"
         style={{ fontSize: "var(--text-metaSmall)" }}
       >
         {reasonFor(item)}
@@ -232,9 +237,10 @@ export function ActionCard({
 /**
  * The line under the title: what to read to decide if the item is real.
  *
- * `summary` -- a preview of the sources beyond the title itself -- stands in
- * for the count when there is one; the full quotations stay drawer-only
- * either way, so this is never more than the one line was.
+ * `summary` -- what was said, cut to the part the item is about -- stands in
+ * for the count when there is one, so a model's sentence has the words it
+ * stands for beneath it. Two lines at most; the quotation itself is in the
+ * detail window.
  */
 function reasonFor(item: ActionItemRead): string {
   // Ahead of everything else: the text above may still carry what a PII

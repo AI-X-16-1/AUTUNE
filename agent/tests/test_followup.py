@@ -197,7 +197,7 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
 
     (proposal,) = outcome.proposed
-    assert (proposal.level, proposal.tool, proposal.kind) == ("L2", WRITE, "followup_meeting")
+    assert (proposal.level, proposal.tool, proposal.kind) == ("L2", WRITE, "followup_reopened")
     # The trigger's meeting is the run's: the action is bound to it when it runs.
     # No meeting days to read, so three business days from Monday.
     assert proposal.arguments == {"due_date": "2026-10-08", "basis": "cadence"}
@@ -234,6 +234,7 @@ def test_two_high_gaps_and_a_question_leave_a_meeting_heavy(session, team) -> No
     (proposal,) = outcome.proposed
     assert proposal.evidence == ["gap_1", "gap_2"]
     assert "높음 갭 2건과 미해결 질문" in proposal.rationale
+    assert proposal.kind == "followup_risky"
 
 
 def test_high_gaps_without_a_question_are_not_heavy(session, team) -> None:
@@ -264,6 +265,7 @@ def test_both_rules_cite_each_gap_once_carried_first(session, team) -> None:
     ).proposed
 
     assert proposal.evidence == ["gap_2", "gap_1"]
+    assert proposal.kind == "followup_reopened_risky"
 
 
 def test_nothing_fires_and_the_open_item_read_is_not_spent(session, team) -> None:

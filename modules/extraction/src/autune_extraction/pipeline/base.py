@@ -64,6 +64,13 @@ class Prediction:
     piece_summaries: tuple[str, ...] = ()
     """The same, a piece: as long as ``pieces``, empty strings where there is
     none."""
+    part: str = ""
+    """The words of a commitment or a decision that carry it, as they stand in
+    the utterance, when the classifier named them with its label (``llm``,
+    2026-10-08) and they are less than all of it. Empty otherwise -- the
+    quotation is then the sentence or the utterance (``excerpt.quoted``)."""
+    piece_parts: tuple[str, ...] = ()
+    """The same, a piece: words of that piece."""
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.confidence <= 1.0:

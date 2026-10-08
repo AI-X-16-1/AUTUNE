@@ -52,6 +52,35 @@ describe("MeetingSummaryScreen", () => {
     expect(regions[0]).toBe("AI 요약");
   });
 
+  it("shows what was said beneath a decision and an item, and nothing beneath a row with none", async () => {
+    getSummary.mockResolvedValue({
+      ...BASE,
+      decisions: [
+        { id: "dec_1", statement: "출시를 다음 달로 미룬다", status: "pending", summary: "출시는 다음 달로 미루기로 했습니다." },
+        { id: "dec_2", statement: "회의실은 예약제로 한다", status: "confirmed", summary: null },
+      ],
+      action_items: [
+        {
+          id: "act_1",
+          meeting_id: "mtg_1",
+          description: "설문 문항 다시 쓰기",
+          status: "todo",
+          summary: "설문은 제가 금요일까지 다시 쓰겠습니다.",
+        },
+      ] as MeetingSummary["action_items"],
+    });
+
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+
+    const decisions = await screen.findByRole("region", { name: "결정" });
+    const rows = decisions.querySelectorAll("li");
+    expect(rows[0]?.textContent).toContain("출시를 다음 달로 미룬다");
+    expect(rows[0]?.querySelector("p")?.textContent).toBe("출시는 다음 달로 미루기로 했습니다.");
+    expect(rows[1]?.querySelector("p")).toBeNull();
+    const item = screen.getByRole("region", { name: "액션" }).querySelector("li");
+    expect(item?.querySelector("p")?.textContent).toBe("설문은 제가 금요일까지 다시 쓰겠습니다.");
+  });
+
   it("has no such section when none is written", async () => {
     getSummary.mockResolvedValue({ ...BASE, generated: null });
 

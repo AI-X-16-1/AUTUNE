@@ -327,6 +327,32 @@ def test_an_approved_correction_goes_under_the_original_post(
 
 
 @pytest.mark.usefixtures("ready")
+def test_approving_after_slack_went_away_says_so_and_marks_it_failed(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disconnected between the correction and its approval: the task would only
+    log it, so the approver is told at approval, and the card does not read
+    "승인 대기" forever (#698)."""
+    from autune_core import TeamIntegration
+
+    meeting = _posted_report(db_session, team, channel="C123", ts="1.000100")
+    _connect_slack(db_session, team)
+    correction = _write(db_session, team, meeting, "✅ 기한 정정")
+    db_session.execute(sa.delete(TeamIntegration).where(TeamIntegration.team_id == team))
+    queued: list[tuple[str, ...]] = []
+    monkeypatch.setattr(tasks.deliver_meeting_report_correction, "apply_async", queued.append)
+
+    result = tools.publish_meeting_report_correction(team, meeting, correction)
+
+    assert result["ok"] is False and result["reason"] == "slack not connected"
+    assert result["summary"] == tools.NO_SLACK
+    assert queued == []
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None and row.correction_failed_at is not None
+    assert row.correction_sent_at is None
+
+
+@pytest.mark.usefixtures("ready")
 def test_a_correction_is_sent_once(db_session: Session, team: str) -> None:
     meeting = _posted_report(db_session, team)
     _connect_slack(db_session, team)

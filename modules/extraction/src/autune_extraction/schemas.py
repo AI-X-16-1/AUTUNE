@@ -296,10 +296,11 @@ class ActionItemRead(BaseModel):
     the field too."""
 
     summary: str | None = None
-    """A one-line preview of the item's sources beyond ``description`` itself.
-    Rule-based (the longest of them, truncated), and only when there is more
-    than one -- with a single source ``description`` already is that sentence,
-    and a second copy of it would say nothing ``description`` does not. See
+    """A one-line preview of what the item was made from, beyond ``description``
+    itself: the words as said, cut to the part the item is about when the run
+    recorded one. Rule-based (the longest source, truncated). ``None`` when
+    ``description`` already is that line -- one source and no model's sentence
+    -- since a second copy of it would say nothing ``description`` does not. See
     ``ReviewDecision.summary`` for why a chosen line belongs on the list."""
 
 
@@ -313,6 +314,13 @@ class SourceUtterance(BaseModel):
 
     id: str
     text: str
+
+    excerpt: str | None = None
+    """The part of ``text`` the item or decision was made from, cut from it as
+    stored -- never reworded, nothing added (``autune_extraction.excerpt``).
+    ``None`` when it was made from the whole utterance, when the row is older
+    than the offsets, and for a line that is context and not a source: show
+    ``text``."""
 
 
 class EditHistoryEntry(BaseModel):
@@ -370,6 +378,29 @@ class ProjectWrite(BaseModel):
     jira_project_key: str | None = Field(default=None, max_length=32)
 
 
+class MaterialWrite(BaseModel):
+    """A Drive file a member puts on the team's 자료 screen: a title, and the
+    link as pasted. The link is parsed and not kept (``materials.register``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=300)
+    link: str = Field(min_length=1, max_length=2000)
+
+
+class MaterialRead(BaseModel):
+    """One of a team's materials (``ext_materials``): a title and which Drive
+    file it is. No address -- the screen builds Google's from the id and the
+    kind -- and no person."""
+
+    id: str
+    team_id: str
+    title: str
+    drive_file_id: str
+    drive_kind: Literal["file", "document", "presentation", "spreadsheets"]
+    created_at: datetime
+
+
 class ProjectPlacement(BaseModel):
     """A person puts a decision or an item in one of the team's projects, or none."""
 
@@ -409,6 +440,9 @@ class SummaryDecision(BaseModel):
     statement: str
     status: Literal["pending", "confirmed"]
     project_id: str | None = None
+
+    summary: str | None = None
+    """``ReviewDecision.summary``: what was said, shown beneath the statement."""
 
 
 MAX_NOTE_CHARS = 2000

@@ -4,7 +4,7 @@ import type { Route } from "next";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { Button, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { CopyMinutes } from "./CopyMinutes";
 import { ProjectGroups } from "./ProjectGroups";
@@ -154,6 +154,7 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
                   {d.statement}
                 </span>
                 {d.status === "pending" ? <Meta> · 확인 대기</Meta> : null}
+                <Said>{d.summary}</Said>
               </Line>
             ))}
           </ul>
@@ -298,7 +299,25 @@ function ItemLine({ item }: { item: ActionItemRead }) {
         {" · "}
         {COLUMN_LABELS[item.status ?? "needs_confirmation"]}
       </Meta>
+      <Said>{item.summary}</Said>
     </Line>
+  );
+}
+
+/**
+ * What was said, beneath the line a model or a reviewer wrote for it: the
+ * server's one-line preview, cut to the part the row is about. Nothing when
+ * the row has none.
+ */
+function Said({ children }: { children: string | null | undefined }) {
+  if (!children) return null;
+  return (
+    <p
+      className="line-clamp-2 text-[var(--color-ink-muted)]"
+      style={{ fontSize: "var(--text-metaSmall)" }}
+    >
+      <MaskedText>{children}</MaskedText>
+    </p>
   );
 }
 

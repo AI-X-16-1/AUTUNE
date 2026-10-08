@@ -3,6 +3,14 @@ import { HoverPreview, PredictionMockup } from "./HoverPreview";
 import type { PredictionsRead } from "../types";
 
 /**
+ * Both conditions of the server's gate, joined so neither reads as optional.
+ * Four weeks run from the day E scored the team's first meeting, not from
+ * when the meetings were held, so the copy says "analysed".
+ */
+const INSUFFICIENT_HISTORY =
+  "처음 회의를 분석한 날부터 4주가 지나고, 분석한 회의가 3회 이상이면 표시됩니다.";
+
+/**
  * The misalignment-risk prediction on S26 — probability in mono, per ui-spec.
  *
  * What it predicts: the chance a decision from the team's latest meeting is
@@ -16,7 +24,7 @@ export function PredictionCard({ predictions }: { predictions: PredictionsRead |
   if (!prediction) {
     const message =
       predictions?.reason === "insufficient_history"
-        ? "4주 이상, 회의 3회 이상 쌓이면 표시됩니다 (#27)."
+        ? INSUFFICIENT_HISTORY
         : "아직 예측이 없습니다.";
     return (
       <HoverPreview mockup={<PredictionMockup />} side="left">

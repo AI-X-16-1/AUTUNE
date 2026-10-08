@@ -82,6 +82,7 @@ describe("AppSidebar, the screens", () => {
     ["/meetings/mtg_1", "홈"],
     ["/meetings/mtg_1/actions", "홈"],
     ["/actions", "액션아이템"],
+    ["/materials", "자료"],
     ["/settings/members", "설정"],
   ])("on %s the lit entry is %s", (path, label) => {
     pathname.mockImplementation(() => path);

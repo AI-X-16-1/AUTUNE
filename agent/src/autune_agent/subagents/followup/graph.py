@@ -261,7 +261,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             evidence=verdict.evidence,
         )
         proposal = ProposedAction(
-            kind="followup_meeting",
+            kind=verdict.kind,
             title="후속 회의 제안",
             tool=WRITE,
             # ``basis`` is a short enum, so plan mode queues it, and the card

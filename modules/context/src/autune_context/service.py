@@ -1749,7 +1749,6 @@ def send_decision_drift_notices(slack: SlackApi, channel: str, notices: list[Dri
             thread_label=notice.thread_label,
             current_statement=notice.statement_preview,
             change_type=notice.change_type,
-            absent_count=len(notice.absent_user_ids),
             meeting_date=notice.meeting_date,
         )
         posted += _post_to_channel(
