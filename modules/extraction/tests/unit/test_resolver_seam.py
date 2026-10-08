@@ -77,6 +77,39 @@ def test_a_number_absent_from_the_window_is_not_grounded() -> None:
     assert not _grounded("5시에 봅시다", _window_text(request))
 
 
+@pytest.mark.parametrize(
+    ("said", "resolved"),
+    [
+        ("마감은 20일입니다", "2일까지 하겠습니다"),
+        ("2026년 계획입니다", "26건을 보겠습니다"),
+        ("예산은 1500만 원입니다", "500만 원으로 하겠습니다"),
+        ("회의는 10시입니다", "0시에 봅시다"),
+    ],
+)
+def test_a_number_inside_a_longer_one_in_the_window_is_not_grounded(
+    said: str, resolved: str
+) -> None:
+    """Review of #1079: looked for as text, each of these was "in the window"."""
+    request = ResolutionRequest(target="그렇게 하겠습니다", context=(said,))
+    assert not _grounded(resolved, _window_text(request))
+
+
+@pytest.mark.parametrize(
+    ("said", "resolved"),
+    [
+        ("마감은 20일입니다", "20일까지 하겠습니다"),
+        ("회의는 09시입니다", "9시에 봅시다"),
+        ("회의는 9시입니다", "09시에 봅시다"),
+        ("3층 회의실에서 10시에 봅시다", "10시에 3층에서 봅시다"),
+    ],
+)
+def test_a_number_the_window_said_whole_is_grounded_however_it_is_padded(
+    said: str, resolved: str
+) -> None:
+    request = ResolutionRequest(target="그렇게 하겠습니다", context=(said,))
+    assert _grounded(resolved, _window_text(request))
+
+
 def test_text_with_no_numbers_is_trivially_grounded() -> None:
     request = ResolutionRequest(target="그거 할게요", context=("회의실 예약해야죠",))
     assert _grounded("회의실 예약 할게요", _window_text(request))

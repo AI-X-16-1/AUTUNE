@@ -56,6 +56,17 @@ _DIGIT_RUN = re.compile(r"\d+")
 without another model: not anywhere in the window means it is a new fact, and
 #175's own design refuses exactly that ("창에 없는 사실을 만들지 않음")."""
 
+
+def _numbers(text: str) -> set[str]:
+    """The numbers ``text`` says, each a whole run of digits without the zeros
+    in front: "20일" says 20 and does not say 2, and "09시" says 9.
+
+    One reading of "a number the source said" for both places a model's
+    sentence is checked against what was spoken: ``_grounded`` here and the
+    meeting summary's ``_kept`` (#1079, where the rule was first written)."""
+    return {run.lstrip("0") or "0" for run in _DIGIT_RUN.findall(text)}
+
+
 _NAMED_PERSON = re.compile(r"[가-힣]{2,4}(?:님|씨)")
 """A person named by an honorific, the way a colleague is addressed in speech
 ("박지영님", "이건우씨"). Checked for the same reason as ``_DIGIT_RUN`` and
@@ -97,9 +108,14 @@ def _grounded(resolved: str, window: str) -> bool:
     invention: a resolver could still substitute one name in the window for
     another, correctly-spelled one, and neither this nor #366's review found a
     check for that which does not need a second model.
+
+    A number is compared whole (``_numbers``; review of #1079). Looked for as
+    text it was found inside a longer one: a window that said "20일" grounded
+    "2일", and one that said "2026" grounded any of 2, 20, 26, 202 and 026 --
+    a date or a count nobody said, on the card as if the speaker had.
     """
     return (
-        all(digits in window for digits in _DIGIT_RUN.findall(resolved))
+        _numbers(resolved) <= _numbers(window)
         and all(name in window for name in _NAMED_PERSON.findall(resolved))
         and not _leaks_foreign_script(resolved, window)
     )
