@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 import autune_context.pipeline  # noqa: F401  (registers the worker_process_init warm-up hook)
 from autune_context import briefs, service
 from autune_context.config import get_settings
-from autune_context.models import CtxMeetingStatus
+from autune_context.models import CtxBrief, CtxMeetingStatus
 from autune_context.notify import build_pre_meeting_brief
 from autune_contracts import (
     ExtractionResult,
@@ -436,6 +436,11 @@ def send_brief(meeting_id: str) -> None:
     marked sent. Claimed and composed in one session that closes before the
     Slack call, the "gather in session, send after" shape
     ``notify_context_events`` uses.
+
+    A transient Slack failure deletes the claim and raises, and the clock
+    retries; it does not retry itself, because the next tick is a minute away
+    and the meeting only needs the brief before it starts. Anything else keeps
+    the claim, as the other notices do.
     """
     now = datetime.now(tz=UTC)
     with session_scope() as session:
@@ -454,5 +459,15 @@ def send_brief(meeting_id: str) -> None:
         agenda=brief.agenda,
         recap_is_related=brief.match_reason != briefs.LATEST,
     )
-    SlackClient(config.require_secret()).post_message(channel, fallback, blocks)
+    try:
+        SlackClient(config.require_secret()).post_message(channel, fallback, blocks)
+    except TransientIntegrationError:
+        # The claim is the ``ctx_briefs`` row, and it is what ``due_meeting_starts``
+        # looks for: with it gone, the next tick finds the meeting due again and
+        # sends once more while it is still ahead. Left in place, a rate limit
+        # cost the meeting its brief for good (#339).
+        log.warning("context_brief_released", meeting_id=meeting_id)
+        with session_scope() as session:
+            session.execute(sa.delete(CtxBrief).where(CtxBrief.meeting_id == meeting_id))
+        raise
     log.info("context_brief_sent", meeting_id=meeting_id, match_reason=brief.match_reason)

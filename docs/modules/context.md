@@ -673,9 +673,11 @@ brief reads "지난 회의는 보존 기간이 지나 삭제되었습니다" ins
 runs and a meeting enqueued on several ticks send once — and stamps `sent_at`
 in the same commit, before the Slack post. A failure before that commit rolls
 the claim back and the next tick retries; a worker lost after it loses the
-brief rather than sending it twice, the trade the other notices make. A team
-with no Slack channel still gets the row (readable in the app) with `sent_at`
-left `NULL`.
+brief rather than sending it twice, the trade the other notices make. A Slack
+rate limit or timeout on the post deletes the row again (#339), so the meeting is
+due on the next tick and the brief is sent while the meeting is still ahead; any
+other failure keeps the claim. A team with no Slack channel still gets the row
+(readable in the app) with `sent_at` left `NULL`.
 
 **In the app**, the same brief sits at the top of S15's context tab
 (`features/context` `BriefPanel`), rendered from `GET /briefs/{meeting_id}`. A
