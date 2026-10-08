@@ -10,7 +10,7 @@ import { CopyMinutes } from "./CopyMinutes";
 import { ProjectGroups } from "./ProjectGroups";
 import { getSummary, putSummaryNote } from "../api";
 import { isOverdue } from "../dates";
-import { COLUMNS, COLUMN_LABELS, MAX_NOTE_CHARS } from "../types";
+import { COLUMNS, COLUMN_LABELS, MAX_NOTE_CHARS, UNCONFIRMED_DECISION } from "../types";
 import type { ActionItemRead, MeetingSummary } from "../types";
 
 /**
@@ -153,7 +153,7 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
                 <span className="text-[var(--color-ink-strong)]">
                   {d.statement}
                 </span>
-                {d.status === "pending" ? <Meta> · 확인 대기</Meta> : null}
+                {d.status === "pending" ? <Meta> · {UNCONFIRMED_DECISION}</Meta> : null}
                 <Said>{d.summary}</Said>
               </Line>
             ))}

@@ -201,7 +201,7 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     ranked = sorted(confirmed, key=lambda i: _urgency(i, today), reverse=True)
     reassign = sum(i.needs_reassignment for i in confirmed)
-    summary = f"확정된 액션아이템 {len(confirmed)}건, 확인 대기 {len(waiting)}건."
+    summary = f"확정된 액션아이템 {len(confirmed)}건, 확인 필요 {len(waiting)}건."
     if reassign:
         summary += f" 담당자가 팀에 없어 재배정이 필요한 항목 {reassign}건."
     return _result(
@@ -258,7 +258,7 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     dated_open = len(dated) + sum(i.due_date is not None for i in waiting)
     summary = (
         f"확정된 열린 액션아이템 {len(opened)}건 중 기한 있음 {len(dated)}건, "
-        f"기한 없음 {len(opened) - len(dated)}건. 확인 대기 {len(waiting)}건."
+        f"기한 없음 {len(opened) - len(dated)}건. 확인 필요 {len(waiting)}건."
     )
     items = (
         [
@@ -416,8 +416,8 @@ def stalled_action_items(
     ]
     items += [
         {
-            "title": "액션아이템 확인 대기",
-            "body": f"{days}일째 확인 대기",
+            "title": "액션아이템 확인 필요",
+            "body": f"{days}일째 확인 필요",
             "score": 0.5,
             "id": item_id,
             "meeting_id": meeting_id,
@@ -432,7 +432,7 @@ def stalled_action_items(
         summary=(
             f"멈춰 있는 액션아이템: 기한 지남 {overdue}건, "
             f"회의 {service.STALE_AFTER}번 이상 이월 {carried}건, "
-            f"{window}일 넘게 확인 대기 {len(waiting)}건."
+            f"{window}일 넘게 확인 필요 {len(waiting)}건."
         ),
         items=items,
         # Only what a person has confirmed is quoted, so only that is sourced.
@@ -739,10 +739,10 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     unanswered = [a for a in review.ambiguous_agreements if a.outcome in ("not_asked", "pending")]
     items: list[dict[str, Any]] = [
-        {"title": "결정 확인 대기", "body": "", "score": 1.0, "id": d.id} for d in pending_decisions
+        {"title": "결정 확인 필요", "body": "", "score": 1.0, "id": d.id} for d in pending_decisions
     ]
     items += [
-        {"title": "액션아이템 확인 대기", "body": "", "score": 0.8, "id": i.id}
+        {"title": "액션아이템 확인 필요", "body": "", "score": 0.8, "id": i.id}
         for i in waiting_items
     ]
     items += [
@@ -751,7 +751,7 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     return _result(
         summary=(
-            f"결정 확인 대기 {len(pending_decisions)}건, 액션아이템 확인 대기 "
+            f"결정 확인 필요 {len(pending_decisions)}건, 액션아이템 확인 필요 "
             f"{len(waiting_items)}건, 답 없는 약한 동의 {len(unanswered)}건."
         ),
         items=items,
@@ -777,7 +777,7 @@ def meeting_decisions(session: Session, meeting_id: str) -> dict[str, Any]:
     sources = {d.id: d.source_utterance_ids for d in review.decisions}
     pending = sum(d.status == "pending" for d in review.decisions)
     held = sum(b.kind == "decision" for b in outbound.blocked)
-    summary = f"확정된 결정 {len(outbound.decisions)}건, 확인 대기 {pending}건."
+    summary = f"확정된 결정 {len(outbound.decisions)}건, 확인 필요 {pending}건."
     if held:
         summary += f" 개인정보가 남아 보낼 수 없는 결정 {held}건."
     return _result(
@@ -849,8 +849,8 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
         return _not_found("action item", action_item_id)
     if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
         return _result(
-            summary="확인 대기 중인 액션아이템입니다. 확정 전이라 내용은 보여주지 않습니다.",
-            items=[{"title": "확인 대기", "body": "", "score": 0.8, "id": row.id}],
+            summary="확인이 필요한 액션아이템입니다. 확정 전이라 내용은 보여주지 않습니다.",
+            items=[{"title": "확인 필요", "body": "", "score": 0.8, "id": row.id}],
             evidence=[],
         )
     (read,) = [
@@ -1260,7 +1260,7 @@ def add_action_item(
             due_date=due,
         )
         new_id = row.id
-    return _acted("액션아이템 초안을 만들었습니다 (확인 대기).", new_id)
+    return _acted("액션아이템 초안을 만들었습니다 (확인 필요).", new_id)
 
 
 def add_followup_item(
@@ -1324,11 +1324,11 @@ def add_followup_item(
         new_id = row.id
     if passed:
         return _acted(
-            "후속 회의 항목을 추가했습니다 (확인 대기). "
+            "후속 회의 항목을 추가했습니다 (확인 필요). "
             "추천 날짜가 이미 지나 기한은 넣지 않았습니다.",
             new_id,
         )
-    return _acted("후속 회의 항목을 추가했습니다 (확인 대기).", new_id)
+    return _acted("후속 회의 항목을 추가했습니다 (확인 필요).", new_id)
 
 
 def review_decision(team_id: str, decision_id: str, verdict: str) -> dict[str, Any]:
