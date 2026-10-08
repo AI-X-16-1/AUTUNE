@@ -25,8 +25,14 @@ is no id-to-display-name resolution anywhere in this codebase yet -- naming
 someone in a channel message would mean either printing a raw ``usr_...`` id
 (no better than the read-API exposure flagged in issue #188, worse for being
 pushed instead of pulled) or quietly inventing a resolution path outside a
-design conversation. The channel notice states only the count. The personal
-DM needs no such resolution: the recipient already knows who they are.
+design conversation. The personal DM needs no such resolution: the recipient
+already knows who they are.
+
+**Nor does it state how many were absent** (#339). A count of one is a name to
+anyone who knows who attended: "1 key stakeholder was absent" in a small team
+channel points at one person, which is the per-person record this notice
+refuses to publish. The channel is told that *someone* who matters was absent,
+and each of them hears it from the DM.
 """
 
 from __future__ import annotations
@@ -117,10 +123,10 @@ def build_decision_drift_channel_notice(
     thread_label: str,
     current_statement: str,
     change_type: ChangeType,
-    absent_count: int,
     meeting_date: date | None,
 ) -> tuple[str, list[dict]]:
-    """The team-channel drift warning. Names nobody -- see module docstring.
+    """The team-channel drift warning. Names nobody and counts nobody -- see
+    module docstring.
 
     States *which meeting* changed the decision, not just that it "changed" --
     otherwise the notice reads as "just now" regardless of whether the meeting
@@ -138,9 +144,7 @@ def build_decision_drift_channel_notice(
     thread_label = _escape(thread_label)
     current_statement = _escape(current_statement)
     fallback = f"{changed_at}결정이 {verb}되었습니다: {thread_label}"
-    absence_note = (
-        f"{changed_at}핵심 이해관계자 {absent_count}명이 자리에 없는 상태에서 {verb}되었습니다."
-    )
+    absence_note = f"{changed_at}핵심 이해관계자가 자리에 없는 상태에서 {verb}되었습니다."
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": f"● *결정 {verb}*"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*{thread_label}*"}},

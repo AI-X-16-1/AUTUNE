@@ -27,6 +27,7 @@ from autune_context.models import (
 )
 from autune_core import Participant, TeamMember, User, Utterance
 from autune_core.ids import new_id
+from autune_integrations import TransientIntegrationError
 
 
 @pytest.fixture
@@ -396,3 +397,112 @@ def test_notify_late_drift_redelivery_is_a_no_op(
         tasks.notify_late_drift(meeting)
 
     slack_client_cls.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# A transient Slack failure hands the claim back (#339)
+# --------------------------------------------------------------------------- #
+
+
+def _one_absent_drift(db_session: Session, meeting: str, team: str) -> None:
+    thread = CtxDecision(team_id=team, topic_label="검색 정렬 기준")
+    db_session.add(thread)
+    db_session.flush()
+    db_session.add(
+        CtxDecisionVersion(
+            thread_id=thread.id,
+            source_decision_id="dec_direct",
+            meeting_id=meeting,
+            current_statement="최신순으로 정렬한다",
+            change_type="modified",
+            confidence=0.9,
+            nli_version="test",
+            key_stakeholders_absent=[_member(db_session, team)],
+        )
+    )
+    db_session.flush()
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_a_rate_limit_while_sending_releases_the_claim_so_the_retry_sends(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    """Claimed first and failed halfway, the meeting used to stay claimed with
+    its absent stakeholder untold: the retry found ``notified_at`` set and did
+    nothing."""
+    _status(db_session, meeting)
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    _one_absent_drift(db_session, meeting, team)
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        slack_client_cls.return_value.post_message.side_effect = TransientIntegrationError(
+            "rate limited"
+        )
+        with pytest.raises(TransientIntegrationError):
+            tasks.notify_context_events(meeting)
+        assert db_session.get(CtxMeetingStatus, meeting).notified_at is None
+
+        slack_client_cls.return_value.post_message.side_effect = None
+        tasks.notify_context_events(meeting)  # the retry
+
+    assert slack_client_cls.return_value.send_dm.call_count == 1
+    assert db_session.get(CtxMeetingStatus, meeting).notified_at is not None
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_a_failure_that_is_not_transient_keeps_the_claim(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    """A guard refusing the message would refuse it again; releasing the claim
+    would only make the next run fail the same way."""
+    _status(db_session, meeting)
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    _one_absent_drift(db_session, meeting, team)
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        slack_client_cls.return_value.post_message.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            tasks.notify_context_events(meeting)
+
+    assert db_session.get(CtxMeetingStatus, meeting).notified_at is not None
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_a_rate_limit_in_a_late_drift_restores_what_was_owed(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    """``late_drift_due_at`` goes back with the claim: ``notify_context_events``
+    reads it to leave drift to this task."""
+    owed_since = datetime(2026, 10, 7, 9, 0, tzinfo=UTC)
+    db_session.add(
+        CtxMeetingStatus(
+            meeting_id=meeting,
+            topic_linking_done=True,
+            lineage_done=True,
+            extraction_seen=True,
+            published_at=datetime.now(tz=UTC),
+            notified_at=datetime.now(tz=UTC),
+            late_drift_due_at=owed_since,
+        )
+    )
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    _one_absent_drift(db_session, meeting, team)
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        slack_client_cls.return_value.post_message.side_effect = TransientIntegrationError(
+            "rate limited"
+        )
+        with pytest.raises(TransientIntegrationError):
+            tasks.notify_late_drift(meeting)
+
+        status = db_session.get(CtxMeetingStatus, meeting)
+        assert status.late_drift_notified_at is None
+        assert status.late_drift_due_at == owed_since
+
+        slack_client_cls.return_value.post_message.side_effect = None
+        tasks.notify_late_drift(meeting)  # the retry
+
+    assert slack_client_cls.return_value.send_dm.call_count == 1
+    status = db_session.get(CtxMeetingStatus, meeting)
+    assert status.late_drift_notified_at is not None
+    assert status.late_drift_due_at is None
