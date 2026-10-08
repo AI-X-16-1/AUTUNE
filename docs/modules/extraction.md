@@ -376,11 +376,13 @@ them. The page, top to bottom:
 - 결정 사항, numbered, in the order the route gives them. One nobody has
   confirmed is listed and marked "(자동 추출)".
 - 액션, numbered: the item's sentence, then who, the due date and where it
-  stands -- "… — 김민경 · 10월 13일 (화) (진행 중)". A due date is written as
-  the date line writes a day; its year is written only when it is not the
-  meeting's, or the page has no date line. "진행 전" is not said, since it is
-  every item a meeting has just made; an item waiting for confirmation says
-  "(확인 필요)". The tab alone adds "기한 지남" to an item past its date.
+  stands, each set off by a dot -- "… — 김민경 · 10월 13일 (화) · 진행 중". The
+  state is not in brackets: the date already ends in them. A due date is
+  written as the date line writes a day; its year is written only when it is
+  not the meeting's, or the page has no date line. "진행 전" is not said,
+  since it is every item a meeting has just made; an item waiting for
+  confirmation says "확인 필요". The tab alone adds "기한 지남" to an item past
+  its date.
 - 메모, the team's own, edited in place. A change is in the copy once it is
   saved.
 
