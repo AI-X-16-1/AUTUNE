@@ -10,6 +10,7 @@ import type { NotExtracted } from "./ReExtract";
 import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
+import { shortTitle } from "../title";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
 
 /**
@@ -144,6 +145,11 @@ function DecisionRow({
   onDelete: () => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
+  // The row's top line is the statement at twenty characters (`shortTitle`).
+  // A decision has no detail window to hold the rest, so the line itself
+  // opens: pressing it shows the whole statement, pressing again the short one.
+  const [whole, setWhole] = useState(false);
+  const title = shortTitle(decision.statement);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, setPending] = useState(false);
   // Every change the row sends says so when it fails, the way the drawer does.
@@ -199,7 +205,19 @@ function DecisionRow({
               }
               style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
             >
-              {decision.statement}
+              {title.cut ? (
+                <button
+                  type="button"
+                  className="text-left [text-decoration:inherit]"
+                  aria-expanded={whole}
+                  title={whole ? undefined : decision.statement}
+                  onClick={() => setWhole((now) => !now)}
+                >
+                  {whole ? decision.statement : title.shown}
+                </button>
+              ) : (
+                decision.statement
+              )}
             </p>
           )}
           {reworded && !editing ? (

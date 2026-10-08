@@ -4827,8 +4827,9 @@ def meeting_summary(
             model_version=written.model_version,
             created_at=written.created_at,
         )
-        if written is not None
+        if written is not None and not written.too_long
         else None,
+        generated_too_long=written is not None and written.too_long,
         projects=[project_read(p) for p in team_projects],
     )
 
@@ -4920,7 +4921,9 @@ def summary_board(session: Session, meeting_id: str) -> list[str]:
 
 def summary_is_current(session: Session, meeting_id: str, lines: Sequence[str]) -> bool:
     """A stored summary was written from exactly ``lines`` -- asking again would
-    spend a provider's quota on the answer already here."""
+    spend a provider's quota on the answer already here. So is a row that says
+    these lines were too long for one (``mark_summary_too_long``): asking again
+    would spend up to ``summary.MAX_CALLS`` requests to find that out twice."""
     written = session.get(ExtMeetingSummary, meeting_id)
     return written is not None and written.source_digest == source_digest(lines)
 
@@ -4988,6 +4991,50 @@ def store_meeting_summary(
     when they differ nothing is stored and whatever row there was is deleted
     (#782 review). Returns the stored row, or ``None`` when it was not stored.
     """
+    return _store_summary(
+        session,
+        meeting_id,
+        overview=overview,
+        points=points,
+        model_version=model_version,
+        lines=lines,
+        too_long=False,
+    )
+
+
+def mark_summary_too_long(
+    session: Session, meeting_id: str, *, model_version: str, lines: Sequence[str]
+) -> ExtMeetingSummary | None:
+    """Record that the meeting, as ``lines``, is too long for a written summary
+    (``summary.TooLongError``), in place of whatever summary row there was.
+
+    No text: an empty overview, no points, the digest of ``lines`` and the
+    model that would have been asked. Stored under the same check as a summary
+    -- only if the meeting's lines are still ``lines`` -- so it says nothing
+    about lines the meeting no longer has. Returns the row, or ``None`` when
+    the lines had changed.
+    """
+    return _store_summary(
+        session,
+        meeting_id,
+        overview="",
+        points=(),
+        model_version=model_version,
+        lines=lines,
+        too_long=True,
+    )
+
+
+def _store_summary(
+    session: Session,
+    meeting_id: str,
+    *,
+    overview: str,
+    points: Sequence[str],
+    model_version: str,
+    lines: Sequence[str],
+    too_long: bool,
+) -> ExtMeetingSummary | None:
     lock_summary(session, meeting_id)
     row = session.get(ExtMeetingSummary, meeting_id, populate_existing=True)
     if source_digest(summary_lines(session, meeting_id)) != source_digest(lines):
@@ -5000,6 +5047,7 @@ def store_meeting_summary(
         session.add(row)
     row.overview = overview
     row.points = "\n".join(points)
+    row.too_long = too_long
     row.model_version = model_version
     row.source_digest = source_digest(lines)
     row.created_at = datetime.now(UTC)

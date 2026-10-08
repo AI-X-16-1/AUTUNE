@@ -391,6 +391,8 @@ export interface MeetingSummary {
   note_updated_at: string | null;
   /** v2: absent or null when no current summary is written. */
   generated?: GeneratedSummary | null;
+  /** v2: none was written because the meeting is too long for one. */
+  generated_too_long?: boolean;
   /** The team's projects, to group the decisions and items by. */
   projects?: Project[];
 }

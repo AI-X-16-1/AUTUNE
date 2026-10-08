@@ -85,6 +85,23 @@ describe("MeetingSummaryScreen", () => {
     expect(item?.querySelector("p")?.textContent).toBe("설문은 제가 금요일까지 다시 쓰겠습니다.");
   });
 
+  it("says so when the meeting was too long for a summary", async () => {
+    getSummary.mockResolvedValue({
+      ...BASE,
+      generated: null,
+      generated_too_long: true,
+    });
+
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+
+    const section = await screen.findByRole("region", { name: "AI 요약" });
+    expect(section.textContent).toContain(
+      "회의가 길어 AI 요약을 만들지 못했습니다",
+    );
+    expect(section.textContent).not.toContain("모델이 회의 발화로 쓴 요약입니다");
+    expect(section.querySelector("ul")).toBeNull();
+  });
+
   it("has no such section when none is written", async () => {
     getSummary.mockResolvedValue({ ...BASE, generated: null });
 
