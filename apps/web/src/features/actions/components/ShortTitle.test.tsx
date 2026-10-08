@@ -77,6 +77,14 @@ describe("an action card's top line", () => {
     expect(screen.queryByText(LONG)).toBeNull();
   });
 
+  it("never shows half of a masked number", () => {
+    const masked = "담당자 연락처는 010 **** 5678로 정리했습니다";
+    render(<ActionBoard items={[item("a", masked)]} onMove={() => Promise.resolve()} />);
+
+    const line = screen.getByText("담당자 연락처는…");
+    expect(line.getAttribute("title")).toBe(masked);
+  });
+
   it("shows a short sentence as it is", () => {
     render(<ActionBoard items={[item("a", SHORT)]} onMove={() => Promise.resolve()} />);
 

@@ -18,6 +18,15 @@
  * one, the cut moves back to before it. A first word too long to fit -- a
  * sentence with no space in it -- is cut at the limit, moved back out of a
  * number if it lands in one.
+ *
+ * Nor inside a masked span (#1072 review). Module A hides personal data by
+ * keeping its shape and writing "*" for its content (`autune_audio.masking`):
+ * "010-****-5678", "k***@example.com", "김**" -- and a number said with spaces
+ * keeps them, "010 **** 5678", "**** **** **** 3456", which is where a cut
+ * between words would land. Half of one no longer says what was hidden. This
+ * is about reading, not exposure: the text arrives masked. There is no
+ * bracketed mark to keep whole: "[사람N]" exists only in a request to a model
+ * and is put back before a sentence is stored.
  */
 export const TITLE_MAX = 20;
 
@@ -35,8 +44,12 @@ const COUNTED = `(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|�
  * word that only starts like a unit ("200 개발자") is kept with the number
  * too: that moves a cut earlier and never into one. */
 const NUMBER = `\\d\\S*(?:\\s+${UNIT})?`;
-const PART = `(?:${RELATIVE}|${DAY}|${CLOCK}|${WEEKDAY}|${NEAR}|${COUNTED}|${NUMBER})`;
-/** A date, a time or numbers in a row: parts with only spaces between them. */
+/** A word module A masked: any word with a "*" in it. One "*" is enough -- a
+ * two-character name is hidden as "김*". The look-behind only saves time. */
+const MASKED = "(?<!\\S)\\S*\\*\\S*";
+const PART = `(?:${MASKED}|${RELATIVE}|${DAY}|${CLOCK}|${WEEKDAY}|${NEAR}|${COUNTED}|${NUMBER})`;
+/** A date, a time, numbers or masked words in a row: parts with only spaces
+ * between them, so "010 **** 5678" is one. */
 const UNBROKEN = new RegExp(`${PART}(?:\\s+${PART})*`, "g");
 /** What a cut leaves dangling at the end of the kept part. */
 const DANGLING = /[\s,.;:·\-–—([]+$/u;
@@ -66,10 +79,23 @@ function gaps(text: string): number[] {
   return open;
 }
 
-/** The first `room` characters, moved back out of a number it ends inside. */
+/** A masked span inside a word with no space around it: the "*" run with the
+ * digits, Latin letters and separators the masker leaves beside it. */
+const MASKED_IN_WORD = /[\w@+\-.–—)]*\*[\w@+\-.–—)*]*/g;
+
+/** The first `room` characters, moved back out of a masked span or a number
+ * it ends inside. */
 function hardCut(text: string, room: number): string {
   const letters = [...text];
   let end = room;
+  for (const match of text.matchAll(MASKED_IN_WORD)) {
+    let start = count(text.slice(0, match.index));
+    const stop = start + count(match[0]);
+    // A name keeps its first character, which is no letter this pattern
+    // takes: "김**" starts one before its first "*".
+    if (match[0].startsWith("*") && start > 0) start -= 1;
+    if (start > 0 && start < end && end < stop) end = start;
+  }
   if (/\d/.test(letters[end] ?? "") && /[\d,.]/.test(letters[end - 1] ?? "")) {
     let start = end;
     while (start > 0 && /[\d,.]/.test(letters[start - 1] ?? "")) start -= 1;
