@@ -46,6 +46,11 @@ Basis = Literal["confirmed", "draft", "cadence"]
 at least one is still a draft, or the team's meeting rhythm. The approvals card
 marks a ``draft`` date "초안 기준" (#963)."""
 
+Kind = Literal["followup_reopened", "followup_risky", "followup_reopened_risky"]
+"""Which of section 4's rules fired, as the proposal's ``kind`` (#854). The
+pending row keeps ``kind`` and no rationale (agent/CLAUDE.md rule 8), so the
+approvals card turns the code into its one line of why."""
+
 
 @dataclass(frozen=True)
 class Verdict:
@@ -62,6 +67,12 @@ class Verdict:
     def evidence(self) -> list[str]:
         """Carried-over gaps first, then heavy ones, each once."""
         return list(dict.fromkeys(self.carried + self.heavy))[:MAX_EVIDENCE]
+
+    @property
+    def kind(self) -> Kind:
+        if self.carried and self.heavy:
+            return "followup_reopened_risky"
+        return "followup_reopened" if self.carried else "followup_risky"
 
     def reason(self) -> str:
         parts = []
