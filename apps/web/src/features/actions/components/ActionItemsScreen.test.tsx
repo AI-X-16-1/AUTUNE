@@ -66,6 +66,7 @@ const FINE: ExtractionState = {
   failed_at: null,
   will_retry: false,
   not_published: false,
+  partly_unread: false,
   requested: false,
   requested_at: null,
   in_progress: false,

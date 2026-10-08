@@ -10,6 +10,7 @@ import pytest
 from autune_contracts import ContextLinks, ExtractionResult, GapReport
 from autune_intelligence.pipeline.predictor import HeuristicMisalignmentPredictor
 from autune_intelligence.prediction import (
+    MIN_HISTORY,
     MeetingFeatures,
     meeting_features,
     prediction_visible,
@@ -140,12 +141,12 @@ def test_extraction_and_gap_counts() -> None:
 # --- #27 gate --------------------------------------------------------------
 
 
-def test_gate_needs_both_four_weeks_and_three_meetings() -> None:
-    four_weeks_ago = NOW - timedelta(weeks=4)
-
-    assert prediction_visible(four_weeks_ago, 3, now=NOW)
-    assert not prediction_visible(four_weeks_ago, 2, now=NOW)
-    assert not prediction_visible(NOW - timedelta(weeks=3, days=6), 10, now=NOW)
+def test_gate_needs_three_meetings_and_no_weeks_until_the_presentation() -> None:
+    """The four weeks are lifted until the final presentation (#27); the
+    meeting floor is not."""
+    assert timedelta(0) == MIN_HISTORY
+    assert prediction_visible(NOW, 3, now=NOW)  # three meetings this week are enough
+    assert not prediction_visible(NOW - timedelta(weeks=10), 2, now=NOW)
     assert not prediction_visible(None, 0, now=NOW)
 
 

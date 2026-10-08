@@ -140,6 +140,8 @@ def resolver(session: Session, monkeypatch: pytest.MonkeyPatch) -> _CitingResolv
 def _draft(session: Session) -> ExtActionItem:
     result = tools.add_action_item(TEAM, MEETING, "utt_1")
     assert result["ok"] is True, result
+    # The board's word for an item nobody confirmed.
+    assert result["summary"] == "액션아이템 초안을 만들었습니다 (확인 필요)."
     row = session.get(ExtActionItem, result["items"][0]["id"])
     assert row is not None
     return row

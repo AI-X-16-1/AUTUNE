@@ -10,14 +10,14 @@ import { PredictionCard } from "./PredictionCard";
 afterEach(cleanup);
 
 describe("dashboard empty states", () => {
-  it("says the prediction needs four weeks and three meetings, both", () => {
+  it("says the prediction needs three analysed meetings", () => {
     render(
       <PredictionCard
         predictions={{ team_id: "team_1", prediction: null, reason: "insufficient_history" }}
       />,
     );
 
-    const message = screen.getByText(/4주가 지나고, 분석한 회의가 3회 이상이면 표시됩니다\.$/);
+    const message = screen.getByText("분석한 회의가 3회 이상이면 표시됩니다.");
     expect(message.textContent).not.toMatch(/#\d/);
   });
 

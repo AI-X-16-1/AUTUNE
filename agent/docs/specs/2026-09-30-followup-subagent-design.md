@@ -160,8 +160,11 @@ One `ProposedAction`, with:
 2026-10-05; revised by #963, proposed). A follow-up meeting checks what M
 asked people to do, so it belongs just after that work is due. The date comes
 from M's action-item due dates when M has any, and from the team's rhythm
-otherwise. No model call: the same inputs give the same date, and the lead can
-be told why.
+otherwise. **The date is the rule's, the wording of why is a model's**
+(decided 2026-10-08, section 7 "Stage 2"). The date takes no model call: the
+same inputs give the same date. The rule also returns what it used
+(`rules.Why`), and a model turns only that into the sentence that tells the
+lead why (`explain.py`, below). The model never chooses or moves the date.
 
 *Inputs.* `today` (the run's date), M's open dated action items as B's
 `extraction.meeting_due_dates(M)` reports them (below), and the team's meeting
@@ -252,8 +255,31 @@ in each entry, always `true` for now, so the rule and its tests stay as they
 are. If B ever hands over draft dates, they count as `draft` with no change
 here.
 
-Titles are not read in this stage. Stage 2 (section 7) may read the titles of
-confirmed items only, under B's outbound rule (#261 rule 3).
+Titles are not read, in this stage or by Stage 2's sentence (section 7).
+
+*Why this date: the sentence* (`explain.py`, Stage 2). Each `Suggestion`
+carries `why`, the values the rule used: the step (`overdue`, `due_share`,
+`cadence`, or `default` when the rhythm is unknown); for step 2 how many
+confirmed items are late; for step 4 the due dates counted, how many fall by
+the 80% point and that point, how many were dropped past the horizon and how
+many past drafts were dropped; for the rhythm how many meeting days were read,
+the latest and the usual gap; and whether the day was held to the earliest
+business day or moved off a weekend or holiday. When Follow-up proposes, it
+sends the model `explain.facts(...)`: the step, `basis`, and those counts and
+day spans, **never a date**. The model answers one or two Korean sentences.
+
+A sentence is used only if it is one or two sentences of Korean on one line,
+names no date, weekday or day-pinning word ("다음 주", "내일"), and holds no
+number the facts do not. Otherwise -- or with no model configured, or a call
+that fails or is refused -- the step's fixed wording (`explain.FALLBACK`) is
+used. The proposal never waits on or fails for the model. The sentence is
+written once, at the proposal, and the card is not to write it again.
+
+*Not yet shown.* The sentence goes into the run's answer and the proposal's
+`rationale` today. Neither is stored: the pending row keeps no rationale
+(rule 8; #854). Keeping it with the pending row and showing it on the card is
+`main/`'s (`models.py`, a migration, `pending.py`, `preview.py`; 김민경), asked
+on an issue.
 
 The suggestion reads no calendar and nobody's availability, so section 6
 holds. Free time in the lead's own calendar is the card's to show, from the
@@ -279,9 +305,14 @@ text, as settled on #509.
   aggregate and section 3.1 allows it. But in a two- or three-person meeting a
   share of one-half says a lot about one person, and the rule does not need it.
   If a later rule wants it, that is a decision recorded here first.
-- **Nothing leaves Autune.** There is no model call and no outbound request. The
-  only write is B's, and it runs after the lead approves. The item it stores
-  holds B's fixed wording, not gap titles, so no topic label is copied into B.
+- **What leaves Autune: the reason's numbers only** (decided 2026-10-08). The
+  one outbound request is the reason sentence's model call (section 5). It
+  carries the rule's step, `basis`, and counts and day spans. No date, no
+  item title, no gap title, no owner, no meeting text. It goes through
+  `GeminiText`, so `check_outbound` sees it. Until then this read "nothing
+  leaves Autune". The only write is still B's, and it runs after the lead
+  approves. The item it stores holds B's fixed wording, not gap titles, so no
+  topic label is copied into B.
 - **The lead is the only reader of the proposal**: approvers with scope
   `followup` in `agent_approvers`. The item it creates starts unconfirmed on the
   board (`add_followup_item`), so it reaches nobody else until someone confirms
@@ -293,11 +324,12 @@ text, as settled on #509.
   topics. That is why it does not use `meeting_action_items`, whose `body`
   carries the assignee. The overdue step (section 5) reads only that *some*
   item is late, not whose.
-- **Stage 2's sentence names no person.** If a model later writes the card's
-  reason (section 7), its input is the date, the rule step that produced it and
-  confirmed item titles. It gets no assignee, speaker or participant name. Its
-  output is checked for the team's member names before it is shown, and a
-  sentence that names one is replaced by the rule's own wording.
+- **Stage 2's sentence names no person.** Its input holds no name, title or
+  text at all, only the rule's numbers (section 5), so there is nothing of a
+  person for it to repeat. Its output is checked for dates and for numbers
+  the input does not hold, and a sentence that fails is replaced by the
+  step's fixed wording. The earlier sketch's member-name check is not needed
+  while no title is sent.
 
 ## 7. Open questions
 
@@ -386,15 +418,25 @@ text, as settled on #509.
   Decided by #22's check (section 5, "First guesses"): the time from proposal
   to approval, and the share of M's dated items confirmed at approval. Mostly
   after confirmation → C's hint is enough. Mostly before → B, or neither.
-- **Stage 2: a model-written reason** (after #963). The card could say why in a
-  sentence, for example that two items are due on Thursday and Friday and the
-  results can be compared the following Monday. A model writes only that
-  sentence from the rule's output (the date, the step used, the dates it
-  rested on, confirmed item titles). It never chooses or moves the date, and
-  it names no person (section 6). It goes through `packages/integrations` like
-  every model call and falls back to the rule's own wording when the call
-  fails or is refused. This changes section 6's "nothing leaves Autune" and is
-  decided here before it is built.
+- **Stage 2: a model-written reason.** **Decided 2026-10-08** by the owner
+  (박재경): the date stays the rule's; a model writes only the sentence that
+  says why (section 5, "Why this date: the sentence").
+  - *What changed from the earlier sketch.* The model gets the rule's values
+    as counts and day spans. It gets no dates and no item titles, and its
+    sentence names no date: the card already shows the date, and a sentence
+    that names one could name a different one. Section 6's "nothing leaves
+    Autune" became "the reason's numbers only".
+  - *Why a model at all.* The values are enough for fixed wording, and that
+    wording is the fallback. A model puts several of them in one readable
+    sentence ("기한이 있는 할 일 3개 중 3개가 지난 직후로") where fixed wording
+    would need a template per combination.
+  - *Why it cannot change the date.* It never sees the date. Its answer is
+    only text, and it is checked against the values it was given.
+  - *Written once.* At the proposal, never when the card is read: the lead
+    sees the sentence that was written with the date, and reading the list
+    makes no model call.
+  - *Still open.* Where the sentence is kept and how the card shows it. That
+    is `main/`'s, 김민경's.
 - **Holidays** (#964). Settled: business days skip B's public holidays
   (section 5). A team's own days off (a company holiday) are not known; the
   lead moves the date on the board.

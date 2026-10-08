@@ -305,7 +305,7 @@ confirmation DM's quotation is #586's second part.
 | --- | --- |
 | `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
 | `ext_action_items` | Assignee, description, due date, status, origin |
-| `ext_action_item_sources` | Which utterances an item came from, and for a row made from one sentence of a long turn, where that sentence is in the utterance: two character offsets (`excerpt_start`, `excerpt_end`), never the words |
+| `ext_action_item_sources` | Which utterances an item came from, and for a row made from one sentence of a long turn, where that sentence is in the utterance: two character offsets (`excerpt_start`, `excerpt_end`), never the words. A row outlives its utterance with `utterance_id` NULL (#379) and the same trigger clears its offsets then |
 | `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
 | `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
 | `ext_edit_events` | One row per correction, and one per close without finishing (`closed`, which is not a correction and is left out of edit cost). Counts only — no person on it |
@@ -322,7 +322,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결), and Monday's DM of their own open items with them (#792): one switch for both. On unless a row says off; the person and when, nothing else. Goes with the account |
 | `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
-| `ext_decision_sources` | Which utterances a decision was settled in, in order, and the same two offsets for a decision settled in part of a long turn |
+| `ext_decision_sources` | Which utterances a decision was settled in, in order, and the same two offsets for a decision settled in part of a long turn. A row outlives its utterance with `utterance_id` NULL (#400), as an action item's does: readers list the sources that exist and say how many were deleted (`deleted_source_count`), and the row keeps its `position` and nothing of the line -- no id, speaker, time or words, and no offsets: a trigger on the table clears `excerpt_start` and `excerpt_end` whenever the row has no `utterance_id`, so every path that deletes an utterance is covered without this module being told |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
 | `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
@@ -335,7 +335,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
-| `ext_materials` | The Google Drive files a team keeps on its 자료 screen (#817): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`). Not the file and not the link as pasted -- Autune reads nothing of the file, holds no Drive permission, and builds Google's address from the id where it is shown. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 a team; any member deletes one; goes with the team |
+| `ext_materials` | The Google Drive files a team keeps on its 자료 screen (#817): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`). Not the file and not the link as pasted -- Autune reads nothing of the file, holds no Drive permission, and builds Google's address from the id where it is shown. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 a team -- registrations at once included: the count and the insert run under a per-team advisory lock (`materials.lock_shelf`); any member deletes one; goes with the team |
 | `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
 | `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
@@ -394,6 +394,54 @@ a person has edited is kept. A meeting with a transcript and no extraction on
 record at all -- a run that failed before failures were counted, or one lost
 with a worker -- is counted as failed once, half an hour after its last line
 was stored and for a week, and tried the same way.
+
+With `classifier_impl=llm`, a model answer that cannot be read is not taken
+for "nothing found". An answer is read when it holds a JSON object whose
+`labels` is an object or names nothing: `{"labels": {}}` is what the
+instructions ask for when no line qualifies, and it is a success, as are `{}`,
+an empty list and `null` in its place. It cannot be read when the request was
+refused, no candidate came back, the candidate had no text, the text holds no
+JSON object, or `labels` holds something that is not an object -- a list of
+kinds, a string -- which nobody can map to lines. That window is asked once
+more at once. The log line carries the cause and the provider's reason word,
+never the answer.
+
+What happens next depends on the other windows (the user, 2026-10-08). When no
+window of the meeting could be read, the call raises `UnreadableAnswerError`
+and the run is a failure, counted and retried as above. When some were read,
+the run goes through with what they held: the rows are stored and published as
+any run's, the unread windows' lines carry no label, and in the place of
+ending the count the run adds one to it with the reason `PartlyUnread`. That
+count is what makes the sweep run the meeting again, three runs in all, and
+`ExtractionState.partly_unread` is what the 액션 tab reads to say, over the
+rows, that part of the meeting was not read and items may be missing. The
+reason stays until a run reads every window, also through a rerun that fails
+outright, and the line with it once the tries are spent. The team's channel is
+not told: its message is about a meeting that could not be extracted.
+
+Which windows were unread is not kept, only that some were, so every rerun
+asks about the whole meeting and follows the rules of any rerun: a meeting a
+person has corrected keeps its items, a confirmed row stays, and what is
+stored is the latest run's. A rerun that reads a different part can therefore
+drop an unconfirmed row an earlier run had; the line over the board is up for
+as long as that can be the case.
+
+**A meeting with no rows.** An empty 액션 tab says which of four things is
+true, from `GET /meetings/{id}/extraction` (`ExtractionState`, B's own schema):
+
+| State | When | The tab says |
+| --- | --- | --- |
+| `in_progress` | Lines are stored; no run and no failure is on record; the newest line is under half an hour old | The extraction is going. It asks again every five seconds and reads the board and the decisions when the run is in |
+| `overdue` | The same, and the newest line is half an hour old or more | The extraction has not happened, and points at "다시 추출" |
+| `read_nothing` | The last run was allowed to read none of the meeting's lines | No consent is on record, so nothing was read; B extracts again by itself once it is |
+| none of them | A run went through | No item and no decision was found |
+
+"In progress" ends on the clock the sweep above uses, to the instant: the
+moment the sweep would count the meeting as failed is the moment the tab stops
+saying a run is going. A failure on record ends it sooner, and the tab's
+failure line says that instead. `read_nothing` is about the meeting as a whole
+and names nobody; it is false as soon as one line was read, so a meeting where
+only some speech was out shows its items and no line about consent.
 
 **A speaker identified after the run (#360).** A commitment by an unidentified
 speaker keeps only the label ("Speaker 2"). When A later fills
@@ -472,6 +520,25 @@ one. Both are NULL for an utterance used whole, and for every row written
 before the columns existed: those are quoted whole, as they were, until the
 meeting is extracted again. A decision settled over two sentences of a turn has
 one span, from the first to the second.
+
+With `classifier_impl=llm` the part can be narrower than a sentence, and an
+utterance too short to be cut has one as well. The request that labels a line
+also asks which of its words carry the promise or the decision (`parts`,
+2026-10-08), and the answer only chooses where the cut falls. The words are
+looked for in the line as it was said, character for character, whitespace
+aside (`llm.usable_part`), and again in the stored utterance, inside the
+sentence the line was (`excerpt.quoted`); what is recorded is the same two
+offsets and no word. Words that are not there -- reworded, shortened, another
+line's -- are not used, and neither are words that are all of the line: the
+part is then the sentence, and for an utterance that was not cut, the whole of
+it. A decision whose members name words in two places has one span, from the
+first of them to the last. A member that names no words contributes its
+sentence, or the whole utterance when it was not cut. The `local` and `fake`
+classifiers name no words. Measured on invented meetings only, the numbers in
+`INSTRUCTIONS`' docstring: every part returned was in its line (282 of 282),
+and a turn of about 360 characters was quoted as about 38 where its sentence
+is about 65. A transcript without sentence ends and a real meeting were not
+measured.
 
 The offsets are counted on one text and are dropped when it changes. A
 transcript correction (#586) clears an item's, since the item is kept and the

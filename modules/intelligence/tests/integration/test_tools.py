@@ -308,11 +308,11 @@ def _predicted(db_session: Session, team: str, probability: float, scored_at: da
     db_session.flush()
 
 
-def test_misalignment_risk_withholds_the_probability_before_the_history_gate(
+def test_misalignment_risk_withholds_the_probability_below_the_meeting_floor(
     db_session: Session, team: str
 ) -> None:
-    for _ in range(5):
-        _predicted(db_session, team, 0.37, datetime.now(UTC))
+    for _ in range(2):
+        _predicted(db_session, team, 0.37, datetime.now(UTC) - timedelta(weeks=10))
 
     result = tools.misalignment_risk(db_session, team)
 
