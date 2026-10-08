@@ -300,8 +300,9 @@ that, and the approver would have read "예약했습니다" for a post that neve
 went out. The draft stays, and can be approved again after connecting. So the
 Report subagent asks first (`report_channel`, whether, never which channel) and,
 without a channel, proposes the draft alone and says why; a person's edit or
-correction proposes nothing. Those runs have no chat, so the reason stays in
-the run's record; the card shows the draft as not posted. A meeting that passed
+correction proposes nothing. Those runs have no chat, and a run keeps no
+answer (agent-layer.md section 5), so the reason is not shown anywhere; the card
+shows the draft as not posted. A meeting that passed
 without Slack gets no card later: once Slack is connected, its post is asked for
 in chat ("리포트 올려줘") and approved as usual.
 
