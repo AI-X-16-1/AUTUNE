@@ -126,12 +126,15 @@ def _held(recent: ToolResult | None) -> list[date]:
 
 
 def _due(result: ToolResult) -> list[rules.Due]:
-    """The due dates on B's row, as ``{"date": ISO, "confirmed": bool}``.
+    """The due dates on B's row, as ``{"date": ISO, "confirmed": bool}``, and a
+    confirmed entry's ``title`` when the row holds one (B does not hand one over
+    yet; the reason sentence then counts the items without naming one).
 
     A failed read, or a row without the list, is no dates, so the suggestion
     falls back to the rhythm. An entry that is not a date and a flag is
-    skipped rather than guessed at. Any other key on an entry is ignored: the
-    rule takes a day and a flag and nothing else.
+    skipped rather than guessed at. Any other key but ``title`` is ignored: the
+    rule takes a day and a flag and nothing else; a title only reaches the
+    reason sentence.
     """
     if not result.ok:
         return []
@@ -146,8 +149,15 @@ def _due(result: ToolResult) -> list[rules.Due]:
             raw, confirmed = entry.get("date"), entry.get("confirmed")
             if not isinstance(raw, str) or not isinstance(confirmed, bool):
                 continue
+            title = entry.get("title")
             try:
-                due.append(rules.Due(date.fromisoformat(raw), confirmed))
+                due.append(
+                    rules.Due(
+                        date.fromisoformat(raw),
+                        confirmed,
+                        title if confirmed and isinstance(title, str) and title.strip() else None,
+                    )
+                )
             except ValueError:
                 continue
     return due
@@ -254,7 +264,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             suggestion = rules.suggest_by_rhythm(_held(recent), today, off)
         suggested, basis = suggestion.day, suggestion.basis
         when = f"{_day(suggested)}, {BASIS_NOTE[basis]}"
-        why = explain.explain(suggestion)
+        why = explain.explain(suggestion).text
         result = ToolResult(
             ok=True,
             summary=(

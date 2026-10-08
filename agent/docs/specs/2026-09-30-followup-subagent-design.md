@@ -160,11 +160,13 @@ One `ProposedAction`, with:
 2026-10-05; revised by #963, proposed). A follow-up meeting checks what M
 asked people to do, so it belongs just after that work is due. The date comes
 from M's action-item due dates when M has any, and from the team's rhythm
-otherwise. **The date is the rule's, the wording of why is a model's**
-(decided 2026-10-08, section 7 "Stage 2"). The date takes no model call: the
-same inputs give the same date. The rule also returns what it used
-(`rules.Why`), and a model turns only that into the sentence that tells the
-lead why (`explain.py`, below). The model never chooses or moves the date.
+otherwise. **Dates and titles are the rule's values; only the wording of
+why is a model's, as a sentence with blanks** (decided 2026-10-08, section 7
+"Stage 2"). The date takes no model call: the same inputs give the same date.
+The rule also returns what it used (`rules.Why`). A model writes the sentence
+that tells the lead why with blanks where the dates and the title go, and
+code fills them from `Why` (`explain.py`, below). The model never sees,
+chooses or moves a date.
 
 *Inputs.* `today` (the run's date), M's open dated action items as B's
 `extraction.meeting_due_dates(M)` reports them (below), and the team's meeting
@@ -255,31 +257,65 @@ in each entry, always `true` for now, so the rule and its tests stay as they
 are. If B ever hands over draft dates, they count as `draft` with no change
 here.
 
-Titles are not read, in this stage or by Stage 2's sentence (section 7).
+*Titles, for the sentence only.* The date rule reads no title. The reason
+sentence names one confirmed item due by the 80% point -- the one due last of
+those with a title -- when B's row gives it as `title` on an entry, and counts
+the rest ("'API 연동' 등 할 일 4건"). An unconfirmed item's title is never
+used (B's rule 3). **B does not hand over titles today**: `meeting_due_dates`
+returns dates and counts only, by B's own rule, so the sentence counts the
+items without naming one until B's owner agrees to a `title` for confirmed
+entries (asked on an issue). A title is B's masked description, cut to 20
+characters, and is filled in by code; it never reaches the model.
 
 *Why this date: the sentence* (`explain.py`, Stage 2). Each `Suggestion`
 carries `why`, the values the rule used: the step (`overdue`, `due_share`,
 `cadence`, or `default` when the rhythm is unknown); for step 2 how many
 confirmed items are late; for step 4 the due dates counted, how many fall by
-the 80% point and that point, how many were dropped past the horizon and how
-many past drafts were dropped; for the rhythm how many meeting days were read,
-the latest and the usual gap; and whether the day was held to the earliest
-business day or moved off a weekend or holiday. When Follow-up proposes, it
-sends the model `explain.facts(...)`: the step, `basis`, and those counts and
-day spans, **never a date**. The model answers one or two Korean sentences.
+the 80% point, that point and the title above, how many were dropped past the
+horizon and how many past drafts were dropped; for the rhythm how many meeting
+days were read, the latest and the usual gap; whether the day was held to the
+earliest business day; and the day before any move off a weekend or holiday,
+with the days passed over.
 
-A sentence is used only if it is one or two sentences of Korean on one line,
-names no date, weekday or day-pinning word ("다음 주", "내일"), and holds no
-number the facts do not. Otherwise -- or with no model configured, or a call
-that fails or is refused -- the step's fixed wording (`explain.FALLBACK`) is
-used. The proposal never waits on or fails for the model. The sentence is
-written once, at the proposal, and the card is not to write it again.
+The blanks (`explain.SLOTS`), each filled with its unit:
 
-*Not yet shown.* The sentence goes into the run's answer and the proposal's
-`rationale` today. Neither is stored: the pending row keeps no rationale
-(rule 8; #854). Keeping it with the pending row and showing it on the card is
-`main/`'s (`models.py`, a migration, `pending.py`, `preview.py`; 김민경), asked
-on an issue.
+| Blank | Filled with | Steps |
+| --- | --- | --- |
+| `{date}` | the suggested day, `10/16(금)` | all; required |
+| `{due}` | the 80% point, `10/15` | `due_share`; required |
+| `{work}` | `'API 연동' 등 할 일 4건`, `'API 연동' 1건`, or `할 일 4건` without a title | `due_share`; required |
+| `{count}` | `4건` | `due_share` |
+| `{interval_days}` | `7일` | `cadence`; required |
+| `{last_meeting}` | `10/7(수)` | `cadence` |
+| `{holiday_shift}` | `공휴일(10/9)을 피해` or `주말을 피해`, by the day passed over first | `due_share`, `cadence`; required when the day moved |
+| `{overdue_count}` | `2건` | `overdue` |
+| `{default_days}` | `3영업일` | `default` |
+
+When Follow-up proposes, it sends the model `explain.facts(...)`: the step,
+`basis`, whether the day moved or was held, the blanks it may and must use
+with what each means, and the counts. **Never a date and never a title.** The
+model answers a template, for example "{work}을 {due}까지 완료하기로 해서,
+결과를 함께 확인할 수 있도록 다음 영업일인 {date}에 후속 회의를 제안했습니다."
+
+A template is used only if it is on one line, one or two sentences, uses
+every blank its step requires once and no blank it does not offer, and
+outside the blanks has Korean, no date, weekday or day-pinning word
+("다음 주", "내일") and no number the counts do not hold. Otherwise -- or with
+no model configured, or a call that fails or is refused -- the step's fixed
+template (`explain.FALLBACK`) is used, filled the same way. There is one per
+step, and one each for a day moved off a holiday and a rhythm day already
+past, so the card reads as well without the model. The proposal never waits
+on or fails for the model. The sentence is written once, at the proposal, and
+the card is not to write it again.
+
+*Not yet shown.* The filled sentence goes into the run's answer and the
+proposal's `rationale` today. Neither is stored: the pending row keeps no
+rationale (rule 8; #854). Keeping it with the pending row and showing it on the
+card is `main/`'s (`models.py`, a migration, `pending.py`, `preview.py`;
+김민경), asked on an issue. `explain.Reason` offers the shape that suits rule
+8: its `template` holds blanks and no title, so a row could keep the template
+alone, and the card fill it from the row's own date and the item's title as B
+gives it when the list is read. A deleted item then leaves no title behind.
 
 The suggestion reads no calendar and nobody's availability, so section 6
 holds. Free time in the lead's own calendar is the card's to show, from the
@@ -305,10 +341,11 @@ text, as settled on #509.
   aggregate and section 3.1 allows it. But in a two- or three-person meeting a
   share of one-half says a lot about one person, and the rule does not need it.
   If a later rule wants it, that is a decision recorded here first.
-- **What leaves Autune: the reason's numbers only** (decided 2026-10-08). The
-  one outbound request is the reason sentence's model call (section 5). It
-  carries the rule's step, `basis`, and counts and day spans. No date, no
-  item title, no gap title, no owner, no meeting text. It goes through
+- **What leaves Autune: the reason's counts and blank names only** (decided
+  2026-10-08). The one outbound request is the reason sentence's model call
+  (section 5). It carries the rule's step, `basis`, the blanks it may use and
+  counts. No date, no item title, no gap title, no owner, no meeting text:
+  dates and the title are filled in by code after the call. It goes through
   `GeminiText`, so `check_outbound` sees it. Until then this read "nothing
   leaves Autune". The only write is still B's, and it runs after the lead
   approves. The item it stores holds B's fixed wording, not gap titles, so no
@@ -318,18 +355,20 @@ text, as settled on #509.
   board (`add_followup_item`), so it reaches nobody else until someone confirms
   it.
 - **Due dates, never owners** (#963). From B, Follow-up reads each open item's
-  due date and whether it is confirmed, and nothing else. It does not read
+  due date and whether it is confirmed and, for the reason sentence only, a
+  confirmed item's title once B hands it over (section 5). It does not read
   assignees. A suggestion built from "who is late" would tell the lead about
   one person through the date, the same reason section 3.1 keeps Follow-up on
   topics. That is why it does not use `meeting_action_items`, whose `body`
   carries the assignee. The overdue step (section 5) reads only that *some*
   item is late, not whose.
-- **Stage 2's sentence names no person.** Its input holds no name, title or
-  text at all, only the rule's numbers (section 5), so there is nothing of a
-  person for it to repeat. Its output is checked for dates and for numbers
-  the input does not hold, and a sentence that fails is replaced by the
-  step's fixed wording. The earlier sketch's member-name check is not needed
-  while no title is sent.
+- **Stage 2's sentence names no person.** The model's input holds no name,
+  title or text, only the rule's counts and the blank names (section 5), so
+  there is nothing of a person for it to repeat. Its template is checked for
+  blanks it was not offered, dates and numbers it was not given, and one that
+  fails is replaced by the step's fixed template. The one title in the filled
+  sentence is a confirmed item's masked description, put there by code. The
+  earlier sketch's member-name check is not needed while no title is sent.
 
 ## 7. Open questions
 
@@ -431,12 +470,20 @@ text, as settled on #509.
     sentence ("기한이 있는 할 일 3개 중 3개가 지난 직후로") where fixed wording
     would need a template per combination.
   - *Why it cannot change the date.* It never sees the date. Its answer is
-    only text, and it is checked against the values it was given.
+    only a template, checked against the blanks and values it was given,
+    and the date is filled in by code.
   - *Written once.* At the proposal, never when the card is read: the lead
     sees the sentence that was written with the date, and reading the list
     makes no model call.
-  - *Still open.* Where the sentence is kept and how the card shows it. That
-    is `main/`'s, 김민경's.
+  - *Revised the same day: dates and a title, by blanks.* A sentence without
+    them read thin ("할 일 기한의 대부분이 지난 직후로"). The model now
+    writes a template with blanks (`{date}`, `{due}`, `{work}`, ...), and code
+    fills them from `Why`. The model still sees no date and no title, so it
+    still cannot choose or move the date; the date in the sentence and the
+    date on the card are one value. The fixed templates were rewritten to the
+    same standard, so a failed call costs little.
+  - *Still open.* Where the sentence is kept and how the card shows it
+    (`main/`, 김민경); B handing over confirmed items' titles (B, 강민구).
 - **Holidays** (#964). Settled: business days skip B's public holidays
   (section 5). A team's own days off (a company holiday) are not known; the
   lead moves the date on the board.

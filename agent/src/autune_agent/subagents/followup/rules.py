@@ -158,17 +158,27 @@ def suggest_by_rhythm(
         cadence_days=cadence,
         held_to_earliest=planned < earliest,
         moved_off_day=day != max(planned, earliest),
+        planned=max(planned, earliest),
+        skipped=_skipped(max(planned, earliest), day),
     )
     return Suggestion(day, "cadence", why)
 
 
+def _skipped(start: date, day: date) -> tuple[date, ...]:
+    """The days from ``start`` up to ``day`` that were passed over as days off."""
+    return tuple(start + timedelta(days=n) for n in range((day - start).days))
+
+
 @dataclass(frozen=True)
 class Due:
-    """One open, dated action item of M: its due date and whether a person
-    confirmed it. Nothing else -- no title, no assignee (spec section 6)."""
+    """One open, dated action item of M: its due date, whether a person
+    confirmed it and, for a confirmed one, its title when B hands it over.
+    Never an assignee (spec section 6)."""
 
     day: date
     confirmed: bool
+    title: str | None = field(default=None, compare=False)
+    """For the reason sentence only; the date rule never reads it."""
 
 
 Step = Literal["overdue", "due_share", "cadence", "default"]
@@ -182,8 +192,9 @@ class Why:
     """What the rule used to reach its day, as values (spec section 7, Stage 2).
 
     The reason sentence is written from these and nothing else, so it can say
-    no more than the rule did. Dates, counts and flags only: no item's title,
-    no owner, no meeting text.
+    no more than the rule did. Dates, counts, flags and at most one confirmed
+    item's title; no owner and no other meeting text. Only the counts reach a
+    model (``explain.facts``); dates and the title fill its blanks in code.
     """
 
     step: Step
@@ -208,6 +219,13 @@ class Why:
     """The rule's day was before the next business day, so that day was taken."""
     moved_off_day: bool = False
     """The day fell on a weekend or a public holiday and moved past it."""
+    planned: date | None = None
+    """The day before any move off a weekend or holiday (steps 4 and 5)."""
+    skipped: tuple[date, ...] = ()
+    """The days off passed over between ``planned`` and the day."""
+    title: str | None = None
+    """Step 4: a title of an item due by ``share_point``, the one due last of
+    those with a title. ``None`` when B handed over none."""
 
 
 @dataclass(frozen=True)
@@ -240,7 +258,9 @@ def suggest_from_due_dates(
     if overdue:
         return Suggestion(earliest, "confirmed", Why(step="overdue", overdue=overdue))
     horizon = today + timedelta(days=DUE_HORIZON_DAYS)
-    kept = sorted((d for d in due if today <= d.day <= horizon), key=lambda d: d.day)
+    kept = sorted(
+        (d for d in due if today <= d.day <= horizon), key=lambda d: (d.day, d.title or "")
+    )
     if not kept:
         return None
     # Rounded first: 0.8 * 15 is 12.000000000000002 in floating point.
@@ -249,14 +269,19 @@ def suggest_from_due_dates(
     after = _business_days_after(point, 1, off)
     day = max(after, earliest)
     basis: Basis = "confirmed" if all(d.confirmed for d in kept) else "draft"
+    by_point = [d for d in kept if d.day <= point]
+    titled = [d.title for d in by_point if d.confirmed and d.title]
     why = Why(
         step="due_share",
         used=tuple(d.day for d in kept),
-        covered=sum(1 for d in kept if d.day <= point),
+        covered=len(by_point),
         share_point=point,
         beyond_horizon=sum(1 for d in due if d.day > horizon),
         past_drafts=sum(1 for d in due if not d.confirmed and d.day < today),
         held_to_earliest=after < earliest,
         moved_off_day=day == after and after != point + timedelta(days=1),
+        planned=point + timedelta(days=1),
+        skipped=_skipped(point + timedelta(days=1), day) if day == after else (),
+        title=titled[-1] if titled else None,
     )
     return Suggestion(day, basis, why)
