@@ -127,12 +127,13 @@ LIST_FIELDS = "items(id,summary,start,end,status),nextPageToken"
 Google (mkkim68 on #824)."""
 
 WRITE_FIELDS = (
-    "description,attendees(email,self,resource),attendeesOmitted,"
+    "description,start,attendees(email,self,resource),attendeesOmitted,"
     "guestsCanSeeOtherGuests,organizer(self)"
 )
-"""All the write reads of the picked event: the description it edits, the
-attendees' addresses to refuse an event shared outside the team, and whether
-that list is whole (``attendees_hidden``)."""
+"""All the write reads of the picked event: the description it edits, when it
+starts (for the team channel's notice to say), the attendees' addresses to
+refuse an event shared outside the team, and whether that list is whole
+(``attendees_hidden``)."""
 
 DESCRIPTION_FIELDS = "description"
 """All the cleanup reads: the description it takes lines out of."""
@@ -279,11 +280,37 @@ def update_agenda(
     never is. What was written is recorded in ``GapAgendaEvent`` with the
     caller's own session, for the caller to commit.
     """
+    outcome, _ = write_agenda(
+        session,
+        gaps,
+        team_id=team_id,
+        user_id=user_id,
+        carried=carried,
+        event_id=event_id,
+        now=now,
+    )
+    return outcome
+
+
+def write_agenda(
+    session: Session,
+    gaps: Sequence[GapGap],
+    *,
+    team_id: str,
+    user_id: str,
+    carried: bool,
+    event_id: str | None = None,
+    now: datetime | None = None,
+) -> tuple[AgendaOutcome, datetime | date | None]:
+    """``update_agenda``, and when the event it wrote to starts, as Google gave
+    it in the event's own time zone -- a ``date`` for an all-day event, ``None``
+    when nothing was written or Google did not say. Only the team channel's
+    notice reads it; it is not stored or logged."""
     starts: datetime | None = None
     if event_id is None:
         meeting = next_meeting(session, team_id, now=now or datetime.now(UTC))
         if meeting is None or meeting.started_at is None:
-            return "no_next_meeting"
+            return "no_next_meeting", None
         # SQLite hands back a naive datetime; PostgreSQL's is already UTC-aware.
         starts = meeting.started_at
         if starts.tzinfo is None:
@@ -291,22 +318,22 @@ def update_agenda(
     try:
         with calendar_of(session, user_id) as calendar:
             if calendar is None:
-                return "not_connected"
+                return "not_connected", None
             client, calendar_id = calendar
             if event_id is None and starts is not None:
                 event_id = _event_starting(client, calendar_id, starts)
             if event_id is None:
-                return "no_event"
+                return "no_event", None
             path = f"/calendars/{calendar_id}/events/{event_id}"
             current = client.request("GET", path, params={"fields": WRITE_FIELDS})
             if carried and attendees_hidden(current):
                 log.info("gap_agenda_refused_hidden", gaps=len(gaps))
-                return "hidden_attendees"
+                return "hidden_attendees", None
             if carried and outside_team(
                 list(current.get("attendees") or []), _team_addresses(session, team_id)
             ):
                 log.info("gap_agenda_refused_external", gaps=len(gaps))
-                return "external_attendees"
+                return "external_attendees", None
             updated = edited(str(current.get("description") or ""), gaps, carried=carried)
             if updated is not None:
                 client.request(
@@ -316,16 +343,17 @@ def update_agenda(
                     json={"description": updated},
                 )
             written_to = (calendar_id, event_id)
+            event_starts = _start_of(current)
     except ReconnectRequiredError:
-        return "reconnect_required"
+        return "reconnect_required", None
     except PermanentIntegrationError as exc:
         if exc.details.get("upstream_status") in (404, 410):
-            return "no_event"
+            return "no_event", None
         log.warning("gap_agenda_failed", error=type(exc).__name__)
-        return "failed"
+        return "failed", None
     except (IntegrationError, PrivacyViolationError) as exc:
         log.warning("gap_agenda_failed", error=type(exc).__name__)
-        return "failed"
+        return "failed", None
     _record(
         session,
         gaps,
@@ -335,7 +363,7 @@ def update_agenda(
         kept=carried,
     )
     log.info("gap_agenda_set", gaps=len(gaps), carried=carried, picked=starts is None)
-    return "added" if carried else "removed"
+    return ("added" if carried else "removed"), event_starts
 
 
 def written_lines(
@@ -421,6 +449,15 @@ def _when(raw: dict[str, Any] | None) -> datetime | date | None:
     if "date" in raw:
         return date.fromisoformat(raw["date"])
     return None
+
+
+def _start_of(event: dict[str, Any]) -> datetime | date | None:
+    """When ``event`` starts, or ``None`` when Google said nothing readable --
+    the line is already written by then, so this never fails the write."""
+    try:
+        return _when(event.get("start"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _timed_events(

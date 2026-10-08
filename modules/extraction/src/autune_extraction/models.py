@@ -465,7 +465,13 @@ class ExtActionItemSource(Base):
     excerpt_end: Mapped[int | None] = mapped_column(Integer)
     """Which part of the utterance the item was made from, as two offsets into
     its stored text -- no words (``excerpt``). Both NULL for the whole utterance,
-    for a row from before these columns, and once the utterance was corrected."""
+    for a row from before these columns, and once the utterance was corrected.
+
+    Both NULL once the utterance is deleted, too (#400): a trigger on the table
+    clears them whenever the row has no ``utterance_id``, so that no path which
+    deletes an utterance has to remember to. They point into a text that is
+    gone, and their size is a trace of it. The trigger is the migration's
+    (``5d1f8b3a7c46``); a table made by ``create_all`` does not have it."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
@@ -747,6 +753,16 @@ class ExtDecisionSource(Base):
     ``position`` keeps meeting order without a second join to ``utterances``.
     The order is the argument of the decision -- the proposal first, the sentence
     that settles it last -- and sorting by id would scramble it.
+
+    A row outlives its utterance, as ``ExtActionItemSource``'s does (#400):
+    deleting the utterance sets ``utterance_id`` to NULL instead of taking the
+    row. Module A's rerun of a meeting replaces every utterance, and a decision
+    a person added is not rebuilt, so under a cascade it was left with no trace
+    that it had ever pointed at a line; so was the model's decision whose
+    speaker deleted their own data. The words and the id go; that there was a
+    source stays. Every reader skips the NULLs for ids
+    (``service.live_decision_source_ids``) and counts them as
+    ``deleted_source_count``.
     """
 
     __tablename__ = "ext_decision_sources"
@@ -759,14 +775,21 @@ class ExtDecisionSource(Base):
     decision_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    utterance_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    utterance_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "utterances.id", ondelete="SET NULL", name="fk_ext_decision_sources_utterance_id"
+        ),
+        index=True,
     )
+    """NULL once the utterance is deleted. Never written NULL by this module."""
+
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
     excerpt_start: Mapped[int | None] = mapped_column(Integer)
     excerpt_end: Mapped[int | None] = mapped_column(Integer)
-    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision."""
+    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision,
+    cleared by the same trigger once the utterance is deleted."""
 
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 

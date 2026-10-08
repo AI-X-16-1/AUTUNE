@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, UploadFile, status
+from fastapi import APIRouter, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import Utterance
-from autune_core import CurrentUser, User, get_logger, get_session
+from autune_core import CurrentUser, User, get_logger
 from autune_core.auth import clear_session_cookie
 from autune_core.errors import AutuneError
 from autune_core.events import publish
@@ -32,6 +32,7 @@ from . import (
 )
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
+from .deps import SessionDep
 from .enqueue import enqueue_process_recording
 from .live.routes import router as live_router
 from .persistence import transcript_payload
@@ -87,7 +88,6 @@ class EnqueueFailedError(AutuneError):
 
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 
 # A local-only page for putting a recording through the pipeline by hand.
 # It has no auth, so it is mounted nowhere but a developer's machine.

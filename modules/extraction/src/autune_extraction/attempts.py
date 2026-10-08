@@ -15,6 +15,7 @@ exception raised over a meeting's rows can carry what was said in it
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -308,6 +309,12 @@ def release_notice(session: Session, meeting_id: str) -> None:
     )
 
 
+NOTHING_READ = hashlib.sha256(b"").hexdigest()
+"""``ExtExtractionRun.consent_key`` of a run that was allowed to read no line:
+``service.consent_key`` of no ids. Written out here because ``service`` imports
+this module; a test holds the two together."""
+
+
 def transcribed(session: Session, meeting_id: str) -> bool:
     """Whether module A has stored any line of this meeting yet."""
     return (
@@ -316,14 +323,34 @@ def transcribed(session: Session, meeting_id: str) -> bool:
     )
 
 
-def state(session: Session, meeting_id: str) -> ExtractionState:
-    """What the meeting's 액션 screen says about its extraction."""
+def state(session: Session, meeting_id: str, *, now: datetime | None = None) -> ExtractionState:
+    """What the meeting's 액션 screen says about its extraction.
+
+    A transcript with neither a run nor a failure on record is a first run
+    that has not finished: ``in_progress`` for as long as ``adopt_unextracted``
+    leaves such a meeting alone, ``overdue`` after that -- the same clock, the
+    newest line module A stored, so the screen stops saying "in progress" when
+    the sweep stops believing it."""
+    when = now or datetime.now(tz=UTC)
     row = session.get(ExtExtractionAttempt, meeting_id)
     failures = row.failures if row is not None else 0
+    run = session.execute(
+        select(ExtExtractionRun.extracted_at, ExtExtractionRun.consent_key).where(
+            ExtExtractionRun.meeting_id == meeting_id
+        )
+    ).first()
+    stored = session.scalar(
+        select(func.max(Utterance.created_at)).where(Utterance.meeting_id == meeting_id)
+    )
+    if stored is not None and stored.tzinfo is None:
+        stored = stored.replace(tzinfo=UTC)
+    unrun = stored is not None and run is None and not failures
+    fresh = stored is not None and stored > when - ADOPT_AFTER
     return ExtractionState(
-        extracted_at=session.scalar(
-            select(ExtExtractionRun.extracted_at).where(ExtExtractionRun.meeting_id == meeting_id)
-        ),
+        extracted_at=run.extracted_at if run is not None else None,
+        in_progress=unrun and fresh,
+        overdue=unrun and not fresh,
+        read_nothing=stored is not None and run is not None and run.consent_key == NOTHING_READ,
         failures=failures,
         failed_at=row.failed_at if row is not None and failures else None,
         will_retry=0 < failures < MAX_ATTEMPTS,

@@ -41,7 +41,7 @@ from autune_core import (
     Utterance,
     get_session,
 )
-from autune_extraction import attempts, tasks
+from autune_extraction import attempts, service, tasks
 from autune_extraction.models import (
     ExtActionItem,
     ExtClassification,
@@ -872,6 +872,10 @@ def test_the_state_says_whether_the_worker_will_try_again(client: TestClient) ->
         "not_published": False,
         "requested": False,
         "requested_at": None,
+        # Lines stored a moment ago and nothing of B's yet: the first run.
+        "in_progress": True,
+        "overdue": False,
+        "read_nothing": False,
     }
 
     fails()
@@ -879,3 +883,152 @@ def test_the_state_says_whether_the_worker_will_try_again(client: TestClient) ->
     state = client.get(url()).json()
     assert state["failures"] == 1 and state["will_retry"] is True
     assert state["failed_at"] is not None
+
+
+# -- an empty board with nothing wrong on record (the user, dev, 2026-10-08) --
+#
+# No items and no decisions minutes after a transcription, and both there after
+# "다시 추출": the first run was still going, and the screen had one sentence
+# for "not yet", "read nothing" and "found nothing".
+
+
+def said(session: Session, meeting_id: str = MEETING, **at: datetime) -> dict[str, bool]:
+    """The three reasons the state gives for a board that may be empty."""
+    session.expire_all()
+    state = attempts.state(session, meeting_id, **at)
+    return {
+        name: getattr(state, name)
+        for name in ("in_progress", "overdue", "read_nothing")
+        if getattr(state, name)
+    }
+
+
+def test_a_transcript_whose_first_run_is_not_in_yet_reads_as_in_progress_until_it_is(
+    client: TestClient, wired: Session
+) -> None:
+    assert said(wired) == {"in_progress": True}
+    assert client.get(url()).json()["in_progress"] is True
+
+    tasks.on_transcript_ready(event())
+
+    assert said(wired) == {}
+    assert client.get(url()).json()["extracted_at"] is not None
+
+
+def test_a_run_that_failed_is_not_in_progress(wired: Session) -> None:
+    fails()
+
+    assert said(wired) == {}
+    assert attempts.state(wired, MEETING).failures == 1
+
+
+def test_a_meeting_with_no_transcript_is_not_in_progress(wired: Session) -> None:
+    wired.add(Meeting(id="mtg_empty", team_id="team_1", title="아직 올리지 않은 회의"))
+    wired.commit()
+
+    assert said(wired, "mtg_empty") == {}
+
+
+def test_in_progress_ends_when_the_sweep_stops_leaving_the_meeting_alone(
+    wired: Session,
+) -> None:
+    """A run that never comes -- lost with a worker -- must not read as "in
+    progress" for good. The screen and ``adopt_unextracted`` use one clock, to
+    the instant: what the sweep would take is what the screen calls overdue."""
+    now = datetime.now(tz=UTC)
+    for line in wired.query(Utterance).filter_by(meeting_id=MEETING):
+        line.created_at = now - attempts.ADOPT_AFTER
+    wired.commit()
+    just_before = now - timedelta(seconds=1)
+
+    assert said(wired, now=just_before) == {"in_progress": True}
+    assert attempts.adopt_unextracted(wired, now=just_before) == []
+
+    assert said(wired, now=now) == {"overdue": True}
+    assert attempts.adopt_unextracted(wired, now=now) == [MEETING]
+    wired.commit()
+
+    # Adopted: a failure on record, and the screen's own failure line says it.
+    assert said(wired, now=now) == {}
+    assert attempts.state(wired, MEETING, now=now).will_retry is True
+
+
+def test_a_transcript_too_old_to_adopt_stays_overdue_and_not_in_progress(
+    wired: Session,
+) -> None:
+    stored_since(wired, MEETING, attempts.ADOPT_WINDOW + timedelta(hours=1))
+
+    assert tasks.retry_failed_extractions() == []
+    assert said(wired) == {"overdue": True}
+
+
+def consent(session: Session, meeting_id: str, given: bool) -> None:
+    session.get(Participant, f"par_{meeting_id}").consented = given  # type: ignore[union-attr]
+    session.commit()
+
+
+def test_a_run_that_was_allowed_to_read_no_line_says_so_and_not_that_nothing_was_found(
+    wired: Session,
+) -> None:
+    consent(wired, MEETING, False)
+
+    tasks.on_transcript_ready(event())
+
+    assert wired.query(ExtActionItem).count() == 0
+    assert said(wired) == {"read_nothing": True}
+
+    # A's attestation, and B's own sweep after it.
+    consent(wired, MEETING, True)
+    assert tasks.reextract_consent_changes() == [MEETING]
+
+    assert wired.query(ExtActionItem).count() == 1
+    assert said(wired) == {}
+
+
+def test_a_run_that_read_some_of_the_speech_does_not_say_it_read_nothing(
+    wired: Session,
+) -> None:
+    """Only part of the meeting was out: items exist, and a line about consent
+    over them would point at whoever is not on the board."""
+    wired.add(Participant(id="par_out", meeting_id=MEETING, speaker_label="B", consented=False))
+    wired.get(Utterance, f"utt_1_{MEETING}").participant_id = "par_out"  # type: ignore[union-attr]
+    wired.commit()
+
+    tasks.on_transcript_ready(event())
+
+    assert wired.query(ExtActionItem).count() == 1
+    assert wired.query(ExtDecision).count() == 0
+    assert said(wired) == {}
+
+
+def test_a_run_that_read_everything_and_found_nothing_does_not_say_it_read_nothing(
+    wired: Session,
+) -> None:
+    for line in wired.query(Utterance).filter_by(meeting_id=MEETING):
+        line.text = "오늘 날씨가 좋네요"
+    wired.commit()
+    quiet = event()
+    for line in quiet["utterances"]:
+        line["text"] = "오늘 날씨가 좋네요"
+
+    tasks.on_transcript_ready(quiet)
+
+    assert wired.query(ExtActionItem).count() == 0
+    assert said(wired) == {}
+
+
+def test_the_key_of_a_run_that_read_nothing_is_the_one_the_run_writes() -> None:
+    assert service.consent_key([]) == attempts.NOTHING_READ
+    assert service.consent_key(["utt_1"]) != attempts.NOTHING_READ
+
+
+def test_a_meeting_with_no_lines_stored_does_not_say_consent_is_why(wired: Session) -> None:
+    """A run can read nothing because nothing is there to read. That is not a
+    statement about anybody's consent."""
+    wired.add(Meeting(id="mtg_empty", team_id="team_1", title="아직 올리지 않은 회의"))
+    wired.commit()
+
+    tasks.on_transcript_ready(event("mtg_empty"))
+
+    assert wired.get(ExtExtractionRun, "mtg_empty") is not None
+    assert said(wired, "mtg_empty") == {}

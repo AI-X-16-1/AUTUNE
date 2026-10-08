@@ -432,6 +432,12 @@ export interface ReviewDecision {
   suggested: boolean | null;
   source_utterance_ids: string[];
   /**
+   * Sources whose utterance was deleted since (#400) -- by a rerun of the
+   * meeting or by a person deleting their own data. They are not in
+   * `source_utterance_ids`. Absent from a server before the count existed.
+   */
+  deleted_source_count?: number;
+  /**
    * A one-line preview of the sources, distinct from `statement` (which is
    * assembled or reworded). Rule-based, not a model: the longest source
    * utterance, truncated. `null` only when there are no sources at all.

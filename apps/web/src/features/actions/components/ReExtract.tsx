@@ -10,6 +10,13 @@ import { getExtractionState, requestExtraction, type ExtractionState } from "../
 /** How often a requested run is looked for, and for how long. */
 export const POLL_MS = 5_000;
 export const POLL_LIMIT = 60;
+/** Reads of a first run that may fail in a row before the screen stops asking. */
+export const MISS_LIMIT = 12;
+
+/** Why a board with no rows is not yet "this meeting produced nothing". */
+export type NotExtracted = "in_progress" | "overdue" | null;
+export const notExtracted = (state: ExtractionState | null): NotExtracted =>
+  state === null ? null : state.in_progress ? "in_progress" : state.overdue ? "overdue" : null;
 
 type Outcome = "done" | "failed" | "slow" | "too_soon" | "no_transcript" | "not_asked" | null;
 
@@ -28,18 +35,36 @@ type Outcome = "done" | "failed" | "slow" | "too_soon" | "no_transcript" | "not_
  * again. The run is the automatic one: a meeting whose items a person has
  * edited keeps its item list, which is said under the button so that nobody
  * presses it expecting their corrections to be replaced.
+ *
+ * **A first run that is not in yet is said, and watched** (the user, dev,
+ * 2026-10-08: no items and no decisions minutes after a transcription, both
+ * there after "다시 추출" -- the run was still going, and an empty board said
+ * the meeting had produced nothing). While the server reports `in_progress`
+ * the screen looks again by itself and has the board read when the run is in.
+ * The server ends that state: with the run, with a failure, or half an hour
+ * after the transcript, when it reports `overdue` and the screen says the
+ * extraction has not happened. A run that read no line for want of consent on
+ * record says that -- of the meeting, never of a person.
  */
 export function ReExtract({
   meetingId,
   onExtracted,
+  onState,
 }: {
   meetingId: string;
   onExtracted: () => void;
+  /** Each state read, for the sentences the empty lists below say. */
+  onState?: (state: ExtractionState) => void;
 }) {
   const [state, setState] = useState<ExtractionState | null>(null);
   const [waiting, setWaiting] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>(null);
+  const [looked, setLooked] = useState({ times: 0, missed: 0 });
   const alive = useRef(true);
+  // The parent's callbacks are new functions on every render of it; a ref
+  // keeps them out of the effects' dependencies.
+  const told = useRef({ onExtracted, onState });
+  told.current = { onExtracted, onState };
 
   useEffect(() => {
     alive.current = true;
@@ -50,6 +75,33 @@ export function ReExtract({
       alive.current = false;
     };
   }, [meetingId]);
+
+  useEffect(() => {
+    if (state !== null) told.current.onState?.(state);
+  }, [state]);
+
+  // The first run, which nobody on this screen asked for. Each read counts
+  // one look, which is what asks for the next; a requested run has its own
+  // watch below.
+  const firstRun =
+    state !== null && state.in_progress && !waiting && looked.missed < MISS_LIMIT;
+  useEffect(() => {
+    if (!firstRun) return;
+    const timer = window.setTimeout(() => {
+      getExtractionState(meetingId)
+        .then((read) => {
+          if (!alive.current) return;
+          setLooked((so) => ({ times: so.times + 1, missed: 0 }));
+          setState(read);
+          if (!read.in_progress && read.extracted_at !== null) told.current.onExtracted();
+        })
+        .catch(() => {
+          if (!alive.current) return;
+          setLooked((so) => ({ times: so.times + 1, missed: so.missed + 1 }));
+        });
+    }, POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [meetingId, firstRun, looked]);
 
   const watch = (before: ExtractionState, tries: number) => {
     window.setTimeout(() => {
@@ -137,6 +189,21 @@ export function ReExtract({
             더 시도하지 않습니다. 아래 버튼으로 다시 시도할 수 있습니다.
           </p>
         )
+      ) : waiting ? null : state.in_progress ? (
+        <p role="status" style={muted}>
+          이 회의의 액션 아이템과 결정을 추출하고 있습니다. 보통 1~2분 걸리며, 끝나면 이 화면에
+          나타납니다.
+        </p>
+      ) : state.overdue ? (
+        <p role="status" style={muted}>
+          전사는 끝났지만 이 회의의 액션 아이템과 결정은 아직 추출되지 않았습니다. 아래 버튼으로
+          추출할 수 있습니다.
+        </p>
+      ) : state.read_nothing ? (
+        <p role="status" style={muted}>
+          녹음 동의가 기록되지 않아 이 회의의 발화를 읽지 않았습니다. 그래서 추출된 액션 아이템과
+          결정이 없습니다. 동의가 기록되면 10분 안에 자동으로 다시 추출합니다.
+        </p>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button

@@ -6,6 +6,7 @@ import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import type { NotExtracted } from "./ReExtract";
 import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
@@ -24,7 +25,14 @@ import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
  * rejected rather than deleted — a deleted one would be proposed again by the
  * next run — and "거부" already says that.
  */
-export function DecisionReview({ meetingId }: { meetingId: string }) {
+export function DecisionReview({
+  meetingId,
+  unrun = null,
+}: {
+  meetingId: string;
+  /** The meeting's first extraction is not in: an empty list is not "none". */
+  unrun?: NotExtracted;
+}) {
   const { review, loading, error, setStatus, reword, add, remove } = useDecisionReview(meetingId);
 
   const decisions = review ? [...review.decisions].sort(byStatus) : [];
@@ -52,7 +60,13 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
         <>
           {error ? <Note>최신 결정을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
           {decisions.length === 0 ? (
-            <Note>이 회의에서 제안된 결정이 없습니다. 놓친 결정은 직접 추가할 수 있습니다.</Note>
+            <Note>
+              {unrun === "in_progress"
+                ? "이 회의의 결정을 추출하고 있습니다. 끝나면 여기에 나타납니다."
+                : unrun === "overdue"
+                  ? "이 회의의 결정은 아직 추출되지 않았습니다. 놓친 결정은 직접 추가할 수 있습니다."
+                  : "이 회의에서 제안된 결정이 없습니다. 놓친 결정은 직접 추가할 수 있습니다."}
+            </Note>
           ) : (
             <ul className="grid gap-2">
               {decisions.map((decision) => (
@@ -71,6 +85,36 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
       )}
     </section>
   );
+}
+
+/**
+ * What a row says of where its decision came from.
+ *
+ * A source whose utterance was deleted is said, in the words the action card
+ * uses (#400): "근거 발화 0건" would read as if the model had made the decision
+ * up, and a hand-added decision that pointed at a line would read as one that
+ * never had.
+ */
+export function decisionSourceLine(
+  decision: Pick<
+    ReviewDecision,
+    "origin" | "summary" | "confidence" | "source_utterance_ids" | "deleted_source_count"
+  >,
+): string {
+  const sources = decision.source_utterance_ids.length;
+  const deleted = decision.deleted_source_count ?? 0;
+  if (decision.origin === "user") {
+    if (deleted === 0) return "직접 추가";
+    return sources === 0
+      ? "직접 추가 · 근거 발화 삭제됨"
+      : `직접 추가 · 근거 발화 ${deleted}건 삭제됨`;
+  }
+  const from =
+    sources === 0 && deleted > 0
+      ? "근거 발화 삭제됨"
+      : (decision.summary ?? `근거 발화 ${sources}건`) +
+        (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
+  return `${from} · 신뢰도 ${Math.round(decision.confidence * 100)}%`;
 }
 
 const ORDER: Record<DecisionStatus, number> = { pending: 0, confirmed: 1, rejected: 2 };
@@ -183,9 +227,7 @@ function DecisionRow({
           <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
             {decision.needs_recheck ? "출처 발화가 정정됨 · 확인 필요 · " : null}
             {status.label} ·{" "}
-            {decision.origin === "user"
-              ? "직접 추가"
-              : `${decision.summary ?? `근거 발화 ${decision.source_utterance_ids.length}건`} · 신뢰도 ${Math.round(decision.confidence * 100)}%`}
+            {decisionSourceLine(decision)}
           </p>
           {decision.sync_refs?.length ? (
             <div

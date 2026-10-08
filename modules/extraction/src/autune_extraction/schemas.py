@@ -479,7 +479,10 @@ class ExtractionState(BaseModel):
     log, by the error's class -- with one distinction the screen needs:
     ``not_published`` says the last failure was passing a stored result on to
     the other modules, so the items and decisions on the board are this run's
-    and "could not extract" would be false."""
+    and "could not extract" would be false.
+
+    The last three say why a board can be empty with nothing wrong on record:
+    the first run has not finished, never came, or read nothing."""
 
     extracted_at: datetime | None
     failures: int
@@ -488,6 +491,24 @@ class ExtractionState(BaseModel):
     not_published: bool = False
     requested: bool
     requested_at: datetime | None
+    in_progress: bool = False
+    """A transcript is stored and no run of it is on record yet, nor a failure:
+    the first extraction is still going. An empty board is then "not yet", not
+    "nothing" (the user, dev, 2026-10-08: no items and no decisions minutes
+    after a transcription, and both there after "다시 추출"). Ends by itself:
+    with the run, with a failure, or ``attempts.ADOPT_AFTER`` after the
+    transcript was stored, when ``overdue`` takes its place."""
+    overdue: bool = False
+    """The same, and the transcript is older than ``attempts.ADOPT_AFTER``: the
+    run did not come -- lost with a worker, or never started. The sweep counts
+    it as a failure on its next pass and tries; until then the screen says the
+    extraction has not happened, instead of "in progress" for good."""
+    read_nothing: bool = False
+    """The last run was allowed to read none of the meeting's lines: no speech
+    in it has consent on record (``service.consented_utterance_ids``). The run
+    went through and found nothing, which is not the same as nothing having
+    been said. About the meeting as a whole -- never who did or did not
+    consent, and false as soon as any line was read."""
 
 
 class DueReminderSetting(BaseModel):
@@ -794,6 +815,13 @@ class ReviewDecision(BaseModel):
 
     source_utterance_ids: list[str]
 
+    deleted_source_count: int = 0
+    """Sources whose utterance was deleted since -- by module A's rerun of the
+    meeting or by a person deleting their own data (#400). They are not in
+    ``source_utterance_ids``; the count lets the screen say "근거 발화 삭제됨"
+    instead of showing a decision that never had a source, as
+    ``ActionItemRead.deleted_source_count`` does for an item."""
+
     sync_refs: list[ExternalRefRead]
     """One entry per system this decision has been claimed for -- today, at
     most ``notion`` (#30). No drawer exists for a decision (S15 is the whole
@@ -839,7 +867,8 @@ class DecisionDetail(ReviewDecision):
 
     sources: list[SourceUtterance]
     """In the order they were spoken -- the proposal first, the sentence that
-    settled it last. Empty for a decision a person added, which has none."""
+    settled it last. Empty for a decision a person added without pointing at a
+    line, and for one whose every source was deleted (``deleted_source_count``)."""
 
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence
