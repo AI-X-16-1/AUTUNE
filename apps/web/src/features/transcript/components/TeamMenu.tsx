@@ -24,12 +24,34 @@ import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
  * only place to choose it was the row at the top of each team-level screen:
  * on a screen without that row there was nothing to press. This is the same
  * choice, in the one place that is on every screen. Picking a team here is
- * `rememberTeam`, which every mounted `TeamScope` follows at once; picking one
- * in a row moves the mark here.
+ * `rememberTeam`; picking one in a screen's row moves the mark here.
  *
- * One team: its name, with nothing to choose. None, or a list that could not
- * be read: nothing -- the screens say so themselves, and a sidebar that
- * showed an error on every page would say it louder than it deserves.
+ * **A team name pressed here opens that team's home screen, from any screen**
+ * (the user, 2026-10-08: "어떤 화면이던 사이드 바에 팀명을 누르면 해당 팀의
+ * 홈화면 출력"). Until then the screen on show followed the choice in place
+ * and only a meeting's screens moved. Now the choice is kept and the app goes
+ * to the home screen showing that team (`/?team=`) -- from a team-level
+ * screen, a meeting's screens, the settings: every screen that has this
+ * sidebar. (The legal page and a live meeting are drawn without it.) The
+ * sentence has no exception in it, so these are read into it and are ours:
+ *
+ * - The team already marked goes home too. It is the way back to the team's
+ *   home from wherever a person is.
+ * - On the home screen nothing is pushed: it already follows the choice and
+ *   writes the team into its own address (`HomeScreen`), so a press there
+ *   shows the team at once, and a press on the team already shown changes
+ *   nothing.
+ * - A team picked in "더보기"'s window is the same press. A pin made there
+ *   goes nowhere.
+ * - The row at the top of a team-level screen is not the sidebar: it still
+ *   chooses in place (`TeamScope`).
+ * - Leaving a screen this way asks nothing, as leaving it by "홈" or any other
+ *   sidebar entry asks nothing. The one screen kept out is "회의 시작", below.
+ *
+ * One team: its name, which is the same way home, with nothing to choose.
+ * None, or a list that could not be read: nothing -- the screens say so
+ * themselves, and a sidebar that showed an error on every page would say it
+ * louder than it deserves.
  *
  * **At most three teams are listed** (the user: "팀 고정한거 포함해서 3개만").
  * They are the first three of the order `GET /teams` gives, so pinned teams
@@ -47,12 +69,11 @@ import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
  * (`TeamsWindow`). It is offered to anybody on more than one team.
  *
  * **Inside a meeting, another team pressed here goes to that team's
- * meetings** (the user: "회의 상태에서 사이드바에 다른 팀 누르면 해당 팀의
- * 회의로 이동"). A meeting's own screens show one team's meeting and have no
- * row that could follow the choice, so the page used to stay on a meeting of
- * the team just left. Now the choice is kept and the app goes to the home
- * screen showing that team (`/?team=`). The team already marked does nothing
- * new, as before.
+ * meetings** (the user, 2026-10-06: "회의 상태에서 사이드바에 다른 팀 누르면
+ * 해당 팀의 회의로 이동"). This was the first screen to move, because a
+ * meeting's own screens have no row that could follow the choice. The
+ * sentence of 2026-10-08 above made it the rule for every screen and for the
+ * marked team as well.
  *
  * **"+" beside the heading makes a team** (the user: "팀 옆에 + 버튼으로
  * 팀생성하면서 구성원들에게 메일을 보내거나 초대링크를 생성하게 작은 화면").
@@ -64,16 +85,19 @@ import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
  *
  * Not on "회의 시작" (`/meetings/new`): a recording or an upload may be in
  * progress there, and a press in the sidebar must not drop it. There the
- * choice changes and the page stays, as it did. Whether to ask first and go
- * is the module owner's to settle. On a meeting's review screens the move is
- * what any other sidebar entry already does.
+ * choice changes and the page stays, as it did before 2026-10-08 and still
+ * does -- "어떤 화면이던" was not asked about a recording in progress, and
+ * until it is, the press that could lose one is the one not taken. Whether to
+ * ask first and go is the module owner's to settle.
  */
 
-/** A meeting's own screens: `/meetings/<id>` and its tabs, never "회의 시작". */
-function insideAMeeting(pathname: string | null): boolean {
-  return (
-    pathname !== null && pathname.startsWith("/meetings/") && !pathname.startsWith("/meetings/new")
-  );
+/**
+ * Whether a press on a team name leaves the screen on show as it is: the home
+ * screen, which follows the choice by itself, and "회의 시작", which may hold
+ * a recording or an upload.
+ */
+function staysWhereItIs(pathname: string | null): boolean {
+  return pathname === "/" || (pathname !== null && pathname.startsWith("/meetings/new"));
 }
 
 export function TeamMenu() {
@@ -142,21 +166,26 @@ export function TeamMenu() {
   );
   const text = { fontSize: "var(--control-text-default)", fontWeight: 500 } as const;
 
-  if (teams.length === 1)
+  const choose = (chosenId: string) => {
+    rememberTeam(chosenId);
+    if (!staysWhereItIs(pathname)) router.push(`/?team=${encodeURIComponent(chosenId)}`);
+  };
+
+  const only = teams.length === 1 ? teams[0] : undefined;
+  if (only !== undefined)
     return (
-      <div>
+      <div className="flex flex-col">
         {heading}
-        <div className="truncate text-[var(--color-ink-body)]" style={{ ...text, padding: "6px 0" }}>
-          {teams[0]?.name}
-        </div>
+        <button
+          type="button"
+          onClick={() => choose(only.team_id)}
+          className="truncate text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
+          style={{ ...text, padding: "6px 0" }}
+        >
+          {only.name}
+        </button>
       </div>
     );
-
-  const choose = (chosenId: string) => {
-    const another = chosenId !== teamId;
-    rememberTeam(chosenId);
-    if (another && insideAMeeting(pathname)) router.push(`/?team=${encodeURIComponent(chosenId)}`);
-  };
 
   return (
     <nav aria-label="팀" className="flex flex-col">

@@ -5,6 +5,7 @@ import { ApiError } from "@/shared/api/client";
 
 import { TeamMenu } from "./TeamMenu";
 import { TeamScope } from "./TeamScope";
+import { onTeamChosen } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
 // The team is chosen in the sidebar (the user, 2026-10-06): the menu and a
@@ -156,10 +157,10 @@ describe("TeamMenu", () => {
     open([A]);
 
     expect(await screen.findByText("가 팀")).toBeTruthy();
-    // No team to press and no "더보기"; only the way to make another team.
-    expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
-      "새 팀 만들기",
-    ]);
+    // No team to mark and no "더보기": the way to make another team, and the
+    // name, which is the way to the team's home.
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["+", "가 팀"]);
+    expect(document.querySelectorAll("button[aria-pressed]")).toHaveLength(0);
   });
 
   it("shows nothing to somebody on no team, or when the list cannot be read", async () => {
@@ -397,32 +398,44 @@ describe("TeamMenu, pinning in the window", () => {
   });
 });
 
-describe("TeamMenu, inside a meeting", () => {
-  it.each(["/meetings/mtg_1", "/meetings/mtg_1/actions", "/meetings/mtg_1/summary"])(
-    "on %s another team pressed goes to that team's meetings",
+describe("TeamMenu, a team name goes to that team's home", () => {
+  // The user, 2026-10-08: "어떤 화면이던 사이드 바에 팀명을 누르면 해당 팀의
+  // 홈화면 출력". Home shows the team named in its address.
+  it.each([
+    "/actions",
+    "/dashboard",
+    "/materials",
+    "/gaps",
+    "/decisions",
+    "/settings/members",
+    "/meetings/mtg_1",
+    "/meetings/mtg_1/actions",
+    "/meetings/mtg_1/summary",
+  ])("on %s a team pressed is kept and its home opens", async (path) => {
+    pathname.mockImplementation(() => path);
+    open([A, B, C]);
+    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+
+    fireEvent.click(entry("나 팀"));
+
+    expect(window.localStorage.getItem("autune.team")).toBe("team_b");
+    expect(chosen()).toEqual(["나 팀"]);
+    expect(push).toHaveBeenCalledExactlyOnceWith("/?team=team_b");
+  });
+
+  it.each(["/actions", "/meetings/mtg_1"])(
+    "on %s the team already marked goes to its home too",
     async (path) => {
-      // The user, 2026-10-06: "회의 상태에서 사이드바에 다른 팀 누르면 해당 팀의
-      // 회의로 이동". Home shows the team named in its address.
       pathname.mockImplementation(() => path);
       open([A, B, C]);
       await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
 
-      fireEvent.click(entry("나 팀"));
+      fireEvent.click(entry("가 팀"));
 
-      expect(window.localStorage.getItem("autune.team")).toBe("team_b");
-      expect(push).toHaveBeenCalledExactlyOnceWith("/?team=team_b");
+      expect(push).toHaveBeenCalledExactlyOnceWith("/?team=team_a");
+      expect(chosen()).toEqual(["가 팀"]);
     },
   );
-
-  it("the team already marked goes nowhere", async () => {
-    pathname.mockImplementation(() => "/meetings/mtg_1");
-    open([A, B, C]);
-    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
-
-    fireEvent.click(entry("가 팀"));
-
-    expect(push).not.toHaveBeenCalled();
-  });
 
   it("a team picked from the window goes there as well", async () => {
     pathname.mockImplementation(() => "/meetings/mtg_1/gap");
@@ -436,32 +449,80 @@ describe("TeamMenu, inside a meeting", () => {
     expect(window.localStorage.getItem("autune.team")).toBe("team_e");
   });
 
-  it("a pin made from a meeting's screen goes nowhere", async () => {
-    pin.mockResolvedValue([{ ...B, pinned: true }, A, C]);
-    pathname.mockImplementation(() => "/meetings/mtg_1");
-    open([A, B, C]);
-    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
-    fireEvent.click(more() as HTMLButtonElement);
+  it.each(["/actions", "/meetings/mtg_1"])(
+    "on %s a pin made in the window goes nowhere",
+    async (path) => {
+      pin.mockResolvedValue([{ ...B, pinned: true }, A, C]);
+      pathname.mockImplementation(() => path);
+      open([A, B, C]);
+      await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+      fireEvent.click(more() as HTMLButtonElement);
 
-    fireEvent.click(pinButton("나 팀"));
+      fireEvent.click(pinButton("나 팀"));
 
-    await waitFor(() => expect(names()).toEqual(["나 팀", "가 팀", "다 팀"]));
-    expect(push).not.toHaveBeenCalled();
-    expect(chosen()).toEqual(["가 팀"]);
+      await waitFor(() => expect(names()).toEqual(["나 팀", "가 팀", "다 팀"]));
+      expect(push).not.toHaveBeenCalled();
+      expect(chosen()).toEqual(["가 팀"]);
+    },
+  );
+
+  it("the one team of somebody on one team is the way to its home", async () => {
+    pathname.mockImplementation(() => "/actions");
+    open([A]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "가 팀" }));
+
+    expect(push).toHaveBeenCalledExactlyOnceWith("/?team=team_a");
+    expect(window.localStorage.getItem("autune.team")).toBe("team_a");
   });
 
-  it.each(["/meetings/new", "/", "/actions", "/dashboard"])(
+  it("a team picked in a screen's own row chooses in place and goes nowhere", async () => {
+    // The row is not the sidebar: the screen on show is the one asked for.
+    pathname.mockImplementation(() => "/actions");
+    open([A, B], true);
+    await waitFor(() => expect(shown()).toBe("team_a"));
+    const row = screen
+      .getAllByRole("button", { name: "나 팀" })
+      .find((b) => !menu().contains(b)) as HTMLElement;
+
+    fireEvent.click(row);
+
+    expect(shown()).toBe("team_b");
+    expect(chosen()).toEqual(["나 팀"]);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("on the home screen nothing is pushed: it follows the choice by itself", async () => {
+    // `HomeScreen` hears the choice and writes the team into its own address.
+    const heard: string[] = [];
+    const stop = onTeamChosen((id) => heard.push(id));
+    open([A, B, C]);
+    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+
+    fireEvent.click(entry("나 팀"));
+    fireEvent.click(entry("나 팀"));
+    stop();
+
+    // Told both times, the marked team included: home showing every team
+    // turns to the team pressed.
+    expect(heard).toEqual(["team_b", "team_b"]);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it.each(["/meetings/new", "/meetings/new?from=calendar"])(
     "on %s the choice changes and the page stays",
     async (path) => {
       // "회의 시작" may hold a recording or an upload in progress: a press in
-      // the sidebar must not drop it. Elsewhere the screens follow by themselves.
+      // the sidebar must not drop it.
       pathname.mockImplementation(() => path);
       open([A, B, C]);
       await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
 
       fireEvent.click(entry("나 팀"));
+      fireEvent.click(entry("가 팀"));
 
-      expect(chosen()).toEqual(["나 팀"]);
+      expect(chosen()).toEqual(["가 팀"]);
+      expect(window.localStorage.getItem("autune.team")).toBe("team_a");
       expect(push).not.toHaveBeenCalled();
     },
   );
