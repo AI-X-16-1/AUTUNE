@@ -217,11 +217,12 @@ def test_due_dates_of_an_unknown_meeting_are_ok_false_not_an_exception(session: 
     assert result["items"] == [] and result["evidence"] == []
 
 
-def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
+def test_due_dates_are_the_confirmed_unfinished_items_dates_and_titles_and_nobody(
     session: Session,
 ) -> None:
-    """One row, every date in it, earliest first, a shared day twice -- and no
-    title, assignee or text of any item."""
+    """One row, every date in it, earliest first, a shared day twice, each with
+    its item's title (#1038) -- and no assignee, and nothing of an item that is
+    undated or done."""
     item(session, "act_b", due=TODAY + timedelta(days=5))
     item(session, "act_a", due=TODAY + timedelta(days=2), status="in_progress")
     item(session, "act_c", due=TODAY + timedelta(days=5), assignee="user_gone")
@@ -236,10 +237,26 @@ def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
     assert row == {
         "title": "기한",
         "due_dates": [
-            {"date": (TODAY - timedelta(days=3)).isoformat(), "confirmed": True},
-            {"date": (TODAY + timedelta(days=2)).isoformat(), "confirmed": True},
-            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
-            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
+            {
+                "date": (TODAY - timedelta(days=3)).isoformat(),
+                "confirmed": True,
+                "title": "act_late 할 일",
+            },
+            {
+                "date": (TODAY + timedelta(days=2)).isoformat(),
+                "confirmed": True,
+                "title": "act_a 할 일",
+            },
+            {
+                "date": (TODAY + timedelta(days=5)).isoformat(),
+                "confirmed": True,
+                "title": "act_b 할 일",
+            },
+            {
+                "date": (TODAY + timedelta(days=5)).isoformat(),
+                "confirmed": True,
+                "title": "act_c 할 일",
+            },
         ],
         "dated_open": 4,
         "dated_confirmed": 4,
@@ -249,10 +266,66 @@ def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
         "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 필요 0건."
     )
     said = str(result)
-    assert "할 일" not in said, "no item's text"
+    assert "act_undated" not in said and "act_done" not in said, "only the dated open ones"
     assert "박지영" not in said and "이건우" not in said and "user_" not in said, (
         "and nobody's name"
     )
+
+
+def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
+    session: Session,
+) -> None:
+    """#1038, the first condition. A person's own item is confirmed as written
+    and its text never passed module A's masker, so the title is screened: the
+    entry stays, with its date, and the text does not come out. Written and
+    reworded through the board's own writes, which is where such text comes
+    from."""
+    plain = service.create_action_item(
+        session,
+        ActionItemCreate(
+            meeting_id=MEETING, description="API 연동 마무리", due_date=TODAY + timedelta(days=2)
+        ),
+    )
+    phone = service.create_action_item(
+        session,
+        ActionItemCreate(
+            meeting_id=MEETING,
+            description="거래처 010-1234-5678 로 견적 요청",
+            due_date=TODAY + timedelta(days=3),
+        ),
+    )
+    session.flush()
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    (row,) = result["items"]
+    assert row["due_dates"] == [
+        {
+            "date": (TODAY + timedelta(days=2)).isoformat(),
+            "confirmed": True,
+            "title": "API 연동 마무리",
+        },
+        {"date": (TODAY + timedelta(days=3)).isoformat(), "confirmed": True},
+    ]
+    assert "010-1234-5678" not in str(result) and "견적" not in str(result)
+    # Held back, not dropped: the date is counted and the item can be pointed at.
+    assert (row["dated_open"], row["dated_confirmed"]) == (2, 2)
+    assert result["evidence"] == [plain.id, phone.id]
+
+    # An edit can put personal data in, and a rewording can take it out.
+    service.update_action_item(
+        session, plain, ActionItemUpdate(description="담당 kim@example.com 에게 전달")
+    )
+    service.update_action_item(session, phone, ActionItemUpdate(description="거래처에 견적 요청"))
+    session.flush()
+
+    after = tools.meeting_due_dates(session, MEETING)
+
+    assert [entry.get("title") for entry in after["items"][0]["due_dates"]] == [
+        None,
+        "거래처에 견적 요청",
+    ]
+    assert "kim@example.com" not in str(after)
 
 
 def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Session) -> None:
@@ -269,6 +342,9 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
     dates = [entry["date"] for entry in result["items"][0]["due_dates"]]
     assert dates == [(TODAY + timedelta(days=4)).isoformat()]
     assert draft_day.isoformat() not in str(result)
+    # Nor its title (#1038): a confirmed item's only, and "act_draft" is in neither.
+    assert [entry["title"] for entry in result["items"][0]["due_dates"]] == ["act_confirmed 할 일"]
+    assert "act_draft" not in str(result)
     assert result["evidence"] == ["act_confirmed"], "no card can point at a draft"
     assert "확인 필요 2건" in result["summary"]
     assert all(entry["confirmed"] is True for entry in result["items"][0]["due_dates"])
@@ -286,6 +362,10 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
         (TODAY + timedelta(days=4)).isoformat(),
     ]
     assert after["evidence"] == ["act_draft", "act_confirmed"]
+    assert [entry["title"] for entry in after["items"][0]["due_dates"]] == [
+        "act_draft 할 일",
+        "act_confirmed 할 일",
+    ]
     assert "확인 필요 1건" in after["summary"]
     assert (after["items"][0]["dated_open"], after["items"][0]["dated_confirmed"]) == (2, 2)
 
