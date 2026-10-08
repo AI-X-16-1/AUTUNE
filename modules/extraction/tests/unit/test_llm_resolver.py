@@ -121,6 +121,18 @@ def test_an_unusable_answer_gives_the_quote_back(answer: str) -> None:
     assert out == TARGET
 
 
+def test_a_number_found_only_inside_a_longer_one_gives_the_quote_back() -> None:
+    """The line before said "20일". A sentence that says "2일" states a date
+    nobody said, and "2" was in the window only as part of 20."""
+    said = ResolutionRequest(target="그때까지 제가 볼게요", context=("마감이 20일이라고 했어요",))
+
+    (invented,) = resolver(Provider("2일까지 제가 볼게요")).resolve([said])
+    (kept,) = resolver(Provider("20일까지 제가 볼게요")).resolve([said])
+
+    assert invented == "그때까지 제가 볼게요"
+    assert kept == "20일까지 제가 볼게요"
+
+
 def test_a_sentence_that_loses_the_verb_ending_gives_the_quote_back() -> None:
     (out,) = resolver(Provider("고객 인터뷰 결과 검토")).resolve([request()])
 
