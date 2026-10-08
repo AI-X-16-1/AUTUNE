@@ -136,7 +136,17 @@ were asked for, decisions first, and three points sat under the wrong label.
 So the limit is now said twice, with what to do when there is more, and each
 label says what it is for. What the answer still gets wrong is ``by_kind``'s
 to bound. And both prompts now ask for no person, in the rule and in the
-examples, which named a role (the module docstring says why)."""
+examples, which named a role (the module docstring says why).
+
+Measured again the same day, the model kept to the limit (7, 6 and 7 points)
+and two of the three summaries were seven decisions and nothing else: with a
+board of many decisions it spends every point on them, and an open question
+is then in the overview or nowhere. That is a known limit, and one fix for it
+was tried and dropped: a share per kind in this prompt ("decisions at most
+four, every open question listed") did change the kinds (4/1/2 in the long
+meeting), and made the model call three things the meeting had decided
+undecided, each against a board row it was given. A summary that lists only
+decisions is true; that one was not."""
 
 _BOARD_HEADER = (
     '\n아래는 이 회의에서 뽑아 둔 결정과 할 일입니다. "확인 전"은 사람이 아직 확인하지 '
