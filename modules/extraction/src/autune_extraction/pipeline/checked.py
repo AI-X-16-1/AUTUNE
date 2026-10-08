@@ -104,4 +104,6 @@ def combine(proposed: Prediction, checked: Prediction) -> Prediction:
         pieces=proposed.pieces,
         summary=proposed.summary,
         piece_summaries=proposed.piece_summaries,
+        part=proposed.part,
+        piece_parts=proposed.piece_parts,
     )

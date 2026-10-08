@@ -102,6 +102,55 @@ class ExtProject(Base):
     )
 
 
+MATERIAL = "mat"
+"""The id prefix of ``ext_materials`` rows -- B's own, not a shared entity's."""
+
+DRIVE_KINDS = ("file", "document", "presentation", "spreadsheets")
+"""Which Google preview a Drive file has: a plain file, or one of the three
+editors. The same four ``apps/web/src/shared/drive/driveLink.ts`` tells apart."""
+
+
+class ExtMaterial(Base):
+    """A Google Drive file a team keeps on its 자료 screen (#817; the user,
+    2026-10-08): a title a member typed and which file it is.
+
+    **Not the file, and not the link as pasted.** ``drive_file_id`` and
+    ``drive_kind`` are what ``materials.parse_drive_link`` took from the pasted
+    link; the screen builds Google's own address from them, so nothing a
+    person typed is ever used as an address. Autune reads no byte of the file
+    and holds no Drive permission -- the preview is Google's page under the
+    viewer's own sign-in.
+
+    **Nothing here names a person**: no registrant, no reader. The row says
+    that this team keeps this file under this title. ``title`` is typed, not
+    derived from speech, and stored as typed -- like a meeting's title or a
+    project's name it can hold a name. A file id opens the file for anyone the
+    file is shared with by link, so neither it nor the title is logged.
+
+    Goes with the team; a member deletes one at any time.
+    """
+
+    __tablename__ = "ext_materials"
+    __table_args__ = (
+        UniqueConstraint("team_id", "drive_file_id", name="uq_ext_materials_team_file"),
+        CheckConstraint(
+            "drive_kind IN ('file','document','presentation','spreadsheets')",
+            name="ck_ext_materials_drive_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(MATERIAL))
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    drive_file_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    drive_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtProjectSend(Base):
     """Where a project's minutes for one meeting were sent, per tool (2026-10-04).
 
@@ -366,6 +415,13 @@ class ExtActionItem(Base, TimestampMixin):
     )
 
 
+_EXCERPT_CHECK = (
+    "(excerpt_start IS NULL AND excerpt_end IS NULL) "
+    "OR (excerpt_start >= 0 AND excerpt_end > excerpt_start)"
+)
+"""Both offsets or neither, and a part that has something in it."""
+
+
 class ExtActionItemSource(Base):
     """Which utterances an item came from.
 
@@ -386,6 +442,7 @@ class ExtActionItemSource(Base):
     __tablename__ = "ext_action_item_sources"
     __table_args__ = (
         UniqueConstraint("action_item_id", "utterance_id", name="uq_ext_action_item_sources"),
+        CheckConstraint(_EXCERPT_CHECK, name="ck_ext_action_item_sources_excerpt"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -403,6 +460,18 @@ class ExtActionItemSource(Base):
         index=True,
     )
     """NULL once the utterance is deleted. Never written NULL by this module."""
+
+    excerpt_start: Mapped[int | None] = mapped_column(Integer)
+    excerpt_end: Mapped[int | None] = mapped_column(Integer)
+    """Which part of the utterance the item was made from, as two offsets into
+    its stored text -- no words (``excerpt``). Both NULL for the whole utterance,
+    for a row from before these columns, and once the utterance was corrected.
+
+    Both NULL once the utterance is deleted, too (#400): a trigger on the table
+    clears them whenever the row has no ``utterance_id``, so that no path which
+    deletes an utterance has to remember to. They point into a text that is
+    gone, and their size is a trace of it. The trigger is the migration's
+    (``5d1f8b3a7c46``); a table made by ``create_all`` does not have it."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
@@ -684,21 +753,43 @@ class ExtDecisionSource(Base):
     ``position`` keeps meeting order without a second join to ``utterances``.
     The order is the argument of the decision -- the proposal first, the sentence
     that settles it last -- and sorting by id would scramble it.
+
+    A row outlives its utterance, as ``ExtActionItemSource``'s does (#400):
+    deleting the utterance sets ``utterance_id`` to NULL instead of taking the
+    row. Module A's rerun of a meeting replaces every utterance, and a decision
+    a person added is not rebuilt, so under a cascade it was left with no trace
+    that it had ever pointed at a line; so was the model's decision whose
+    speaker deleted their own data. The words and the id go; that there was a
+    source stays. Every reader skips the NULLs for ids
+    (``service.live_decision_source_ids``) and counts them as
+    ``deleted_source_count``.
     """
 
     __tablename__ = "ext_decision_sources"
     __table_args__ = (
         UniqueConstraint("decision_id", "utterance_id", name="uq_ext_decision_sources"),
+        CheckConstraint(_EXCERPT_CHECK, name="ck_ext_decision_sources_excerpt"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     decision_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    utterance_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    utterance_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "utterances.id", ondelete="SET NULL", name="fk_ext_decision_sources_utterance_id"
+        ),
+        index=True,
     )
+    """NULL once the utterance is deleted. Never written NULL by this module."""
+
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    excerpt_start: Mapped[int | None] = mapped_column(Integer)
+    excerpt_end: Mapped[int | None] = mapped_column(Integer)
+    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision,
+    cleared by the same trigger once the utterance is deleted."""
 
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 

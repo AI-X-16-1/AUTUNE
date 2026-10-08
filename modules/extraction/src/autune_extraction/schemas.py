@@ -296,10 +296,11 @@ class ActionItemRead(BaseModel):
     the field too."""
 
     summary: str | None = None
-    """A one-line preview of the item's sources beyond ``description`` itself.
-    Rule-based (the longest of them, truncated), and only when there is more
-    than one -- with a single source ``description`` already is that sentence,
-    and a second copy of it would say nothing ``description`` does not. See
+    """A one-line preview of what the item was made from, beyond ``description``
+    itself: the words as said, cut to the part the item is about when the run
+    recorded one. Rule-based (the longest source, truncated). ``None`` when
+    ``description`` already is that line -- one source and no model's sentence
+    -- since a second copy of it would say nothing ``description`` does not. See
     ``ReviewDecision.summary`` for why a chosen line belongs on the list."""
 
 
@@ -313,6 +314,13 @@ class SourceUtterance(BaseModel):
 
     id: str
     text: str
+
+    excerpt: str | None = None
+    """The part of ``text`` the item or decision was made from, cut from it as
+    stored -- never reworded, nothing added (``autune_extraction.excerpt``).
+    ``None`` when it was made from the whole utterance, when the row is older
+    than the offsets, and for a line that is context and not a source: show
+    ``text``."""
 
 
 class EditHistoryEntry(BaseModel):
@@ -370,6 +378,29 @@ class ProjectWrite(BaseModel):
     jira_project_key: str | None = Field(default=None, max_length=32)
 
 
+class MaterialWrite(BaseModel):
+    """A Drive file a member puts on the team's 자료 screen: a title, and the
+    link as pasted. The link is parsed and not kept (``materials.register``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=300)
+    link: str = Field(min_length=1, max_length=2000)
+
+
+class MaterialRead(BaseModel):
+    """One of a team's materials (``ext_materials``): a title and which Drive
+    file it is. No address -- the screen builds Google's from the id and the
+    kind -- and no person."""
+
+    id: str
+    team_id: str
+    title: str
+    drive_file_id: str
+    drive_kind: Literal["file", "document", "presentation", "spreadsheets"]
+    created_at: datetime
+
+
 class ProjectPlacement(BaseModel):
     """A person puts a decision or an item in one of the team's projects, or none."""
 
@@ -410,6 +441,9 @@ class SummaryDecision(BaseModel):
     status: Literal["pending", "confirmed"]
     project_id: str | None = None
 
+    summary: str | None = None
+    """``ReviewDecision.summary``: what was said, shown beneath the statement."""
+
 
 MAX_NOTE_CHARS = 2000
 
@@ -445,7 +479,10 @@ class ExtractionState(BaseModel):
     log, by the error's class -- with one distinction the screen needs:
     ``not_published`` says the last failure was passing a stored result on to
     the other modules, so the items and decisions on the board are this run's
-    and "could not extract" would be false."""
+    and "could not extract" would be false.
+
+    The last three say why a board can be empty with nothing wrong on record:
+    the first run has not finished, never came, or read nothing."""
 
     extracted_at: datetime | None
     failures: int
@@ -454,6 +491,24 @@ class ExtractionState(BaseModel):
     not_published: bool = False
     requested: bool
     requested_at: datetime | None
+    in_progress: bool = False
+    """A transcript is stored and no run of it is on record yet, nor a failure:
+    the first extraction is still going. An empty board is then "not yet", not
+    "nothing" (the user, dev, 2026-10-08: no items and no decisions minutes
+    after a transcription, and both there after "다시 추출"). Ends by itself:
+    with the run, with a failure, or ``attempts.ADOPT_AFTER`` after the
+    transcript was stored, when ``overdue`` takes its place."""
+    overdue: bool = False
+    """The same, and the transcript is older than ``attempts.ADOPT_AFTER``: the
+    run did not come -- lost with a worker, or never started. The sweep counts
+    it as a failure on its next pass and tries; until then the screen says the
+    extraction has not happened, instead of "in progress" for good."""
+    read_nothing: bool = False
+    """The last run was allowed to read none of the meeting's lines: no speech
+    in it has consent on record (``service.consented_utterance_ids``). The run
+    went through and found nothing, which is not the same as nothing having
+    been said. About the meeting as a whole -- never who did or did not
+    consent, and false as soon as any line was read."""
 
 
 class DueReminderSetting(BaseModel):
@@ -760,6 +815,13 @@ class ReviewDecision(BaseModel):
 
     source_utterance_ids: list[str]
 
+    deleted_source_count: int = 0
+    """Sources whose utterance was deleted since -- by module A's rerun of the
+    meeting or by a person deleting their own data (#400). They are not in
+    ``source_utterance_ids``; the count lets the screen say "근거 발화 삭제됨"
+    instead of showing a decision that never had a source, as
+    ``ActionItemRead.deleted_source_count`` does for an item."""
+
     sync_refs: list[ExternalRefRead]
     """One entry per system this decision has been claimed for -- today, at
     most ``notion`` (#30). No drawer exists for a decision (S15 is the whole
@@ -805,7 +867,8 @@ class DecisionDetail(ReviewDecision):
 
     sources: list[SourceUtterance]
     """In the order they were spoken -- the proposal first, the sentence that
-    settled it last. Empty for a decision a person added, which has none."""
+    settled it last. Empty for a decision a person added without pointing at a
+    line, and for one whose every source was deleted (``deleted_source_count``)."""
 
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence

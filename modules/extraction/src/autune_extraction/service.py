@@ -74,6 +74,7 @@ from .decisions import (
     needs_write_up,
 )
 from .edit_cost import EditCost
+from .excerpt import cut, joined, quoted
 from .models import (
     ExtActionItem,
     ExtActionItemRelated,
@@ -1201,6 +1202,20 @@ def live_source_ids(item: ExtActionItem) -> list[str]:
     return [source.utterance_id for source in item.sources if source.utterance_id is not None]
 
 
+def live_decision_source_ids(decision: ExtDecision) -> list[str]:
+    """The decision's source utterances that still exist, in the order they
+    were spoken.
+
+    A link row outlives its utterance with ``utterance_id`` NULL (see
+    ``ExtDecisionSource``); those are counted, never listed.
+    """
+    return [
+        source.utterance_id
+        for source in sorted(decision.sources, key=lambda s: s.position)
+        if source.utterance_id is not None
+    ]
+
+
 def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[str]:
     """Ids of the items whose assignee is not a member of the meeting's team.
 
@@ -1876,28 +1891,46 @@ def _summary_texts(session: Session, utterance_ids: Collection[str]) -> dict[str
     return {utterance_id: text for utterance_id, text in rows}
 
 
+def _said(texts: Mapping[str, str], source: ExtActionItemSource | ExtDecisionSource) -> str | None:
+    """What a preview shows of one source: the part the row was made from when
+    one is recorded (``excerpt``), the utterance otherwise; ``None`` when the
+    utterance is gone."""
+    text = texts.get(source.utterance_id) if source.utterance_id is not None else None
+    if text is None:
+        return None
+    return cut(text, source.excerpt_start, source.excerpt_end) or text
+
+
 def action_item_summaries(session: Session, items: Sequence[ExtActionItem]) -> dict[str, str]:
-    """A one-line preview of each item's sources, for the ones ``description``
-    alone does not already say.
+    """A one-line preview of what each item was made from, for the ones
+    ``description`` alone does not already say.
 
-    **Rule-based, not a model.** The longest source utterance, truncated --
-    which utterance actually carries the point is a real question (#325), and
-    this is the cheap first answer while that is unbuilt: exactly the same
-    reasoning ``decisions._substance`` already uses for the settling row.
-    Wrong here is visible and checked against the drawer's full quotation, not
-    generated prose a reader has no way to verify.
+    **Rule-based, not a model.** The longest source, truncated -- which
+    utterance actually carries the point is a real question (#325), and this is
+    the cheap first answer while that is unbuilt: exactly the same reasoning
+    ``decisions._substance`` already uses for the settling row. Wrong here is
+    visible and checked against the drawer's full quotation, not generated
+    prose a reader has no way to verify. A source is read as the part of it the
+    item was made from, when the run recorded one (``_said``).
 
-    **Only when there is more than one source.** With a single source
-    ``description`` already is that utterance's text (``slots`` builds it that
-    way), and repeating it as ``summary`` would be a second copy of the same
-    line, not a new one.
+    **Not when ``description`` is that line already.** With a single source and
+    no model's sentence, ``description`` is the utterance's own text (``slots``
+    builds it that way), and repeating it as ``summary`` would be a second copy
+    of the same line, not a new one. A model's sentence
+    (``description_resolved``) is not the line: what was said goes beneath it,
+    so a card shows the summary and the words it stands for (the user,
+    2026-10-08).
     """
     live = {item.id: live_source_ids(item) for item in items}
-    multi = [item for item in items if len(live[item.id]) > 1]
-    texts = _summary_texts(session, {uid for item in multi for uid in live[item.id]})
+    shown = [
+        item
+        for item in items
+        if len(live[item.id]) > 1 or (live[item.id] and item.description_resolved)
+    ]
+    texts = _summary_texts(session, {uid for item in shown for uid in live[item.id]})
     summaries: dict[str, str] = {}
-    for item in multi:
-        candidates = [texts[uid] for uid in live[item.id] if uid in texts]
+    for item in shown:
+        candidates = [said for source in item.sources if (said := _said(texts, source))]
         if candidates:
             summaries[item.id] = _truncate(max(candidates, key=len))
     return summaries
@@ -1913,15 +1946,11 @@ def decision_summaries(session: Session, decisions: Sequence[ExtDecision]) -> di
     literally said beside it.
     """
     texts = _summary_texts(
-        session, {source.utterance_id for decision in decisions for source in decision.sources}
+        session, {u for decision in decisions for u in live_decision_source_ids(decision)}
     )
     summaries: dict[str, str] = {}
     for decision in decisions:
-        candidates = [
-            texts[source.utterance_id]
-            for source in decision.sources
-            if source.utterance_id in texts
-        ]
+        candidates = [said for source in decision.sources if (said := _said(texts, source))]
         if candidates:
             summaries[decision.id] = _truncate(max(candidates, key=len))
     return summaries
@@ -1936,12 +1965,20 @@ def source_utterances(session: Session, action_item_id: str) -> list[SourceUtter
     join failed.
     """
     rows = session.execute(
-        select(Utterance.id, Utterance.text)
+        select(
+            Utterance.id,
+            Utterance.text,
+            ExtActionItemSource.excerpt_start,
+            ExtActionItemSource.excerpt_end,
+        )
         .join(ExtActionItemSource, ExtActionItemSource.utterance_id == Utterance.id)
         .where(ExtActionItemSource.action_item_id == action_item_id)
         .order_by(Utterance.start_sec, Utterance.id)
     ).all()
-    return [SourceUtterance(id=utterance_id, text=text) for utterance_id, text in rows]
+    return [
+        SourceUtterance(id=utterance_id, text=text, excerpt=cut(text, start, end))
+        for utterance_id, text, start, end in rows
+    ]
 
 
 def update_action_item(
@@ -2249,6 +2286,33 @@ def build_decisions(
         id_: list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
         for id_, group in fresh.items()
     }
+    # Which part of an utterance each decision was settled in (``excerpt``):
+    # for each of its members, the words the classifier named when they are in
+    # the stored text, else the piece of a long turn the member was; a member
+    # with neither is the whole utterance. Found in the text as it is stored.
+    by_id = {u.id: u for u in utterances}
+    members: dict[tuple[str, str], list[ClassifiedUtterance]] = {}
+    for id_, group in fresh.items():
+        for member in group.source_utterance_ids:
+            entry = by_id.get(member)
+            if entry is not None and (entry.part_of or entry.part):
+                members.setdefault((id_, entry.source_id), []).append(entry)
+    turns = _summary_texts(session, {turn for _, turn in members})
+    parts = {
+        (id_, turn): part
+        for (id_, turn), entries in members.items()
+        if (whole := turns.get(turn)) is not None
+        and (
+            part := joined(
+                whole,
+                (
+                    quoted(whole, entry.text if entry.part_of else None, entry.part)
+                    for entry in entries
+                ),
+            )
+        )
+        is not None
+    }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
     # Which statements are a model's sentence and not the line tidied: said
@@ -2333,6 +2397,27 @@ def build_decisions(
                 .on_conflict_do_nothing(index_elements=["decision_id", "utterance_id"])
             )
 
+        # The parts are written for every decision of this run, not only the
+        # new ones: a row from before the offsets existed gets them, and a turn
+        # corrected in another sentence has them counted again on its new text.
+        session.execute(
+            update(ExtDecisionSource)
+            .where(
+                ExtDecisionSource.decision_id.in_(fresh),
+                ExtDecisionSource.excerpt_start.is_not(None),
+            )
+            .values(excerpt_start=None, excerpt_end=None)
+        )
+        for (id_, turn), (start, end) in parts.items():
+            session.execute(
+                update(ExtDecisionSource)
+                .where(
+                    ExtDecisionSource.decision_id == id_,
+                    ExtDecisionSource.utterance_id == turn,
+                )
+                .values(excerpt_start=start, excerpt_end=end)
+            )
+
         # The lines a summary used can differ between two runs over the same
         # sources, so they are replaced, not kept: the summary they belong to was.
         session.execute(delete(ExtDecisionRelated).where(ExtDecisionRelated.decision_id.in_(fresh)))
@@ -2410,9 +2495,7 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
         Decision(
             id=row.id,
             statement=_lineage_statement(row, reviews.get(row.id)),
-            source_utterance_ids=[
-                source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
-            ],
+            source_utterance_ids=live_decision_source_ids(row),
             confidence=row.confidence,
         )
         for row in rows
@@ -2849,6 +2932,8 @@ def classify_utterances(
             pieces=prediction.pieces,
             summary=prediction.summary,
             piece_summaries=prediction.piece_summaries,
+            part=prediction.part,
+            piece_parts=prediction.piece_parts,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -3399,6 +3484,11 @@ def apply_source_corrections(
         item.source_digest = digest
         if first:
             continue
+        # The part was counted on the line as it was before the correction.
+        # Only a meeting a person has edited gets here with one: any other was
+        # rebuilt by this run, and a new item's digest is recorded just above.
+        for source in item.sources:
+            source.excerpt_start = source.excerpt_end = None
         line = texts[0] or ""
         if item.origin == "user" or _edited_description(session, item.id):
             item.needs_recheck = True
@@ -3428,7 +3518,7 @@ def apply_source_corrections(
         .where(ExtDecision.meeting_id == meeting_id)
         .options(selectinload(ExtDecision.sources))
     ):
-        ids = [s.utterance_id for s in sorted(decision.sources, key=lambda s: s.position)]
+        ids = live_decision_source_ids(decision)
         texts = [spoken.get(u) for u in ids]
         if not ids or any(t is None for t in texts):
             continue
@@ -3549,6 +3639,9 @@ def build_action_items(
         # A piece is read by its own words: the date in another part of the
         # turn belongs to whatever was promised there.
         own = utterance.text if utterance.part_of else said.text
+        # Where the promise is in the utterance, for the quotation
+        # (``excerpt``): the words the classifier named, else the piece.
+        part = quoted(said.text, own if utterance.part_of else None, utterance.part)
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(own, day)
         # ``description_resolved`` is about the resolver's rewrite alone; tidying
@@ -3574,7 +3667,13 @@ def build_action_items(
                 status=ActionStatus.NEEDS_CONFIRMATION.value,
                 confidence=utterance.confidence,
                 origin="model",
-                sources=[ExtActionItemSource(utterance_id=utterance.source_id)],
+                sources=[
+                    ExtActionItemSource(
+                        utterance_id=utterance.source_id,
+                        excerpt_start=part[0] if part else None,
+                        excerpt_end=part[1] if part else None,
+                    )
+                ],
                 related=[ExtActionItemRelated(utterance_id=u) for u in cited],
             )
         )
@@ -4554,6 +4653,7 @@ def _review_decision_row(
     or a meeting's worth fetched in batches -- build the same row the same way
     without either one re-running the other's queries (#296).
     """
+    source_ids = live_decision_source_ids(decision)
     return ReviewDecision(
         id=decision.id,
         statement=_confirmed_statement(decision, review),
@@ -4563,9 +4663,8 @@ def _review_decision_row(
         needs_recheck=bool(decision.needs_recheck),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
-        source_utterance_ids=[
-            source.utterance_id for source in sorted(decision.sources, key=lambda s: s.position)
-        ],
+        source_utterance_ids=source_ids,
+        deleted_source_count=len(decision.sources) - len(source_ids),
         sync_refs=[
             ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
             for ref in refs
@@ -4627,20 +4726,29 @@ def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDet
     """One decision with the utterances it was settled in, in spoken order.
 
     Reads ``utterances``, which module A owns and this module may only read. An
-    utterance that has been deleted takes its link row with it, so a missing
-    quotation means the speech is gone.
+    utterance that has been deleted leaves its link row with no id (#400): the
+    join skips it, and ``deleted_source_count`` says a quotation is missing
+    because the speech is gone.
     """
     row = _read_decision(session, decision)
     quoted = session.execute(
-        select(Utterance.id, Utterance.text)
+        select(
+            Utterance.id,
+            Utterance.text,
+            ExtDecisionSource.excerpt_start,
+            ExtDecisionSource.excerpt_end,
+        )
         .join(ExtDecisionSource, ExtDecisionSource.utterance_id == Utterance.id)
         .where(ExtDecisionSource.decision_id == decision.id)
         .order_by(ExtDecisionSource.position)
     ).all()
     return DecisionDetail(
         **row.model_dump(),
-        sources=[SourceUtterance(id=uid, text=text) for uid, text in quoted],
-        context=context_before(session, [uid for uid, _ in quoted]),
+        sources=[
+            SourceUtterance(id=uid, text=text, excerpt=cut(text, start, end))
+            for uid, text, start, end in quoted
+        ],
+        context=context_before(session, [uid for uid, *_ in quoted]),
         related=decision_related_utterances(session, decision.id),
     )
 
@@ -4699,6 +4807,7 @@ def meeting_summary(
                 statement=d.statement,
                 status=d.status,  # type: ignore[arg-type]
                 project_id=placed.get(d.id),
+                summary=d.summary,
             )
             for d in kept
         ],
@@ -5796,12 +5905,14 @@ def decision_notion_properties(
 
     ``statement`` is the person's rewording when there is one -- what they
     confirmed -- and the model's sentence otherwise. The source utterances stay in
-    Autune; the page carries only how many there were.
+    Autune; the page carries only how many there are. One that was deleted is not
+    counted, as it was not while the link went with it (#400): what leaves Autune
+    is unchanged by the link's outliving the utterance.
     """
     fields: dict[str, Any] = {
         "title": {"title": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]},
         "confidence": {"number": round(decision.confidence, 3)},
-        "sources": {"number": len(decision.sources)},
+        "sources": {"number": len(live_decision_source_ids(decision))},
     }
     if meeting_title:
         fields["meeting"] = {

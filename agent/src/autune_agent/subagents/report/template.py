@@ -48,7 +48,10 @@ READS = (ACTIONS_TOOL, REVIEW_TOOL, GAPS_TOOL, LINKS_TOOL)
 """What a report is composed from, in order."""
 AWAITING_TOOL = "intelligence.meeting_report_awaiting_approval"
 """E's read of the draft a person's edit left, for the post proposal (#674)."""
-TOOLS = (*READS, AWAITING_TOOL)
+CHANNEL_TOOL = "intelligence.report_channel"
+"""E's read of whether the team has a Slack channel to post to. Without one a
+post is refused at approval, so it is not proposed (#1000 review)."""
+TOOLS = (*READS, AWAITING_TOOL, CHANNEL_TOOL)
 OPTIONAL = (GAPS_TOOL, LINKS_TOOL)
 """Context around B's confirmed items. A failure here drops a section, never the report."""
 
@@ -86,6 +89,32 @@ def _read(toolbox: Toolbox, name: str, meeting: dict[str, Any]) -> ToolResult | 
         raise  # the run's stop, not this tool's failure
     except Exception as exc:  # a bug in C's or D's tool costs its section only
         log.warning("report_optional_tool_failed tool=%s error=%s", name, type(exc).__name__)
+        return None
+
+
+NO_SLACK = (
+    "Slack이 연결되어 있지 않아 게시는 요청하지 않았습니다. 설정에서 Slack과 채널을 연결해 주세요."
+)
+"""Said instead of a post proposal that would only fail at approval."""
+
+
+def no_channel(result: ToolResult | None) -> bool:
+    """True only when E's ``report_channel`` says there is no channel. A missing
+    tool or a failed read proposes the post as before: E refuses it at approval."""
+    if result is None or not result.ok or not result.items:
+        return False
+    return getattr(result.items[0], "connected", True) is False
+
+
+def _channel(toolbox: Toolbox) -> ToolResult | None:
+    if CHANNEL_TOOL not in toolbox.describe():
+        return None
+    try:
+        return toolbox.call(CHANNEL_TOOL)
+    except BudgetExceededError:
+        raise
+    except Exception as exc:  # a broken check costs nothing: the post is proposed as before
+        log.warning("report_channel_check_failed error=%s", type(exc).__name__)
         return None
 
 
@@ -132,6 +161,8 @@ def repropose(toolbox: Toolbox) -> SubagentState:
         said = "회의 리포트 수정본을 승인 대기로 올렸습니다."
     else:
         return failed("what awaits approval has no id")
+    if no_channel(_channel(toolbox)):
+        return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=NO_SLACK, items=[]))}
     summary = ToolResult(ok=True, summary=said, items=[])
     return {"outcome": SubagentResult(result=summary, proposed=[post])}
 
@@ -160,7 +191,8 @@ def already_posted(toolbox: Toolbox, meeting: dict[str, Any]) -> bool:
 
 
 def compose_report(toolbox: Toolbox, meeting: dict[str, Any]) -> SubagentResult:
-    """Read B, C, D, render, and propose the draft (L1) and its post (L2)."""
+    """Read B, C, D, render, and propose the draft (L1) and its post (L2) --
+    the draft alone when the team has no Slack channel to post to."""
     results = {name: _read(toolbox, name, meeting) for name in READS}
     actions = results[ACTIONS_TOOL]
     if actions is not None and not actions.ok:
@@ -185,6 +217,9 @@ def compose_report(toolbox: Toolbox, meeting: dict[str, Any]) -> SubagentResult:
         level="L1",
         rationale="The meeting's analysis finished; store its structured minutes.",
     )
+    if no_channel(_channel(toolbox)):
+        said = f"회의 리포트 초안을 만들었습니다. {NO_SLACK}"
+        return SubagentResult(result=ToolResult(ok=True, summary=said, items=[]), proposed=[draft])
     post = ProposedAction(
         kind="meeting_report_post",
         title="회의 리포트 게시",

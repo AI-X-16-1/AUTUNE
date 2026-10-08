@@ -4,6 +4,7 @@ test_feedback.py."""
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 import pytest
@@ -70,7 +71,6 @@ def test_drift_channel_notice_escapes_the_label_and_the_statement() -> None:
         thread_label="<!channel>",
         current_statement=_PING,
         change_type=ChangeType.REVERSED,
-        absent_count=1,
         meeting_date=None,
     )
 
@@ -104,13 +104,50 @@ def test_drift_channel_notice_names_no_one() -> None:
         thread_label="검색 정렬 기준",
         current_statement="최신순으로 정렬한다",
         change_type=ChangeType.REVERSED,
-        absent_count=2,
         meeting_date=date(2026, 9, 4),
     )
 
     text = _text(blocks)
     assert "usr_" not in text
-    assert "2명" in text
+
+
+@pytest.mark.parametrize("change_type", [ChangeType.MODIFIED, ChangeType.REVERSED])
+def test_drift_channel_notice_does_not_say_how_many_were_absent(change_type: ChangeType) -> None:
+    """A count of one points at one person in a small team (#339)."""
+    fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="검색 정렬 기준",
+        current_statement="최신순으로 정렬한다",
+        change_type=change_type,
+        meeting_date=date(2026, 9, 4),
+    )
+
+    assert not re.search(r"\d+\s*명", fallback + _text(blocks))
+
+
+def test_drift_channel_notice_does_not_print_the_same_sentence_twice() -> None:
+    """The label is the thread's head statement, so for the head version label
+    and statement are one sentence (#282)."""
+    _fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="최신순으로 정렬한다",
+        current_statement="최신순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        meeting_date=None,
+    )
+
+    assert _text(blocks).count("최신순으로 정렬한다") == 1
+
+
+def test_drift_channel_notice_shows_both_when_the_statement_is_not_the_label() -> None:
+    _fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="최신순으로 정렬한다",
+        current_statement="관련도순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        meeting_date=None,
+    )
+
+    text = _text(blocks)
+    assert "최신순으로 정렬한다" in text
+    assert "관련도순으로 정렬한다" in text
 
 
 def test_drift_channel_notice_reflects_reversed_vs_modified() -> None:
@@ -118,14 +155,12 @@ def test_drift_channel_notice_reflects_reversed_vs_modified() -> None:
         thread_label="t",
         current_statement="s",
         change_type=ChangeType.REVERSED,
-        absent_count=1,
         meeting_date=None,
     )
     _fallback, modified_blocks = build_decision_drift_channel_notice(
         thread_label="t",
         current_statement="s",
         change_type=ChangeType.MODIFIED,
-        absent_count=1,
         meeting_date=None,
     )
 
@@ -138,7 +173,6 @@ def test_drift_channel_notice_states_the_changing_meetings_date() -> None:
         thread_label="검색 정렬 기준",
         current_statement="최신순으로 정렬한다",
         change_type=ChangeType.MODIFIED,
-        absent_count=1,
         meeting_date=date(2026, 9, 4),
     )
 
@@ -151,7 +185,6 @@ def test_drift_channel_notice_omits_the_date_when_the_meeting_has_none() -> None
         thread_label="검색 정렬 기준",
         current_statement="최신순으로 정렬한다",
         change_type=ChangeType.MODIFIED,
-        absent_count=1,
         meeting_date=None,
     )
 

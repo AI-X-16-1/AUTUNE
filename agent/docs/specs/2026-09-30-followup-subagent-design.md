@@ -149,6 +149,12 @@ One `ProposedAction`, with:
   puts the meeting on a calendar (#441).
 
 - `evidence`: the gap ids the rule fired on, highest risk first.
+- `kind`: which rule of section 4 fired (#854). `followup_reopened` when a gap
+  carried over from the previous meeting, `followup_risky` when high gaps and
+  a question left the meeting heavy, `followup_reopened_risky` when both did.
+  The pending row keeps `kind` but not the rationale (agent/CLAUDE.md rule 8),
+  so the card turns the code into its one line of why. Rows queued before this
+  carry `followup_meeting`.
 
 **The suggested date** (`rules.suggest_date`, asked for by the owner on
 2026-10-05; revised by #963, proposed). A follow-up meeting checks what M

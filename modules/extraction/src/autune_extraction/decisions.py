@@ -83,6 +83,12 @@ class ClassifiedUtterance:
     ``service.resolve_decision_summaries`` in place of asking the resolver."""
     piece_summaries: tuple[str, ...] = ()
     """The same for each of ``pieces``."""
+    part: str = ""
+    """The words of this line that carry the commitment or the decision
+    (``Prediction.part``); empty when the classifier named none. Read where a
+    source is recorded, for the quotation (``excerpt.quoted``)."""
+    piece_parts: tuple[str, ...] = ()
+    """The same for each of ``pieces``."""
     part_of: str = ""
     """The id of the utterance this is a piece of, for an entry ``in_pieces``
     made; empty for an utterance itself."""
@@ -134,6 +140,12 @@ def in_pieces(classified: Sequence[ClassifiedUtterance]) -> list[ClassifiedUtter
                         else ""
                     ),
                     piece_summaries=(),
+                    part=(
+                        utterance.piece_parts[number - 1]
+                        if number <= len(utterance.piece_parts)
+                        else ""
+                    ),
+                    piece_parts=(),
                     part_of=utterance.id,
                 )
             )

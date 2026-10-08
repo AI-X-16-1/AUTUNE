@@ -13,14 +13,13 @@ it is finally used. Each database touch here is short and scoped.
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Annotated
 
 import anyio
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from autune_audio import masking_rules, service
 from autune_audio.config import get_settings
+from autune_audio.deps import SessionDep
 from autune_audio.live import protocol, registry, tickets
 from autune_audio.live.embedder import Embedder
 from autune_audio.live.segmenter import Segmenter
@@ -28,7 +27,7 @@ from autune_audio.live.session import LiveSession, TranscribeFailed
 from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber
 from autune_audio.schemas import LiveTicket
-from autune_core import CurrentUser, get_logger, get_session
+from autune_core import CurrentUser, get_logger
 from autune_core.auth import SESSION_COOKIE
 from autune_core.db import session_scope
 from autune_core.errors import (
@@ -85,9 +84,7 @@ def build_session() -> LiveSession:
 
 
 @router.post("/live/{meeting_id}/ticket", response_model=LiveTicket)
-def live_ticket(
-    meeting_id: str, user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> LiveTicket:
+def live_ticket(meeting_id: str, user: CurrentUser, session: SessionDep) -> LiveTicket:
     """A one-use ticket for ``hello``, for a socket on another host.
 
     Asked over the page's own origin, where the session cookie goes; the
@@ -276,6 +273,13 @@ async def _emit(websocket: WebSocket, session: LiveSession, data: bytes) -> None
 
 
 async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str) -> None:
+    # Released before the last segment is transcribed, not after. The claim
+    # stops an upload landing under a socket that is still streaming, and
+    # from here on no frame is read. The browser waits 15 s for ``ended`` and
+    # then uploads regardless; on the dev server's CPU the last segment took
+    # longer than that, and the upload was refused 409 while the claim was
+    # still held.
+    registry.release(meeting_id)
     try:
         rows = await session.stop()
     except TranscribeFailed:
@@ -283,8 +287,5 @@ async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str
         await websocket.send_json(protocol.error("transcribe_failed"))
     for row in rows:
         await websocket.send_json(protocol.row(row))
-    # Released before ``ended``: the browser uploads the moment it sees
-    # ``ended``, and ``start_transcription`` refuses while the claim is held.
-    registry.release(meeting_id)
     await websocket.send_json(protocol.ended())
     await websocket.close()

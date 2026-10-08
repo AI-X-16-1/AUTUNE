@@ -190,7 +190,10 @@ def test_context_gives_way_before_a_target_does_and_the_nearest_line_stays() -> 
 
     found = windows(lines, budget)
 
-    assert [(start, end) for _context, start, end in found][:2] == [(0, 3), (3, 4)]
+    # Two of these fit beside the instructions, not three, since the
+    # instructions also ask for ``parts`` (2026-10-08) and are 127 characters
+    # longer.
+    assert [(start, end) for _context, start, end in found][:2] == [(0, 2), (2, 3)]
     for context, start, _end in found[1:]:
         assert 0 < start - context < CONTEXT_LINES  # some context, never all three
         assert sum(len(line) + 12 for line in lines[context : start + 1]) <= budget
