@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from json import dumps as json_dumps
 from types import SimpleNamespace
 
 import pytest
@@ -51,6 +52,7 @@ from autune_extraction.models import (
     ExtExtractionRun,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli
+from autune_extraction.pipeline.llm import UNREADABLE_ASKS, LlmClassifier, UnreadableAnswerError
 from autune_extraction.router import router
 from autune_integrations import TransientIntegrationError
 
@@ -1032,3 +1034,102 @@ def test_a_meeting_with_no_lines_stored_does_not_say_consent_is_why(wired: Sessi
 
     assert wired.get(ExtExtractionRun, "mtg_empty") is not None
     assert said(wired, "mtg_empty") == {}
+
+
+# -- a model answer that cannot be read (the user, 2026-10-08) ----------------
+#
+# A refused or broken answer used to label nothing, so the run went through
+# with no item and no decision and nothing tried again. The cloud classifier
+# itself is behind the task here; only the provider is a fake.
+
+
+class Answers:
+    """A provider that gives back the responses it was handed, in order, and
+    after them labels every line that ends a promise."""
+
+    def __init__(self, *responses: dict) -> None:
+        self.responses = list(responses)
+        self.asked = 0
+
+    def request(self, method: str, path: str, *, json: dict) -> dict:  # noqa: A002 - httpx's name
+        self.asked += 1
+        if self.responses:
+            return self.responses.pop(0)
+        labels = {}
+        for line in json["contents"][0]["parts"][0]["text"].splitlines():
+            number, mark, text = line.split(" ", 2)
+            if mark == "[대상]" and text.endswith("겠습니다"):
+                labels[number] = "commitment"
+        return answered(json_dumps({"labels": labels}))
+
+
+def answered(text: str) -> dict:
+    return {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+
+
+def cloud(monkeypatch: pytest.MonkeyPatch, *responses: dict) -> Answers:
+    provider = Answers(*responses)
+    classifier = LlmClassifier(api_key="k", model="gemini-test", base_url="http://llm.invalid")
+    classifier._client = provider  # type: ignore[assignment]
+    monkeypatch.setattr(tasks, "get_classifier", lambda: classifier)
+    return provider
+
+
+REFUSED = {"promptFeedback": {"blockReason": "SAFETY"}}
+
+
+def test_an_answer_that_cannot_be_read_is_a_failed_run_and_the_sweep_extracts_the_meeting(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = cloud(monkeypatch, *[REFUSED] * UNREADABLE_ASKS)
+
+    with pytest.raises(UnreadableAnswerError):
+        tasks.on_transcript_ready(event())
+
+    # Not an extraction that went through and found nothing.
+    assert wired.get(ExtExtractionRun, MEETING) is None
+    counted = row(wired)
+    assert counted is not None and counted.failures == 1
+    assert counted.reason == "UnreadableAnswerError"
+    state = attempts.state(wired, MEETING)
+    assert state.extracted_at is None and state.will_retry is True
+
+    # The provider answers now; nobody presses anything.
+    assert tasks.retry_failed_extractions() == [MEETING]
+
+    assert wired.query(ExtActionItem).count() == 1
+    assert row(wired).failures == 0  # type: ignore[union-attr]
+    assert wired.get(ExtExtractionRun, MEETING) is not None
+    assert provider.asked == UNREADABLE_ASKS + 1
+
+
+def test_an_answer_that_stays_unreadable_is_said_after_three_runs_and_asked_no_more(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, channel: dict
+) -> None:
+    provider = cloud(monkeypatch, *[answered(f"답할 수 없습니다: {SAID}")] * 100)
+
+    with capture_logs() as logs, pytest.raises(UnreadableAnswerError):
+        tasks.on_transcript_ready(event())
+    for _ in range(attempts.MAX_ATTEMPTS):
+        tasks.retry_failed_extractions()
+
+    assert row(wired).failures == attempts.MAX_ATTEMPTS  # type: ignore[union-attr]
+    assert attempts.state(wired, MEETING).will_retry is False
+    assert provider.asked == UNREADABLE_ASKS * attempts.MAX_ATTEMPTS
+    assert wired.query(ExtActionItem).count() == 0
+    # The answer quoted a line of the meeting; no log line does.
+    assert SAID not in repr(logs)
+
+
+def test_an_answer_that_says_there_is_nothing_is_a_run_that_went_through(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = cloud(monkeypatch, *[answered('{"labels": {}}')] * 100)
+
+    tasks.on_transcript_ready(event())
+
+    assert wired.get(ExtExtractionRun, MEETING) is not None
+    assert row(wired) is None
+    assert wired.query(ExtActionItem).count() == 0
+    assert provider.asked == 1
+    assert tasks.retry_failed_extractions() == []
