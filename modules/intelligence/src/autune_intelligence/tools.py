@@ -506,6 +506,21 @@ def weekly_report_schedule(session: Session, team_id: str) -> dict[str, Any]:
     return _result(summary=f"{when}에 팀 채널로 보냅니다. {empty}{by}", items=[])
 
 
+def report_channel(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this before proposing a report's post: whether the team has a Slack
+    channel to post to. Do not use it for anything a person asked about Slack.
+
+    Returns one item whose ``connected`` is true or false. Never the channel,
+    the workspace or the token. Without a channel the post would be refused at
+    approval (``slack not connected``), so it is not worth proposing.
+    """
+    connected = service._slack_connected(session, team_id)
+    title = "Slack 채널이 연결되어 있습니다." if connected else "Slack이 연결되어 있지 않습니다."
+    return _result(
+        summary=title, items=[{"title": title, "body": "", "score": 1.0, "connected": connected}]
+    )
+
+
 def explain_metric(session: Session, team_id: str, question: str) -> dict[str, Any]:
     """Use this to say what one of E's numbers means or how it is computed --
     the quality grade, a gap pattern, alignment, the prediction, completion or
@@ -541,6 +556,7 @@ TOOLS = [
     weekly_reports,
     weekly_report_schedule,
     explain_metric,
+    report_channel,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 

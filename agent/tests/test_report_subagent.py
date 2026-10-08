@@ -23,6 +23,7 @@ from autune_agent.subagents.report.graph import (
     PUBLISH_ACTION,
     REVIEW_TOOL,
 )
+from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK
 from autune_agent.testing import mock_tool
 
 TEAM = "team_a"
@@ -212,6 +213,61 @@ def test_an_edit_on_another_teams_meeting_proposes_nothing() -> None:
 
 def test_the_awaiting_read_is_a_tool_e_actually_ships() -> None:
     assert AWAITING_TOOL in collect_tools(["intelligence"])
+
+
+# --- no Slack channel to post to (#1000 review) -------------------------------------
+
+
+def _channel(connected: bool) -> dict[str, Any]:
+    title = "Slack 채널이 연결되어 있습니다." if connected else "Slack이 연결되어 있지 않습니다."
+    return {"ok": True, "summary": title, "items": [{"title": title, "connected": connected}]}
+
+
+def test_without_a_channel_a_finished_meeting_is_drafted_and_its_post_not_proposed() -> None:
+    """E would refuse the post at approval; a card that can only fail is not offered."""
+    tools = {**_all_tools(), CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, _channel(False))}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert outcome.result.ok is True
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION]
+    assert NO_SLACK in outcome.result.summary
+
+
+@pytest.mark.parametrize(
+    "check",
+    [_channel(True), {"ok": False, "reason": "boom", "summary": "읽지 못했습니다."}],
+    ids=["connected", "check-failed"],
+)
+def test_with_a_channel_or_no_answer_the_post_is_proposed_as_before(check: dict[str, Any]) -> None:
+    """A failed check proposes the post: E's action still refuses it at approval."""
+    tools = {**_all_tools(), CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, check)}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
+
+
+@pytest.mark.parametrize(
+    "awaiting",
+    [_awaiting("rdr_edited"), _awaiting_correction("rcr_fix")],
+    ids=["edited-draft", "correction"],
+)
+def test_without_a_channel_a_persons_change_proposes_nothing(awaiting: dict[str, Any]) -> None:
+    tools = {
+        AWAITING_TOOL: mock_tool(AWAITING_TOOL, awaiting),
+        CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, _channel(False)),
+    }
+
+    outcome = _run(CHANGED, tools, scope_meeting=MEETING)
+
+    assert outcome.result.ok is True and outcome.proposed == []
+    assert outcome.result.summary == NO_SLACK
+
+
+def test_the_channel_read_is_a_tool_e_actually_ships() -> None:
+    assert CHANNEL_TOOL in collect_tools(["intelligence"])
+    assert CHANNEL_TOOL in SUBAGENT.tools
 
 
 # --- asked in chat ----------------------------------------------------------------

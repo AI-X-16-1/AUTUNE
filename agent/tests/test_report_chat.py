@@ -21,6 +21,7 @@ from autune_agent.subagents.report.graph import (
     REVIEW_TOOL,
     TRIGGERS,
 )
+from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK
 from autune_agent.testing import mock_tool
 
 TEAM = "team_a"
@@ -425,6 +426,51 @@ def test_request_post_then_redraft_replaces_the_earlier_post(monkeypatch) -> Non
     (post,) = _posts(out)
     (draft,) = [p for p in out.proposed if p.tool == DRAFT_ACTION]
     assert post.arguments["draft_id"] == draft.arguments["draft_id"] != "rdr_a"
+
+
+def _no_slack(tools: dict[str, Any]) -> dict[str, Any]:
+    """E says the team has no Slack channel: a post would be refused at approval."""
+    title = "Slack이 연결되어 있지 않습니다."
+    unconnected = {"ok": True, "summary": title, "items": [{"title": title, "connected": False}]}
+    return {**tools, CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, unconnected)}
+
+
+def test_request_post_without_slack_says_so_and_proposes_nothing(monkeypatch) -> None:
+    out = _run(
+        "리포트 올려줘",
+        Script([call("request_post")]),
+        _no_slack(_tools()),
+        monkeypatch=monkeypatch,
+    )
+    assert out.proposed == [] and NO_SLACK in out.result.summary
+    assert "승인 대기로 요청했습니다" not in out.result.summary
+
+
+def test_a_correction_without_slack_is_not_proposed(monkeypatch) -> None:
+    awaiting = {
+        "ok": True,
+        "summary": "",
+        "items": [{"title": "리포트 수정본", "kind": "correction", "correction_id": "rcr_1"}],
+    }
+    out = _run(
+        "정정 올려줘",
+        Script([call("request_post")]),
+        _no_slack(_tools(body=_body(status="posted"), awaiting=awaiting)),
+        monkeypatch=monkeypatch,
+    )
+    assert out.proposed == [] and NO_SLACK in out.result.summary
+
+
+@pytest.mark.parametrize("order", [("redraft", "request_post"), ("request_post", "redraft")])
+def test_redraft_and_post_without_slack_draft_only_and_say_it_once(monkeypatch, order) -> None:
+    out = _run(
+        "다시 써서 올려줘",
+        Script([call(name) for name in order]),
+        _no_slack(_tools()),
+        monkeypatch=monkeypatch,
+    )
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
+    assert out.result.summary.count(NO_SLACK) == 1
 
 
 def test_each_action_runs_once_per_run(monkeypatch) -> None:

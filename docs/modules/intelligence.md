@@ -297,7 +297,14 @@ posted copy in Slack is outside Autune: deleting an account or a meeting does
 not recall it. An approved post is refused at approval (`slack not connected`)
 while the team has no Slack token or channel: the delivery task could only log
 that, and the approver would have read "예약했습니다" for a post that never
-went out. The draft stays, and can be approved again after connecting.
+went out. The draft stays, and can be approved again after connecting. So the
+Report subagent asks first (`report_channel`, whether, never which channel) and,
+without a channel, proposes the draft alone and says why; a person's edit or
+correction proposes nothing. Those runs have no chat, and a run keeps no
+answer (agent-layer.md section 5), so the reason is not shown anywhere; the card
+shows the draft as not posted. A meeting that passed
+without Slack gets no card later: once Slack is connected, its post is asked for
+in chat ("리포트 올려줘") and approved as usual.
 
 **A correction to a posted report (#658, #674).** A posted report is never
 changed in place. A member writes a correction on the card; it goes the same
