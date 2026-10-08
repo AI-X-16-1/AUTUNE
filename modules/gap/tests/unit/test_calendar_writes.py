@@ -89,6 +89,9 @@ class FakeCalendar:
             self.descriptions[event_id] = kwargs["json"]["description"]
             return {}
         found: dict[str, Any] = {"description": self.descriptions.get(event_id, "")}
+        listed = next((e for e in self.events if e["id"] == event_id), None)
+        if listed is not None:
+            found["start"] = listed["start"]
         if event_id in self.attendees:
             found["attendees"] = self.attendees[event_id]
         found.update(self.extra.get(event_id, {}))
@@ -456,6 +459,7 @@ def test_the_picker_and_the_write_ask_google_for_named_fields_only(
     assert google.fields == [calendar_writes.LIST_FIELDS, calendar_writes.WRITE_FIELDS]
     assert "description" not in calendar_writes.LIST_FIELDS
     assert "attendees" not in calendar_writes.LIST_FIELDS
+    assert "summary" not in calendar_writes.WRITE_FIELDS  # the notice never names the event
 
 
 # --- an event shared outside the team (mkkim68 on #824) -------------------------
@@ -834,6 +838,60 @@ def test_scheduling_tells_the_team_channel_once(
     card = slack.card()
     assert "다음 회의 안건" in card
     assert "목표 응답 시간을 누가 정합니까?" in card
+
+
+def test_the_notice_says_when_the_next_meeting_starts(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """In the event's own time zone, as Google gave it -- not the server's UTC."""
+    gap(session, "gap_1")
+    kst = datetime.fromisoformat("2026-10-15T14:00:00+09:00")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", kst)])
+    google.events[0]["summary"] = "홍길동 1:1"
+    slack.connect()
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    card = slack.card()
+    assert "다음 회의(10월 15일(목) 14:00) 캘린더 일정에" in card
+    assert "*다음 회의:* 10월 15일(목) 14:00" in card
+    assert "홍길동" not in card
+
+
+def test_the_next_scheduled_meetings_event_gives_its_start_too(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    gap(session, "gap_1")
+    next_meeting(session)
+    calendars[MEMBER] = FakeCalendar([event("evt_next", STARTS)])
+    slack.connect()
+
+    client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert f"*다음 회의:* {team_notice.when(STARTS)}" in slack.card()
+
+
+def test_a_notice_without_a_start_from_google_leaves_the_time_out(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.extra["evt_picked"] = {"start": {"dateTime": "not a time"}}
+    slack.connect()
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["slack"] == "posted"
+    card = slack.card()
+    assert "다음 회의 캘린더 일정에" in card
+    assert "*다음 회의:*" not in card
+
+
+def test_when_reads_a_time_or_an_all_day_date() -> None:
+    assert team_notice.when(datetime.fromisoformat("2026-12-31T09:05:00+09:00")) == (
+        "12월 31일(목) 09:05"
+    )
+    assert team_notice.when(date(2026, 10, 12)) == "10월 12일(월)"
 
 
 def test_nothing_is_announced_when_the_calendar_refused(

@@ -877,7 +877,8 @@ def carry_meeting_on_calendar(
 
     The notice lists only the gaps whose line is new on the event, so pressing
     again posts nothing; and it is posted only once the calendar took them,
-    so the channel never announces an agenda the event does not hold.
+    so the channel never announces an agenda the event does not hold. It says
+    when that event starts, so the team reads which meeting the gaps went to.
     """
     if not gaps:
         return GapMeetingCarry(meeting_id=meeting_id, carried=0, calendar="not_tried")
@@ -885,7 +886,7 @@ def carry_meeting_on_calendar(
     assert meeting is not None  # carry_meeting checked it
     gap_ids = [gap.id for gap in gaps]
     before = calendar_writes.written_lines(session, user_id=reader.id, gap_ids=gap_ids)
-    outcome = calendar_writes.update_agenda(
+    outcome, starts = calendar_writes.write_agenda(
         session, gaps, team_id=meeting.team_id, user_id=reader.id, carried=True, event_id=event_id
     )
     session.flush()
@@ -893,7 +894,7 @@ def carry_meeting_on_calendar(
     fresh = [gap for gap in gaps if gap.id in {gap_id for gap_id, _ in added}]
     slack: team_notice.SlackOutcome = "not_tried"
     if outcome == "added" and fresh:
-        slack = team_notice.post_agenda(session, meeting, fresh, presser=reader)
+        slack = team_notice.post_agenda(session, meeting, fresh, presser=reader, starts=starts)
     return GapMeetingCarry(meeting_id=meeting_id, carried=len(gaps), calendar=outcome, slack=slack)
 
 

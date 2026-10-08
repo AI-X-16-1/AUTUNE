@@ -1225,6 +1225,12 @@ polls them every five seconds while the rail says `analysed: false`.
 
 - Gap report thread in the meeting channel, `high` severity only by default
 - Generated question cards teams can act on
+- S20's two buttons post once on the team's channel (`team_notice`, #824).
+  "담당자 지정해 질문" mentions the member with the gap's question. "다음 회의
+  잡기" lists the gaps it put on the next meeting's event and says when that
+  event starts (`10월 15일(목) 14:00`, in the event's own time zone). Only the
+  event's date and time are read for it, never its title, which is Google's
+  unmasked text.
 
 ## AI stack
 
