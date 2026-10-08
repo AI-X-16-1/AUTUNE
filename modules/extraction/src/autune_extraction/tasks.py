@@ -98,6 +98,7 @@ from .models import (
 )
 from .pipeline.base import give_roster
 from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
+from .pipeline.summary import TooLongError
 
 log = get_logger(__name__)
 
@@ -387,7 +388,10 @@ def summarize_meeting(meeting_id: str) -> bool:
     that changed no line does not ask again. Reads, then calls the model with no
     session open, then writes: a transaction is never held across a call that
     takes seconds. A failed or unusable answer leaves the tab as v1 built it and
-    is logged by meeting id; nothing about it fails the meeting.
+    is logged by meeting id; nothing about it fails the meeting. A meeting too
+    long for a summary (``TooLongError``) leaves a row that says so and no text
+    (``service.mark_summary_too_long``): the tab then says why it has none, and
+    the same lines are not asked about again.
 
     A stored summary of other lines than the meeting has now is deleted before
     the model is asked, so none of the ways this can end without a new summary
@@ -419,6 +423,16 @@ def summarize_meeting(meeting_id: str) -> bool:
         written = summarizer.summarize(lines, board=board)
     except PrivacyViolationError:
         log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
+        return False
+    except TooLongError:
+        # Not a failure to retry: these lines need more calls than a meeting
+        # gets. Said in the row, so the tab can say it and the next run over
+        # the same lines does not spend the calls to find it out again.
+        with session_scope() as session:
+            service.mark_summary_too_long(
+                session, meeting_id, model_version=summarizer.model_version, lines=lines
+            )
+        log.info("extraction_summary_too_long", meeting_id=meeting_id, lines=len(lines))
         return False
     except Exception as exc:  # noqa: BLE001 -- the tab keeps v1; logged by id, never the text
         log.warning("extraction_summary_failed", meeting_id=meeting_id, error=type(exc).__name__)
