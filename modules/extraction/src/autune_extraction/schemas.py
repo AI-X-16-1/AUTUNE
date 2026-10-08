@@ -370,6 +370,29 @@ class ProjectWrite(BaseModel):
     jira_project_key: str | None = Field(default=None, max_length=32)
 
 
+class MaterialWrite(BaseModel):
+    """A Drive file a member puts on the team's 자료 screen: a title, and the
+    link as pasted. The link is parsed and not kept (``materials.register``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=300)
+    link: str = Field(min_length=1, max_length=2000)
+
+
+class MaterialRead(BaseModel):
+    """One of a team's materials (``ext_materials``): a title and which Drive
+    file it is. No address -- the screen builds Google's from the id and the
+    kind -- and no person."""
+
+    id: str
+    team_id: str
+    title: str
+    drive_file_id: str
+    drive_kind: Literal["file", "document", "presentation", "spreadsheets"]
+    created_at: datetime
+
+
 class ProjectPlacement(BaseModel):
     """A person puts a decision or an item in one of the team's projects, or none."""
 

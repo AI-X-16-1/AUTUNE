@@ -293,6 +293,23 @@ export interface Project {
 }
 
 /**
+ * A Google Drive file a team keeps on its 자료 screen -- `MaterialRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py` (`ext_materials`,
+ * #817). A title and which file it is: no address, which the screen builds
+ * from the id (`@/shared/drive`), and no person.
+ */
+export interface Material {
+  id: string;
+  team_id: string;
+  /** Typed by a member, shown as typed. */
+  title: string;
+  drive_file_id: string;
+  drive_kind: "file" | "document" | "presentation" | "spreadsheets";
+  /** ISO 8601, when it was registered. */
+  created_at: string;
+}
+
+/**
  * One of the reader's teams, by name -- `TeamRead` in
  * `modules/extraction/src/autune_extraction/schemas.py`. The board across
  * meetings heads each team's items with it (`ActionItemRead.team_id`).
