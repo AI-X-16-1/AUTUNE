@@ -397,13 +397,15 @@ was stored and for a week, and tried the same way.
 
 With `classifier_impl=llm`, a model answer that cannot be read is such a
 failure and not a run that found nothing. An answer is read when it holds a
-JSON object, with labels or with none: `{"labels": {}}` is what the
-instructions ask for when no line qualifies, and it is a success. It cannot be
-read when the request was refused, no candidate came back, the candidate had
-no text, or the text holds no JSON object. That window is asked once more at
-once; if the second answer cannot be read either, the call raises
-`UnreadableAnswerError`, the later windows are not asked, and the run is
-counted and retried as above. So one window refused every time costs the
+JSON object whose `labels` is an object or names nothing: `{"labels": {}}` is
+what the instructions ask for when no line qualifies, and it is a success, as
+are `{}`, an empty list and `null` in its place. It cannot be read when the
+request was refused, no candidate came back, the candidate had no text, the
+text holds no JSON object, or `labels` holds something that is not an object
+-- a list of kinds, a string -- which nobody can map to lines. That window is
+asked once more at once; if the second answer cannot be read either, the call
+raises `UnreadableAnswerError`, the later windows are not asked, and the run
+is counted and retried as above. So one window refused every time costs the
 meeting its model rows until it goes through, where it used to cost that
 window's rows without a word; a meeting already extracted keeps its rows. The
 log line carries the cause and the provider's reason word, never the answer.
