@@ -386,6 +386,10 @@ export const retrySync = (id: string) =>
  * What became of a meeting's extraction: when it last went through, how many
  * runs in a row failed since, whether the server is still trying by itself,
  * and whether a "다시 추출" is waiting for the worker. Counts and times only.
+ *
+ * The last three are why a board can be empty with nothing wrong on record:
+ * the first run is not in yet, it never came, or it was allowed to read none
+ * of the meeting's lines.
  */
 export interface ExtractionState {
   extracted_at: string | null;
@@ -400,6 +404,12 @@ export interface ExtractionState {
   not_published: boolean;
   requested: boolean;
   requested_at: string | null;
+  /** A transcript is stored and its first run has left nothing yet. */
+  in_progress: boolean;
+  /** The same, half an hour on: the run did not come. */
+  overdue: boolean;
+  /** The last run read no line: no speech in the meeting has consent on record. */
+  read_nothing: boolean;
 }
 
 export const getExtractionState = (meetingId: string) =>

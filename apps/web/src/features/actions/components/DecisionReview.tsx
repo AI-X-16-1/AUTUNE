@@ -6,6 +6,7 @@ import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import type { NotExtracted } from "./ReExtract";
 import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
@@ -24,7 +25,14 @@ import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
  * rejected rather than deleted — a deleted one would be proposed again by the
  * next run — and "거부" already says that.
  */
-export function DecisionReview({ meetingId }: { meetingId: string }) {
+export function DecisionReview({
+  meetingId,
+  unrun = null,
+}: {
+  meetingId: string;
+  /** The meeting's first extraction is not in: an empty list is not "none". */
+  unrun?: NotExtracted;
+}) {
   const { review, loading, error, setStatus, reword, add, remove } = useDecisionReview(meetingId);
 
   const decisions = review ? [...review.decisions].sort(byStatus) : [];
@@ -52,7 +60,13 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
         <>
           {error ? <Note>최신 결정을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
           {decisions.length === 0 ? (
-            <Note>이 회의에서 제안된 결정이 없습니다. 놓친 결정은 직접 추가할 수 있습니다.</Note>
+            <Note>
+              {unrun === "in_progress"
+                ? "이 회의의 결정을 추출하고 있습니다. 끝나면 여기에 나타납니다."
+                : unrun === "overdue"
+                  ? "이 회의의 결정은 아직 추출되지 않았습니다. 놓친 결정은 직접 추가할 수 있습니다."
+                  : "이 회의에서 제안된 결정이 없습니다. 놓친 결정은 직접 추가할 수 있습니다."}
+            </Note>
           ) : (
             <ul className="grid gap-2">
               {decisions.map((decision) => (

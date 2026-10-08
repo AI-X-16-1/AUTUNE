@@ -14,7 +14,7 @@ import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { ProjectFilter } from "./ProjectFilter";
-import { ReExtract } from "./ReExtract";
+import { notExtracted, ReExtract, type NotExtracted } from "./ReExtract";
 import { listProjects } from "../api";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import type { Project } from "../types";
@@ -70,6 +70,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   // Bumped when a "다시 추출" has run: the decisions below read themselves, so
   // they are mounted again rather than told.
   const [extraction, setExtraction] = useState(0);
+  // An empty list is "not yet" while the first run is going, and "not
+  // extracted" when it never came -- not "nothing" (dev, 2026-10-08).
+  const [unrun, setUnrun] = useState<NotExtracted>(null);
 
   return (
     // The tab row's gutter (see the review layout, #534): starting at the same
@@ -117,6 +120,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         <div className="mt-4">
           <ReExtract
             meetingId={meetingId}
+            onState={(read) => setUnrun(notExtracted(read))}
             onExtracted={() => {
               setExtraction((n) => n + 1);
               void reload();
@@ -133,7 +137,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </div>
 
         <div className="mt-6">
-          <DecisionReview key={extraction} meetingId={meetingId} />
+          <DecisionReview key={extraction} meetingId={meetingId} unrun={unrun} />
         </div>
 
         <div className="mt-8">
@@ -154,7 +158,11 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
               ) : null}
               {items.length === 0 ? (
                 <Note>
-                  이 회의에서 추출된 액션 아이템이 없습니다. 놓친 항목은 직접 추가할 수 있습니다.
+                  {unrun === "in_progress"
+                    ? "이 회의의 액션 아이템을 추출하고 있습니다. 끝나면 여기에 나타납니다."
+                    : unrun === "overdue"
+                      ? "이 회의의 액션 아이템은 아직 추출되지 않았습니다. 놓친 항목은 직접 추가할 수 있습니다."
+                      : "이 회의에서 추출된 액션 아이템이 없습니다. 놓친 항목은 직접 추가할 수 있습니다."}
                 </Note>
               ) : null}
               <ProjectFilter projects={projects} value={project} onChange={setProject} />
