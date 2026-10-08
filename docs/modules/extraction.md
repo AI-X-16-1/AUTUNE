@@ -395,20 +395,36 @@ record at all -- a run that failed before failures were counted, or one lost
 with a worker -- is counted as failed once, half an hour after its last line
 was stored and for a week, and tried the same way.
 
-With `classifier_impl=llm`, a model answer that cannot be read is such a
-failure and not a run that found nothing. An answer is read when it holds a
-JSON object whose `labels` is an object or names nothing: `{"labels": {}}` is
-what the instructions ask for when no line qualifies, and it is a success, as
-are `{}`, an empty list and `null` in its place. It cannot be read when the
-request was refused, no candidate came back, the candidate had no text, the
-text holds no JSON object, or `labels` holds something that is not an object
--- a list of kinds, a string -- which nobody can map to lines. That window is
-asked once more at once; if the second answer cannot be read either, the call
-raises `UnreadableAnswerError`, the later windows are not asked, and the run
-is counted and retried as above. So one window refused every time costs the
-meeting its model rows until it goes through, where it used to cost that
-window's rows without a word; a meeting already extracted keeps its rows. The
-log line carries the cause and the provider's reason word, never the answer.
+With `classifier_impl=llm`, a model answer that cannot be read is not taken
+for "nothing found". An answer is read when it holds a JSON object whose
+`labels` is an object or names nothing: `{"labels": {}}` is what the
+instructions ask for when no line qualifies, and it is a success, as are `{}`,
+an empty list and `null` in its place. It cannot be read when the request was
+refused, no candidate came back, the candidate had no text, the text holds no
+JSON object, or `labels` holds something that is not an object -- a list of
+kinds, a string -- which nobody can map to lines. That window is asked once
+more at once. The log line carries the cause and the provider's reason word,
+never the answer.
+
+What happens next depends on the other windows (the user, 2026-10-08). When no
+window of the meeting could be read, the call raises `UnreadableAnswerError`
+and the run is a failure, counted and retried as above. When some were read,
+the run goes through with what they held: the rows are stored and published as
+any run's, the unread windows' lines carry no label, and in the place of
+ending the count the run adds one to it with the reason `PartlyUnread`. That
+count is what makes the sweep run the meeting again, three runs in all, and
+`ExtractionState.partly_unread` is what the 액션 tab reads to say, over the
+rows, that part of the meeting was not read and items may be missing. The
+reason stays until a run reads every window, also through a rerun that fails
+outright, and the line with it once the tries are spent. The team's channel is
+not told: its message is about a meeting that could not be extracted.
+
+Which windows were unread is not kept, only that some were, so every rerun
+asks about the whole meeting and follows the rules of any rerun: a meeting a
+person has corrected keeps its items, a confirmed row stays, and what is
+stored is the latest run's. A rerun that reads a different part can therefore
+drop an unconfirmed row an earlier run had; the line over the board is up for
+as long as that can be the case.
 
 **A meeting with no rows.** An empty 액션 tab says which of four things is
 true, from `GET /meetings/{id}/extraction` (`ExtractionState`, B's own schema):
