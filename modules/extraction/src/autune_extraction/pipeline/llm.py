@@ -586,6 +586,32 @@ def _written(answer: str, key: str) -> dict[int, str]:
     return out
 
 
+_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’"))
+
+
+def unquoted(text: str) -> str:
+    """``text`` without the quotation marks a model put around its answer.
+
+    Around the *whole* answer, or one left over at an end with no partner.
+    A mark that opens a phrase the sentence quotes stays with the one that
+    closes it: stripping every mark off both ends, as this used to, turned
+    ``"처리 중입니다" 로딩 문구는 제가 …`` into ``처리 중입니다" 로딩 문구는 제가 …``
+    (seen 2026-10-08 on an invented line) -- a sentence that starts by quoting
+    what the meeting said is an ordinary one.
+    """
+    text = text.strip()
+    for opening, closing in _QUOTE_PAIRS:
+        inner = text[1:-1]
+        wrapped = len(text) >= 2 and text[0] == opening and text[-1] == closing
+        if wrapped and opening not in inner and closing not in inner:
+            return inner.strip()
+        if text.startswith(opening) and closing not in text[1:]:
+            return text[1:].strip()
+        if text.endswith(closing) and opening not in text[:-1]:
+            return text[:-1].strip()
+    return text
+
+
 def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     """What the model wrote about a line, as the sentence to show for it -- or
     "" when it should not be shown, and the line as said is used instead.
@@ -603,7 +629,7 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     # Here and not at the top: ``resolver`` imports this module.
     from .resolver import _grounded  # noqa: PLC0415
 
-    text = written.strip().strip("\"'“”‘’").strip()
+    text = unquoted(written)
     if not text or len(text) > SUMMARY_MAX_CHARS:
         return ""
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):

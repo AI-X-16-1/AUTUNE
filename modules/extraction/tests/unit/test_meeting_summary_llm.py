@@ -155,6 +155,22 @@ def test_a_point_the_meeting_does_not_support_is_dropped() -> None:
     assert written.points == ("배포는 금요일로 미룹니다",)
 
 
+def test_a_point_that_starts_with_a_quoted_phrase_keeps_both_marks() -> None:
+    final = {
+        "overview": '"처리 중입니다" 문구를 넣기로 한 회의입니다.',
+        "points": ['결정: "처리 중입니다" 문구를 넣기로 했습니다.', '"따옴표로 감싼 문장입니다."'],
+    }
+
+    written = summarizer(Provider(final)).summarize(LINES)
+
+    assert written is not None
+    assert written.overview == '"처리 중입니다" 문구를 넣기로 한 회의입니다.'
+    assert written.points == (
+        '결정: "처리 중입니다" 문구를 넣기로 했습니다.',
+        "따옴표로 감싼 문장입니다.",
+    )
+
+
 def test_an_unusable_overview_means_no_summary() -> None:
     provider = Provider({"overview": "", "points": ["배포는 금요일로 미룹니다"]})
 

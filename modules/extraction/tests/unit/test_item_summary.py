@@ -787,6 +787,169 @@ def test_a_commitments_summary_still_has_to_keep_its_verb_ending() -> None:
     assert out == Resolution("그건 다음 빌드에 넣을게요")
 
 
+@pytest.mark.parametrize(
+    ("said", "before", "written"),
+    [
+        (
+            "아, 그럼 그 일정은 제가 다시 짜 볼게요",
+            "출시 일정이 마이그레이션이랑 겹쳤어요",
+            "아프, 그럼 출시 일정은 제가 다시 짜 볼게요",
+        ),
+        (
+            "감사합니다. 그거 받으면 제가 작업 시작할게요",
+            "문의 유형 정리 문서를 금요일까지 드릴게요",
+            "감사해, 문의 유형 정리 문서를 받으면 제가 작업 시작할게요",
+        ),
+    ],
+)
+def test_a_rewrite_that_changed_a_word_the_speaker_said_keeps_the_said_line(
+    said: str, before: str, written: str
+) -> None:
+    # Both came back so on invented lines (2026-10-08): the reference filled
+    # in rightly and one other word turned into something nobody said.
+    request = ResolutionRequest(target=said, context=(before,), target_id="t", context_ids=("c1",))
+
+    (out,) = resolver(Provider(answer(written, [1]))).resolve_with_evidence([request])
+
+    assert out == Resolution(said)
+
+
+@pytest.mark.parametrize(
+    ("said", "written"),
+    [
+        ("그건 제가 볼게요", "타임아웃 변경은 제가 볼게요"),
+        ("네 그럼 그것도 제가 반영할게요", "네 그럼 타임아웃 변경도 제가 반영할게요"),
+        ("그날은 제가 맡겠습니다", "타임아웃 변경하는 날은 제가 맡겠습니다"),
+        ("그 부분은 제가 맡겠습니다", "타임아웃 부분은 제가 맡겠습니다"),
+    ],
+)
+def test_the_word_that_stood_for_something_is_the_one_a_rewrite_may_drop(
+    said: str, written: str
+) -> None:
+    request = ResolutionRequest(
+        target=said,
+        context=("타임아웃은 5초로 늘리고 재시도를 넣기로 했어요",),
+        target_id="t",
+        context_ids=("c1",),
+    )
+
+    (out,) = resolver(Provider(answer(written, [1]))).resolve_with_evidence([request])
+
+    assert out == Resolution(written, ("c1",))
+
+
+@pytest.mark.parametrize(
+    ("said", "written"),
+    [
+        ("이벤트는 제가 다음 달로 옮길게요", "봄 행사는 제가 다음 달로 옮길게요"),
+        ("저는 그거 내일 볼게요", "봄 행사 내일 볼게요"),  # who promised
+        ("그럼 그건 이번 배포에 넣을게요", "그럼 봄 행사는 배포에 넣을게요"),  # which one
+    ],
+)
+def test_a_word_that_only_starts_like_a_pointing_word_has_to_stay(said: str, written: str) -> None:
+    request = ResolutionRequest(
+        target=said, context=("봄 행사가 배포랑 겹쳐요",), target_id="t", context_ids=("c1",)
+    )
+
+    (out,) = resolver(Provider(answer(written, [1]))).resolve_with_evidence([request])
+
+    assert out == Resolution(said)
+
+
+def test_a_rewrite_that_starts_with_a_phrase_the_meeting_quoted_keeps_both_marks() -> None:
+    said = "로딩 문구는 제가 시안 만들어서 드릴게요"
+    written = '"처리 중입니다" 로딩 문구는 제가 시안 만들어서 드릴게요'
+    request = ResolutionRequest(
+        target=said,
+        context=('3초가 넘으면 "처리 중입니다" 로딩 문구를 보여 주면 됩니다',),
+        target_id="t",
+        context_ids=("c1",),
+    )
+
+    (out,) = resolver(Provider(answer(written, [1]))).resolve_with_evidence([request])
+
+    assert out == Resolution(written, ("c1",))
+
+
+WORDING = "문구는 제가 정리해서 공유드릴게요"
+MAIL = "메일은 출시 다음 날 오전에 보내기로 하죠"
+REFUND = "환불 정책 안내 문구도 바꿔야 하는데요"
+TAKEN_FROM_REFUND = "환불 정책 안내 문구는 제가 정리해서 공유드릴게요"
+
+
+def test_a_fill_found_only_in_a_line_said_afterwards_keeps_the_said_line() -> None:
+    # The meeting had moved on: the wording promised was the mail's, and the
+    # next speaker's subject is what the model filled in (2026-10-08).
+    request = ResolutionRequest(
+        target=WORDING,
+        context=(MAIL,),
+        context_after=(REFUND,),
+        target_id="t",
+        context_ids=("c1",),
+        context_after_ids=("a1",),
+    )
+
+    (out,) = resolver(Provider(answer(TAKEN_FROM_REFUND, [3]))).resolve_with_evidence([request])
+
+    assert out == Resolution(WORDING)
+
+
+@pytest.mark.parametrize("where", ["before", "related"])
+def test_a_fill_that_was_also_said_earlier_or_elsewhere_is_kept(where: str) -> None:
+    earlier = "환불 정책 안내가 예전 기준이라 문의가 계속 와요"
+    request = ResolutionRequest(
+        target=WORDING,
+        context=(earlier,) if where == "before" else (MAIL,),
+        context_after=(REFUND,),
+        target_id="t",
+        context_ids=("c1",),
+        context_after_ids=("a1",),
+        related=() if where == "before" else (("r1", earlier),),
+    )
+
+    (out,) = resolver(Provider(answer(TAKEN_FROM_REFUND, [1]))).resolve_with_evidence([request])
+
+    assert out.text == TAKEN_FROM_REFUND
+
+
+def test_a_refused_rewrite_is_asked_of_the_second_model_like_any_failed_check() -> None:
+    request = ResolutionRequest(
+        target=WORDING,
+        context=(MAIL,),
+        context_after=(REFUND,),
+        target_id="t",
+        context_ids=("c1",),
+        context_after_ids=("a1",),
+    )
+    provider = Provider(
+        answer(TAKEN_FROM_REFUND, [3]), answer("메일 문구는 제가 정리해서 공유드릴게요", [1])
+    )
+
+    (out,) = resolver(provider, second="second").resolve_with_evidence([request])
+
+    assert out == Resolution("메일 문구는 제가 정리해서 공유드릴게요", ("c1",))
+    assert len(provider.bodies) == 2
+
+
+def test_a_decisions_write_up_may_draw_on_the_turns_after_it_and_reword_the_turn() -> None:
+    # A decision is settled over several turns, the later ones included, and
+    # its write-up is a new sentence: neither check is a commitment's.
+    request = ResolutionRequest(
+        target="그렇게 갑시다",
+        context=("QA는 금요일에 끝납니다",),
+        context_after=("그럼 화요일 출시로 공지하겠습니다",),
+        purpose="decision",
+        target_id="t",
+        context_ids=("c1",),
+        context_after_ids=("a1",),
+    )
+    provider = Provider(answer("화요일에 출시하기로 했습니다", [3]))
+
+    (out,) = resolver(provider).resolve_with_evidence([request])
+
+    assert out == Resolution("화요일에 출시하기로 했습니다", ("a1",))
+
+
 def test_the_lines_a_decision_used_are_read_only_if_consented(session: Session) -> None:
     say(session, 1, "동의한 사람의 설명 줄입니다")
     say(session, 2, "동의하지 않은 사람의 줄입니다", who="par_no")
