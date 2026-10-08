@@ -10,22 +10,23 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
 
-from autune_context import tasks
+from autune_context import briefs, tasks
 from autune_context.constants import EMBEDDING_DIM
 from autune_context.models import (
+    CtxBrief,
     CtxDecision,
     CtxDecisionVersion,
     CtxEmbedding,
     CtxMeetingStatus,
     CtxTopicLink,
 )
-from autune_core import Participant, TeamMember, User, Utterance
+from autune_core import Meeting, Participant, TeamMember, User, Utterance
 from autune_core.ids import new_id
 from autune_integrations import TransientIntegrationError
 
@@ -506,3 +507,58 @@ def test_a_rate_limit_in_a_late_drift_restores_what_was_owed(
     status = db_session.get(CtxMeetingStatus, meeting)
     assert status.late_drift_notified_at is not None
     assert status.late_drift_due_at is None
+
+
+# --------------------------------------------------------------------------- #
+# A transient Slack failure gives the brief back to the clock (#339)
+# --------------------------------------------------------------------------- #
+
+
+def _scheduled_in(db_session: Session, meeting_id: str, *, minutes: int) -> None:
+    row = db_session.get(Meeting, meeting_id)
+    row.status = "scheduled"
+    row.started_at = datetime.now(tz=UTC) + timedelta(minutes=minutes)
+    db_session.flush()
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_a_rate_limit_posting_a_brief_leaves_it_due_for_the_next_tick(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    """The ``ctx_briefs`` row is the claim and ``due_meeting_starts`` skips a
+    meeting that has one, so a brief that failed to post used to be lost."""
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    _scheduled_in(db_session, meeting, minutes=5)
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        slack_client_cls.return_value.post_message.side_effect = TransientIntegrationError(
+            "rate limited"
+        )
+        with pytest.raises(TransientIntegrationError):
+            tasks.send_brief(meeting)
+
+        assert db_session.get(CtxBrief, meeting) is None
+        now = datetime.now(tz=UTC)
+        assert meeting in {m for m, _ in briefs.due_meeting_starts(db_session, now)}
+
+        slack_client_cls.return_value.post_message.side_effect = None
+        tasks.send_brief(meeting)  # the next tick
+
+    assert slack_client_cls.return_value.post_message.call_count == 2
+    sent = db_session.get(CtxBrief, meeting)
+    assert sent is not None and sent.sent_at is not None
+
+
+@pytest.mark.usefixtures("use_test_session", "fake_encryption_key")
+def test_a_brief_that_failed_for_another_reason_keeps_its_claim(
+    db_session: Session, meeting: str, team: str
+) -> None:
+    _connect_slack(db_session, team, config={"channel": "C123"})
+    _scheduled_in(db_session, meeting, minutes=5)
+
+    with patch.object(tasks, "SlackClient") as slack_client_cls:
+        slack_client_cls.return_value.post_message.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError):
+            tasks.send_brief(meeting)
+
+    assert db_session.get(CtxBrief, meeting) is not None
