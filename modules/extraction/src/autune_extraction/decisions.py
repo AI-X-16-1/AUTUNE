@@ -178,10 +178,6 @@ class DecisionGroup:
     """``담당 박지영, 기한 2026-10-02``, or empty: what is added after the line."""
 
     substance_id: str = ""
-    from_piece: bool = False
-    """Whether the substance is a piece of a long turn (``in_pieces``): up to
-    half a request of speech, which is not a line of minutes until a model has
-    written what was decided in it (``needs_write_up``)."""
     first_position: int = 0
     last_position: int = 0
     """Where the decision's first and last utterance sit in the meeting's sequence,
@@ -323,26 +319,6 @@ Both halves are required. The name is at least two syllables, so "날씨가" and
 원하시니" names nobody as the owner."""
 
 
-SELF_CONTAINED = 20
-"""A substance turn this long that points at nothing ("그거", "그 방향") already says
-what was decided; writing it up again would only change its ending. See
-``needs_write_up``."""
-
-
-def needs_write_up(group: DecisionGroup) -> bool:
-    """Whether a model is worth asking about this decision.
-
-    Measured on the dummy meetings (2026-09-30): asked about every decision, the
-    model rewrote all of them and cited a line for about a quarter -- the rest it
-    only put into "~하기로 했습니다", which ``noun_form.tidy`` does without a model,
-    a request or a chance of drifting from what was said. It earns its call when
-    the turn that settles the decision does not say what was decided: it is short,
-    or it points at something said before.
-    """
-    core = group.core_text.strip()
-    return group.from_piece or len(core) < SELF_CONTAINED or bool(_POINTS_AT.search(core))
-
-
 def _substance(members: Sequence[ClassifiedUtterance]) -> ClassifiedUtterance:
     """The member that says *what* was decided, not the one that says yes.
 
@@ -441,7 +417,6 @@ def _build(
         core_text=core,
         suffix=suffix,
         substance_id=substance.id,
-        from_piece=bool(substance.part_of),
         first_position=span[0],
         last_position=span[1],
     )
