@@ -310,7 +310,8 @@ person's, those counts are that person's completion record. So:
   meetings to look first; the screen says both before they leave.
   A member leaves only by their own act
   (`DELETE /api/audio/teams/{team_id}/members/me`), and the last member of a
-  team cannot leave it.
+  team cannot leave it: a team with nobody on it could be neither read nor
+  deleted. What the last member can do is delete the team (the next rule).
   This is ADR 0007's ownership rule -- the record belongs to the meeting, and
   leaving is an access change rather than a data change -- **without that
   ADR's mechanism**, which clears `participants.user_id` on departure and
@@ -319,6 +320,66 @@ person's, those counts are that person's completion record. So:
   is written in the ADR, under *Not taken yet*. Until 2026-10-06 this line
   read "their utterances and everything derived from them are deleted", and
   nothing did that: there was no way to leave a team.
+- **The last member of a team may delete the team** (decided with the user
+  and the four other owners, 2026-10-09, #1007; before the legal review of
+  ADR 0007, #92 -- that ADR carries a dated note on it).
+  `DELETE /api/audio/teams/{team_id}`, by the one person still on the team,
+  with the team's name typed on the screen and sent in the request's body.
+  A team with two or more members is as it was: nobody deletes it, and nobody
+  takes anybody else off it.
+  - **What goes.** The `teams` row and every row PostgreSQL reaches from it or
+    from its meetings by `ON DELETE CASCADE`: the membership, the team's
+    integrations with their tokens, pending invitations, masking rules, every
+    meeting with its participants and utterances, and what modules A to E and
+    the agent layer keep for the team or for its meetings. The utterances of
+    people who left the team earlier go with the rest. They are not told: no
+    new message leaves Autune for this. Until the team is deleted their own
+    deletion reaches their lines as above.
+  - **The order is the retention sweep's.** Every meeting's
+    `on_meeting_deleted` hooks run before that meeting's row goes, and all of
+    them before the `teams` row. The cascade does not run them, and they are
+    what moves B's calendar events and C's agenda lines to the clean-up
+    queues; those queues are keyed by person, so they outlive the team and are
+    worked through with each person's own Google grant. A hook that raises
+    stops the deletion and leaves the team and every meeting of it in place
+    to ask again, as a user hook stops an account deletion; clean-up a hook
+    had already queued still runs, which is why every hook is safe to repeat.
+  - **Refused while a meeting of the team is being processed** (409
+    `team_meeting_in_progress`): a transcription job that is queued or
+    running -- a job is running until its `TranscriptReady` has gone out --
+    or a live session that is open. Deleting under a queued job would leave
+    its recording in the temp directory until the orphan sweep's age limit
+    (section 1); deleting between the transcript's commit and its publish
+    would announce a meeting that is gone; and a live socket checks
+    membership once, at its hello. Also refused: when anybody else is on the
+    team (409 `team_has_other_members`), and when the name sent is not the
+    team's (422 `team_name_mismatch`).
+  - **What stays is outside Autune**, and deleting the team ends Autune's way
+    to reach it. The screen says so before the name is typed, and names the
+    first three:
+    - B's copies in the team's own tools: project minutes in Notion, Slack
+      and Jira, and the Notion pages and Jira issues of items and decisions.
+      A meeting's expiry takes the project minutes back through the team's
+      integration; a team's deletion deletes that integration and the queue
+      of copies still to take back (`ext_project_send_cleanup`) with it.
+    - C's notices in the team's Slack channel (S20). C keeps no message id
+      and takes none back at a meeting's expiry either.
+    - E's meeting reports, their corrections and the weekly reports in the
+      team's Slack channel, which E never takes back.
+    - What was sent to a person's own Slack DM -- a confirmation request, a
+      reminder, a digest, their own speaking ratio -- stays in that person's
+      DM, as at a meeting's expiry.
+    - A `TranscriptReady` message already published and not yet consumed
+      stays in the broker until a consumer takes it. It holds the masked
+      transcript, and nothing removes it earlier.
+    - What was already sent to a model provider follows that provider's
+      terms (section 6), as it does without any deletion.
+
+    What Autune put on a person's own Google Calendar does not stay: the
+    queued jobs above remove it.
+  - **A voice profile is not deleted in the request.** It is the person's,
+    not the team's. The hourly sweep deletes it once no remaining meeting
+    names its owner, as it does after an expiry.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -400,6 +461,10 @@ an account deletion does not wait on Google, so if Google does not answer an
 event can remain on that calendar, and Autune's record of it goes with the
 account anyway. Module C's agenda lines on a person's own calendar follow
 the same rule -- see "Google Calendar, S20's 다음 회의 잡기" in section 6.
+When a team is deleted by its last member (section 4, #1007), the calendar
+entries are removed the same way, and everything in the team's own tools
+stays -- B's project minutes among them, which an expiry would have taken
+back: the integration that could reach them is deleted with the team.
 
 ## 5. Consent
 
