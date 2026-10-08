@@ -48,7 +48,7 @@ export function DecisionReview({
         </h2>
         {review !== null && (
           <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-            확인 대기 {review.pending_decisions}
+            확인 필요 {review.pending_decisions}
           </span>
         )}
         {review !== null && <AddDecision onAdd={add} />}
@@ -123,8 +123,11 @@ function byStatus(a: ReviewDecision, b: ReviewDecision): number {
   return ORDER[a.status] - ORDER[b.status];
 }
 
+// A pending decision reads as an unconfirmed item does on the board
+// (`COLUMN_LABELS.needs_confirmation`): what there is to do, not a queue
+// it is waiting in (the user, 2026-10-08).
 const STATUS: Record<DecisionStatus, { label: string; variant: StatusVariant }> = {
-  pending: { label: "확인 대기", variant: "attention" },
+  pending: { label: "확인 필요", variant: "attention" },
   confirmed: { label: "확정", variant: "confirmed" },
   rejected: { label: "거부", variant: "idle" },
 };
@@ -283,7 +286,7 @@ function DecisionRow({
               disabled={pending}
               onClick={() => run(() => onStatus("pending"), "되돌리지 못했습니다. 잠시 후 다시 시도해 주세요.")}
             >
-              확인 대기로 되돌리기
+              확인 필요로 되돌리기
             </Button>
           )}
           {decision.status !== "rejected" ? (
