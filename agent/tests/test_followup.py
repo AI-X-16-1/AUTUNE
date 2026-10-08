@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from autune_agent.main import CallBudget, RunScope, Toolbox, collect_actions, collect_subagents
 from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import Tool
-from autune_agent.subagents.followup import SUBAGENT, graph, rules
+from autune_agent.subagents.followup import SUBAGENT, explain, graph, rules
 from autune_agent.subagents.followup.graph import (
     DUE_DATES,
     HOLIDAYS,
@@ -36,6 +36,18 @@ MONDAY = date(2026, 10, 5)
 def _monday(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every run is on Monday 2026-10-05, so a suggested date is fixed."""
     monkeypatch.setattr(graph, "_today", lambda: MONDAY)
+
+
+class NoModel:
+    def generate(self, instructions: str, text: str, *, json_answer: bool) -> str:
+        raise RuntimeError("no model in these tests")
+
+
+@pytest.fixture(autouse=True)
+def _no_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No run here reaches a model: the reason is the step's fixed wording
+    (``test_followup_explain.py`` covers the model's)."""
+    monkeypatch.setattr(explain, "TEXT_FACTORY", NoModel)
 
 
 def gap(gid: str, severity: str = "high", key: str = "risk") -> dict[str, Any]:

@@ -1,6 +1,7 @@
 """The Follow-up subgraph (spec section 3): read, decide, propose.
 
-Three nodes, no model call, no checkpointer (agent/CLAUDE.md rule 6). It reads
+Three nodes, no checkpointer (agent/CLAUDE.md rule 6), and no model call in
+the decision or the date; a model writes only the sentence saying why. It reads
 through its ``Toolbox`` only and calls no write: the follow-up meeting leaves as
 one L2 ``ProposedAction`` for plan mode, where an approver with scope
 ``followup`` -- the team lead -- accepts or refuses it.
@@ -18,7 +19,9 @@ M's action items are due (``rules.suggest_from_due_dates``, #963), or, when M
 has no usable due date or B's read fails, the team's usual gap between meetings
 after its latest one (``rules.suggest_date``). Business days skip weekends
 and Korea's public holidays as B knows them (#964). ``basis`` says which, so the
-card can mark a date resting on drafts "초안 기준". From B it reads due dates
+card can mark a date resting on drafts "초안 기준". A sentence says why the
+date is that date (``explain``): a model writes it from what the rule used,
+once, here, and never chooses or moves the date. From B it reads due dates
 and whether each is confirmed, never who owns an item (spec section 6). The
 lead sees the date on the card and moves it on the board; the item's due date
 is what B puts on a calendar (#441).
@@ -36,7 +39,7 @@ from autune_agent.main.registry import NO_MEETING, Toolbox
 from autune_agent.main.subagents import CompiledSubagent, SubagentState
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
 
-from . import rules
+from . import explain, rules
 
 OPEN_GAPS = "gap.open_gaps"
 RECURRING = "gap.recurring_open_gaps"
@@ -248,14 +251,15 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         )
         if suggestion is None:
             recent = state.get("recent") or toolbox.call(RECENT)
-            suggestion = rules.Suggestion(rules.suggest_date(_held(recent), today, off), "cadence")
+            suggestion = rules.suggest_by_rhythm(_held(recent), today, off)
         suggested, basis = suggestion.day, suggestion.basis
         when = f"{_day(suggested)}, {BASIS_NOTE[basis]}"
+        why = explain.explain(suggestion)
         result = ToolResult(
             ok=True,
             summary=(
                 f"후속 회의를 제안했습니다 ({reason}). 추천 날짜는 {when}입니다. "
-                "팀장이 승인하면 보드에 항목이 생깁니다."
+                f"{why} 팀장이 승인하면 보드에 항목이 생깁니다."
             ),
             items=rules.cited(state["open_gaps"], verdict),
             evidence=verdict.evidence,
@@ -268,7 +272,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             # reads it off the row; B's write must declare it (#963).
             arguments={**state["at"], "due_date": suggested.isoformat(), "basis": basis},
             level="L2",
-            rationale=f"{reason}. 추천 날짜 {when}.",
+            rationale=f"{reason}. 추천 날짜 {when}. {why}",
             evidence=verdict.evidence,
         )
         return {"outcome": SubagentResult(result=result, proposed=[proposal])}
