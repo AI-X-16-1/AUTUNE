@@ -3,8 +3,10 @@
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
 
-import { getSession, type SessionUser } from "@/shared/api/auth";
+import { getConsents, getSession, type SessionUser } from "@/shared/api/auth";
 import { authHeaders, setSignedIn } from "@/shared/api/client";
+
+import { missingConsents } from "../legal/consents";
 
 /**
  * Sends somebody with no session to `/login` before any screen draws.
@@ -33,6 +35,16 @@ import { authHeaders, setSignedIn } from "@/shared/api/client";
  * they were being used as intended. Each of them already calls `notFound()`
  * in production, so skipping the check here opens nothing in a deployment.
  *
+ * **A signed-in person who has not agreed to every required document is sent
+ * to `/consent`** (the user, 2026-10-02), with the path they were on, and comes
+ * back when they have. This is the whole of the gate: the server records what
+ * was agreed to and refuses nothing, so the check is here, in front of every
+ * screen, and nowhere else. Two cases pass without it. A developer token has
+ * no person to ask. And a record that cannot be read -- a network failure, a
+ * server from before the record existed -- is unknown, not missing: holding
+ * everybody at a page that cannot save either would lock the app on the
+ * server's bad day.
+ *
  * Nothing is drawn while the check is in flight, so a signed-out visitor never
  * sees a screen fail before the redirect. The session it finds is shared
  * through `useSessionUser` so the sidebar does not ask again.
@@ -56,10 +68,19 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
     if (devPreview) return;
     let current = true;
     const hasDevToken = "authorization" in authHeaders();
-    void getSession().then((user) => {
+    void getSession().then(async (user) => {
       if (!current) return;
       setSignedIn(user !== null);
-      if (user || hasDevToken) {
+      if (user) {
+        const given = await getConsents();
+        if (!current) return;
+        if (given !== null && missingConsents(given).length > 0) {
+          const here = window.location.pathname + window.location.search;
+          router.replace(`/consent?next=${encodeURIComponent(here)}`);
+          return;
+        }
+        setState({ status: "in", user });
+      } else if (hasDevToken) {
         setState({ status: "in", user });
       } else {
         router.replace("/login");
