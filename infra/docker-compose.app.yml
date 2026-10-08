@@ -187,7 +187,14 @@ services:
     # nginx, so /api/*/dev/ has no password here: anyone on the LAN can mint a
     # token (#517's original terms).
     ports: ["${DEV_PUBLIC_HOST:-127.0.0.1}:8000:8000"]
-    volumes: ["audio-tmp:/tmp/autune-audio"]
+    volumes:
+      - audio-tmp:/tmp/autune-audio
+      # Live transcription runs in this process: its first session loads
+      # Whisper large-v3-turbo and the speaker embedder. Without the volume
+      # every redeploy downloaded them again inside that session's warm-up,
+      # which reads no message -- no row reached the page, and the browser's
+      # stop went unread until its upload was refused 409.
+      - models:/models
     # Starlette writes each multipart upload to the OS temp directory before
     # module A's code runs (docs/engineering/environments.md); keep that copy
     # in memory too.
