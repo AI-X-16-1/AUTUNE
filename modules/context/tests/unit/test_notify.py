@@ -124,6 +124,32 @@ def test_drift_channel_notice_does_not_say_how_many_were_absent(change_type: Cha
     assert not re.search(r"\d+\s*명", fallback + _text(blocks))
 
 
+def test_drift_channel_notice_does_not_print_the_same_sentence_twice() -> None:
+    """The label is the thread's head statement, so for the head version label
+    and statement are one sentence (#282)."""
+    _fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="최신순으로 정렬한다",
+        current_statement="최신순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        meeting_date=None,
+    )
+
+    assert _text(blocks).count("최신순으로 정렬한다") == 1
+
+
+def test_drift_channel_notice_shows_both_when_the_statement_is_not_the_label() -> None:
+    _fallback, blocks = build_decision_drift_channel_notice(
+        thread_label="최신순으로 정렬한다",
+        current_statement="관련도순으로 정렬한다",
+        change_type=ChangeType.MODIFIED,
+        meeting_date=None,
+    )
+
+    text = _text(blocks)
+    assert "최신순으로 정렬한다" in text
+    assert "관련도순으로 정렬한다" in text
+
+
 def test_drift_channel_notice_reflects_reversed_vs_modified() -> None:
     _fallback, reversed_blocks = build_decision_drift_channel_notice(
         thread_label="t",
