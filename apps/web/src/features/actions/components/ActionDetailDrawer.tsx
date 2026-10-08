@@ -11,7 +11,7 @@ import { SourceQuote } from "./SourceQuote";
 import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
-import { CONFIRMED_NOTICE, confirms } from "../board";
+import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -39,12 +39,15 @@ export function ActionDetailDrawer({
   item,
   onClose,
   onStatusChange,
+  onCloseUnfinished,
   onAssigneeChange,
   onDelete,
 }: {
   item: ActionItemRead;
   onClose: () => void;
   onStatusChange?: (status: ActionStatus) => void | Promise<void>;
+  /** Close the item without finishing it. The control is not shown without it. */
+  onCloseUnfinished?: () => void | Promise<void>;
   /** Set the assignee: a member's account or a typed name, never both. */
   onAssigneeChange?: (change: {
     assignee_id: string | null;
@@ -305,6 +308,36 @@ export function ActionDetailDrawer({
               ))}
             </select>
           </Field>
+          {/* Under the status it changes, not at the top right: the button
+              there says 닫기 and closes this window. Open items only -- one
+              still waiting has nothing agreed to close, and a finished one is
+              finished. No confirmation (the user, 2026-10-09): the status
+              above re-opens it. */}
+          {onCloseUnfinished !== undefined &&
+          (item.status === "todo" || item.status === "in_progress") ? (
+            <div className="mt-2">
+              <Button
+                tone="quiet"
+                size="compact"
+                disabled={changing}
+                onClick={async () => {
+                  setFailure(null);
+                  setNotice(null);
+                  setChanging(true);
+                  try {
+                    await onCloseUnfinished();
+                    setNotice(CLOSED_NOTICE);
+                  } catch {
+                    setFailure("닫지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                  } finally {
+                    setChanging(false);
+                  }
+                }}
+              >
+                끝내지 않고 닫기
+              </Button>
+            </div>
+          ) : null}
           {notice !== null ? (
             <p
               role="status"
