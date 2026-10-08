@@ -577,6 +577,7 @@ other module's tables.
 | GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order (each with `excerpt`, the part of it the item was made from, when one is recorded), up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
+| POST | `/action-items/{id}/close` | Close a confirmed, open item that will not be finished (#856, #1077) -- what "끝내지 않고 닫기" in the detail window calls. Not a `PATCH` of the status: the item ends `done` either way, and the `closed` event is what tells a close from finished work. Answers with the item as `GET /action-items/{id}` does. Refused 409: an item still waiting for confirmation, one already finished, one already closed. An item the reader may not see is the 404 an unknown one gets. Copies outside follow as after any change of status |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
@@ -708,10 +709,17 @@ other module's tables.
   `AUTUNE_EXTRACTION_WORK_REPORT=true` turns it on
 - An item can be **closed without being finished** (#856; the user,
   2026-10-07) -- dropped, overtaken, no longer needed. There is no cancelled
-  status: `tools.close_action_item` (an L2 action, run only after a person
-  approves; no board control calls it yet) makes a confirmed, open item
-  `done` and records an edit event of kind `closed` in place of an edit of
-  the status (`service.close_without_finishing`). A closed item is in none
+  status: a close makes a confirmed, open item `done` and records an edit
+  event of kind `closed` in place of an edit of the status
+  (`service.close_without_finishing`). There are two ways to it, with the
+  same refusals -- an item still waiting for confirmation, a finished one,
+  one already closed: `tools.close_action_item` (an L2 action, run only
+  after a person approves), and `POST /action-items/{id}/close`, which
+  "끝내지 않고 닫기" in the detail window of an open item calls (#1077), on
+  the meeting's list and on the team board. The window asks for no
+  confirmation (the user, 2026-10-09): it says afterwards that the item was
+  closed without being finished, and changing the status re-opens it, as it
+  does a finished item. A closed item is in none
   of the counts B publishes for E's completion rate (`TeamActionProgress`,
   `service.team_action_progress`; asked by E's owner on #856) -- neither
   finished nor left undone, as a deleted item is. That event is all that
