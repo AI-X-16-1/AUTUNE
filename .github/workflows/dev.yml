@@ -111,8 +111,17 @@ jobs:
       - name: Start database and broker
         run: docker compose -f infra/docker-compose.yml up -d --wait --remove-orphans
 
+      # Every image is built here, once, and the steps below use what this
+      # built. Migrate and Start application each built it before: the second
+      # build ran the dependency layer's `uv sync` again two minutes after the
+      # first had made it (773 s and 671 s in one deploy), because the builder
+      # had already dropped that several-GB layer from its cache. `migrate`
+      # shares the python image, so its profile adds nothing to build.
+      - name: Build images
+        run: docker compose -f infra/docker-compose.app.yml build
+
       - name: Migrate
-        run: docker compose -f infra/docker-compose.app.yml run --rm --build migrate
+        run: docker compose -f infra/docker-compose.app.yml run --rm migrate
 
       # A key that is set and is not a Fernet key would otherwise be found by
       # the first person who connects something. The error names the
@@ -122,7 +131,7 @@ jobs:
           if defined AUTUNE_ENCRYPTION_KEY docker compose -f infra/docker-compose.app.yml run --rm migrate python -c "from autune_core.crypto import ensure_configured; ensure_configured()"
 
       - name: Start application
-        run: docker compose -f infra/docker-compose.app.yml up -d --build --wait --wait-timeout 600
+        run: docker compose -f infra/docker-compose.app.yml up -d --wait --wait-timeout 600
 
       # Every deploy rebuilds the images, and the python one is over 10 GB;
       # the one it replaced is left untagged. Only untagged images go: the
