@@ -55,6 +55,7 @@ export interface MinutesAction {
   id: string;
   description: string;
   who: string;
+  /** The day it is due, written as the page's date line writes a day. */
   due: string | null;
   overdue: boolean;
   /** Said after the line; nothing for an item simply not begun. */
@@ -63,9 +64,10 @@ export interface MinutesAction {
 
 export function minutesOf(summary: MeetingSummary, title?: string | null): Minutes {
   const items = summary.action_items.filter((item) => !isCandidate(item));
+  const began = startOf(summary.meeting_started_at);
   return {
     title: title ? `회의록 — ${title}` : "회의록",
-    day: dayOf(summary.meeting_started_at),
+    day: began ? dayOf(began) : null,
     overview: summary.generated
       ? { text: summary.generated.overview, points: summary.generated.points }
       : null,
@@ -74,7 +76,7 @@ export function minutesOf(summary: MeetingSummary, title?: string | null): Minut
       statement: decision.statement,
       unconfirmed: decision.status === "pending",
     })),
-    actions: items.map(action),
+    actions: items.map((item) => action(item, began)),
     candidates: summary.action_items.length - items.length,
     note: summary.note?.trim() || null,
   };
@@ -114,7 +116,7 @@ export function actionMeta(item: MinutesAction): string {
   return [item.who, item.due ?? "기한 없음"].join(" · ") + (item.state ? ` (${item.state})` : "");
 }
 
-function action(item: ActionItemRead): MinutesAction {
+function action(item: ActionItemRead, began: Date | null): MinutesAction {
   // The generated contract type leaves `status` optional; the server always sends one.
   const status = item.status ?? "needs_confirmation";
   return {
@@ -123,7 +125,7 @@ function action(item: ActionItemRead): MinutesAction {
     who: item.needs_reassignment
       ? "재배정 필요"
       : (item.assignee_name ?? item.assignee_label ?? "담당 미지정"),
-    due: item.due_date ?? null,
+    due: dueOf(item.due_date, began),
     overdue: isOverdue(item),
     // "진행 전" is every item a meeting has just made; minutes that said it on
     // each line would say nothing.
@@ -131,14 +133,38 @@ function action(item: ActionItemRead): MinutesAction {
   };
 }
 
-/** "2026년 10월 8일 (목)", in the reader's time zone: the server sends UTC. */
-function dayOf(iso: string | null | undefined): string | null {
+/** When the meeting began, in the reader's time zone: the server sends UTC. */
+function startOf(iso: string | null | undefined): Date | null {
   if (!iso) return null;
   const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return null;
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
+/** "2026년 10월 8일 (목)". */
+function dayOf(at: Date): string {
   // Written out, not `toLocaleDateString`: browsers and Node disagree about
   // the brackets around the weekday, and the copy must read the same from both.
   return `${at.getFullYear()}년 ${at.getMonth() + 1}월 ${at.getDate()}일 (${WEEKDAYS[at.getDay()]})`;
+}
+
+/**
+ * A due date as the date line writes a day -- "10월 13일 (화)" -- and not as it
+ * is stored, "2026-10-13" (the user, 2026-10-09).
+ *
+ * The year is the date line's to say, so it is written here only where
+ * reading it from there would be wrong: a due date in another year than the
+ * meeting's, and a page with no date line. A due date is a day on the
+ * calendar with no time in it, so no time zone moves it.
+ */
+function dueOf(due: string | null | undefined, began: Date | null): string | null {
+  if (!due) return null;
+  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
+  // Not a day as the server writes one: shown as it came, not guessed at.
+  if (!parts) return due;
+  const [year, month, day] = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
+  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  const written = `${month}월 ${day}일 (${weekday})`;
+  return began && began.getFullYear() === year ? written : `${year}년 ${written}`;
 }
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];

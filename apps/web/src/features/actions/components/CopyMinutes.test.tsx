@@ -62,7 +62,8 @@ describe("minutesText", () => {
         "2. 검색 개편은 2주 미룬다 (자동 추출)",
         "",
         "액션",
-        "1. 스펙 초안 공유 — 김민경 · 2026-10-09 (진행 중)",
+        // No date line on this page, so the due date says its own year.
+        "1. 스펙 초안 공유 — 김민경 · 2026년 10월 9일 (금) (진행 중)",
         "2. QA 일정 확인 — 민구 · 기한 없음 (확인 필요)",
         "3. 회고 자료 정리 — 담당 미지정 · 기한 없음 (완료)",
         "",
@@ -91,6 +92,33 @@ describe("minutesText", () => {
     ]);
     expect(text).toContain("1. 스펙 초안 공유 — 박재경 · 기한 없음");
     expect(text).not.toContain("진행 전");
+  });
+
+  it("writes a due date as the date line writes a day, and leaves the year to that line", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      meeting_started_at: "2026-10-08T03:00:00Z",
+      action_items: [
+        item({ id: "a6", due_date: "2026-10-13", status: "todo" }),
+        item({ id: "a7", description: "내년 예산안 내기", due_date: "2027-01-05", status: "todo" }),
+      ],
+    });
+
+    expect(text).toContain("2026년 10월 8일 (목)");
+    expect(text).toContain("1. 스펙 초안 공유 — 담당 미지정 · 10월 13일 (화)\n");
+    // Another year than the meeting's: the date line would give the wrong one.
+    expect(text).toContain("2. 내년 예산안 내기 — 담당 미지정 · 2027년 1월 5일 (화)\n");
+    expect(text).not.toContain("2026-10-13");
+  });
+
+  it("shows a due date it cannot read as it came", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      meeting_started_at: "2026-10-08T03:00:00Z",
+      action_items: [item({ id: "a8", due_date: "2026-10", status: "todo" })],
+    });
+
+    expect(text).toContain("1. 스펙 초안 공유 — 담당 미지정 · 2026-10\n");
   });
 
   it("puts a model's summary on top, under a heading that says a model wrote it", () => {

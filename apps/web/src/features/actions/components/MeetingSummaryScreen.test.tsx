@@ -99,9 +99,9 @@ describe("MeetingSummaryScreen", () => {
 
     const actions = within(page).getByRole("region", { name: "액션" });
     expect([...actions.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-      "설문 문항 다시 쓰기 — 김민경 · 2999-01-01",
+      "설문 문항 다시 쓰기 — 김민경 · 2999년 1월 1일 (화)",
       "QA 일정 확인 — 담당 미지정 · 기한 없음 (확인 필요)",
-      "견적서 보내기 — 담당 미지정 · 2020-01-01 (진행 중) · 기한 지남",
+      "견적서 보내기 — 담당 미지정 · 2020년 1월 1일 (수) (진행 중) · 기한 지남",
     ]);
   });
 
