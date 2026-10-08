@@ -106,6 +106,12 @@ def queue_l2(
     meeting's, so asking again replaces the last card instead of stacking
     another, and approval runs under it (#862). A meeting outside the team is
     refused here rather than queued.
+
+    A ``team_wide`` proposal that names a meeting is that meeting's whatever
+    woke the run (#959). Workload and Tracker judge the team; the meeting
+    whose processing woke them is not what a move is about -- the item's
+    meeting is, and the approval card names the row's meeting (#854). A run
+    about its own meeting keeps it, as before, whatever its proposal names.
     """
     refused: list[dict[str, Any]] = []
     subagent = run.route or ""
@@ -123,8 +129,11 @@ def queue_l2(
                 }
             )
             continue
-        meeting_id = run.meeting_id or proposal.arguments.get("meeting_id")
-        if meeting_id is not None and run.meeting_id is None:
+        named = proposal.arguments.get("meeting_id")
+        meeting_id = (named or run.meeting_id) if team_wide else (run.meeting_id or named)
+        # The run's own meeting is its team's already; one a proposal names is
+        # whatever the model wrote.
+        if meeting_id is not None and meeting_id != run.meeting_id:
             meeting = session.get(Meeting, meeting_id)
             if meeting is None or meeting.team_id != run.team_id:
                 refused.append(

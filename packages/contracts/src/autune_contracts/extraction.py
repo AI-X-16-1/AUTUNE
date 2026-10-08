@@ -227,9 +227,19 @@ class MeetingActionProgress(ContractModel):
 
     meeting_id: str = Field(pattern=r"^mtg_")
     confirmed: int = Field(
-        ge=1, description="Items past needs_confirmation; deleted items are gone."
+        ge=1,
+        description=(
+            "Items past needs_confirmation; deleted items are gone, and an item closed "
+            "without being finished is not counted."
+        ),
     )
-    done: int = Field(ge=0, description="Confirmed items in status done.")
+    done: int = Field(
+        ge=0,
+        description=(
+            "Confirmed items in status done that were finished; one closed without being "
+            "finished is in neither count."
+        ),
+    )
     overdue: int = Field(
         ge=0,
         description=(

@@ -5991,6 +5991,15 @@ def team_action_progress(session: Session, team_id: str, *, now: datetime) -> Te
     ids only: no assignee, title or item id leaves here, so no per-person
     completion record can be built from it (privacy.md section 3; the
     contract's own note).
+
+    **An item closed without being finished is in none of the counts**
+    (``closed_unfinished``; lsh2217 on #856). It has the status of finished
+    work, and E's completion rate is ``done`` over ``confirmed`` from this
+    snapshot and nothing else, so counted as done it would be work the team
+    finished, and counted as confirmed only it would be work left undone
+    for ever. Left out of both it is what a deleted item is: not part of the
+    rate. A meeting whose every confirmed item was closed is left out with
+    it. Re-opened and really finished, it is counted again.
     """
     today = now.astimezone(KST).date()
     confirmed = ExtActionItem.status != ActionStatus.NEEDS_CONFIRMATION.value
@@ -6001,6 +6010,15 @@ def team_action_progress(session: Session, team_id: str, *, now: datetime) -> Te
         ExtActionItem.due_date.is_not(None),
         ExtActionItem.due_date < today,
     )
+    counted = and_(Meeting.team_id == team_id, _counted_for_progress(now))
+    closed = closed_unfinished(
+        session,
+        session.scalars(
+            select(ExtActionItem.id)
+            .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
+            .where(counted, done)
+        ).all(),
+    )
     rows = session.execute(
         select(
             ExtActionItem.meeting_id,
@@ -6009,7 +6027,7 @@ def team_action_progress(session: Session, team_id: str, *, now: datetime) -> Te
             func.count().filter(overdue),
         )
         .join(Meeting, Meeting.id == ExtActionItem.meeting_id)
-        .where(Meeting.team_id == team_id, _counted_for_progress(now))
+        .where(counted, ExtActionItem.id.not_in(closed))
         .group_by(ExtActionItem.meeting_id)
         .order_by(ExtActionItem.meeting_id)
     ).all()

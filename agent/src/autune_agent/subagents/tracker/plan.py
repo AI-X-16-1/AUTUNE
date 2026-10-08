@@ -58,6 +58,10 @@ class Stalled:
     title: str
     overdue: bool
     carried: bool
+    meeting_id: str | None = None
+    """The item's own meeting, as the tool gave it. A proposal names it so
+    that its card is that meeting's and not the one whose processing woke
+    the run (#959)."""
 
 
 @dataclass(frozen=True)
@@ -106,8 +110,15 @@ def stalled_from(result: ToolResult) -> list[Stalled]:
         overdue, carried = "overdue" in ways, "carried" in ways
         if not (overdue or carried):
             continue
+        meeting_id = extra.get("meeting_id")
         found.append(
-            Stalled(action_item_id=item_id, title=row.title, overdue=overdue, carried=carried)
+            Stalled(
+                action_item_id=item_id,
+                title=row.title,
+                overdue=overdue,
+                carried=carried,
+                meeting_id=meeting_id if isinstance(meeting_id, str) else None,
+            )
         )
     return found
 

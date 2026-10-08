@@ -929,6 +929,33 @@ def test_a_due_date_arrives_as_text_and_can_be_cleared(
     assert session.get(ExtActionItem, "act_1").due_date is None  # type: ignore[union-attr]
 
 
+def test_a_write_that_names_the_items_meeting_runs_and_a_wrong_meeting_is_refused(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    """Workload and Tracker name the item's meeting so that their proposal is
+    filed under it (#959). The write checks it: an item of another meeting
+    reads as missing, and nothing changes."""
+    member(session, "user_free", "최여유")
+    session.add(Meeting(id="mtg_2", team_id=TEAM, title="다른 회의"))
+    item(session, "act_1", due=TODAY)
+
+    wrong = (
+        tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20", meeting_id="mtg_2"),
+        tools.reassign_action_item(TEAM, "act_1", "user_free", meeting_id="mtg_2"),
+        tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20", meeting_id=OTHER_MEETING),
+    )
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert [r["ok"] for r in wrong] == [False, False, False]
+    assert (row.due_date, row.assignee_id) == (TODAY, "user_in")
+    assert acting["items"] == [] and session.query(ExtEditEvent).count() == 0
+
+    assert tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20", meeting_id=MEETING)["ok"]
+    assert tools.reassign_action_item(TEAM, "act_1", "user_free", meeting_id=MEETING)["ok"]
+    assert (row.due_date, row.assignee_id) == (date(2026, 10, 20), "user_free")
+    assert acting["items"] == ["act_1", "act_1"]
+
+
 def test_a_status_outside_the_board_is_refused(
     session: Session, acting: dict[str, list[str]]
 ) -> None:

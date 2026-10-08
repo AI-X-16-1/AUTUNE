@@ -3,13 +3,12 @@ import type {
   GapReport,
   TemplateComparison,
   TemplateOption,
-  TopicGraph,
 } from "../types";
 
 /**
  * One meeting's gap report, for looking at S20 without a database behind it.
  *
- * The screen and its three hooks are the real ones; only the answers are made
+ * The screen and its hooks are the real ones; only the answers are made
  * up. It exists so the layout can be reviewed against
  * `docs/design/AUTUNE Spec 03 회의 후.dc.html` before the pipeline is running
  * locally — the same reason `features/transcript` keeps `live-demo`.
@@ -32,16 +31,6 @@ import type {
  *   screen are one finding seen twice.
  */
 export const DEMO_MEETING_ID = "mtg_demo";
-
-/** The topic that joined two conversations, which is not the one that carried
- * the meeting — `gap_topics` keeps the two numbers apart. Declared before the
- * graph that reads it: these are module-level constants, evaluated in order. */
-const BETWEENNESS: Record<string, number> = {
-  topic_demo_personalisation: 1.0,
-  topic_demo_popular: 0.36,
-  topic_demo_coldstart: 0.42,
-  topic_demo_target: 0.18,
-};
 
 export const DEMO_REPORT: GapReport = {
   contract_version: "1.0",
@@ -138,26 +127,6 @@ export const DEMO_REPORT: GapReport = {
   ],
 };
 
-export const DEMO_GRAPH: TopicGraph = {
-  meeting_id: DEMO_MEETING_ID,
-  nodes: DEMO_REPORT.topics!.map((one) => ({
-    id: one.id,
-    label: one.label,
-    centrality: one.centrality,
-    betweenness: BETWEENNESS[one.id] ?? 0,
-  })),
-  // Both directions, the way `gap_topic_edges` stores a symmetric relation —
-  // the renderer collapses the pair, the server does not.
-  edges: [
-    ...pair("topic_demo_personalisation", "topic_demo_popular", 1.0),
-    ...pair("topic_demo_personalisation", "topic_demo_target", 0.82),
-    ...pair("topic_demo_personalisation", "topic_demo_coldstart", 0.61),
-    ...pair("topic_demo_popular", "topic_demo_coldstart", 0.44),
-    ...pair("topic_demo_target", "topic_demo_exception", 0.3),
-    ...pair("topic_demo_coldstart", "topic_demo_integration", 0.21),
-  ],
-};
-
 export const DEMO_COMPARISON: TemplateComparison = {
   template_key: "general",
   name: "기본",
@@ -210,23 +179,6 @@ export const DEMO_COMPARISON: TemplateComparison = {
 
 function topic(id: string, label: string, centrality: number) {
   return { id, label, centrality, utterance_ids: [] };
-}
-
-function pair(source: string, target: string, weight: number) {
-  return [
-    {
-      source_topic_id: source,
-      target_topic_id: target,
-      relation: "co_occurs",
-      weight,
-    },
-    {
-      source_topic_id: target,
-      target_topic_id: source,
-      relation: "co_occurs",
-      weight,
-    },
-  ];
 }
 
 /** What the picker offers on the demo route: the two templates the package ships. */
