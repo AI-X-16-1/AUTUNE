@@ -595,8 +595,8 @@ other module's tables.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.extraction.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
-| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `cpu_heavy` |
-| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `cpu_heavy` |
+| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `cpu_heavy` by its name; nothing queues it today -- every caller runs it in process |
+| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `cpu_heavy` where the module queues it itself (`_follow_corrections`, `_extract` and `forget_deleted_speech` in `tasks.py`); the confirmation in this row is not queued |
 | `autune.extraction.periodic.ask_confirmations` | Beat, every five minutes (step 6 of the pipeline). Not chained after extraction: a speaker who links Slack later is still asked within the window | `cpu_heavy` |
 
 The Queue column is where `autune_core.celery_app.TASK_ROUTES` sends the name:
