@@ -30,7 +30,7 @@ from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import Embedder, Resolution, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
-from .llm import GeminiClient, _answer_text, substitute_names_mapped
+from .llm import GeminiClient, _answer_text, substitute_names_mapped, unquoted
 
 if TYPE_CHECKING:
     pass
@@ -595,6 +595,62 @@ MAX_GROWTH = 3
 characters, whichever is more) is a paragraph, not a resolved reference."""
 
 
+_WORD = re.compile(r"[가-힣A-Za-z0-9]+")
+_PARTICLE = r"(?:은|는|이|가|을|를|도|만|에|의|로|에는|에도|까지|부터)?"
+_STANDS_FOR = re.compile(
+    rf"^(?:[그이저](?:거|건|걸|게|것){_PARTICLE}|그(?:날|때|쪽){_PARTICLE}|[그이])$"
+)
+"""A word of the said line a rewrite may leave out: the one that stood for
+something -- "그건", "그것도", "그날은", the "그" of "그 부분은" -- which is the word
+it was asked to replace. Spelled out, not "anything starting with 그/이/저":
+"저는", "이번" and "그럼" start so too, and a rewrite that dropped one of those
+changed who promised or when."""
+
+
+def _words(text: str) -> set[str]:
+    return set(_WORD.findall(text.lower()))
+
+
+def _stems(text: str) -> set[str]:
+    """As ``related._stems``: a word without its particle or ending."""
+    return {word[:2] for word in _WORD.findall(text.lower()) if len(word) >= 2}
+
+
+def _keeps_what_was_said(answer: str, target: str) -> bool:
+    """Every word of the said line is still in the rewrite, the pointing words
+    aside (``_STANDS_FOR``).
+
+    A commitment's rewrite is the said line with what it pointed at filled in;
+    the instructions say so and ``_retains_target_ending`` holds the last few
+    letters to it. The words before the ending were held to nothing, and on 20
+    invented commitments (2026-10-08) two answers came back with one changed
+    into a word nobody said -- "아," into "아프,", "감사합니다." into "감사해," --
+    and the rest of the sentence right, so every other check passed. A changed
+    word is not a filled reference, and the said line is the better row.
+    """
+    said = _words(answer)
+    return all(word in said or _STANDS_FOR.match(word) for word in _words(target))
+
+
+def _filled_from_what_followed(answer: str, request: ResolutionRequest) -> bool:
+    """Whether the rewrite added a word that only a line said *after* the
+    target holds.
+
+    The lines after a commitment are offered because an answer to it can name
+    what it was about. They are also where the meeting moves on: of 20 invented
+    commitments (2026-10-08), "문구는 제가 정리해서 공유드릴게요" -- about the
+    mail just decided -- came back as the wording of the refund notice, which
+    the next speaker had brought up. Nothing in the answer was a number or a
+    name, and its ending was the target's, so it passed. What a speaker points
+    at was said before they spoke; a word found in a following line and in no
+    earlier or related one is the next subject, not this one's.
+    """
+    added = _stems(answer) - _stems(request.target)
+    earlier = _stems(" ".join([*request.context, *(text for _, text in request.related)]))
+    later = _stems(" ".join(request.context_after))
+    return bool((added & later) - earlier)
+
+
 def _sound(answer: str, request: ResolutionRequest) -> bool:
     """What a resolved sentence must not do that the groundedness checks miss.
 
@@ -950,6 +1006,8 @@ class LlmResolver(GeminiClient):
     downgraded.
     """
 
+    step = "resolver"
+
     def __init__(
         self,
         *,
@@ -991,7 +1049,7 @@ class LlmResolver(GeminiClient):
             text = answer
         else:
             text, used = _read_summary(answer, numbered)
-        text = text.strip().strip("\"'“”‘’").strip()
+        text = unquoted(text)
         if not text or "\n" in text:
             return None
         restored = _restored(text, surface)
@@ -1000,6 +1058,14 @@ class LlmResolver(GeminiClient):
         decision = request.purpose == "decision"
         if not _passes_grounding(
             restored, request, self._embedder, self._min_similarity, keep_ending=not decision
+        ):
+            return None
+        # A decision's write-up is a new sentence about several turns, the ones
+        # after its substance included; these two hold a commitment's rewrite to
+        # the line it rewrites.
+        if not decision and not (
+            _keeps_what_was_said(restored, request.target)
+            and not _filled_from_what_followed(restored, request)
         ):
             return None
         if _ends_the_same(restored, request.target):

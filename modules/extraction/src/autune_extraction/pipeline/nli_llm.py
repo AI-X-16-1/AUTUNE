@@ -135,6 +135,8 @@ def parse(answer: str, count: int) -> dict[int, str]:
 class LlmNli(GeminiClient):
     """Gemini's ``generateContent`` over masked premises, a batch a request."""
 
+    step = "nli"
+
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         """One result per pair, aligned to ``pairs``. A failed request and a
         privacy refusal are raised, as the other NLI implementations raise:

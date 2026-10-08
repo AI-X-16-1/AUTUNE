@@ -39,7 +39,7 @@ from typing import Any
 from autune_core import get_logger
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
-from .llm import GeminiClient, _answer_text, substitute_names_mapped
+from .llm import GeminiClient, _answer_text, substitute_names_mapped, unquoted
 
 log = get_logger(__name__)
 
@@ -192,7 +192,7 @@ def _kept(
     sent, or a number the meeting never said."""
     if not isinstance(sentence, str):
         return None
-    text = sentence.strip().strip("\"'“”").strip()
+    text = unquoted(sentence)
     if not text or "\n" in text or len(text) > limit:
         return None
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
@@ -211,6 +211,8 @@ def _points(value: Any, surface: dict[str, str], said: str) -> list[str]:
 
 class LlmSummarizer(GeminiClient):
     """Gemini's ``generateContent`` over a meeting's masked lines, in sections."""
+
+    step = "summary"
 
     def summarize(
         self, lines: Sequence[str], *, board: Sequence[str] = ()

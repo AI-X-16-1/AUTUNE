@@ -47,6 +47,7 @@ from autune_extraction.pipeline.llm import (
     LlmClassifier,
     _prediction,
     parse_summaries,
+    unquoted,
     usable_summary,
 )
 from autune_extraction.pipeline.related import drawn_on
@@ -233,6 +234,36 @@ def test_parse_summaries_drops_what_it_cannot_read() -> None:
     ) == {2: "두 줄 요약"}
     assert parse_summaries('{"labels": {"1": "commitment"}}') == {}
     assert parse_summaries('{"summaries": ["a"]}') == {} and parse_summaries("no json") == {}
+
+
+@pytest.mark.parametrize(
+    ("answer", "sentence"),
+    [
+        (' "따옴표로 감싼 요약" ', "따옴표로 감싼 요약"),
+        ("“따옴표로 감싼 요약”", "따옴표로 감싼 요약"),
+        ("'따옴표로 감싼 요약'", "따옴표로 감싼 요약"),
+        ('"닫지 않은 따옴표', "닫지 않은 따옴표"),
+        ('열지 않은 따옴표"', "열지 않은 따옴표"),
+        ("열지 않은 따옴표”", "열지 않은 따옴표"),
+        # A phrase the sentence quotes keeps both of its marks.
+        ('"처리 중입니다" 문구는 제가 만들게요', '"처리 중입니다" 문구는 제가 만들게요'),
+        ('문구는 "처리 중입니다"', '문구는 "처리 중입니다"'),
+        ('"즉시 알림"과 "요약 알림"', '"즉시 알림"과 "요약 알림"'),
+        ("“처리 중입니다” 문구는 제가 만들게요", "“처리 중입니다” 문구는 제가 만들게요"),
+        ("따옴표 없는 문장", "따옴표 없는 문장"),
+        ('"', ""),
+    ],
+)
+def test_only_the_marks_around_a_whole_answer_or_left_over_come_off(
+    answer: str, sentence: str
+) -> None:
+    assert unquoted(answer) == sentence
+
+
+def test_a_classifier_summary_that_starts_with_a_quoted_phrase_keeps_its_marks() -> None:
+    written = '"처리 중입니다" 문구는 제가 만들게요'
+
+    assert usable_summary(written, {}, "") == written
 
 
 def test_usable_summary_is_at_most_a_line() -> None:

@@ -673,15 +673,26 @@ def test_without_usable_due_dates_the_rhythm_decides(session, team, setup: dict[
 
 
 def test_nothing_about_an_owner_reaches_the_proposal_or_the_answer(session, team) -> None:
-    # Were B's row ever to carry more, only the date and the flag are read.
+    # Were B's row ever to carry more, the date, the flag and a confirmed
+    # item's title are read, and the title reaches the reason sentence only.
     entry = {"date": "2026-10-07", "confirmed": True, "assignee": "박지영", "title": "결제 QA"}
     tools = tools_for(recurring=[carried("gap_1")], due=[entry])
 
     outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
 
-    assert outcome.proposed
+    (proposal,) = outcome.proposed
     assert "박지영" not in repr(outcome)
-    assert "결제 QA" not in repr(outcome)
+    assert "결제 QA" not in repr(proposal.arguments)
+    assert "'결제 QA' 1건을 10/7까지" in proposal.rationale
+
+
+def test_a_drafts_title_never_reaches_the_answer(session, team) -> None:
+    entry = {"date": "2026-10-07", "confirmed": False, "title": "초안 제목"}
+    tools = tools_for(recurring=[carried("gap_1")], due=[entry])
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert "초안 제목" not in repr(outcome)
 
 
 # --- Public holidays (#964) -----------------------------------------------------------

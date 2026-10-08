@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
+from autune_integrations.privacy import find_unmasked
 
 from . import days_off, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
@@ -211,6 +212,15 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     )
 
 
+def _shown_title(description: str) -> dict[str, str]:
+    """A due-date entry's ``title``, or nothing (#1038): the item's description
+    when it carries no personal data. A description a person typed or edited
+    never passed module A's masker, so it is screened here as
+    ``service.outbound_for_meeting`` screens what leaves for Notion, Jira or
+    Slack; one that fails gives the entry no ``title`` key and stays in B."""
+    return {} if find_unmasked(description) else {"title": description}
+
+
 def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     """Use this when a day has to be chosen around one meeting's work -- a
     follow-up meeting after most of what it agreed is due (#963, #966). Do not
@@ -220,9 +230,32 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     Returns one row, ``기한``, whose ``due_dates`` lists the due date of every
     action item of the meeting that is **confirmed**, not done and has a date,
     earliest first -- one entry an item, so a day two items share is there
-    twice. A date and nothing else: no title, no assignee, no text. With an
-    assignee beside it a date would say who is late; without one it says only
-    when the meeting's work falls due. ``evidence`` holds those items' ids.
+    twice. An entry is a date, ``confirmed`` and, when it may be shown, the
+    item's ``title`` (below) -- never an assignee. With an assignee beside it a
+    date would say who is late; without one it says only when the meeting's
+    work falls due and what a piece of it is called. ``evidence`` holds those
+    items' ids.
+
+    **``title`` is a confirmed item's description, for one use: a sentence shown
+    to the meeting's own team that names a piece of the work beside the day**
+    (#1038; the user, 2026-10-08: "두 조건을 붙여 추가"). The two conditions:
+
+    - *Screened.* An entry has a ``title`` only when ``find_unmasked`` finds no
+      personal data in the description (``_shown_title``). Otherwise the entry
+      is a date and ``confirmed`` as before: the item still counts and its text
+      stays in B. A caller has to work without a title.
+    - *Shown, not kept.* The title fills a sentence at the moment it is shown.
+      It is not to be written into an ``agent_`` row or any other store outside
+      B: a copy there would outlive the item's deletion and the meeting's
+      retention, which B's own row does not. A card that shows the sentence
+      later reads this tool again and fills it then. B cannot enforce this on a
+      caller; it is the condition the title is handed over on.
+
+    Every confirmed entry's title comes out, not one: which item a sentence
+    names is the caller's rule. A caller that puts a title into text a model
+    then reads -- the main agent's compose step in a chat turn does -- sends it
+    to that model, through ``check_outbound``, as it already does a title from
+    ``meeting_action_items``.
 
     The row also counts, for a card that says how much of the dated work is
     settled ("기한 있는 항목 0/5 확정", #966, #967): ``dated_open`` is how many
@@ -267,7 +300,11 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
                 # One row holding them all: a row an item would be cut at five
                 # (``MAX_ITEMS``), and the rule this feeds needs every date.
                 "due_dates": [
-                    {"date": i.due_date.isoformat(), "confirmed": True}
+                    {
+                        "date": i.due_date.isoformat(),
+                        "confirmed": True,
+                        **_shown_title(i.description),
+                    }
                     for i in dated
                     if i.due_date is not None
                 ],

@@ -586,6 +586,32 @@ def _written(answer: str, key: str) -> dict[int, str]:
     return out
 
 
+_QUOTE_PAIRS = (('"', '"'), ("'", "'"), ("“", "”"), ("‘", "’"))
+
+
+def unquoted(text: str) -> str:
+    """``text`` without the quotation marks a model put around its answer.
+
+    Around the *whole* answer, or one left over at an end with no partner.
+    A mark that opens a phrase the sentence quotes stays with the one that
+    closes it: stripping every mark off both ends, as this used to, turned
+    ``"처리 중입니다" 로딩 문구는 제가 …`` into ``처리 중입니다" 로딩 문구는 제가 …``
+    (seen 2026-10-08 on an invented line) -- a sentence that starts by quoting
+    what the meeting said is an ordinary one.
+    """
+    text = text.strip()
+    for opening, closing in _QUOTE_PAIRS:
+        inner = text[1:-1]
+        wrapped = len(text) >= 2 and text[0] == opening and text[-1] == closing
+        if wrapped and opening not in inner and closing not in inner:
+            return inner.strip()
+        if text.startswith(opening) and closing not in text[1:]:
+            return text[1:].strip()
+        if text.endswith(closing) and opening not in text[:-1]:
+            return text[:-1].strip()
+    return text
+
+
 def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     """What the model wrote about a line, as the sentence to show for it -- or
     "" when it should not be shown, and the line as said is used instead.
@@ -603,7 +629,7 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     # Here and not at the top: ``resolver`` imports this module.
     from .resolver import _grounded  # noqa: PLC0415
 
-    text = written.strip().strip("\"'“”‘’").strip()
+    text = unquoted(written)
     if not text or len(text) > SUMMARY_MAX_CHARS:
         return ""
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
@@ -683,6 +709,35 @@ def _prediction(
     )
 
 
+_USAGE_COUNTS = (
+    ("prompt_tokens", "promptTokenCount"),
+    ("output_tokens", "candidatesTokenCount"),
+    ("thinking_tokens", "thoughtsTokenCount"),
+)
+
+
+def _usage(response: Any) -> dict[str, int]:
+    """The token counts the provider returned with an answer
+    (``usageMetadata``), under the names they are logged by -- and nothing
+    else of the answer.
+
+    Only a whole number is taken: this is read from a response that also holds
+    what a model wrote about a meeting, and a count is the one thing in it a
+    log line may carry. A block that is missing, or is not what the provider
+    documents, gives no counts; a count that is missing is left out (a model
+    that does not think returns none for it).
+    """
+    block = response.get("usageMetadata") if isinstance(response, dict) else None
+    if not isinstance(block, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for name, key in _USAGE_COUNTS:
+        value = block.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            counts[name] = value
+    return counts
+
+
 class GeminiClient:
     """Gemini's ``generateContent``: the client, the retry, the fallback model and
     the roster every request is scrubbed with (#411).
@@ -691,6 +746,10 @@ class GeminiClient:
     and record ``model_version`` the same way -- and so that neither can send a
     request the other's guard would have refused.
     """
+
+    step = "llm"
+    """Which step of an extraction asks, as ``extraction_llm_usage`` names it:
+    each subclass says its own."""
 
     def __init__(
         self,
@@ -723,12 +782,28 @@ class GeminiClient:
         would attribute the second's answers to it."""
         return f"llm:{self._model}" + (f"+{self._fallback}" if self._fallback else "")
 
+    def _answered(self, model: str, response: Any, *, index: int) -> Any:
+        """``response``, with what it cost logged: one ``extraction_llm_usage``
+        a request that was answered, by the model that answered it.
+
+        What a meeting costs was an estimate from character counts (2026-10-08);
+        these are the provider's own numbers. Counts, the model and the step
+        only -- no meeting, as no line of this client carries one, and never
+        anything the request or the answer said. An answer without counts logs
+        nothing and is the answer all the same.
+        """
+        counts = _usage(response)
+        if counts:
+            log.info("extraction_llm_usage", step=self.step, model=model, window=index, **counts)
+        return response
+
     def _post_to(self, model: str, body: dict[str, Any], *, index: int) -> Any:
         """Same retry shape as ``HostedDeberta._post``: transient failures only."""
         path = f"/models/{model}:generateContent"
         for attempt, wait in enumerate(_RETRY_BACKOFF_SEC, start=1):
             try:
-                return self._client.request("POST", path, json=body)
+                response = self._client.request("POST", path, json=body)
+                return self._answered(model, response, index=index)
             except TransientIntegrationError as exc:
                 # Counts and a reason only; the body is utterances.
                 log.info(
@@ -739,7 +814,7 @@ class GeminiClient:
                     reason=str(exc),
                 )
                 time.sleep(wait)
-        return self._client.request("POST", path, json=body)
+        return self._answered(model, self._client.request("POST", path, json=body), index=index)
 
     def _post(self, body: dict[str, Any], *, index: int) -> Any:
         """The primary model, then -- if it stays unavailable -- the fallback.
@@ -764,6 +839,8 @@ class GeminiClient:
 
 class LlmClassifier(GeminiClient):
     """Gemini's ``generateContent`` over masked utterances, one window at a time."""
+
+    step = "classifier"
 
     unread_windows = 0
     """How many windows of the last ``classify`` could not be read, when some

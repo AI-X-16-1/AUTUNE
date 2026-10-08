@@ -360,6 +360,9 @@ def _report_item(
         "editor": read.edited_by_name,
         "date": held.astimezone(service._KST).date().isoformat(),
         "correction": read.correction_status,
+        # The chat opens this row on the dashboard's report card, not the
+        # meeting screen that a bare ``meeting_id`` links to.
+        "link": "report",
     }
 
 
