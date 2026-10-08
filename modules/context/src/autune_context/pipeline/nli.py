@@ -77,6 +77,18 @@ class KlueKorNliLocal:
             "text-classification", model=settings.nli_local_model, top_k=None
         )
         self._model_version = settings.nli_local_model
+        # klue/roberta-base ships a BertTokenizer (2-segment 0/1
+        # token_type_ids) on top of a RoBERTa encoder (type_vocab_size=1):
+        # id=1 is out of range for token_type_embeddings and crashes --
+        # an IndexError on CPU, an unrecoverable CUDA device-side assert
+        # on GPU. RoBERTa's own tokenizer never emits token_type_ids for
+        # exactly this reason; match that instead of trusting the
+        # checkpoint's tokenizer_config.json. Read from the loaded model's own
+        # config rather than assumed from the name: a real BERT checkpoint
+        # (type_vocab_size=2) set in AUTUNE_CONTEXT_NLI_LOCAL_MODEL keeps its
+        # segment ids, instead of silently merging premise and hypothesis into
+        # one segment -- no crash, no error, just a wrong score (#334).
+        self._needs_segment_ids: bool = self._pipe.model.config.type_vocab_size > 1
 
     @property
     def model_version(self) -> str:
@@ -85,13 +97,7 @@ class KlueKorNliLocal:
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         if not pairs:
             return []
-        # klue/roberta-base ships a BertTokenizer (2-segment 0/1
-        # token_type_ids) on top of a RoBERTa encoder (type_vocab_size=1):
-        # id=1 is out of range for token_type_embeddings and crashes --
-        # an IndexError on CPU, an unrecoverable CUDA device-side assert
-        # on GPU. RoBERTa's own tokenizer never emits token_type_ids for
-        # exactly this reason; match that instead of trusting the
-        # checkpoint's tokenizer_config.json.
+        # Segment ids: see ``__init__``.
         #
         # Always a list input: with ``top_k=None`` a list returns one list of
         # label records per pair, while a single dict input returns that one
@@ -99,7 +105,7 @@ class KlueKorNliLocal:
         # ``[0]`` picked one record and iterated over its keys.
         batch = self._pipe(
             [{"text": premise, "text_pair": hypothesis} for premise, hypothesis in pairs],
-            return_token_type_ids=False,
+            return_token_type_ids=self._needs_segment_ids,
         )
         out: list[NliScores] = []
         for records in batch:
