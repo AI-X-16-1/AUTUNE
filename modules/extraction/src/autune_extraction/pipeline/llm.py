@@ -709,6 +709,35 @@ def _prediction(
     )
 
 
+_USAGE_COUNTS = (
+    ("prompt_tokens", "promptTokenCount"),
+    ("output_tokens", "candidatesTokenCount"),
+    ("thinking_tokens", "thoughtsTokenCount"),
+)
+
+
+def _usage(response: Any) -> dict[str, int]:
+    """The token counts the provider returned with an answer
+    (``usageMetadata``), under the names they are logged by -- and nothing
+    else of the answer.
+
+    Only a whole number is taken: this is read from a response that also holds
+    what a model wrote about a meeting, and a count is the one thing in it a
+    log line may carry. A block that is missing, or is not what the provider
+    documents, gives no counts; a count that is missing is left out (a model
+    that does not think returns none for it).
+    """
+    block = response.get("usageMetadata") if isinstance(response, dict) else None
+    if not isinstance(block, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for name, key in _USAGE_COUNTS:
+        value = block.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            counts[name] = value
+    return counts
+
+
 class GeminiClient:
     """Gemini's ``generateContent``: the client, the retry, the fallback model and
     the roster every request is scrubbed with (#411).
@@ -717,6 +746,10 @@ class GeminiClient:
     and record ``model_version`` the same way -- and so that neither can send a
     request the other's guard would have refused.
     """
+
+    step = "llm"
+    """Which step of an extraction asks, as ``extraction_llm_usage`` names it:
+    each subclass says its own."""
 
     def __init__(
         self,
@@ -749,12 +782,28 @@ class GeminiClient:
         would attribute the second's answers to it."""
         return f"llm:{self._model}" + (f"+{self._fallback}" if self._fallback else "")
 
+    def _answered(self, model: str, response: Any, *, index: int) -> Any:
+        """``response``, with what it cost logged: one ``extraction_llm_usage``
+        a request that was answered, by the model that answered it.
+
+        What a meeting costs was an estimate from character counts (2026-10-08);
+        these are the provider's own numbers. Counts, the model and the step
+        only -- no meeting, as no line of this client carries one, and never
+        anything the request or the answer said. An answer without counts logs
+        nothing and is the answer all the same.
+        """
+        counts = _usage(response)
+        if counts:
+            log.info("extraction_llm_usage", step=self.step, model=model, window=index, **counts)
+        return response
+
     def _post_to(self, model: str, body: dict[str, Any], *, index: int) -> Any:
         """Same retry shape as ``HostedDeberta._post``: transient failures only."""
         path = f"/models/{model}:generateContent"
         for attempt, wait in enumerate(_RETRY_BACKOFF_SEC, start=1):
             try:
-                return self._client.request("POST", path, json=body)
+                response = self._client.request("POST", path, json=body)
+                return self._answered(model, response, index=index)
             except TransientIntegrationError as exc:
                 # Counts and a reason only; the body is utterances.
                 log.info(
@@ -765,7 +814,7 @@ class GeminiClient:
                     reason=str(exc),
                 )
                 time.sleep(wait)
-        return self._client.request("POST", path, json=body)
+        return self._answered(model, self._client.request("POST", path, json=body), index=index)
 
     def _post(self, body: dict[str, Any], *, index: int) -> Any:
         """The primary model, then -- if it stays unavailable -- the fallback.
@@ -790,6 +839,8 @@ class GeminiClient:
 
 class LlmClassifier(GeminiClient):
     """Gemini's ``generateContent`` over masked utterances, one window at a time."""
+
+    step = "classifier"
 
     unread_windows = 0
     """How many windows of the last ``classify`` could not be read, when some
