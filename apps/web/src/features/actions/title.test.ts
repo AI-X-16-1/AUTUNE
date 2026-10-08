@@ -99,6 +99,59 @@ describe("shortTitle", () => {
     expect(title.shown).toBe("가나다라마바사아자차카타파하…");
   });
 
+  // What module A's masker writes (`autune_audio.masking`): the shape kept,
+  // "*" for the content. Each shape below is one it produces.
+  it("does not cut inside a masked phone number said with spaces", () => {
+    // The last gap that fits is between "****" and "5678로".
+    const title = shortTitle("담당자 연락처는 010 **** 5678로 정리했습니다");
+
+    expect(title.shown).toBe("담당자 연락처는…");
+  });
+
+  it("does not cut inside a masked card number", () => {
+    const title = shortTitle("결제는 **** **** **** 3456 카드로 하기로 했습니다");
+
+    expect(title.shown).toBe("결제는…");
+  });
+
+  it("does not cut inside a span a person reported, masked word by word", () => {
+    const title = shortTitle("새 배송지는 ** *** **** *** 쪽으로 정했습니다");
+
+    expect(title.shown).toBe("새 배송지는…");
+  });
+
+  it("keeps a masked span whole when it fits", () => {
+    const title = shortTitle("연락처는 010-****-5678로 정리했습니다");
+
+    expect(title.shown).toBe("연락처는 010-****-5678로…");
+    expect(length(title.shown)).toBe(TITLE_MAX);
+  });
+
+  it("moves a cut with no gap to fall in back out of a masked number", () => {
+    const title = shortTitle("가나다라마바사아자차카타010-****-5678로연락합니다");
+
+    expect(title.shown).toBe("가나다라마바사아자차카타…");
+  });
+
+  it("keeps a masked number that ends exactly where that cut falls", () => {
+    const title = shortTitle("가나다라마바010-****-5678로연락드리겠습니다");
+
+    expect(title.shown).toBe("가나다라마바010-****-5678…");
+    expect(length(title.shown)).toBe(TITLE_MAX);
+  });
+
+  it("moves that cut back out of a masked address, its first letter kept", () => {
+    const title = shortTitle("가나다라마바사아자차카타파하k***@example.com으로보냅니다");
+
+    expect(title.shown).toBe("가나다라마바사아자차카타파하…");
+  });
+
+  it("moves that cut back out of a masked name, its first character kept", () => {
+    const title = shortTitle("가나다라마바사아자차카타파하거너더김**님께전달합니다");
+
+    expect(title.shown).toBe("가나다라마바사아자차카타파하거너더…");
+  });
+
   it("leaves no comma or stop hanging before the mark", () => {
     expect(shortTitle("첫째, 둘째, 셋째, 넷째, 다섯째, 여섯째, 일곱째").shown).toBe(
       "첫째, 둘째, 셋째, 넷째, 다섯째…",
