@@ -813,35 +813,55 @@ def test_a_sentence_that_differs_only_in_its_full_stop_resolved_nothing() -> Non
     assert out == Resolution(TARGET), "no change, so no citation either"
 
 
-def test_a_decision_that_already_says_what_was_decided_is_not_sent_to_the_model() -> None:
+SAYS_IT_ALL = "검색 결과 정렬은 다음 주 월요일부터 인기순으로 바꾸는 걸로 합시다"
+
+
+def test_a_decision_that_already_says_what_was_decided_is_sent_to_the_model_too() -> None:
+    # Every row is a written sentence (the user, 2026-10-08): a long turn that
+    # points at nothing was left as said, or tidied into the wrong tense.
+    from autune_extraction.decisions import decision_id
+
     resolver = Citing()
     rows = [
         ClassifiedUtterance(
             id="utt_1",
             kind=UtteranceKind.DECISION,
             confidence=0.9,
-            text="검색 결과 정렬은 다음 주 월요일부터 인기순으로 바꾸는 걸로 합시다",
+            text=SAYS_IT_ALL,
             speaker="김민경",
         )
     ]
 
-    assert service.resolve_decision_summaries(resolver, rows, meeting_id=MEETING) == {}
-    assert resolver.received == []
+    summaries = service.resolve_decision_summaries(resolver, rows, meeting_id=MEETING)
+
+    assert [r.target for r in resolver.received] == [SAYS_IT_ALL]
+    assert summaries == {decision_id(MEETING, ("utt_1",)): Resolution(SAYS_IT_ALL + " (정리)")}
 
 
-@pytest.mark.parametrize(
-    ("core", "asked"),
-    [
-        ("그럼 그 방향으로 진행합시다", True),  # points at something said before
-        ("인기순으로 가요", True),  # too short to say much
-        ("검색 결과 정렬은 다음 주 월요일부터 인기순으로 바꾸는 걸로 합시다", False),
-    ],
-)
-def test_which_decisions_are_worth_a_call(core: str, asked: bool) -> None:
-    from autune_extraction.decisions import DecisionGroup, needs_write_up
+def test_a_decision_the_classifier_wrote_a_line_for_costs_no_request_whatever_it_says() -> None:
+    from autune_extraction.decisions import decision_id
 
-    group = DecisionGroup(
-        statement=core, source_utterance_ids=("utt_1",), confidence=0.9, core_text=core
-    )
+    resolver = Citing()
+    rows = [
+        ClassifiedUtterance(
+            id="utt_1",
+            kind=UtteranceKind.DECISION,
+            confidence=0.9,
+            text=SAYS_IT_ALL,
+            summary="검색 결과 정렬을 다음 주 월요일부터 인기순으로 바꾸기로 했습니다",
+        ),
+        ClassifiedUtterance(id="utt_2", kind=None, confidence=0.9, text="네 알겠습니다"),
+        ClassifiedUtterance(id="utt_3", kind=None, confidence=0.9, text="다음 안건으로 넘어가죠"),
+        ClassifiedUtterance(id="utt_4", kind=None, confidence=0.9, text="배포 일정 얘기입니다"),
+        ClassifiedUtterance(
+            id="utt_5",
+            kind=UtteranceKind.DECISION,
+            confidence=0.9,
+            text="배포는 이번 주 목요일 오후에 하는 걸로 정리하겠습니다",
+        ),
+    ]
 
-    assert needs_write_up(group) is asked
+    summaries = service.resolve_decision_summaries(resolver, rows, meeting_id=MEETING)
+
+    assert [r.target_id for r in resolver.received] == ["utt_5"]
+    assert set(summaries) == {decision_id(MEETING, (n,)) for n in ("utt_1", "utt_5")}

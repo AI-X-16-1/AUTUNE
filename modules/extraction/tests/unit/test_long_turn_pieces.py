@@ -38,7 +38,6 @@ from autune_extraction.decisions import (
     group_decisions,
     identified,
     in_pieces,
-    needs_write_up,
 )
 from autune_extraction.models import (
     ExtActionItem,
@@ -374,18 +373,6 @@ def test_the_lines_a_piece_summary_used_are_stored_as_the_utterances_they_are_in
             select(ExtDecisionRelated.utterance_id).where(ExtDecisionRelated.decision_id == made)
         )
     ) == ["utt_3"]
-
-
-def test_a_decision_that_is_a_piece_is_always_worth_a_write_up() -> None:
-    """Half a request of speech is not a line of minutes."""
-    said = "이번 분기에는 여러 사정을 다 따져 본 끝에 결국 A안으로 가기로 했습니다"
-    (whole,) = group_decisions([turn("utt_1", K.DECISION, said)])
-    (piece,) = group_decisions(
-        in_pieces([turn("utt_1", K.DECISION, "", pieces=((said, K.DECISION), (CHAT, None)))])
-    )
-
-    assert not needs_write_up(whole)
-    assert needs_write_up(piece)
 
 
 # --- which part of the turn a row was made from --------------------------------------
