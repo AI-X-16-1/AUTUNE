@@ -765,23 +765,29 @@ class GeminiClient:
 class LlmClassifier(GeminiClient):
     """Gemini's ``generateContent`` over masked utterances, one window at a time."""
 
-    def _readable(self, body: dict[str, Any], *, index: int) -> str:
-        """This window's answer, as text that says something -- labels, or that
-        there are none. An answer that says nothing (``unreadable``) is asked
-        for again, ``UNREADABLE_ASKS`` times in all, and then the call fails.
+    unread_windows = 0
+    """How many windows of the last ``classify`` could not be read, when some
+    could. Their lines carry no label, which is not "nothing was said there":
+    the run stores what was read and says a part was not
+    (``attempts.note_partly_unread``). A count -- not which windows, and
+    nothing of them."""
 
-        It used to label nothing, which is what "no commitment and no decision
-        in these lines" also looks like: a meeting whose one request was
-        refused ended as an extraction that went through and found nothing,
-        and nothing tried again (the user, 2026-10-08). Raising lets the run be
-        counted and tried again (``attempts``), and the 액션 tab say so."""
+    def _readable(self, body: dict[str, Any], *, index: int) -> tuple[str, str]:
+        """This window's answer as text that says something -- labels, or that
+        there are none -- or why it says nothing (``unreadable``), after asking
+        ``UNREADABLE_ASKS`` times in all. One of the two is "".
+
+        An answer that says nothing used to label nothing, which is what "no
+        commitment and no decision in these lines" also looks like: a meeting
+        whose one request was refused ended as an extraction that went through
+        and found nothing, and nothing tried again (the user, 2026-10-08)."""
         cause = ""
         for ask in range(1, UNREADABLE_ASKS + 1):
             response = self._post(body, index=index)
             answer = _answer_text(response)
             cause = unreadable(response, answer)
             if not cause:
-                return answer
+                return answer, ""
             # The cause, the provider's own reason word and counts: an answer
             # that cannot be read can still be utterances.
             log.warning(
@@ -792,9 +798,10 @@ class LlmClassifier(GeminiClient):
                 cause=cause,
                 finish=_finish_reason(response),
             )
-        raise UnreadableAnswerError(cause)
+        return "", cause
 
     def classify(self, texts: list[str]) -> list[Prediction]:
+        self.unread_windows = 0
         if not texts:
             return []
         # A long turn is cut as it was said, and each piece keeps those words:
@@ -809,6 +816,7 @@ class LlmClassifier(GeminiClient):
         labels: list[UtteranceKind | None] = [None] * len(lines)
         summaries = [""] * len(lines)
         chosen = [""] * len(lines)
+        asked, unread, cause = 0, 0, ""
         for index, (context, start, end) in enumerate(windows(lines, budget)):
             text, targets = render(lines, context, start, end)
             body = {
@@ -816,7 +824,14 @@ class LlmClassifier(GeminiClient):
                 "contents": [{"role": "user", "parts": [{"text": text}]}],
                 "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
             }
-            answer = self._readable(body, index=index)
+            asked += 1
+            answer, cause_here = self._readable(body, index=index)
+            if cause_here:
+                # The other windows are still asked: what they hold is kept
+                # (the user, 2026-10-08), and only a meeting none of whose
+                # windows could be read is a call that failed.
+                unread, cause = unread + 1, cause_here
+                continue
             for line, kind in parse(answer).items():
                 if line in targets:
                     labels[targets[line]] = kind
@@ -837,6 +852,11 @@ class LlmClassifier(GeminiClient):
                 at = targets.get(line)
                 if at is not None and labels[at] in SUMMARISED:
                     chosen[at] = usable_part(written, said[at], names)
+        if unread == asked:
+            # Nothing was read at all: there is no result to keep, and "found
+            # nothing" would be false. The run is counted and tried again.
+            raise UnreadableAnswerError(cause)
+        self.unread_windows = unread
         parts: list[list[int]] = [[] for _ in texts]
         for line, owner in enumerate(owners):
             parts[owner].append(line)
@@ -859,6 +879,8 @@ class LlmClassifier(GeminiClient):
             in_pieces=sum(len(own) > 1 for own in parts),
             summarised=sum(bool(written) for written in summaries),
             narrowed=sum(bool(words) for words in chosen),
+            windows=asked,
+            unread=unread,
         )
         return predictions
 
@@ -879,9 +901,10 @@ def _in_pieces(texts: list[str], names: re.Pattern[str] | None) -> tuple[list[in
 
 UNREADABLE_ASKS = 2
 """How many times one window is asked before its answer is given up on. The
-second ask is at once: nothing was busy, the answer was no answer. A run that
-still fails is tried again by the sweep, so a window that is refused every time
-is asked ``UNREADABLE_ASKS * attempts.MAX_ATTEMPTS`` times and then left."""
+second ask is at once: nothing was busy, the answer was no answer. A run with
+a window still unread is tried again by the sweep, so a window that is refused
+every time is asked ``UNREADABLE_ASKS * attempts.MAX_ATTEMPTS`` times and then
+left."""
 
 BLOCKED = "blocked"
 NO_CANDIDATE = "no_candidate"
@@ -890,9 +913,12 @@ UNPARSEABLE = "unparseable"
 
 
 class UnreadableAnswerError(TransientIntegrationError):
-    """The model answered a window with nothing that can be read: the request
-    was refused, no candidate came back, the candidate was empty, or its text
-    was not the JSON asked for.
+    """The model answered every window of a meeting with nothing that can be
+    read: the request was refused, no candidate came back, the candidate was
+    empty, or its text was not the JSON asked for. Carries the last cause.
+
+    A meeting some of whose windows were read is not this: it is a result with
+    a part missing (``LlmClassifier.unread_windows``).
 
     Transient in the shared client's sense -- the request was fine and asking
     again can work -- so whatever handles a busy model handles this. The

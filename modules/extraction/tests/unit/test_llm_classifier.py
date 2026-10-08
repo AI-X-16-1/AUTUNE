@@ -221,24 +221,83 @@ def test_a_second_ask_that_can_be_read_is_the_answer(slept) -> None:
     ]
 
 
-def test_a_window_that_cannot_be_read_stops_the_meeting_there(slept) -> None:
-    """The run fails whatever the later windows say, so they are not asked."""
+def refusing(provider: Provider, refused: set[int]) -> None:
+    """Makes ``provider`` answer the windows in ``refused`` (by the order they
+    are first asked in) with nothing, however often they are asked."""
+    answer = provider.request
+    seen: list[str] = []
+
+    def request(method: str, path: str, *, json: dict) -> dict:  # noqa: A002 - httpx's name
+        read = answer(method, path, json=json)
+        asked = json["contents"][0]["parts"][0]["text"]
+        if asked not in seen:
+            seen.append(asked)
+        return {"candidates": []} if seen.index(asked) in refused else read
+
+    provider.request = request  # type: ignore[method-assign]
+
+
+def test_a_window_that_cannot_be_read_costs_its_own_lines_and_is_counted(slept) -> None:
+    """What the other windows hold is kept (the user, 2026-10-08): the windows
+    after the unread one are still asked, and the call says how many were not
+    read -- its lines carry no label, which is not "nothing was said there"."""
     whole = Provider()
-    classifier(whole).classify(meeting(300))
-    assert len(whole.bodies) > 2
+    reader = classifier(whole)
+    full = [p.kind for p in reader.classify(meeting(300))]
+    asked = len(whole.bodies)
+    assert asked > 2
+    assert reader.unread_windows == 0
 
     provider = Provider()
-    answer = provider.request
+    refusing(provider, {1})
+    partly = classifier(provider)
+    with capture_logs() as logs:
+        read = [p.kind for p in partly.classify(meeting(300))]
 
-    def second_window_refused(method: str, path: str, *, json: dict) -> dict:  # noqa: A002
-        read = answer(method, path, json=json)
-        return read if len(provider.bodies) == 1 else {"candidates": []}
+    assert partly.unread_windows == 1
+    # Every window was asked, the unread one ``UNREADABLE_ASKS`` times.
+    assert len(provider.bodies) == asked + UNREADABLE_ASKS - 1
+    lost = [i for i, (was, now) in enumerate(zip(full, read, strict=True)) if was != now]
+    assert lost and all(read[i] is None for i in lost)
+    # The lost lines are one stretch -- the unread window -- with read lines on both sides.
+    assert lost == [i for i in range(lost[0], lost[-1] + 1) if full[i] is not None]
+    assert any(read[: lost[0]]) and any(read[lost[-1] + 1 :])
+    done = next(entry for entry in logs if entry["event"] == "extraction_llm_classified")
+    assert (done["windows"], done["unread"]) == (asked, 1)
 
-    provider.request = second_window_refused  # type: ignore[method-assign]
-    with pytest.raises(UnreadableAnswerError):
-        classifier(provider).classify(meeting(300))
+    # The count is the last call's: the classifier is kept between meetings,
+    # and the next one may have no line it is allowed to read.
+    assert partly.classify([]) == []
+    assert partly.unread_windows == 0
 
-    assert len(provider.bodies) == 1 + UNREADABLE_ASKS
+
+def test_a_meeting_none_of_whose_windows_can_be_read_fails_after_asking_them_all(slept) -> None:
+    whole = Provider()
+    classifier(whole).classify(meeting(300))
+    asked = len(whole.bodies)
+
+    provider = Provider()
+    refusing(provider, set(range(asked)))
+    unread = classifier(provider)
+    with pytest.raises(UnreadableAnswerError) as raised:
+        unread.classify(meeting(300))
+
+    assert raised.value.cause == NO_CANDIDATE
+    assert len(provider.bodies) == asked * UNREADABLE_ASKS
+
+
+def test_every_window_but_one_unread_is_still_a_result(slept) -> None:
+    whole = Provider()
+    classifier(whole).classify(meeting(300))
+    asked = len(whole.bodies)
+
+    provider = Provider()
+    refusing(provider, set(range(1, asked)))
+    partly = classifier(provider)
+    read = [p.kind for p in partly.classify(meeting(300))]
+
+    assert partly.unread_windows == asked - 1
+    assert read[0] is UtteranceKind.COMMITMENT
 
 
 @pytest.mark.parametrize(

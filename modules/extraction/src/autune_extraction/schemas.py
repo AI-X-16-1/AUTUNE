@@ -489,6 +489,11 @@ class ExtractionState(BaseModel):
     failed_at: datetime | None
     will_retry: bool
     not_published: bool = False
+    partly_unread: bool = False
+    """The last run stored its rows and could not read part of the transcript
+    (``attempts.PARTLY_UNREAD``): the board's items and decisions are this
+    run's, and some may be missing. Counted in ``failures`` so that it is
+    tried again; never which part, and nothing of it."""
     requested: bool
     requested_at: datetime | None
     in_progress: bool = False
