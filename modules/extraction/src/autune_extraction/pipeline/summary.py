@@ -55,6 +55,7 @@ from autune_core import get_logger
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .llm import GeminiClient, _answer_text, substitute_names_mapped, unquoted
+from .resolver import _numbers
 
 log = get_logger(__name__)
 
@@ -165,13 +166,6 @@ _PLACEHOLDER = re.compile(r"\[사람\d+\]")
 _FIRST_PERSON = re.compile(r"(?<![가-힣])(?:제가|저는|저도|제게|내가)(?![가-힣])")
 """A speaker's word for themselves, as its own word: not the 제가 of 문제가."""
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-_DIGIT_RUN = re.compile(r"\d+")
-
-
-def _numbers(text: str) -> set[str]:
-    """The numbers ``text`` says, each a whole run of digits without the zeros
-    in front: "20일" says 20 and does not say 2, and "09시" says 9."""
-    return {run.lstrip("0") or "0" for run in _DIGIT_RUN.findall(text)}
 
 
 class TooLongError(RuntimeError):
