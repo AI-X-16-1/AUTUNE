@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from autune_context.config import ContextSettings
 from autune_context.pipeline.nli import KlueKorNliLocal
 from autune_context.pipeline.reranking import BgeRerankerKoLocal
 
@@ -109,10 +110,13 @@ class _FakeTextClassificationPipeline:
         return out if isinstance(inputs, list) else out[0]
 
 
-def _nli(pipe: _FakeTextClassificationPipeline) -> KlueKorNliLocal:
+def _nli(
+    pipe: _FakeTextClassificationPipeline, *, needs_segment_ids: bool = False
+) -> KlueKorNliLocal:
     nli = object.__new__(KlueKorNliLocal)  # skip loading weights
     nli._pipe = pipe
     nli._model_version = "fake"
+    nli._needs_segment_ids = needs_segment_ids
     return nli
 
 
@@ -144,6 +148,34 @@ def test_nli_sends_one_batch_without_token_type_ids() -> None:
     inputs, kwargs = pipe.calls[0]
     assert inputs == [{"text": "가", "text_pair": "나"}, {"text": "다", "text_pair": "라"}]
     assert kwargs["return_token_type_ids"] is False
+
+
+def test_nli_keeps_segment_ids_for_an_encoder_that_has_them() -> None:
+    """A BERT checkpoint (``type_vocab_size=2``) needs them: without, premise
+    and hypothesis become one segment, with no error to say so (#334)."""
+    pipe = _FakeTextClassificationPipeline(
+        [{"entailment": 1.0, "contradiction": 0.0, "neutral": 0.0}]
+    )
+
+    _nli(pipe, needs_segment_ids=True).classify([("가", "나")])
+
+    assert pipe.calls[0][1]["return_token_type_ids"] is True
+
+
+@pytest.mark.parametrize(("type_vocab_size", "expected"), [(1, False), (2, True)])
+def test_nli_reads_whether_it_needs_segment_ids_from_the_loaded_model(
+    monkeypatch: pytest.MonkeyPatch, type_vocab_size: int, expected: bool
+) -> None:
+    pipe = types.SimpleNamespace(
+        model=types.SimpleNamespace(config=types.SimpleNamespace(type_vocab_size=type_vocab_size))
+    )
+    monkeypatch.setitem(
+        sys.modules, "transformers", types.SimpleNamespace(pipeline=lambda *args, **kwargs: pipe)
+    )
+
+    nli = KlueKorNliLocal(ContextSettings(nli_local_model="any/checkpoint"))
+
+    assert nli._needs_segment_ids is expected
 
 
 def test_nli_with_a_single_pair_still_reads_its_records() -> None:
