@@ -86,6 +86,29 @@ describe("JiraOpenIssues", () => {
     expect(await screen.findByText(message)).toBeTruthy();
   });
 
+  it("lists one team's project alone when the board shows one team", async () => {
+    const OTHER: JiraProjectIssues = {
+      ...PROJECT,
+      team_id: "team_2",
+      team_name: "디자인팀",
+      project_key: "DSN",
+    };
+    list.mockResolvedValue([PROJECT, OTHER]);
+    const view = render(<JiraOpenIssues teamId="team_2" />);
+
+    open();
+
+    expect(await screen.findByText("디자인팀 · DSN")).toBeTruthy();
+    expect(screen.queryByText("제품팀 · AUT")).toBeNull();
+
+    // Every team again, and a team with no project: nothing is read anew.
+    view.rerender(<JiraOpenIssues teamId={null} />);
+    expect(screen.getByText("제품팀 · AUT")).toBeTruthy();
+    view.rerender(<JiraOpenIssues teamId="team_3" />);
+    expect(screen.getByText(/연결한 Jira 프로젝트가 없습니다/)).toBeTruthy();
+    expect(list).toHaveBeenCalledOnce();
+  });
+
   it("says so when no team has connected a project", async () => {
     list.mockResolvedValue([]);
     render(<JiraOpenIssues />);

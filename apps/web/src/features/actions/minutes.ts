@@ -1,4 +1,4 @@
-import { COLUMN_LABELS, isCandidate } from "./types";
+import { COLUMN_LABELS, UNCONFIRMED_DECISION, isCandidate } from "./types";
 import type { ActionItemRead, MeetingSummary } from "./types";
 
 /**
@@ -16,7 +16,8 @@ import type { ActionItemRead, MeetingSummary } from "./types";
  *
  * **Candidates are left out.** A candidate is something the model was not sure
  * was an item at all; minutes that listed it would state a guess as an
- * outcome. An item still waiting for confirmation is listed, and says so.
+ * outcome. An item still waiting for confirmation is listed, and says so; a
+ * decision nobody confirmed is listed as one a model extracted.
  *
  * Built in the browser from what the summary tab already holds. Nothing is
  * sent anywhere: copying is the reader's act, and so is where it is pasted.
@@ -30,7 +31,9 @@ export function minutesText(summary: MeetingSummary, title?: string | null): str
     lines.push("- 없음");
   } else {
     for (const decision of summary.decisions) {
-      lines.push(`- ${decision.statement}${decision.status === "pending" ? " (확인 대기)" : ""}`);
+      lines.push(
+        `- ${decision.statement}${decision.status === "pending" ? ` (${UNCONFIRMED_DECISION})` : ""}`,
+      );
     }
   }
 

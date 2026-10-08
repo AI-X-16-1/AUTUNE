@@ -204,7 +204,7 @@ def test_unconfirmed_items_are_counted_never_quoted(session: Session) -> None:
 
     titles = [i["title"] for i in result["items"]]
     assert titles == ["act_confirmed 할 일"]
-    assert "확인 대기 1건" in result["summary"]
+    assert "확인 필요 1건" in result["summary"]
 
 
 # --- meeting_due_dates (#966) ----------------------------------------------------------
@@ -246,7 +246,7 @@ def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
     }
     assert result["evidence"] == ["act_late", "act_a", "act_b", "act_c"]
     assert result["summary"] == (
-        "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 대기 0건."
+        "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 필요 0건."
     )
     said = str(result)
     assert "할 일" not in said, "no item's text"
@@ -270,7 +270,7 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
     assert dates == [(TODAY + timedelta(days=4)).isoformat()]
     assert draft_day.isoformat() not in str(result)
     assert result["evidence"] == ["act_confirmed"], "no card can point at a draft"
-    assert "확인 대기 2건" in result["summary"]
+    assert "확인 필요 2건" in result["summary"]
     assert all(entry["confirmed"] is True for entry in result["items"][0]["due_dates"])
     # The dated draft is in the count and nowhere else; the undated one in neither.
     assert (result["items"][0]["dated_open"], result["items"][0]["dated_confirmed"]) == (2, 1)
@@ -286,7 +286,7 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
         (TODAY + timedelta(days=4)).isoformat(),
     ]
     assert after["evidence"] == ["act_draft", "act_confirmed"]
-    assert "확인 대기 1건" in after["summary"]
+    assert "확인 필요 1건" in after["summary"]
     assert (after["items"][0]["dated_open"], after["items"][0]["dated_confirmed"]) == (2, 2)
 
 
@@ -308,7 +308,7 @@ def test_only_drafts_have_dates_means_a_row_of_counts_no_date_and_no_evidence(
     ]
     assert result["evidence"] == []
     assert result["summary"] == (
-        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 대기 2건."
+        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 필요 2건."
     )
     said = str(result)
     assert not any(day.isoformat() in said for day in draft_days), "a count, never a date"
@@ -529,9 +529,14 @@ def test_review_state_counts_what_waits_and_quotes_none_of_it(session: Session) 
 
     result = tools.review_state(session, MEETING)
 
-    assert "결정 확인 대기 1건" in result["summary"]
-    assert "액션아이템 확인 대기 1건" in result["summary"]
+    assert "결정 확인 필요 1건" in result["summary"]
+    assert "액션아이템 확인 필요 1건" in result["summary"]
     assert {i["id"] for i in result["items"]} == {"dec_1", "act_draft"}
+    # The words the board and the decision list use for a row nobody confirmed.
+    assert {i["id"]: i["title"] for i in result["items"]} == {
+        "dec_1": "결정 확인 필요",
+        "act_draft": "액션아이템 확인 필요",
+    }
     assert all(i["body"] == "" for i in result["items"])
     assert result["evidence"] == ["utt_d"]
 
@@ -766,7 +771,7 @@ def test_only_confirmed_decisions_are_quoted(session: Session) -> None:
     result = tools.meeting_decisions(session, MEETING)
 
     assert [i["title"] for i in result["items"]] == ["dec_ok 결정"]
-    assert "확인 대기 1건" in result["summary"]
+    assert "확인 필요 1건" in result["summary"]
     assert "dec_wait 결정" not in str(result)
     assert "dec_no 결정" not in str(result)
 
@@ -821,7 +826,8 @@ def test_an_unconfirmed_item_is_reported_without_its_text(session: Session) -> N
     result = tools.action_item_status(session, TEAM, "act_draft")
 
     assert "act_draft 할 일" not in str(result)
-    assert result["items"][0]["title"] == "확인 대기"
+    assert result["items"][0]["title"] == "확인 필요"
+    assert result["summary"].startswith("확인이 필요한 액션아이템입니다.")
 
 
 def test_another_teams_item_is_the_same_as_an_unknown_one(session: Session) -> None:
@@ -1137,6 +1143,7 @@ def test_a_followup_item_is_followups_fixed_text_and_waits(
         "followup",
     )
     assert acting["items"] == []  # unconfirmed: nothing leaves
+    assert result["summary"] == "후속 회의 항목을 추가했습니다 (확인 필요)."
     # Not a person finding what the model missed: edit cost gets no "created".
     assert session.query(ExtEditEvent).count() == 0
 
@@ -1257,7 +1264,9 @@ def test_a_date_that_has_passed_is_left_off_and_the_item_is_still_made(
     (row,) = session.query(ExtActionItem).all()
     assert result["ok"] is True and result["items"][0]["id"] == row.id
     assert row.due_date is None
-    assert "기한은 넣지 않았습니다" in result["summary"]
+    assert result["summary"] == (
+        "후속 회의 항목을 추가했습니다 (확인 필요). 추천 날짜가 이미 지나 기한은 넣지 않았습니다."
+    )
 
 
 def test_once_confirmed_it_is_an_ordinary_item_with_a_date(
@@ -1476,8 +1485,8 @@ def test_an_item_nobody_confirmed_is_given_by_id_and_never_quoted(session: Sessi
 
     assert result["items"] == [
         {
-            "title": "액션아이템 확인 대기",
-            "body": "4일째 확인 대기",
+            "title": "액션아이템 확인 필요",
+            "body": "4일째 확인 필요",
             "score": 0.5,
             "id": "act_waiting",
             "meeting_id": MEETING,
@@ -1487,7 +1496,7 @@ def test_an_item_nobody_confirmed_is_given_by_id_and_never_quoted(session: Sessi
     ]
     assert "act_waiting 할 일" not in repr(result) and "박지영" not in repr(result)
     assert result["evidence"] == [], "nothing unconfirmed is sourced either"
-    assert "3일 넘게 확인 대기 1건" in result["summary"]
+    assert "3일 넘게 확인 필요 1건" in result["summary"]
 
 
 def test_how_long_unconfirmed_counts_is_the_callers_to_say(session: Session) -> None:

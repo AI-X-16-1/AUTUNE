@@ -37,6 +37,15 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
 };
 
 /**
+ * What a document -- the 요약 tab, the copied minutes -- says after a decision
+ * nobody has confirmed. Where the line came from, not what it waits for: on a
+ * page of minutes "…로 결정함 (확인 대기)" read as if the decision itself were
+ * not final, or as a workflow that had stalled (the user, 2026-10-08). The
+ * review list, where a person acts, says "확인 필요" as the board does.
+ */
+export const UNCONFIRMED_DECISION = "자동 추출";
+
+/**
  * Where one item stands with one outside system — `ExternalRefRead`.
  *
  * Not the generated `ExternalRef` from `@autune/contracts`: that type is the

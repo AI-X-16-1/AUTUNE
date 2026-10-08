@@ -765,7 +765,43 @@ class GeminiClient:
 class LlmClassifier(GeminiClient):
     """Gemini's ``generateContent`` over masked utterances, one window at a time."""
 
+    unread_windows = 0
+    """How many windows of the last ``classify`` could not be read, when some
+    could. Their lines carry no label, which is not "nothing was said there":
+    the run stores what was read and says a part was not
+    (``attempts.note_partly_unread``). A count -- not which windows, and
+    nothing of them."""
+
+    def _readable(self, body: dict[str, Any], *, index: int) -> tuple[str, str]:
+        """This window's answer as text that says something -- labels, or that
+        there are none -- or why it says nothing (``unreadable``), after asking
+        ``UNREADABLE_ASKS`` times in all. One of the two is "".
+
+        An answer that says nothing used to label nothing, which is what "no
+        commitment and no decision in these lines" also looks like: a meeting
+        whose one request was refused ended as an extraction that went through
+        and found nothing, and nothing tried again (the user, 2026-10-08)."""
+        cause = ""
+        for ask in range(1, UNREADABLE_ASKS + 1):
+            response = self._post(body, index=index)
+            answer = _answer_text(response)
+            cause = unreadable(response, answer)
+            if not cause:
+                return answer, ""
+            # The cause, the provider's own reason word and counts: an answer
+            # that cannot be read can still be utterances.
+            log.warning(
+                "extraction_llm_unreadable",
+                model=self.last_model,
+                window=index,
+                ask=ask,
+                cause=cause,
+                finish=_finish_reason(response),
+            )
+        return "", cause
+
     def classify(self, texts: list[str]) -> list[Prediction]:
+        self.unread_windows = 0
         if not texts:
             return []
         # A long turn is cut as it was said, and each piece keeps those words:
@@ -780,6 +816,7 @@ class LlmClassifier(GeminiClient):
         labels: list[UtteranceKind | None] = [None] * len(lines)
         summaries = [""] * len(lines)
         chosen = [""] * len(lines)
+        asked, unread, cause = 0, 0, ""
         for index, (context, start, end) in enumerate(windows(lines, budget)):
             text, targets = render(lines, context, start, end)
             body = {
@@ -787,7 +824,14 @@ class LlmClassifier(GeminiClient):
                 "contents": [{"role": "user", "parts": [{"text": text}]}],
                 "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
             }
-            answer = _answer_text(self._post(body, index=index))
+            asked += 1
+            answer, cause_here = self._readable(body, index=index)
+            if cause_here:
+                # The other windows are still asked: what they hold is kept
+                # (the user, 2026-10-08), and only a meeting none of whose
+                # windows could be read is a call that failed.
+                unread, cause = unread + 1, cause_here
+                continue
             for line, kind in parse(answer).items():
                 if line in targets:
                     labels[targets[line]] = kind
@@ -808,6 +852,11 @@ class LlmClassifier(GeminiClient):
                 at = targets.get(line)
                 if at is not None and labels[at] in SUMMARISED:
                     chosen[at] = usable_part(written, said[at], names)
+        if unread == asked:
+            # Nothing was read at all: there is no result to keep, and "found
+            # nothing" would be false. The run is counted and tried again.
+            raise UnreadableAnswerError(cause)
+        self.unread_windows = unread
         parts: list[list[int]] = [[] for _ in texts]
         for line, owner in enumerate(owners):
             parts[owner].append(line)
@@ -830,6 +879,8 @@ class LlmClassifier(GeminiClient):
             in_pieces=sum(len(own) > 1 for own in parts),
             summarised=sum(bool(written) for written in summaries),
             narrowed=sum(bool(words) for words in chosen),
+            windows=asked,
+            unread=unread,
         )
         return predictions
 
@@ -848,8 +899,89 @@ def _in_pieces(texts: list[str], names: re.Pattern[str] | None) -> tuple[list[in
     return owners, lines
 
 
+UNREADABLE_ASKS = 2
+"""How many times one window is asked before its answer is given up on. The
+second ask is at once: nothing was busy, the answer was no answer. A run with
+a window still unread is tried again by the sweep, so a window that is refused
+every time is asked ``UNREADABLE_ASKS * attempts.MAX_ATTEMPTS`` times and then
+left."""
+
+BLOCKED = "blocked"
+NO_CANDIDATE = "no_candidate"
+EMPTY = "empty"
+UNPARSEABLE = "unparseable"
+
+
+class UnreadableAnswerError(TransientIntegrationError):
+    """The model answered every window of a meeting with nothing that can be
+    read: the request was refused, no candidate came back, the candidate was
+    empty, or its text was not the JSON asked for. Carries the last cause.
+
+    A meeting some of whose windows were read is not this: it is a result with
+    a part missing (``LlmClassifier.unread_windows``).
+
+    Transient in the shared client's sense -- the request was fine and asking
+    again can work -- so whatever handles a busy model handles this. The
+    message is one of four words and nothing of the answer.
+    """
+
+    def __init__(self, cause: str) -> None:
+        super().__init__(f"the model's answer could not be read ({cause})", cause=cause)
+        self.cause = cause
+
+
+def unreadable(body: Any, answer: str) -> str:
+    """Why this response says nothing, or "" when it can be read.
+
+    Readable is narrower than "has labels": ``{"labels": {}}`` is the answer
+    the instructions ask for when no line is a commitment or a decision, and it
+    is a success. So is any JSON object that names no labels (``{}``,
+    ``"labels": []``, ``"labels": null``) -- a model saying "none" in the wrong
+    shape is still saying none, and failing those would retry a quiet meeting
+    for ever. Entries ``parse`` cannot use are dropped there, as before.
+
+    Unreadable is what cannot be told apart from silence: no text at all, text
+    with no JSON object in it (cut off, or prose), or labels that hold
+    something in a shape nobody can map to lines.
+    """
+    if not answer.strip():
+        feedback = body.get("promptFeedback") if isinstance(body, dict) else None
+        if isinstance(feedback, dict) and feedback.get("blockReason"):
+            return BLOCKED
+        candidates = body.get("candidates") if isinstance(body, dict) else None
+        return EMPTY if candidates else NO_CANDIDATE
+    match = re.search(r"\{.*\}", answer, re.S)
+    try:
+        loaded = json.loads(match.group(0)) if match else None
+    except json.JSONDecodeError:
+        loaded = None
+    if not isinstance(loaded, dict):
+        return UNPARSEABLE
+    labels = loaded.get("labels")
+    return UNPARSEABLE if labels and not isinstance(labels, dict) else ""
+
+
+_REASON_WORD = re.compile(r"[A-Z_]{1,40}")
+
+
+def _finish_reason(body: Any) -> str:
+    """The provider's reason word for the log -- ``SAFETY``, ``MAX_TOKENS`` --
+    or "". Only a word of capitals is passed on; anything else is not a reason
+    word and could be anything."""
+    try:
+        reason = body["promptFeedback"]["blockReason"]
+    except (KeyError, IndexError, TypeError):
+        try:
+            reason = body["candidates"][0]["finishReason"]
+        except (KeyError, IndexError, TypeError):
+            return ""
+    return reason if isinstance(reason, str) and _REASON_WORD.fullmatch(reason) else ""
+
+
 def _answer_text(body: Any) -> str:
-    """The first candidate's text, or "" -- a blocked or empty answer labels nothing."""
+    """The first candidate's text, or "" for a blocked or empty answer. What ""
+    means is the caller's: the classifier does not take it for "nothing found"
+    (``unreadable``)."""
     try:
         parts = body["candidates"][0]["content"]["parts"]
         return "".join(p.get("text", "") for p in parts if isinstance(p, dict))

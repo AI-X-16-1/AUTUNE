@@ -20,7 +20,7 @@ from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
@@ -89,6 +89,27 @@ NOT_PUBLISHED = ResultNotPublishedError.__name__
 NOT_EXTRACTED = "NotExtracted"
 """``reason`` for a meeting the sweep adopted: no run of it is on record at all."""
 
+PARTLY_UNREAD = "PartlyUnread"
+"""``reason`` for a meeting whose run stored its rows and could not read part
+of the transcript: the model's answer for some window said nothing
+(``llm.unreadable``) while others were read (the user, 2026-10-08: keep what
+was read, say a part was not, try again).
+
+Not an extraction that failed -- the rows are on the board -- and not one that
+went through: what was said in the unread part is unknown. So it is counted
+like a failure, which is what makes the sweep run the meeting again and the
+액션 tab say so, and the tab's sentence is its own. Each further run that
+still leaves a part unread counts one more, and so does one that fails
+outright -- the reason stays this one until a run reads everything, because the
+board still holds the partial read. After ``MAX_ATTEMPTS`` the sweep stops and
+the tab keeps saying it. The team's channel is not told (``owed_notices``): its
+message says a meeting could not be extracted, and this one was.
+
+Every run asks about the whole meeting again: which windows were unread is
+not kept, and a window is read with the lines before it. So a rerun follows
+the rules of any rerun -- a meeting a person corrected keeps its items, a
+confirmed row stays -- and what is stored is always the latest run's."""
+
 
 def adopt_unextracted(session: Session, *, now: datetime | None = None) -> list[str]:
     """Count one failure for each meeting that has a transcript and no
@@ -134,8 +155,18 @@ def note_failure(
 
     One statement, so the event's task and the sweep failing at once count
     two and not one."""
-    when = now or datetime.now(tz=UTC)
-    reason = type(exc).__name__[:80]
+    return _count(session, meeting_id, type(exc).__name__[:80], now or datetime.now(tz=UTC))
+
+
+def note_partly_unread(session: Session, meeting_id: str, *, now: datetime | None = None) -> int:
+    """One more run of this meeting that stored its rows with part of the
+    transcript unread (``PARTLY_UNREAD``); returns how many failures there are
+    now. In the run's own transaction, in the place of ``note_success``: the
+    count and the rows it is about are committed together."""
+    return _count(session, meeting_id, PARTLY_UNREAD, now or datetime.now(tz=UTC))
+
+
+def _count(session: Session, meeting_id: str, reason: str, when: datetime) -> int:
     statement = _insert(session).values(
         meeting_id=meeting_id, failures=1, reason=reason, failed_at=when
     )
@@ -145,7 +176,15 @@ def note_failure(
                 index_elements=["meeting_id"],
                 set_={
                     "failures": ExtExtractionAttempt.failures + 1,
-                    "reason": reason,
+                    # The board of a meeting counted as partly unread holds a
+                    # partial read until a run goes through, whatever the run
+                    # after it failed at: the reason stays, so the tab keeps
+                    # saying that and not "could not extract" over rows.
+                    # (``note_success`` clears it.)
+                    "reason": case(
+                        (ExtExtractionAttempt.reason == PARTLY_UNREAD, PARTLY_UNREAD),
+                        else_=reason,
+                    ),
                     "failed_at": when,
                 },
             ).returning(ExtExtractionAttempt.failures)
@@ -236,13 +275,16 @@ def unpublished(session: Session, meeting_ids: Collection[str]) -> set[str]:
 
 
 def owed_notices(session: Session, *, now: datetime | None = None) -> list[str]:
-    """Meetings out of tries whose team has not been told yet."""
+    """Meetings out of tries whose team has not been told yet. Not one whose
+    rows are stored with a part unread (``PARTLY_UNREAD``): the message is
+    about a meeting with nothing on its board."""
     when = now or datetime.now(tz=UTC)
     return list(
         session.scalars(
             select(ExtExtractionAttempt.meeting_id)
             .where(
                 ExtExtractionAttempt.failures >= MAX_ATTEMPTS,
+                ExtExtractionAttempt.reason.is_distinct_from(PARTLY_UNREAD),
                 ExtExtractionAttempt.told_at.is_(None),
                 ExtExtractionAttempt.failed_at > when - NOTICE_WINDOW,
             )
@@ -355,6 +397,7 @@ def state(session: Session, meeting_id: str, *, now: datetime | None = None) -> 
         failed_at=row.failed_at if row is not None and failures else None,
         will_retry=0 < failures < MAX_ATTEMPTS,
         not_published=bool(failures) and row is not None and row.reason == NOT_PUBLISHED,
+        partly_unread=bool(failures) and row is not None and row.reason == PARTLY_UNREAD,
         requested=row.requested if row is not None else False,
         requested_at=row.requested_at if row is not None else None,
     )

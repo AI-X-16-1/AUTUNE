@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from statistics import median_low
 from typing import Literal
@@ -120,6 +120,13 @@ def _business_days_after(day: date, n: int, off: AbstractSet[date] = frozenset()
 
 
 def suggest_date(held: list[date], today: date, off: AbstractSet[date] = frozenset()) -> date:
+    """The day ``suggest_by_rhythm`` gives."""
+    return suggest_by_rhythm(held, today, off).day
+
+
+def suggest_by_rhythm(
+    held: list[date], today: date, off: AbstractSet[date] = frozenset()
+) -> Suggestion:
     """When the follow-up meeting could be: the team's usual gap after its
     latest meeting, never before the next business day.
 
@@ -136,13 +143,23 @@ def suggest_date(held: list[date], today: date, off: AbstractSet[date] = frozens
     days = sorted(set(held), reverse=True)
     earliest = _business_days_after(today, 1, off)
     if len(days) < 2:
-        return _business_days_after(today, DEFAULT_BUSINESS_DAYS, off)
+        day = _business_days_after(today, DEFAULT_BUSINESS_DAYS, off)
+        return Suggestion(day, "cadence", Why(step="default", meetings=len(days)))
     gaps = [(a - b).days for a, b in zip(days, days[1:], strict=False)]
     cadence = min(max(median_low(gaps), 1), MAX_CADENCE_DAYS)
-    day = max(days[0] + timedelta(days=cadence), earliest)
+    planned = days[0] + timedelta(days=cadence)
+    day = max(planned, earliest)
     while not is_business_day(day, off):
         day += timedelta(days=1)
-    return day
+    why = Why(
+        step="cadence",
+        meetings=len(days),
+        last_meeting=days[0],
+        cadence_days=cadence,
+        held_to_earliest=planned < earliest,
+        moved_off_day=day != max(planned, earliest),
+    )
+    return Suggestion(day, "cadence", why)
 
 
 @dataclass(frozen=True)
@@ -154,10 +171,52 @@ class Due:
     confirmed: bool
 
 
+Step = Literal["overdue", "due_share", "cadence", "default"]
+"""Which step of the date rule gave the day (spec section 5): a confirmed item
+already late (2), the ``DUE_DATE_SHARE`` point of M's due dates (4), the
+team's rhythm (5), or ``DEFAULT_BUSINESS_DAYS`` when the rhythm is unknown."""
+
+
+@dataclass(frozen=True)
+class Why:
+    """What the rule used to reach its day, as values (spec section 7, Stage 2).
+
+    The reason sentence is written from these and nothing else, so it can say
+    no more than the rule did. Dates, counts and flags only: no item's title,
+    no owner, no meeting text.
+    """
+
+    step: Step
+    overdue: int = 0
+    """Confirmed items already past their due date (step 2)."""
+    used: tuple[date, ...] = ()
+    """The due dates step 4 counted, ascending."""
+    covered: int = 0
+    """How many of ``used`` are due by ``share_point``."""
+    share_point: date | None = None
+    """The due date at the ``DUE_DATE_SHARE`` point; the day is the business day after."""
+    beyond_horizon: int = 0
+    """Due dates dropped as past ``DUE_HORIZON_DAYS``."""
+    past_drafts: int = 0
+    """Unconfirmed due dates dropped as already past."""
+    meetings: int = 0
+    """The team's meeting days the rhythm read (steps 5 and default)."""
+    last_meeting: date | None = None
+    cadence_days: int | None = None
+    """The team's usual gap between meetings, in days."""
+    held_to_earliest: bool = False
+    """The rule's day was before the next business day, so that day was taken."""
+    moved_off_day: bool = False
+    """The day fell on a weekend or a public holiday and moved past it."""
+
+
 @dataclass(frozen=True)
 class Suggestion:
     day: date
     basis: Basis
+    why: Why | None = field(default=None, compare=False)
+    """What the rule used. Not compared: two suggestions are the same date on
+    the same basis."""
 
 
 def suggest_from_due_dates(
@@ -177,14 +236,27 @@ def suggest_from_due_dates(
     a weekday not in ``off``, the public holidays (#964).
     """
     earliest = _business_days_after(today, 1, off)
-    if any(d.confirmed and d.day < today for d in due):
-        return Suggestion(earliest, "confirmed")
+    overdue = sum(1 for d in due if d.confirmed and d.day < today)
+    if overdue:
+        return Suggestion(earliest, "confirmed", Why(step="overdue", overdue=overdue))
     horizon = today + timedelta(days=DUE_HORIZON_DAYS)
     kept = sorted((d for d in due if today <= d.day <= horizon), key=lambda d: d.day)
     if not kept:
         return None
     # Rounded first: 0.8 * 15 is 12.000000000000002 in floating point.
     k = max(math.ceil(round(DUE_DATE_SHARE * len(kept), 9)), 1)
-    day = max(_business_days_after(kept[k - 1].day, 1, off), earliest)
+    point = kept[k - 1].day
+    after = _business_days_after(point, 1, off)
+    day = max(after, earliest)
     basis: Basis = "confirmed" if all(d.confirmed for d in kept) else "draft"
-    return Suggestion(day, basis)
+    why = Why(
+        step="due_share",
+        used=tuple(d.day for d in kept),
+        covered=sum(1 for d in kept if d.day <= point),
+        share_point=point,
+        beyond_horizon=sum(1 for d in due if d.day > horizon),
+        past_drafts=sum(1 for d in due if not d.confirmed and d.day < today),
+        held_to_earliest=after < earliest,
+        moved_off_day=day == after and after != point + timedelta(days=1),
+    )
+    return Suggestion(day, basis, why)

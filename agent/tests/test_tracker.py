@@ -48,8 +48,8 @@ def confirmed(item_id: str, *ways: str, flagged: bool = False) -> dict[str, Any]
 def waiting(item_id: str, days: int = 4) -> dict[str, Any]:
     """An item nobody has confirmed, as B gives it: no text, no holder, no date."""
     return {
-        "title": "액션아이템 확인 대기",
-        "body": f"{days}일째 확인 대기",
+        "title": "액션아이템 확인 필요",
+        "body": f"{days}일째 확인 필요",
         "score": 0.5,
         "id": item_id,
         "meeting_id": "mtg_a",
@@ -126,7 +126,7 @@ def test_an_item_nobody_confirmed_is_never_proposed_and_never_quoted() -> None:
     assert [p.arguments["action_item_id"] for p in outcome.proposed] == ["act_late"]
     assert [i.model_extra["id"] for i in outcome.result.items] == ["act_late"]
     assert outcome.result.evidence == ["act_late"]
-    assert "확인 대기" not in outcome.result.summary
+    assert "확인 필요" not in outcome.result.summary
 
 
 def test_a_row_marked_unconfirmed_is_skipped_whatever_else_it_says() -> None:

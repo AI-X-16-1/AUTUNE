@@ -114,9 +114,14 @@ export function ReExtract({
             !read.requested &&
             (read.extracted_at !== before.extracted_at || read.failures !== before.failures);
           if (ran) {
+            // A run that left part of the transcript unread is counted as a
+            // failure and still stored its rows: the board has to be read.
+            const stored =
+              read.failures <= before.failures ||
+              (read.partly_unread && read.extracted_at !== before.extracted_at);
             setWaiting(false);
-            setOutcome(read.failures > before.failures ? "failed" : "done");
-            if (read.failures <= before.failures) onExtracted();
+            setOutcome(stored ? "done" : "failed");
+            if (stored) onExtracted();
           } else if (tries + 1 >= POLL_LIMIT) {
             setWaiting(false);
             setOutcome("slow");
@@ -162,7 +167,22 @@ export function ReExtract({
 
   return (
     <div className="flex flex-col gap-1.5">
-      {failed && !waiting ? (
+      {state.partly_unread && !waiting ? (
+        // The rows below are what the run read; it is said for as long as a
+        // part is unread, also after a rerun that left one again.
+        state.will_retry ? (
+          <p role="status" style={muted}>
+            이 회의의 일부 구간을 읽지 못했습니다. 아래 액션 아이템과 결정은 읽은 구간에서 추출한
+            것이며, 빠진 항목이 있을 수 있습니다. 자동으로 다시 시도하고 있습니다.
+          </p>
+        ) : (
+          <p role="alert" style={critical}>
+            이 회의의 일부 구간을 읽지 못했습니다. 아래 액션 아이템과 결정은 읽은 구간에서 추출한
+            것이며, 빠진 항목이 있을 수 있습니다. 자동으로는 더 시도하지 않습니다. 아래 버튼으로
+            다시 시도할 수 있습니다.
+          </p>
+        )
+      ) : failed && !waiting ? (
         state.not_published ? (
           // The rows below are this run's: what failed is telling the other
           // analyses, so "could not extract" would be false (PARK, #868).

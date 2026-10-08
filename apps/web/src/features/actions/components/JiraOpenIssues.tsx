@@ -19,6 +19,10 @@ import { listJiraOpenIssues, type JiraIssue, type JiraProjectIssues } from "../a
  *
  * Closed until asked for: every open is a request to Jira with the team's
  * connection, and the board above it is the page's subject.
+ *
+ * Under a board showing one team (`teamId`, 2026-10-08) only that team's
+ * project is listed. The request is the same one -- every team's is read --
+ * and the others are left out of what is shown.
  */
 
 type State =
@@ -36,7 +40,7 @@ const WHY_EMPTY: Record<Exclude<JiraProjectIssues["state"], "ok">, string> = {
 const meta = { fontSize: "var(--text-metaSmall)" } as const;
 const body = { fontSize: "var(--text-rowBody)", lineHeight: "var(--text-rowBody-leading)" } as const;
 
-export function JiraOpenIssues() {
+export function JiraOpenIssues({ teamId = null }: { teamId?: string | null }) {
   const [state, setState] = useState<State>({ kind: "closed" });
   // Which request an answer belongs to. Collapsing moves it on, so an answer
   // that arrives after 접기 is dropped instead of opening the list again.
@@ -68,6 +72,10 @@ export function JiraOpenIssues() {
       </section>
     );
   }
+  const projects =
+    state.kind !== "ready"
+      ? []
+      : state.projects.filter((project) => teamId === null || project.team_id === teamId);
 
   return (
     <section aria-label="Jira 열린 이슈" style={{ marginTop: "var(--space-24)" }}>
@@ -94,13 +102,13 @@ export function JiraOpenIssues() {
         <p role="alert" className="text-[var(--color-signal-critical)]" style={meta}>
           Jira 이슈를 불러오지 못했습니다. 잠시 후 다시 불러와 주세요.
         </p>
-      ) : state.projects.length === 0 ? (
+      ) : projects.length === 0 ? (
         <p className="text-[var(--color-ink-muted)]" style={meta}>
           연결한 Jira 프로젝트가 없습니다. 회의의 액션 탭에서 Jira를 연결하면 열린 이슈가 이곳에
           보입니다.
         </p>
       ) : (
-        state.projects.map((project) => <Project key={project.team_id} project={project} />)
+        projects.map((project) => <Project key={project.team_id} project={project} />)
       )}
     </section>
   );

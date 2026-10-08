@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from autune_agent.main import BudgetExceededError, CallBudget, RunScope, Tool, Toolbox
 from autune_agent.main.pending import arguments_ok
@@ -25,6 +26,7 @@ from autune_agent.subagents.report.graph import (
 )
 from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK
 from autune_agent.testing import mock_tool
+from autune_core.errors import PrivacyViolationError
 
 TEAM = "team_a"
 MEETING = "mtg_ab12cd"
@@ -381,6 +383,39 @@ def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
 
     body = outcome.proposed[0].arguments["body_markdown"]
     assert "열린 갭" not in body and "✅ 확정된 액션 아이템" in body
+
+
+def _raising(name: str, exc: Exception) -> Tool:
+    def fn(_session: object, **_kw: object) -> dict[str, Any]:
+        raise exc
+
+    return Tool(name=name, description="Use this in tests.", fn=fn)
+
+
+_NOT_SWALLOWED = [
+    PrivacyViolationError("refused"),
+    SQLAlchemyError("connection lost"),
+    BudgetExceededError("budget"),
+]
+
+
+@pytest.mark.parametrize("tool", [GAPS_TOOL, CHANNEL_TOOL], ids=["optional-read", "channel"])
+@pytest.mark.parametrize("exc", _NOT_SWALLOWED, ids=["privacy", "database", "budget"])
+def test_a_privacy_database_or_budget_error_is_never_swallowed(tool: str, exc: Exception) -> None:
+    """The chat path re-raises the same three (RAISED): a privacy guard is never
+    downgraded, and a database error leaves the session unusable for the run."""
+    tools = {**_all_tools(), tool: _raising(tool, exc)}
+
+    with pytest.raises(type(exc)):
+        _run(EVENT, tools, scope_meeting=MEETING)
+
+
+def test_a_channel_check_that_raises_proposes_the_post_as_before() -> None:
+    tools = {**_all_tools(), CHANNEL_TOOL: _raising(CHANNEL_TOOL, RuntimeError("bug"))}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
 
 
 def test_an_unknown_meeting_is_a_failure_with_no_proposal() -> None:

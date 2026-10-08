@@ -223,6 +223,10 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, utterances, consented=consented)
+    # Windows of the transcript whose answer could not be read while others
+    # were (``LlmClassifier.unread_windows``): what was read is stored below as
+    # any run's, and the run is counted as one that left a part unread.
+    unread = int(getattr(classifier, "unread_windows", 0) or 0)
     # "네 알겠습니다." called ambiguous is nothing to verify or to ask about.
     classified = service.drop_bare_acknowledgements(classified)
     nli = get_nli()
@@ -297,8 +301,13 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
-        # With the rows too: only a run that stored its result ends the count.
-        attempts.note_success(session, meeting_id)
+        # With the rows too: only a run that stored its result ends the count
+        # -- and only one that read the whole transcript. One that left a part
+        # unread adds to it, so the sweep runs the meeting again.
+        if unread:
+            attempts.note_partly_unread(session, meeting_id)
+        else:
+            attempts.note_success(session, meeting_id)
         result = service.result_for_meeting(session, meeting_id)
 
     _follow_corrections(corrections)
@@ -325,6 +334,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         model_version=classifier.model_version,
         resolver_model_version=resolver.model_version,
         resolved_commitments=len(resolved_descriptions),
+        unread_windows=unread,
     )
     # Step 6, the DM, is ``ask_confirmations``, not this run: a speaker who is
     # identified or links Slack a little later is still asked. Step 7 waits for

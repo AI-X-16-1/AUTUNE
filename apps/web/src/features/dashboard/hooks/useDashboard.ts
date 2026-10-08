@@ -12,7 +12,7 @@ import type { DashboardRead, GapTitlesByPattern, HeatmapCell, PredictionsRead } 
  * `/predictions` (each `/{team_id}`) are separate because each has its own
  * gate or cadence — a heatmap role pair appears only once three meetings have
  * scored it (and none do until B sends stance per role, #168), a prediction
- * only after four weeks and three meetings (#27), and gap titles are a
+ * only after three meetings (#27), and gap titles are a
  * best-effort explanation of `gap_distribution`'s counts, not part of the
  * rollup itself. S26 always shows all four, so they load together here rather
  * than at four call sites. Settled independently: a failure in any but

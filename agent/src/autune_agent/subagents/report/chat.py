@@ -20,9 +20,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from itertools import zip_longest
 from typing import Any
 
-from sqlalchemy.exc import SQLAlchemyError
-
-from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
+from autune_agent.main import SubagentState, Toolbox
 from autune_agent.main.gemini import ADDRESSING, gemini_tools_from_settings
 from autune_agent.main.registry import NO_MEETING
 from autune_agent.main.toolcall import (
@@ -45,6 +43,7 @@ from .template import (
     NO_SLACK,
     POSTED,
     PUBLISH_ACTION,
+    RAISED,
     compose_report,
     no_channel,
 )
@@ -263,7 +262,7 @@ class _Turn:
     def read(self, name: str, **args: Any) -> ToolResult:
         try:
             result = self.toolbox.call(name, **args)
-        except (PrivacyViolationError, BudgetExceededError, SQLAlchemyError):
+        except RAISED:
             raise
         except Exception as exc:  # noqa: BLE001 - one tool's failure is the model's to work around
             log.warning("e_agent_tool_failed tool=%s error=%s", name, type(exc).__name__)
@@ -293,7 +292,7 @@ class _Turn:
     def _compose(self, meeting: dict[str, Any]) -> SubagentResult | ToolResult:
         try:
             return compose_report(self.toolbox, meeting)
-        except (PrivacyViolationError, BudgetExceededError, SQLAlchemyError):
+        except RAISED:
             raise
         except Exception as exc:  # noqa: BLE001 - see ``read``
             log.warning("e_agent_tool_failed tool=redraft error=%s", type(exc).__name__)

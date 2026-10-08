@@ -77,6 +77,10 @@ describe("MeetingSummaryScreen", () => {
     expect(rows[0]?.textContent).toContain("출시를 다음 달로 미룬다");
     expect(rows[0]?.querySelector("p")?.textContent).toBe("출시는 다음 달로 미루기로 했습니다.");
     expect(rows[1]?.querySelector("p")).toBeNull();
+    // An unconfirmed decision says where it came from, not that it is waiting.
+    expect(rows[0]?.textContent).toContain("출시를 다음 달로 미룬다 · 자동 추출");
+    expect(rows[1]?.textContent).not.toContain("자동 추출");
+    expect(decisions.textContent).not.toContain("확인 대기");
     const item = screen.getByRole("region", { name: "액션" }).querySelector("li");
     expect(item?.querySelector("p")?.textContent).toBe("설문은 제가 금요일까지 다시 쓰겠습니다.");
   });
