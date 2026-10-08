@@ -42,6 +42,10 @@ jobs:
       # the api sends the browser here afterwards, so it must be the origin
       # the session cookie belongs to.
       DEV_SITE_URL: https://autune.shelldocs.cloud
+      # Where the browser opens the live transcript socket: the API's own
+      # address. On DEV_SITE_URL the handshake reaches the API without its
+      # Upgrade header and is answered 404; here it is answered 101.
+      DEV_LIVE_URL: wss://autune-back.shelldocs.cloud
       # Optional: without them /api/auth/google/start answers "not
       # configured" and the dev token still works.
       AUTUNE_GOOGLE_CLIENT_ID: ${{ secrets.AUTUNE_GOOGLE_CLIENT_ID }}
