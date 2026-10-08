@@ -136,6 +136,26 @@ agreement, and sync the result to Notion and Jira.
    decision often spans several utterances. **Module D depends on this**: it is
    what a decision lineage is keyed on, and a `Classification` alone is not
    enough. See `../architecture/contracts.md`, "The B → D boundary".
+
+   **Which decision turns are one decision** (the owner, 2026-10-09). Turns
+   said back to back are one decision only while at most one of them says
+   something of its own: a turn with content, then "네 그렇게 하죠", is one
+   decision, and the assent belongs to the one it follows. A second turn with
+   content starts a new decision, so a wrap-up that lists three decisions is
+   three rows, and a date said for one is not attached to the next. "Content"
+   is at least twelve characters once the words that only point ("그렇게",
+   "그대로") are taken out (`decisions.says_something`). The cost, accepted: one
+   decision said twice in full sentences is two rows, and a person removes
+   one. Before this every decision turn in a row was one decision, and three
+   decisions read out together became one row with the last one's date.
+
+   **A date that is what was decided is not the decision's deadline.** "배포를
+   화요일로 바꾸기로" decides a day, and "매주 월요일에 하기로" a day that
+   repeats; neither is due by anything. In a decision a date followed by
+   (으)로, or said with 매주, 매달, 격주 or 마다, is left out of the deadline
+   (`slots.parse_due(decided=True)`); "10월 20일에 내기로" and "다음 주
+   금요일까지" are read as before, and "금요일까지로" stays a deadline. An
+   action item's date is read as it always was.
 6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
@@ -324,9 +344,9 @@ confirmation DM's quotation is #586's second part.
 | `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결), and Monday's DM of their own open items with them (#792): one switch for both. On unless a row says off; the person and when, nothing else. Goes with the account |
-| `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
+| `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's, and of those only the ones no person has confirmed, rejected or reworded (see "Rebuilding a meeting's decisions" below) |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order, and the same two offsets for a decision settled in part of a long turn. A row outlives its utterance with `utterance_id` NULL (#400), as an action item's does: readers list the sources that exist and say how many were deleted (`deleted_source_count`), and the row keeps its `position` and nothing of the line -- no id, speaker, time or words, and no offsets: a trigger on the table clears `excerpt_start` and `excerpt_end` whenever the row has no `utterance_id`, so every path that deletes an utterance is covered without this module being told |
-| `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
+| `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). A row that says something -- a verdict or a rewording -- also keeps its decision through a rerun that would group the lines differently; one put back to pending with no rewording does not. No reviewer column |
 | `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
@@ -591,6 +611,34 @@ whose sources changed gets a different id — and module A mints new `utt_` ids
 whenever it reprocesses a recording (#194), which changes every source — so a
 caller that rebuilds still republishes `ExtractionResult`. Matching an old decision to a reworded new one is the
 same-decision question, and #25 gave that to D.
+
+**A decision a person confirmed, rejected or reworded is not rebuilt** (the
+owner, 2026-10-09; `service._marked_decisions`). While every line it was made
+from can be read, it keeps its `dec_` id, its sentence, its sources, its review
+and its Notion page, however the run would group those lines now -- a label
+the classifier gave differently this time, or a grouping rule that changed
+since the row was made. No new decision is made from a line such a row holds:
+a run of decision turns that is partly held is built from the free turns only,
+and only if one of them says something of its own, so assent to a kept
+decision does not become a row. A decision nobody marked is rebuilt as above,
+and a review put back to pending with no rewording is no mark.
+
+Two things still move a kept row:
+
+- **A line of it was corrected since** (a PII report, #586). The model's
+  sentence is read again from the row's own lines, so a word masked since does
+  not stay in it; the id and the review are kept. A person's rewording is not
+  touched and is flagged "출처 발화가 정정됨 · 확인 필요", as before. A row
+  confirmed without a rewording stays confirmed with the re-read sentence and
+  is not flagged, and its Notion page follows -- the rule #586 already had for
+  a decision whose id did not change.
+- **A line of it was deleted, or its speaker's consent was withdrawn.** It is
+  a decision like any other again: rebuilt from what can still be read, or
+  gone.
+
+Rows stored before this rule change only when their meeting is extracted
+again: a row that joined several decisions and that nobody marked is split
+into new ids then, and a marked one stays as it is.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.
