@@ -112,8 +112,9 @@ See `../architecture/async-pipeline.md`.
    heuristic until there are 50 labeled meetings with at least 5 of each
    outcome. Every prediction is stored in `intel_predictions` with its
    `model_version`; it is **shown** — in the snapshot and on `/predictions` —
-   only once the team has four weeks of history and three scored meetings
-   (#27). Prophet trend forecasting is not built; see Open questions.
+   only once the team has three scored meetings (#27). #27's four weeks of
+   history are lifted until the final presentation (`prediction.MIN_HISTORY`
+   is zero) and come back after it. Prophet trend forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
    `intel_gap_patterns` for a team over `[period_start, period_end)`, plus B's
    current action-item counts (below), into one
@@ -571,4 +572,5 @@ exactly what a surveillance feature looks like. Read
   to mean anything. Deferred until there is enough history to evaluate it.
 
 Decided: predictions are shown after four weeks of history and three meetings
-(#27).
+(#27). The four weeks are lifted until the final presentation; the three
+meetings are not.
