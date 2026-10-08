@@ -94,18 +94,21 @@ agreement, and sync the result to Notion and Jira.
    that added nothing from them cites none, and the drawer shows the quotation
    alone.
    A decision is written up the same way (`ext_decision_related`, "요약에 쓴
-   발화" on S15) -- but only when its settling turn does not say what was decided:
-   short, or pointing at something said before ("그렇게 하죠"). Asked about every
-   decision, the model rewrote all of them and cited a line for about a quarter;
-   the rest it only put into "~하기로 했습니다", which `noun_form.tidy` does without
-   a model. That limit is the resolver's. With `classifier_impl=llm` **every
-   decision the classifier wrote a line for shows that line**, whether or not
-   its settling turn already said what was decided, and cites the lines it
-   took a word from, found the same way (`ext_decision_related`): the owner
-   asked for each
-   action item and decision as one line (2026-10-06), and the line came with
-   the label at no further request. A decision with no such line goes the
-   resolver's way as before.
+   발화" on S15). With `classifier_impl=llm` **every decision the classifier
+   wrote a line for shows that line**, and cites the lines it took a word
+   from, found the same way: the owner asked for each action item and
+   decision as one line (2026-10-06), and the line came with the label at
+   no further request. A decision with no such line is sent to the
+   resolver, **whatever its settling turn says** (2026-10-08). Before that
+   the resolver was asked only when the turn was short or pointed at
+   something said before ("그렇게 하죠"), since for the others it mostly changed
+   the ending; but those were the rows that then stayed as said, or that
+   `noun_form.tidy` turned into "…결정 예정" when the meeting had decided. On
+   twelve invented decisions with no classifier line all twelve write-ups
+   passed the resolver's checks and read right -- one meeting, one run, not
+   a rate. It costs a request for about every six such decisions. A
+   write-up that fails a check, or only repeats the turn, leaves the tidied
+   line, as does a resolver that cannot cite.
 
    **What module D is sent is not what the screen shows.** `ext_decisions.statement`
    is the line a person sees and that leaves for Notion -- noun-ended, or the
