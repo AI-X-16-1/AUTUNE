@@ -33,6 +33,7 @@ from . import (
     attempts,
     jira_issues,
     leave_calendar,
+    materials,
     notion_connect,
     projects,
     service,
@@ -58,6 +59,8 @@ from .schemas import (
     DueReminderSettingIn,
     ExtractionState,
     JiraProjectIssues,
+    MaterialRead,
+    MaterialWrite,
     MeetingNoteUpdate,
     MeetingReview,
     MeetingSummary,
@@ -560,6 +563,40 @@ def delete_project(project_id: str, team_id: str, session: SessionDep, reader: C
     """Delete a project; what was in it becomes 미분류."""
     team = _member_team(session, reader, None, team_id)
     projects.delete_project(session, team, project_id)
+    session.commit()
+
+
+@router.get("/materials", response_model=list[MaterialRead])
+def list_materials(team_id: str, session: SessionDep, reader: CurrentUser) -> list[MaterialRead]:
+    """The Drive files the team keeps on its 자료 screen (#817), the newest
+    first. Members of the team only; anyone else gets the 404 an unknown team
+    gets."""
+    team = _member_team(session, reader, None, team_id)
+    return [materials.read(row) for row in materials.team_materials(session, team)]
+
+
+@router.post("/materials", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
+def register_material(
+    payload: MaterialWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialRead:
+    """Put a Drive file on the team's shelf: a title and a pasted link. Any
+    member, as with the team's projects. Only the file's id is kept, and the
+    file itself is never read."""
+    team = _member_team(session, reader, None, team_id)
+    row = materials.register(session, team, title=payload.title, link=payload.link)
+    response = materials.read(row)
+    session.commit()
+    return response
+
+
+@router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_material(
+    material_id: str, team_id: str, session: SessionDep, reader: CurrentUser
+) -> None:
+    """Take a material off the team's shelf. Any member; the Drive file is not
+    touched."""
+    team = _member_team(session, reader, None, team_id)
+    materials.delete_material(session, team, material_id)
     session.commit()
 
 

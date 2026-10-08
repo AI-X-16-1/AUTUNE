@@ -11,24 +11,27 @@ the sync uses -- ``service.NOTION_PROPERTIES``,
 -- so the schema created here and the pages written later cannot drift apart.
 
 **Why this is not in the dev route any more.** It started inside
-``dev/routes.py`` (#402), the local-only page that connects Notion by hand until
-S28 exists. S28's one-click connect (#428) needs the same step after its OAuth
-callback, and ``packages/core`` cannot import a module (invariant 2), so the
-consumer of the connect event #428 proposes will call ``provision_databases``
-from here. The dev route is now one caller of it, not its owner.
+``dev/routes.py`` (#402), the local-only page that connects Notion by hand.
+S28's one-click connect (#428) needs the same step after its OAuth callback, and
+``packages/core``, which holds that callback, cannot import a module
+(invariant 2). No event carries the connection across: the callback sends the
+browser back to the screen with ``?notion=connected``, the screen calls this
+module's own routes, and ``notion_connect.set_up`` calls ``provision_databases``
+from here. The dev route is one more caller of it, not its owner.
 
 **Why httpx and not ``packages/integrations``.** ``NotionClient`` has
 ``create_page`` and ``update_page`` -- what the sync needs. Creating a database
 is a one-time setup call only B makes, and putting it in the shared package
-would need team approval for code one module uses. What leaves here is three
-fixed database titles and property names; no meeting content, so the outbound
-check ``packages/integrations`` applies has nothing to catch.
+would need team approval for code one module uses. What leaves here is the
+"Autune" page's title and three fixed database titles and property names; no
+meeting content, so the outbound check ``packages/integrations`` applies has
+nothing to catch.
 
-**The 회의록 database has no writer yet.** ``ui-spec.md`` lists it for S28 ("a
-page on confirmation") but not what the page holds; #428 item 7 proposes only
-what the action and decision databases already receive, never a transcript.
-Creating it now means a team connected today does not have to reconnect when
-that writer lands.
+**The 회의록 database is written by ``project_send``.** It was made here before
+anything wrote to it, so that a team connected then would not have to reconnect
+when a writer landed. The writer is a project's minutes: one page for each
+project a person sends from the 요약 tab, holding that project's confirmed
+decisions and items -- never a transcript.
 """
 
 from __future__ import annotations

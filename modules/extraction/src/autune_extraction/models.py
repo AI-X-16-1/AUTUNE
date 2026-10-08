@@ -102,6 +102,55 @@ class ExtProject(Base):
     )
 
 
+MATERIAL = "mat"
+"""The id prefix of ``ext_materials`` rows -- B's own, not a shared entity's."""
+
+DRIVE_KINDS = ("file", "document", "presentation", "spreadsheets")
+"""Which Google preview a Drive file has: a plain file, or one of the three
+editors. The same four ``apps/web/src/shared/drive/driveLink.ts`` tells apart."""
+
+
+class ExtMaterial(Base):
+    """A Google Drive file a team keeps on its 자료 screen (#817; the user,
+    2026-10-08): a title a member typed and which file it is.
+
+    **Not the file, and not the link as pasted.** ``drive_file_id`` and
+    ``drive_kind`` are what ``materials.parse_drive_link`` took from the pasted
+    link; the screen builds Google's own address from them, so nothing a
+    person typed is ever used as an address. Autune reads no byte of the file
+    and holds no Drive permission -- the preview is Google's page under the
+    viewer's own sign-in.
+
+    **Nothing here names a person**: no registrant, no reader. The row says
+    that this team keeps this file under this title. ``title`` is typed, not
+    derived from speech, and stored as typed -- like a meeting's title or a
+    project's name it can hold a name. A file id opens the file for anyone the
+    file is shared with by link, so neither it nor the title is logged.
+
+    Goes with the team; a member deletes one at any time.
+    """
+
+    __tablename__ = "ext_materials"
+    __table_args__ = (
+        UniqueConstraint("team_id", "drive_file_id", name="uq_ext_materials_team_file"),
+        CheckConstraint(
+            "drive_kind IN ('file','document','presentation','spreadsheets')",
+            name="ck_ext_materials_drive_kind",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(MATERIAL))
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    drive_file_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    drive_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class ExtProjectSend(Base):
     """Where a project's minutes for one meeting were sent, per tool (2026-10-04).
 

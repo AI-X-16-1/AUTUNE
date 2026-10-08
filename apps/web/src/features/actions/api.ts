@@ -10,6 +10,7 @@ import type {
   CarriedOver,
   DecisionStatus,
   ExtractionResult,
+  Material,
   MeetingReview,
   MeetingSummary,
   ReviewDecision,
@@ -219,6 +220,25 @@ export const updateProject = (teamId: string, id: string, draft: ProjectDraft) =
 /** Delete a project; what was in it becomes 미분류. */
 export const deleteProject = (teamId: string, id: string) =>
   withoutBody(`/projects/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`);
+
+/** The Drive files the team keeps on its 자료 screen, the newest first (#817). */
+export const listMaterials = (teamId: string) =>
+  api.extraction<Material[]>(`/materials?team_id=${encodeURIComponent(teamId)}`);
+
+/**
+ * Put a Drive file on the team's shelf. The link goes as pasted and the
+ * server keeps only the file's id; 409 when the team already keeps the file,
+ * 422 when the link names no Drive file or the title is blank.
+ */
+export const registerMaterial = (teamId: string, draft: { title: string; link: string }) =>
+  api.extraction<Material>(`/materials?team_id=${encodeURIComponent(teamId)}`, {
+    method: "POST",
+    body: JSON.stringify(draft),
+  });
+
+/** Take a material off the team's shelf. The Drive file is not touched. */
+export const deleteMaterial = (teamId: string, id: string) =>
+  withoutBody(`/materials/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`);
 
 /** Put an item in one of its team's projects, or none (`null`). */
 export const placeActionItem = (id: string, projectId: string | null) =>
