@@ -102,6 +102,17 @@ def test_a_posted_report_says_posted(db_session: Session, team: str) -> None:
     assert listed["status"] == "posted" and body["status"] == "posted"
 
 
+def test_a_report_item_says_it_opens_the_report(db_session: Session, team: str) -> None:
+    """A listed report links to its dashboard card, not the meeting screen."""
+    meeting = _report(db_session, team, "결제 회의", datetime(2026, 10, 2, tzinfo=UTC), "rdr_a")
+
+    (listed,) = tools.meeting_reports(db_session, team)["items"]
+    (body,) = tools.meeting_report_body(db_session, team, meeting)["items"]
+
+    assert listed["link"] == "report" and body["link"] == "report"
+    assert body["meeting_id"] == meeting
+
+
 def test_meeting_report_body_refuses_another_teams_meeting(db_session: Session, team: str) -> None:
     other = Team(name="Other")
     db_session.add(other)
