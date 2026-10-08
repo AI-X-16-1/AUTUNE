@@ -739,6 +739,34 @@ def test_a_kept_decision_is_read_from_all_its_lines_whatever_they_are_called_now
     assert rows(session) == {old: "가격은 월 [금액]으로 진행"}
 
 
+def test_a_decision_confirmed_as_the_model_wrote_it_stays_confirmed_through_a_correction(
+    client: TestClient, session: Session
+) -> None:
+    """Confirmed with no rewording, then a line of it is corrected: the row is
+    still confirmed, with the sentence read again, and is not flagged for
+    another look -- #586's rule for a confirmed decision, kept for a kept row
+    (the owner, 2026-10-09). Only a person's own wording is flagged, because
+    only there can B not tell which words were the private ones. The copy
+    outside follows."""
+    spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "confirmed"})
+    read = spoken(session, {3: "가격은 월 [금액]으로 갑니다"}, ALL_DECISIONS)
+
+    service.build_decisions(session, meeting_id=MEETING, utterances=read)
+    after = service.apply_source_corrections(
+        session, meeting_id=MEETING, spoken={u.id: u.text for u in read if u.text}
+    )
+    session.expire_all()
+
+    kept = session.get(ExtDecision, old)
+    assert kept is not None and kept.statement == "가격은 월 [금액]으로 진행"
+    assert not kept.needs_recheck
+    review = session.get(ExtDecisionReview, old)
+    assert review is not None and review.status == "confirmed" and not review.statement
+    assert old in after.changed_decisions and after.flagged == 0
+
+
 def test_a_summary_written_for_a_kept_decisions_exact_lines_is_its_sentence(
     client: TestClient, session: Session
 ) -> None:
