@@ -276,6 +276,13 @@ async def _emit(websocket: WebSocket, session: LiveSession, data: bytes) -> None
 
 
 async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str) -> None:
+    # Released before the last segment is transcribed, not after. The claim
+    # stops an upload landing under a socket that is still streaming, and
+    # from here on no frame is read. The browser waits 15 s for ``ended`` and
+    # then uploads regardless; on the dev server's CPU the last segment took
+    # longer than that, and the upload was refused 409 while the claim was
+    # still held.
+    registry.release(meeting_id)
     try:
         rows = await session.stop()
     except TranscribeFailed:
@@ -283,8 +290,5 @@ async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str
         await websocket.send_json(protocol.error("transcribe_failed"))
     for row in rows:
         await websocket.send_json(protocol.row(row))
-    # Released before ``ended``: the browser uploads the moment it sees
-    # ``ended``, and ``start_transcription`` refuses while the claim is held.
-    registry.release(meeting_id)
     await websocket.send_json(protocol.ended())
     await websocket.close()

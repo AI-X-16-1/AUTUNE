@@ -1,8 +1,10 @@
 """Which meetings have a live socket open, in this process.
 
 One claim per meeting. The route takes it after ``begin_live`` commits and
-releases it before it sends ``ended``, so the browser's upload -- which
-follows ``ended`` -- never finds the claim still held. ``service`` reads it
+releases it the moment it reads ``stop`` (or the session limit strikes), before
+the last segment is transcribed, so the browser's upload -- which follows
+``ended``, or gives up waiting for it after 15 s -- never finds the claim
+still held. ``service`` reads it
 to refuse an upload for a meeting whose socket is still open: the status
 ``recording`` alone cannot tell "the socket dropped and the browser is
 reconnecting" from "someone else is trying to upload over a live session".
