@@ -74,7 +74,7 @@ from .decisions import (
     needs_write_up,
 )
 from .edit_cost import EditCost
-from .excerpt import cut, span_of
+from .excerpt import cut, joined, quoted
 from .models import (
     ExtActionItem,
     ExtActionItemRelated,
@@ -2272,20 +2272,32 @@ def build_decisions(
         id_: list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
         for id_, group in fresh.items()
     }
-    # Which part of a long turn each decision was settled in (``excerpt``): the
-    # pieces among its members, found in the turn's stored text.
+    # Which part of an utterance each decision was settled in (``excerpt``):
+    # for each of its members, the words the classifier named when they are in
+    # the stored text, else the piece of a long turn the member was; a member
+    # with neither is the whole utterance. Found in the text as it is stored.
     by_id = {u.id: u for u in utterances}
-    pieces: dict[tuple[str, str], list[str]] = {}
+    members: dict[tuple[str, str], list[ClassifiedUtterance]] = {}
     for id_, group in fresh.items():
         for member in group.source_utterance_ids:
-            piece = by_id.get(member)
-            if piece is not None and piece.part_of:
-                pieces.setdefault((id_, piece.part_of), []).append(piece.text)
-    turns = _summary_texts(session, {turn for _, turn in pieces})
+            entry = by_id.get(member)
+            if entry is not None and (entry.part_of or entry.part):
+                members.setdefault((id_, entry.source_id), []).append(entry)
+    turns = _summary_texts(session, {turn for _, turn in members})
     parts = {
-        key: part
-        for key, said in pieces.items()
-        if key[1] in turns and (part := span_of(turns[key[1]], said)) is not None
+        (id_, turn): part
+        for (id_, turn), entries in members.items()
+        if (whole := turns.get(turn)) is not None
+        and (
+            part := joined(
+                whole,
+                (
+                    quoted(whole, entry.text if entry.part_of else None, entry.part)
+                    for entry in entries
+                ),
+            )
+        )
+        is not None
     }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
@@ -2908,6 +2920,8 @@ def classify_utterances(
             pieces=prediction.pieces,
             summary=prediction.summary,
             piece_summaries=prediction.piece_summaries,
+            part=prediction.part,
+            piece_parts=prediction.piece_parts,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -3613,8 +3627,9 @@ def build_action_items(
         # A piece is read by its own words: the date in another part of the
         # turn belongs to whatever was promised there.
         own = utterance.text if utterance.part_of else said.text
-        # Where that piece is in the turn, for the quotation (``excerpt``).
-        part = span_of(said.text, [own]) if utterance.part_of else None
+        # Where the promise is in the utterance, for the quotation
+        # (``excerpt``): the words the classifier named, else the piece.
+        part = quoted(said.text, own if utterance.part_of else None, utterance.part)
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(own, day)
         # ``description_resolved`` is about the resolver's rewrite alone; tidying
