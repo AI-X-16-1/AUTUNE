@@ -501,9 +501,11 @@ text, as settled on #509.
     know whose day it is. C gives the display name only, the one its team
     Slack notice already posts for the same press, and only for members
     still on the team (#1049).
-  - *Approving a picked day* runs the proposal with that day as `due_date`,
-    which needs the approval to take a changed date. That and the card's list
-    are `main/`'s (김민경).
+  - *Approving a picked day* is **not decided yet** (#1051). Running the
+    proposal with a day other than the one it carries changes its arguments
+    at approval, which meets #972's "approve what you saw"; `main/`'s owner
+    (김민경) decides how, with the card's list. `date_choices` serves either
+    way.
   - The reason sentence (Stage 2) explains the rule's day only; a picked day
     is labelled as picked, not explained.
 - **Holidays** (#964). Settled: business days skip B's public holidays
