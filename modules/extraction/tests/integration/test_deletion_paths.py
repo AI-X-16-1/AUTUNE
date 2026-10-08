@@ -161,17 +161,19 @@ def test_deleting_a_meeting_deletes_everything_b_derived_from_it(
 def test_deleting_an_utterance_takes_its_derived_rows(
     db_session: Session, meeting: dict[str, str]
 ) -> None:
-    """Its classification, and the decision links that quoted it. The item
-    stays -- the quotation is what went, not the commitment -- and so does its
-    link row, emptied: ADR 0007's "missing attribution is shown, not hidden"
-    needs to know a source existed, and a NULL id holds no content."""
+    """Its classification. The item and the decision stay -- the quotation is
+    what went, not the commitment or what was settled -- and so do their link
+    rows, emptied: ADR 0007's "missing attribution is shown, not hidden" needs
+    to know a source existed, and a NULL id holds no content (#400 for the
+    decision's)."""
     db_session.execute(sa.text("DELETE FROM utterances WHERE id = :id"), {"id": meeting["said"]})
 
     assert count(db_session, "ext_classifications") == 0
-    assert count(db_session, "ext_decision_sources") == 0
     assert count(db_session, "ext_action_items") == 1
-    links = db_session.execute(sa.text("SELECT utterance_id FROM ext_action_item_sources")).all()
-    assert [row[0] for row in links] == [None]
+    assert count(db_session, "ext_decisions") == 1
+    for table in ("ext_action_item_sources", "ext_decision_sources"):
+        links = db_session.execute(sa.text(f"SELECT utterance_id FROM {table}")).all()  # noqa: S608
+        assert [row[0] for row in links] == [None], table
 
 
 def test_a_departed_assignee_leaves_the_item_standing(

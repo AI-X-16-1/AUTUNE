@@ -747,6 +747,16 @@ class ExtDecisionSource(Base):
     ``position`` keeps meeting order without a second join to ``utterances``.
     The order is the argument of the decision -- the proposal first, the sentence
     that settles it last -- and sorting by id would scramble it.
+
+    A row outlives its utterance, as ``ExtActionItemSource``'s does (#400):
+    deleting the utterance sets ``utterance_id`` to NULL instead of taking the
+    row. Module A's rerun of a meeting replaces every utterance, and a decision
+    a person added is not rebuilt, so under a cascade it was left with no trace
+    that it had ever pointed at a line; so was the model's decision whose
+    speaker deleted their own data. The words and the id go; that there was a
+    source stays. Every reader skips the NULLs for ids
+    (``service.live_decision_source_ids``) and counts them as
+    ``deleted_source_count``.
     """
 
     __tablename__ = "ext_decision_sources"
@@ -759,9 +769,15 @@ class ExtDecisionSource(Base):
     decision_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    utterance_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    utterance_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "utterances.id", ondelete="SET NULL", name="fk_ext_decision_sources_utterance_id"
+        ),
+        index=True,
     )
+    """NULL once the utterance is deleted. Never written NULL by this module."""
+
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
     excerpt_start: Mapped[int | None] = mapped_column(Integer)
