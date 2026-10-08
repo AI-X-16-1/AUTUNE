@@ -395,6 +395,36 @@ record at all -- a run that failed before failures were counted, or one lost
 with a worker -- is counted as failed once, half an hour after its last line
 was stored and for a week, and tried the same way.
 
+With `classifier_impl=llm`, a model answer that cannot be read is such a
+failure and not a run that found nothing. An answer is read when it holds a
+JSON object, with labels or with none: `{"labels": {}}` is what the
+instructions ask for when no line qualifies, and it is a success. It cannot be
+read when the request was refused, no candidate came back, the candidate had
+no text, or the text holds no JSON object. That window is asked once more at
+once; if the second answer cannot be read either, the call raises
+`UnreadableAnswerError`, the later windows are not asked, and the run is
+counted and retried as above. So one window refused every time costs the
+meeting its model rows until it goes through, where it used to cost that
+window's rows without a word; a meeting already extracted keeps its rows. The
+log line carries the cause and the provider's reason word, never the answer.
+
+**A meeting with no rows.** An empty 액션 tab says which of four things is
+true, from `GET /meetings/{id}/extraction` (`ExtractionState`, B's own schema):
+
+| State | When | The tab says |
+| --- | --- | --- |
+| `in_progress` | Lines are stored; no run and no failure is on record; the newest line is under half an hour old | The extraction is going. It asks again every five seconds and reads the board and the decisions when the run is in |
+| `overdue` | The same, and the newest line is half an hour old or more | The extraction has not happened, and points at "다시 추출" |
+| `read_nothing` | The last run was allowed to read none of the meeting's lines | No consent is on record, so nothing was read; B extracts again by itself once it is |
+| none of them | A run went through | No item and no decision was found |
+
+"In progress" ends on the clock the sweep above uses, to the instant: the
+moment the sweep would count the meeting as failed is the moment the tab stops
+saying a run is going. A failure on record ends it sooner, and the tab's
+failure line says that instead. `read_nothing` is about the meeting as a whole
+and names nobody; it is false as soon as one line was read, so a meeting where
+only some speech was out shows its items and no line about consent.
+
 **A speaker identified after the run (#360).** A commitment by an unidentified
 speaker keeps only the label ("Speaker 2"). When A later fills
 `participants.user_id`, nothing announces it, so every ten minutes
