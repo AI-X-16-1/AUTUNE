@@ -68,6 +68,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects import postgresql, sqlite
@@ -361,6 +362,7 @@ def write_agenda(
         calendar_id=written_to[0],
         event_id=written_to[1],
         kept=carried,
+        event_day=day_of(event_starts),
     )
     log.info("gap_agenda_set", gaps=len(gaps), carried=carried, picked=starts is None)
     return ("added" if carried else "removed"), event_starts
@@ -398,8 +400,10 @@ def _record(
     calendar_id: str,
     event_id: str,
     kept: bool,
+    event_day: date | None = None,
 ) -> None:
-    """Remember which event holds each gap's line, or forget it once taken out."""
+    """Remember which event holds each gap's line, and the day it starts, or
+    forget it once taken out. Pressing again on a moved event keeps its new day."""
     if not gaps:
         return
     if not kept:
@@ -421,11 +425,14 @@ def _record(
                     "user_id": user_id,
                     "calendar_id": calendar_id,
                     "event_id": event_id,
+                    "event_day": event_day,
                 }
                 for gap in gaps
             ]
         )
-        .on_conflict_do_nothing(index_elements=["gap_id", "user_id", "event_id"])
+        .on_conflict_do_update(
+            index_elements=["gap_id", "user_id", "event_id"], set_={"event_day": event_day}
+        )
     )
 
 
@@ -449,6 +456,19 @@ def _when(raw: dict[str, Any] | None) -> datetime | date | None:
     if "date" in raw:
         return date.fromisoformat(raw["date"])
     return None
+
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def day_of(starts: datetime | date | None) -> date | None:
+    """The day an event starts, in Korea: an all-day event's own date, a timed
+    one's start moved to Korea first."""
+    if starts is None or not isinstance(starts, datetime):
+        return starts
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=UTC)
+    return starts.astimezone(KST).date()
 
 
 def _start_of(event: dict[str, Any]) -> datetime | date | None:

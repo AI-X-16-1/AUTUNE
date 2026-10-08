@@ -14,10 +14,11 @@ See docs/architecture/data-model.md and docs/modules/gap.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -417,12 +418,21 @@ class GapAgendaEvent(Base):
     account goes (taken out at once, with the owner's own grant). ``user_id``
     is the calendar's owner, who is also who pressed the button -- the line can
     only be removed with their grant, as module B keeps an item's assignee on
-    ``ext_calendar_events``. It is read by nothing but the cleanup: no screen,
-    route or tool says who sent a gap on (``GapGap.carried_at`` names nobody).
+    ``ext_calendar_events``. No screen, route or tool says who sent a gap on
+    (``GapGap.carried_at`` names nobody): ``user_id`` is read by the cleanup
+    only.
+
+    ``event_day`` is the one thing kept from the event: the day it starts, in
+    Korea, as Google gave it when the line was written. A person picking an
+    event for the next meeting has chosen that day, and the Follow-up card
+    offers it among its dates (``tools.next_meeting_days``) -- the day, never
+    whose calendar it is on. The event's attendees, all on the team, already
+    see that day on the event the line went onto. ``None`` when Google did not
+    say, and on records from before it was kept.
 
     ``gap_id`` is not a foreign key: a gap a rescore drops leaves its line on
     the calendar, and the record has to outlive it until the meeting goes.
-    Goes with the meeting and with the owner. Nothing from the event is here.
+    Goes with the meeting and with the owner.
     """
 
     __tablename__ = "gap_agenda_events"
@@ -440,6 +450,7 @@ class GapAgendaEvent(Base):
     )
     calendar_id: Mapped[str] = mapped_column(String(320), nullable=False)
     event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    event_day: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
