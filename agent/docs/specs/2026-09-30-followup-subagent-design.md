@@ -493,10 +493,14 @@ text, as settled on #509.
   - *Read when the card is read.* Follow-up proposes at
     `intelligence.completed`, usually before anybody presses "다음 회의
     잡기", so the days are not part of the proposal. The card reads C's
-    `gap.next_meeting_days` (days only, never whose) and calls
+    `gap.next_meeting_days` and calls
     `followup.date_choices(rule_day, picked_days(result))`: each picked day
-    once, earliest first, then the rule's day, one choice saying both when
-    they are the same.
+    once, earliest first, with who picked it, then the rule's day, one choice
+    saying both when they are the same.
+  - *Who picked it is named* (the owner, 2026-10-08): the approver should
+    know whose day it is. C gives the display name only, the one its team
+    Slack notice already posts for the same press, and only for members
+    still on the team (#1049).
   - *Approving a picked day* runs the proposal with that day as `due_date`,
     which needs the approval to take a changed date. That and the card's list
     are `main/`'s (김민경).
