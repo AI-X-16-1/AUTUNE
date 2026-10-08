@@ -465,7 +465,13 @@ class ExtActionItemSource(Base):
     excerpt_end: Mapped[int | None] = mapped_column(Integer)
     """Which part of the utterance the item was made from, as two offsets into
     its stored text -- no words (``excerpt``). Both NULL for the whole utterance,
-    for a row from before these columns, and once the utterance was corrected."""
+    for a row from before these columns, and once the utterance was corrected.
+
+    Both NULL once the utterance is deleted, too (#400): a trigger on the table
+    clears them whenever the row has no ``utterance_id``, so that no path which
+    deletes an utterance has to remember to. They point into a text that is
+    gone, and their size is a trace of it. The trigger is the migration's
+    (``5d1f8b3a7c46``); a table made by ``create_all`` does not have it."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
@@ -782,7 +788,8 @@ class ExtDecisionSource(Base):
 
     excerpt_start: Mapped[int | None] = mapped_column(Integer)
     excerpt_end: Mapped[int | None] = mapped_column(Integer)
-    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision."""
+    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision,
+    cleared by the same trigger once the utterance is deleted."""
 
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 
