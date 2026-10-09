@@ -65,7 +65,7 @@ describe("minutesText", () => {
         // No date line on this page, so the due date says its own year.
         // The state after a dot like every other part, not in brackets: a due
         // date already ends in them.
-        "1. 스펙 초안 공유 — 김민경 · 2026년 10월 9일 (금) · 진행 중",
+        "1. 스펙 초안 공유 — 김민경 · 2026년 10월 9일 금 · 진행 중",
         "2. QA 일정 확인 — 민구 · 기한 없음 · 확인 필요",
         "3. 회고 자료 정리 — 담당 미지정 · 기한 없음 · 완료",
         "",
@@ -107,10 +107,38 @@ describe("minutesText", () => {
     });
 
     expect(text).toContain("2026년 10월 8일 (목)");
-    expect(text).toContain("1. 스펙 초안 공유 — 담당 미지정 · 10월 13일 (화)\n");
+    expect(text).toContain("1. 스펙 초안 공유 — 담당 미지정 · 10월 13일 화\n");
     // Another year than the meeting's: the date line would give the wrong one.
-    expect(text).toContain("2. 내년 예산안 내기 — 담당 미지정 · 2027년 1월 5일 (화)\n");
+    expect(text).toContain("2. 내년 예산안 내기 — 담당 미지정 · 2027년 1월 5일 화\n");
     expect(text).not.toContain("2026-10-13");
+  });
+
+  it("writes a decision's deadline as it writes an action's, and leaves the year to the date line", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      meeting_started_at: "2026-10-08T03:00:00Z",
+      decisions: [
+        { id: "dec_3", statement: "배포는 미룹니다 (담당 박지영, 기한 2026-10-13)", status: "confirmed" },
+        { id: "dec_4", statement: "예산안은 새해에 냅니다 (기한 2027-01-05)", status: "pending" },
+        { id: "dec_5", statement: "2026-10-20에 다시 봅니다", status: "confirmed" },
+      ],
+      action_items: [item({ id: "a6", due_date: "2026-10-13", status: "todo" })],
+    } as MeetingSummary);
+
+    expect(text).toContain("1. 배포는 미룹니다 (담당 박지영, 기한 10월 13일 화)\n");
+    expect(text).toContain("2. 예산안은 새해에 냅니다 (기한 2027년 1월 5일 화) (자동 추출)\n");
+    // A date somebody said is theirs; only the deadline the server appended is rewritten.
+    expect(text).toContain("3. 2026-10-20에 다시 봅니다\n");
+    expect(text).not.toContain("2026-10-13");
+  });
+
+  it("says a decision's year where the minutes have no date line to say it", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      decisions: [{ id: "dec_3", statement: "배포는 미룹니다 (기한 2026-10-13)", status: "confirmed" }],
+    } as MeetingSummary);
+
+    expect(text).toContain("1. 배포는 미룹니다 (기한 2026년 10월 13일 화)\n");
   });
 
   it("shows a due date it cannot read as it came", () => {

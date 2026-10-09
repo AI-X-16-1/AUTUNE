@@ -147,7 +147,7 @@ def _lines(lines: Sequence[reminders.DigestLine], *, day: date) -> list[str]:
     for line in lines[:MAX_LINES]:
         when = ""
         if line.due_date is not None and line.due_date < day:
-            when = f" (기한 {line.due_date.isoformat()} 지남)"
+            when = f" (기한 {reminders.written_day(line.due_date, year=day.year)} 지남)"
         elif line.due_date == day:
             when = " (오늘 기한)"
         where = f" · {reminders.slack_escape(line.meeting_title)}" if line.meeting_title else ""
@@ -164,7 +164,7 @@ def build_text(report: WorkReport, *, board_url: str) -> str:
     team = f"{reminders.slack_escape(report.team_name)} " if report.team_name else ""
     out = [
         "오늘 업무 보고 초안입니다. 고쳐서 팀에 붙여 넣으셔도 됩니다.",
-        f"{team}업무 보고 ({report.day.isoformat()})",
+        f"{team}업무 보고 ({reminders.written_day(report.day, year=report.day.year)})",
     ]
     for heading, lines in (
         ("끝낸 일", report.done),

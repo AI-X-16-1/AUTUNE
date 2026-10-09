@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import delete, select
 
-from autune_core import Meeting, Participant, Team, session_scope
+from autune_core import Meeting, Participant, Team, TeamMember, User, session_scope
 from autune_gap import service, tools
-from autune_gap.models import GapGap, GapParticipation, GapTopic
+from autune_gap.models import GapAgendaEvent, GapGap, GapParticipation, GapTopic
 
 COVERS_TWO = {"핵심 지표": 1.0, "담당자": 0.9}
 """Matches ``general``'s ``success_criteria`` and ``ownership`` only, so the
@@ -401,3 +402,97 @@ def test_a_rerun_keeps_a_question_a_member_rewrote(team_id: str) -> None:
         gap = s.get(GapGap, gap_id)
         assert gap.suggested_question == "출시 전 위험은 누가 점검합니까?"
         assert gap.question_edited_at is not None
+
+
+# --- next_meeting_days: the days people picked with "다음 회의 잡기" ----------
+
+
+@pytest.fixture
+def pickers(team_id: str) -> Iterator[list[str]]:
+    with session_scope() as s:
+        people = [
+            User(email=f"picker{i}@gap-tools.example", display_name=f"P{i}") for i in range(3)
+        ]
+        s.add_all(people)
+        s.flush()
+        ids = [p.id for p in people]
+        s.add_all([TeamMember(team_id=team_id, user_id=i) for i in ids])
+    yield ids
+    with session_scope() as s:
+        s.execute(delete(User).where(User.id.in_(ids)))
+
+
+def picked(meeting_id: str, user_id: str, event_id: str, day: date | None) -> None:
+    gap_id = gap_ids(meeting_id)[0]
+    with session_scope() as s:
+        s.add(
+            GapAgendaEvent(
+                meeting_id=meeting_id,
+                gap_id=gap_id,
+                user_id=user_id,
+                calendar_id="primary",
+                event_id=event_id,
+                event_day=day,
+            )
+        )
+
+
+def test_next_meeting_days_offers_each_picked_day_once_earliest_first(
+    team_id: str, pickers: list[str]
+) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    picked(m, pickers[0], "evt_a", today + timedelta(days=12))
+    picked(m, pickers[1], "evt_b", today + timedelta(days=10))
+    picked(m, pickers[2], "evt_c", today + timedelta(days=12))  # the same day as the first
+    picked(m, pickers[2], "evt_old", today - timedelta(days=1))  # already past
+    picked(m, pickers[1], "evt_unknown", None)  # Google gave no start
+
+    result = call(tools.next_meeting_days, team_id, m)
+
+    (row,) = result["items"]
+    assert row["days"] == [
+        {"day": (today + timedelta(days=10)).isoformat(), "picked_by": ["P1"]},
+        {"day": (today + timedelta(days=12)).isoformat(), "picked_by": ["P0", "P2"]},
+    ]
+    assert result["evidence"] == []
+
+
+def test_next_meeting_days_names_who_picked_and_nothing_else(
+    team_id: str, pickers: list[str]
+) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    picked(m, pickers[0], "evt_a", datetime.now(ZoneInfo("Asia/Seoul")).date() + timedelta(days=3))
+
+    result = call(tools.next_meeting_days, team_id, m)
+
+    text = repr(result)
+    assert "P0" in text
+    assert not any(user_id in text for user_id in pickers)
+    assert "primary" not in text and "evt_a" not in text
+
+
+def test_next_meeting_days_leaves_out_who_left_the_team(team_id: str, pickers: list[str]) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+    picked(m, pickers[0], "evt_a", datetime.now(ZoneInfo("Asia/Seoul")).date() + timedelta(days=3))
+    with session_scope() as s:
+        s.execute(delete(TeamMember).where(TeamMember.user_id == pickers[0]))
+
+    assert call(tools.next_meeting_days, team_id, m)["items"] == []
+
+
+def test_next_meeting_days_with_none_picked_is_no_row(team_id: str) -> None:
+    m = meeting(team_id, COVERS_TWO, started=T0)
+
+    result = call(tools.next_meeting_days, team_id, m)
+
+    assert result["ok"] is True
+    assert result["items"] == []
+
+
+def test_next_meeting_days_reads_another_teams_meeting_as_missing(
+    team_id: str, other_team: str
+) -> None:
+    m = meeting(other_team, COVERS_TWO, started=T0)
+
+    assert call(tools.next_meeting_days, team_id, m)["ok"] is False

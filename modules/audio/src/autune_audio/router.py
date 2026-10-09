@@ -29,6 +29,7 @@ from . import (
     pii_report,
     service,
     storage,
+    team_deletion,
 )
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
@@ -57,6 +58,7 @@ from .schemas import (
     SpeakerName,
     SpeechDeleted,
     TeamCreate,
+    TeamDeletion,
     TeamMemberSummary,
     TeamPrivacy,
     TeamPrivacyUpdate,
@@ -240,6 +242,19 @@ def leave_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[Tea
     are still on. The last member is refused with 409 ``last_team_member``.
     See ``service.leave_team`` for what stays."""
     service.leave_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
+
+
+@router.delete("/teams/{team_id}", response_model=list[TeamSummary])
+def delete_team(
+    team_id: str, body: TeamDeletion, user: CurrentUser, session: SessionDep
+) -> list[TeamSummary]:
+    """Delete a team, for the one person left on it, and answer with the teams
+    they are still on (#1007). The body carries the team's name as they typed
+    it. Refused with 409 ``team_has_other_members``, 409
+    ``team_meeting_in_progress`` or 422 ``team_name_mismatch``; see
+    ``team_deletion.delete_team`` for what goes and in what order."""
+    team_deletion.delete_team(session, team_id=team_id, member=user, name=body.name)
     return _my_teams(session, user)
 
 

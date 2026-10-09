@@ -12,6 +12,7 @@ import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
+import { shownDue } from "../dates";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -260,8 +261,8 @@ export function ActionDetailDrawer({
               </div>
             )}
           </Field>
-          <Field label="기한" mono>
-            {item.due_date ?? "없음"}
+          <Field label="기한">
+            {item.due_date ? shownDue(item.due_date) : "없음"}
           </Field>
           {item.due_text ? (
             <Field label="기한 파싱 원문">
@@ -601,15 +602,7 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
-function Field({
-  label,
-  mono = false,
-  children,
-}: {
-  label: string;
-  mono?: boolean;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
       <div
@@ -620,10 +613,7 @@ function Field({
       </div>
       <div
         className="mt-1 text-[var(--color-ink-body)]"
-        style={{
-          fontSize: "var(--text-body)",
-          fontFamily: mono ? "var(--font-mono)" : undefined,
-        }}
+        style={{ fontSize: "var(--text-body)" }}
       >
         {children}
       </div>
