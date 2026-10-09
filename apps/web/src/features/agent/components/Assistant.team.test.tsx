@@ -14,9 +14,9 @@ import type { ChatFinding, ChatReply } from "../types";
 import { Assistant } from "./Assistant";
 
 // #1055: off a meeting page a question is about the team chosen in the
-// sidebar; each question keeps its team, a line marks the first question about
-// another team, report rows open the dashboard card, and the page is told when
-// an action ran.
+// sidebar; each question keeps its team, once two teams are asked about a line
+// names each team's group, report rows open the dashboard card, and the page is
+// told when an action ran.
 
 function reply(over: Partial<ChatReply> = {}): ChatReply {
   return {
@@ -92,12 +92,16 @@ describe("Assistant and the chosen team", () => {
     expect(screen.getByText("B팀 · 대시보드 보고 있음")).toBeTruthy();
   });
 
-  it("marks the first question about another team, and only once", async () => {
+  it("names every team's group once a second team is asked about", async () => {
     vi.spyOn(api, "sendChat").mockResolvedValue(reply());
 
     const { switchTo } = mount(A);
     await ask("첫 질문");
+    // One team so far: nothing to tell apart.
+    expect(screen.queryByRole("separator")).toBeNull();
     switchTo(B);
+    // Switched but not asked yet: the composer says so, no line yet.
+    expect(screen.queryByRole("separator")).toBeNull();
     await ask("두 번째");
     // Back and forth without asking draws nothing more.
     switchTo(A);
@@ -105,7 +109,17 @@ describe("Assistant and the chosen team", () => {
     await ask("세 번째");
 
     const lines = screen.getAllByRole("separator");
-    expect(lines.map((l) => l.textContent)).toEqual(["B팀"]);
+    expect(lines.map((l) => l.textContent)).toEqual(["A팀", "B팀"]);
+  });
+
+  it("draws no line in a conversation about one team", async () => {
+    vi.spyOn(api, "sendChat").mockResolvedValue(reply());
+
+    mount(A);
+    await ask("첫 질문");
+    await ask("두 번째");
+
+    expect(screen.queryByRole("separator")).toBeNull();
   });
 
   it("says which team the next question goes to after a switch", async () => {
