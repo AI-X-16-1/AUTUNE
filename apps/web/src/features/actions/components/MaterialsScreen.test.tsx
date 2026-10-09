@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/shared/api/client";
 
@@ -16,8 +16,10 @@ const session = vi.fn();
 const list = vi.fn();
 const register = vi.fn();
 const remove = vi.fn();
+const rules = vi.fn();
 vi.mock("@/shared/api/auth", () => ({ getSession: () => session() }));
 vi.mock("../api", () => ({
+  getMaterialUploadRules: (teamId: string) => rules(teamId),
   listMaterials: (teamId: string) => list(teamId),
   registerMaterial: (teamId: string, draft: unknown) => register(teamId, draft),
   deleteMaterial: (teamId: string, id: string) => remove(teamId, id),
@@ -35,9 +37,12 @@ const material = (over: Partial<Material> = {}): Material => ({
   id: "mat_1",
   team_id: "team_a",
   title: "3분기 로드맵",
+  source: "drive_link",
   drive_file_id: DOC_ID,
   drive_kind: "document",
   created_at: "2026-10-07T03:00:00Z",
+  expires_at: null,
+  not_read: [],
   ...over,
 });
 
@@ -46,8 +51,15 @@ const type = (label: string, value: string) =>
 const submit = () => fireEvent.click(screen.getByRole("button", { name: "자료 등록" }));
 const rows = () => within(screen.getByRole("list", { name: "등록한 자료" })).getAllByRole("listitem");
 
+// A server that knows links alone: it has no upload-rules route, and the
+// screen is the link shelf. Uploads are in `MaterialUpload.test.tsx`.
+beforeEach(() => {
+  rules.mockRejectedValue(new Error("no such route"));
+});
+
 afterEach(() => {
   cleanup();
+  rules.mockReset();
   session.mockReset();
   list.mockReset();
   register.mockReset();

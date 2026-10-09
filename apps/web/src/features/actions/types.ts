@@ -348,20 +348,59 @@ export interface Project {
 }
 
 /**
- * A Google Drive file a team keeps on its 자료 screen -- `MaterialRead` in
+ * A row of a team's 자료 screen -- `MaterialRead` in
  * `modules/extraction/src/autune_extraction/schemas.py` (`ext_materials`,
- * #817). A title and which file it is: no address, which the screen builds
- * from the id (`@/shared/drive`), and no person.
+ * #817). Two kinds, told apart by `source`:
+ *
+ * - `drive_link`: a title and which Drive file it is. No address, which the
+ *   screen builds from the id (`@/shared/drive`); Autune read no byte of it.
+ * - `upload`: a title over the masked text of a file a member sent. Autune
+ *   keeps no original, so there is nothing to preview or download, and the
+ *   text itself comes back only as excerpts of a search, never with the row.
+ *
+ * No row names a person.
  */
 export interface Material {
   id: string;
   team_id: string;
   /** Typed by a member, shown as typed. */
   title: string;
-  drive_file_id: string;
-  drive_kind: "file" | "document" | "presentation" | "spreadsheets";
+  source: "upload" | "drive_link";
+  /** Null for an upload, set for a link -- and so is `drive_kind`. */
+  drive_file_id: string | null;
+  drive_kind: "file" | "document" | "presentation" | "spreadsheets" | null;
   /** ISO 8601, when it was registered. */
   created_at: string;
+  /**
+   * ISO 8601, when an upload's masked text is deleted: the upload plus the
+   * team's retention window as it was that day. An hourly task does it, so
+   * the row can outlive this by up to an hour. Null for a link, which keeps
+   * nothing to delete.
+   */
+  expires_at: string | null;
+  /**
+   * Kinds of content the file held that were not read. Only in the answer to
+   * an upload; always empty in a list.
+   */
+  not_read: MaterialNotRead[];
+}
+
+export type MaterialNotRead = "pictures" | "charts" | "embedded_files";
+
+/**
+ * What the server takes as an upload, in its own numbers -- `GET
+ * /materials/upload-rules`. `enabled` is the deployment's switch
+ * (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`, off by default): off, the upload
+ * route does not exist and the screen shows no control for it.
+ */
+export interface MaterialUploadRules {
+  enabled: boolean;
+  max_bytes: number;
+  /** Accepted file-name endings, with the dot: ".pdf". Matched in any case. */
+  suffixes: string[];
+  max_title_chars: number;
+  /** How many rows a team may keep, links and uploads together. */
+  max_materials: number;
 }
 
 /**

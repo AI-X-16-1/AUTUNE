@@ -8,14 +8,22 @@ import { driveOpenUrl, parseDriveLink } from "@/shared/drive/driveLink";
 import { DrivePreview } from "@/shared/drive/DrivePreview";
 import { Button } from "@/shared/ui";
 
-import { deleteMaterial, listMaterials, registerMaterial } from "../api";
+import {
+  deleteMaterial,
+  getMaterialUploadRules,
+  listMaterials,
+  registerMaterial,
+  uploadMaterial,
+} from "../api";
 import { localToday } from "../dates";
+import { deletionDay, notReadNote, shelfFull } from "../materialUpload";
 import { typedTextRefusal } from "../refusal";
-import type { Material } from "../types";
+import type { Material, MaterialUploadRules } from "../types";
+import { MaterialUploadForm } from "./MaterialUploadForm";
 
 type Team = SessionUser["teams"][number];
 
-const KIND: Record<Material["drive_kind"], string> = {
+const KIND: Record<NonNullable<Material["drive_kind"]>, string> = {
   file: "Drive 파일",
   document: "Google 문서",
   presentation: "Google 프레젠테이션",
@@ -23,15 +31,23 @@ const KIND: Record<Material["drive_kind"], string> = {
 };
 
 /**
- * The sidebar's "자료": the Google Drive files a team keeps, registered by a
- * pasted link and a typed title (#817; the user, 2026-10-08).
+ * The sidebar's "자료": what a team keeps to read beside its meetings
+ * (#817; the user, 2026-10-08). Two kinds of row, and the screen keeps them
+ * apart in what it says, because what Autune holds of each is different.
  *
- * **A link and a title, and nothing of the file.** Autune keeps which file it
- * is and reads no byte of it; a row opens in Google's own preview
+ * **A Drive link: a title, and nothing of the file.** Autune keeps which file
+ * it is and reads no byte of it; a row opens in Google's own preview
  * (`DrivePreview`, #844) under the viewer's own Google sign-in, so the list
  * shows a file's title to the team and the file itself only to those Google
  * lets see it. The screen says so, because a shelf of documents reads as
  * "Autune has our documents" unless told otherwise.
+ *
+ * **An uploaded file: its masked text, until a day, and no original.** Only
+ * where the deployment takes uploads (`MaterialUploadRules.enabled`); off,
+ * the screen is the link shelf it was. Such a row has nothing to preview and
+ * nothing to open -- Autune kept no file -- and it shows the day its text is
+ * deleted. Deleting it is real and at once, so the question before it says
+ * that and not "take it off the list".
  *
  * Any member registers and deletes, as with the team's projects: there is no
  * admin role yet (#592). The team is the one chosen elsewhere in the app when
@@ -84,10 +100,11 @@ export function MaterialsScreen({
         자료
       </h1>
       <p className="text-[var(--color-ink-muted)]" style={meta}>
-        팀이 함께 보는 Google Drive 파일의 제목과 링크를 모아 둡니다. Autune은
-        파일의 내용을 읽거나 저장하지 않습니다. 미리보기는 보는 사람 본인의
-        Google 로그인으로 Google이 보여 주므로, 파일을 볼 권한이 없는 사람에게는
-        보이지 않습니다. 팀 구성원이면 누구나 등록하고 목록에서 뺄 수 있습니다.
+        팀이 함께 보는 자료를 모아 둡니다. 링크로 등록한 Google Drive 파일은
+        제목과 링크만 두며, Autune은 그 파일의 내용을 읽거나 저장하지 않습니다.
+        미리보기는 보는 사람 본인의 Google 로그인으로 Google이 보여 주므로, 파일을
+        볼 권한이 없는 사람에게는 보이지 않습니다. 팀 구성원이면 누구나 등록하고
+        목록에서 뺄 수 있습니다.
       </p>
 
       {teams === null ? (
@@ -128,12 +145,18 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   const [materials, setMaterials] = useState<Material[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // Null until the server says, and null when it cannot: a server without the
+  // route is one that takes no uploads, and the screen is the link shelf.
+  const [rules, setRules] = useState<MaterialUploadRules | null>(null);
 
   useEffect(() => {
     let alive = true;
     listMaterials(teamId)
       .then((list) => alive && setMaterials(list))
       .catch(() => alive && setFailed(true));
+    getMaterialUploadRules(teamId)
+      .then((answer) => alive && setRules(answer))
+      .catch(() => alive && setRules(null));
     return () => {
       alive = false;
     };
@@ -158,12 +181,43 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <RegisterForm
+        rules={rules}
         onRegister={async (draft) => {
+          // The note is about the last thing done; this is a new one.
+          setNote(null);
           const saved = await registerMaterial(teamId, draft);
           setMaterials((list) => [saved, ...(list ?? [])]);
           setNote("자료를 등록했습니다.");
         }}
       />
+      {rules?.enabled ? (
+        <MaterialUploadForm
+          rules={rules}
+          onUpload={async (draft) => {
+            // "자료를 올렸습니다" under a refusal would read as this file's.
+            setNote(null);
+            const saved = await uploadMaterial(teamId, draft);
+            setMaterials((list) => [saved, ...(list ?? [])]);
+            const day = saved.expires_at ? localToday(new Date(saved.expires_at)) : null;
+            setNote(
+              [
+                day
+                  ? `자료를 올렸습니다. 개인정보를 가린 글을 ${day}까지 보관합니다.`
+                  : "자료를 올렸습니다.",
+                notReadNote(saved.not_read ?? []),
+              ]
+                .filter(Boolean)
+                .join(" "),
+            );
+          }}
+          onUnanswered={() => {
+            // The answer was lost, not necessarily the row: the list says.
+            void listMaterials(teamId)
+              .then(setMaterials)
+              .catch(() => undefined);
+          }}
+        />
+      ) : null}
       {note ? (
         <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
           {note}
@@ -173,6 +227,7 @@ function TeamMaterials({ teamId }: { teamId: string }) {
         <p className="text-[var(--color-ink-muted)]" style={meta}>
           아직 등록한 자료가 없습니다. Drive에서 &lsquo;링크 복사&rsquo;로 받은
           주소를 위에 넣어 등록해 주세요.
+          {rules?.enabled ? " 파일을 올려 둘 수도 있습니다." : null}
         </p>
       ) : (
         <ul className="flex flex-col" aria-label="등록한 자료">
@@ -181,16 +236,33 @@ function TeamMaterials({ teamId }: { teamId: string }) {
               key={material.id}
               material={material}
               onDelete={async () => {
+                const uploaded = material.source === "upload";
+                let gone = false;
                 try {
                   await deleteMaterial(teamId, material.id);
-                } catch {
-                  setNote("목록에서 빼지 못했습니다. 잠시 후 다시 시도해 주세요.");
-                  return;
+                } catch (cause) {
+                  // Somebody else deleted it, or its day came: it is not
+                  // there, which is what was asked for.
+                  gone = cause instanceof ApiError && cause.status === 404;
+                  if (!gone) {
+                    setNote(
+                      uploaded
+                        ? "삭제하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                        : "목록에서 빼지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                    );
+                    return;
+                  }
                 }
                 setMaterials((list) =>
                   (list ?? []).filter((m) => m.id !== material.id),
                 );
-                setNote("목록에서 뺐습니다. Drive의 파일은 그대로 있습니다.");
+                setNote(
+                  gone
+                    ? "이미 삭제된 자료입니다."
+                    : uploaded
+                      ? "자료를 삭제했습니다. 보관하던 글도 함께 지웠습니다."
+                      : "목록에서 뺐습니다. Drive의 파일은 그대로 있습니다.",
+                );
               }}
             />
           ))}
@@ -202,8 +274,11 @@ function TeamMaterials({ teamId }: { teamId: string }) {
 
 /** A title and a pasted Drive link. The link is checked here before it is sent. */
 function RegisterForm({
+  rules,
   onRegister,
 }: {
+  /** The server's numbers, where it gave them: a full shelf is said with its limit. */
+  rules: MaterialUploadRules | null;
   onRegister: (draft: { title: string; link: string }) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
@@ -237,7 +312,9 @@ function RegisterForm({
         cause instanceof ApiError && cause.status === 409
           ? "이 팀에 이미 등록된 파일입니다."
           : cause instanceof ApiError && cause.status === 422
-            ? (typedTextRefusal(cause) ?? "등록하지 못했습니다. 제목과 링크를 확인해 주세요.")
+            ? (typedTextRefusal(cause) ??
+              shelfFull(cause, rules) ??
+              "등록하지 못했습니다. 제목과 링크를 확인해 주세요.")
             : "등록하지 못했습니다. 잠시 후 다시 시도해 주세요.",
       );
     } finally {
@@ -296,7 +373,11 @@ function RegisterForm({
   );
 }
 
-/** One material: its title, what kind of file, and the three things done with it. */
+/**
+ * One material: its title, what kind of row it is, and what can be done with
+ * it. A link opens in Google's preview and in Drive; an upload shows the day
+ * its text goes and can only be deleted.
+ */
 function MaterialRow({
   material,
   onDelete,
@@ -307,12 +388,16 @@ function MaterialRow({
   const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  // A row is an upload only when the server says so: one from a server that
+  // knows links alone has no `source` and is a link.
+  const uploaded = material.source === "upload";
   // Google's address, built from the id the server kept -- never from text a
-  // person pasted (`driveLink.ts`).
-  const address = driveOpenUrl({
-    id: material.drive_file_id,
-    kind: material.drive_kind,
-  });
+  // person pasted (`driveLink.ts`). An upload has no file anywhere to open.
+  const address =
+    !uploaded && material.drive_file_id !== null && material.drive_kind !== null
+      ? driveOpenUrl({ id: material.drive_file_id, kind: material.drive_kind })
+      : null;
+  const day = uploaded ? deletionDay(material.expires_at ?? null) : null;
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
 
   return (
@@ -328,25 +413,35 @@ function MaterialRow({
           {material.title}
         </span>
         <span className="text-[var(--color-ink-muted)]" style={meta}>
-          {KIND[material.drive_kind]} · {localToday(new Date(material.created_at))} 등록
+          {uploaded
+            ? "올린 파일"
+            : material.drive_kind
+              ? KIND[material.drive_kind]
+              : "Drive 파일"}{" "}
+          · {localToday(new Date(material.created_at))} 등록
+          {day ? ` · ${day}` : null}
         </span>
-        <Button
-          tone="quiet"
-          size="compact"
-          aria-expanded={open}
-          onClick={() => setOpen((shown) => !shown)}
-        >
-          {open ? "미리보기 닫기" : "미리보기"}
-        </Button>
-        <a
-          className="text-[var(--color-accent-default)]"
-          style={meta}
-          href={address}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Drive에서 열기
-        </a>
+        {address ? (
+          <>
+            <Button
+              tone="quiet"
+              size="compact"
+              aria-expanded={open}
+              onClick={() => setOpen((shown) => !shown)}
+            >
+              {open ? "미리보기 닫기" : "미리보기"}
+            </Button>
+            <a
+              className="text-[var(--color-accent-default)]"
+              style={meta}
+              href={address}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Drive에서 열기
+            </a>
+          </>
+        ) : null}
         {asking ? null : (
           <Button tone="destructiveText" size="compact" onClick={() => setAsking(true)}>
             삭제
@@ -361,7 +456,9 @@ function MaterialRow({
           style={meta}
         >
           <span className="text-[var(--color-ink-body)]">
-            이 자료를 팀의 목록에서 뺄까요? Drive의 파일은 그대로 남습니다.
+            {uploaded
+              ? "이 자료를 삭제할까요? 보관 중인 글이 바로 지워지고 되돌릴 수 없습니다. Autune에는 원본 파일이 없어 다시 올려야 합니다."
+              : "이 자료를 팀의 목록에서 뺄까요? Drive의 파일은 그대로 남습니다."}
           </span>
           <Button tone="quiet" size="compact" disabled={busy} onClick={() => setAsking(false)}>
             취소
@@ -380,11 +477,11 @@ function MaterialRow({
               });
             }}
           >
-            목록에서 빼기
+            {uploaded ? "삭제" : "목록에서 빼기"}
           </Button>
         </div>
       ) : null}
-      {open ? <DrivePreview link={address} title={material.title} /> : null}
+      {open && address ? <DrivePreview link={address} title={material.title} /> : null}
     </li>
   );
 }
