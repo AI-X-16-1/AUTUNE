@@ -10,9 +10,11 @@ import type { NotExtracted } from "./ReExtract";
 import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
+import { useTitleReads } from "../hooks/useTitleReads";
 import { typedTextRefusal } from "../refusal";
 import { shownStatement } from "../statement";
 import { rowTitle } from "../title";
+import { awaitsTitle } from "../titleReads";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
 
 /**
@@ -42,12 +44,19 @@ export const HELD_BACK =
 export function DecisionReview({
   meetingId,
   unrun = null,
+  run = 0,
 }: {
   meetingId: string;
   /** The meeting's first extraction is not in: an empty list is not "none". */
   unrun?: NotExtracted;
+  /** How many runs this screen has seen end; after one, the titles are read (`useTitleReads`). */
+  run?: number;
 }) {
-  const { review, loading, error, setStatus, reword, add, remove } = useDecisionReview(meetingId);
+  const { review, loading, error, readTitles, setStatus, reword, add, remove } =
+    useDecisionReview(meetingId);
+  // A decision a person reworded is shown without a title and is given none.
+  const untitled = (review?.decisions ?? []).filter((d) => d.statement === d.model_statement);
+  useTitleReads(run, awaitsTitle(untitled), () => void readTitles());
 
   const decisions = review ? [...review.decisions].sort(byStatus) : [];
 
