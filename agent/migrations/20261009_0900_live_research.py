@@ -1,4 +1,4 @@
-"""live research: agent_live_research, its sources with a delete trigger, notices
+"""live research: agent_live_research, its sources with a delete trigger, per-person notices
 
 A live document goes with its meeting (FK), with any meeting it quotes (the
 trigger, as for agent_research_sources), and with a person's speech (the
@@ -63,8 +63,10 @@ def upgrade() -> None:
     op.create_table(
         "agent_live_research_notices",
         sa.Column("meeting_id", sa.String(64), primary_key=True),
+        sa.Column("user_id", sa.String(64), primary_key=True),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=False, server_default=_NOW),
         sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
     )
     op.execute(
         """

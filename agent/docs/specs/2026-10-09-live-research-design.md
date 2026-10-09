@@ -180,11 +180,18 @@ pipeline's own events already carry for B and C. No audio, no file path.
 participants are known. A new trigger handler in the agent layer (alongside
 `on_event`, not a subagent) does:
 
-1. If the meeting has at least one `done` live document, find the meeting's
-   participants with a `user_id`, and their Slack member ids (#255).
+1. If the meeting has at least one `done` live document, find the people to
+   tell: the meeting's participants with a `user_id`, and the `requested_by`
+   of its `done` documents — on a fresh upload no speaker is identified yet,
+   so the person who ran the live session is often the only one known. Only
+   current members of the meeting's team; their Slack member ids (#255).
 2. Send each one DM: `회의 중 조사 문서 N건이 준비됐습니다. {web_base_url}/meetings/{id}#live-research`.
-3. Record the send in `agent_live_research_notices(meeting_id, sent_at)` so a
-   re-published `transcript.ready` does not send twice.
+   N is the meeting's `done` documents.
+3. Before each DM, record it in `agent_live_research_notices(meeting_id,
+   user_id, sent_at)` (primary key `(meeting_id, user_id)`, `user_id` FK
+   `users.id` ON DELETE CASCADE) and skip anyone who already has a row. A
+   re-published `transcript.ready` sends nobody twice and reaches only the
+   people identified since. A team without Slack records nothing.
 
 **A count and a link, never the text.** A Slack message cannot be recalled, and
 the document holds meeting words a person may later delete (invariant 11, the

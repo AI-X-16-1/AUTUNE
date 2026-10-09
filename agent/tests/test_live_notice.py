@@ -1,11 +1,14 @@
-"""After the upload, a count and a link to each participant -- once, and never the text."""
+"""After the upload, a count and a link to each person -- once each, and never the text."""
 
 from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from autune_agent.live import notice
 from autune_agent.live.notice import notify_participants
 from autune_agent.models import AgentLiveResearch, AgentLiveResearchNotice
 from autune_core import Participant, TeamMember, User
@@ -20,12 +23,15 @@ class FakeSlack:
         return "ts"
 
 
-def _done(session: Session, team: dict[str, str], n: int = 2) -> None:
+def _done(
+    session: Session, team: dict[str, str], n: int = 2, requested_by: str | None = None
+) -> None:
     for i in range(n):
         session.add(
             AgentLiveResearch(
                 team_id=team["team"],
                 meeting_id=team["meeting"],
+                requested_by=requested_by,
                 origin="auto",
                 status="done",
                 question=f"q{i}",
@@ -78,7 +84,7 @@ def test_a_second_transcript_ready_sends_nothing(session: Session, team: dict[st
     notify_participants(session, team["meeting"], slack=slack)
 
     assert len(slack.sent) == 1
-    assert session.get(AgentLiveResearchNotice, team["meeting"]) is not None
+    assert session.get(AgentLiveResearchNotice, (team["meeting"], team["member"])) is not None
 
 
 def test_no_done_document_sends_nothing(session: Session, team: dict[str, str]) -> None:
@@ -116,3 +122,68 @@ def test_one_slack_failure_does_not_stop_the_others(session: Session, team: dict
             return super().send_dm(user_id, text)
 
     assert notify_participants(session, team["meeting"], slack=Flaky()) == [other.id]
+
+
+def _member(session: Session, team: dict[str, str], email: str) -> str:
+    user = User(email=email, display_name=email)
+    session.add(user)
+    session.flush()
+    session.add(TeamMember(team_id=team["team"], user_id=user.id))
+    session.commit()
+    return user.id
+
+
+def test_the_person_who_ran_the_session_hears_before_anyone_is_identified(
+    session: Session, team: dict[str, str]
+) -> None:
+    _done(session, team, requested_by=team["member"])
+    _participant(session, team, None, "Speaker 1")
+    _participant(session, team, None, "Speaker 2")
+    slack = FakeSlack()
+
+    assert notify_participants(session, team["meeting"], slack=slack) == [team["member"]]
+    assert notify_participants(session, team["meeting"], slack=slack) == []
+    assert [user for user, _ in slack.sent] == [team["member"]]
+
+
+def test_a_later_transcript_ready_reaches_only_people_identified_since(
+    session: Session, team: dict[str, str]
+) -> None:
+    _done(session, team, requested_by=team["member"])
+    _participant(session, team, None, "Speaker 1")
+    slack = FakeSlack()
+    notify_participants(session, team["meeting"], slack=slack)
+
+    other = _member(session, team, "other@example.com")
+    speaker = session.scalars(
+        select(Participant).where(Participant.meeting_id == team["meeting"])
+    ).one()
+    speaker.user_id = other
+    session.commit()
+
+    assert notify_participants(session, team["meeting"], slack=slack) == [other]
+    assert [user for user, _ in slack.sent] == [team["member"], other]
+
+
+def test_a_requester_who_left_the_team_is_not_messaged(
+    session: Session, team: dict[str, str]
+) -> None:
+    _done(session, team, requested_by=team["member"])
+    session.execute(delete(TeamMember).where(TeamMember.user_id == team["member"]))
+    session.commit()
+    slack = FakeSlack()
+
+    assert notify_participants(session, team["meeting"], slack=slack) == []
+    assert slack.sent == []
+
+
+def test_a_team_without_slack_records_nothing(
+    session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # team_integrations is JSONB, so the SQLite suite answers "never connected" here.
+    monkeypatch.setattr(notice, "load_integration", lambda *args: None)
+    _done(session, team, requested_by=team["member"])
+    _participant(session, team, team["member"], "팀원")
+
+    assert notify_participants(session, team["meeting"]) == []
+    assert session.scalars(select(AgentLiveResearchNotice)).all() == []

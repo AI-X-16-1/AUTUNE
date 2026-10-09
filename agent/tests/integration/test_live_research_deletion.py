@@ -1,5 +1,5 @@
 """Live research documents go with their meeting, with any meeting they quote,
-and the notice row with its meeting (spec section 4). PostgreSQL only."""
+and a notice row with its meeting or its person (spec section 4). PostgreSQL only."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from autune_agent.live.deletion import forget_live_research
 from autune_agent.models import AgentLiveResearch, AgentLiveResearchNotice, AgentLiveResearchSource
-from autune_core import Meeting, Team, Utterance
+from autune_core import Meeting, Team, User, Utterance
 
 
 def count(session: Session, table: str) -> int:
@@ -43,15 +43,33 @@ def _team_and_meetings(session: Session) -> tuple[Team, Meeting, Meeting]:
     return team, now, past
 
 
+def _user(session: Session, email: str = "live-notice@example.com") -> User:
+    user = User(email=email, display_name="팀원")
+    session.add(user)
+    session.flush()
+    return user
+
+
 def test_a_document_goes_with_its_meeting(db_session: Session) -> None:
     team, now, _ = _team_and_meetings(db_session)
     _doc(db_session, team, now)
-    db_session.add(AgentLiveResearchNotice(meeting_id=now.id))
+    db_session.add(AgentLiveResearchNotice(meeting_id=now.id, user_id=_user(db_session).id))
     db_session.flush()
 
     db_session.execute(sa.text("DELETE FROM meetings WHERE id = :id"), {"id": now.id})
 
     assert count(db_session, "agent_live_research") == 0
+    assert count(db_session, "agent_live_research_notices") == 0
+
+
+def test_a_notice_row_goes_with_its_person(db_session: Session) -> None:
+    _, now, _ = _team_and_meetings(db_session)
+    user = _user(db_session)
+    db_session.add(AgentLiveResearchNotice(meeting_id=now.id, user_id=user.id))
+    db_session.flush()
+
+    db_session.execute(sa.text("DELETE FROM users WHERE id = :id"), {"id": user.id})
+
     assert count(db_session, "agent_live_research_notices") == 0
 
 
