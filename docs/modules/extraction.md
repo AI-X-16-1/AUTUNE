@@ -143,11 +143,36 @@ agreement, and sync the result to Notion and Jira.
    that has any kind -- a promise with a deadline stays one item -- nor a turn
    read in pieces, a question, or a sentence that says the date is open (아직,
    미정); a date said of the past ("원래 마감은 10월 30일이었죠") is left
-   alone. The cost of a rule that reads words: a date somebody recalls or
-   worries about can be taken ("원래 마감은 10월 30일로 잡혀 있었죠", "출시가
-   금요일인데 걱정이네요"), and a person rejects it on the review screen. Until
-   then it is a pending decision like any other and reaches D and E in
-   `ExtractionResult`.
+   alone.
+
+   The rule is narrow on purpose (module B's owner, 2026-10-09). A line it
+   takes wrongly is a decision nobody made: it is pending like any other,
+   reaches D and E in `ExtractionResult`, and D can read it as a change of an
+   earlier decision before anyone rejects it on the review screen. A line it
+   leaves is where it was before the rule. So a sentence is also left alone
+   when it:
+
+   - looks back at a date -- a past form with an ending that recalls or asks
+     agreement ("원래 마감은 10월 30일로 잡혀 있었죠", "확정됐잖아요"), a state
+     that was or a past of a past ("예정돼 있었습니다", "확정됐었습니다"), or a
+     look-back word (원래, 당초, 처음에, …) with a past form and one date. Two
+     dates are a change announced with its old date ("원래 10월 30일이던
+     마감을 11월 5일로 확정했습니다") and are taken;
+   - is still open -- something yet to be decided or looked at ("오픈일은 다음
+     주에 정해야 합니다"; an obligation to finish, "금요일까지 끝내야 합니다",
+     states a deadline and is taken), a condition ("QA가 늦어지면 출시는 11월
+     3일입니다"; 그러면, 정리하면 and the like are no condition), or one of
+     four worry words (걱정, 빡빡, 촉박, 불안);
+   - names 확정 as its only milestone word without a date something was set
+     to: "수요일에 확정해서 알려드릴게요" names the day of the settling, "11월
+     15일로 확정됐습니다" what was settled.
+
+   What that costs, and was accepted: "문제 없으면 출시는 10월 20일입니다",
+   "일정은 10월 20일 확정입니다" and "그럼 마감은 10월 30일로 확정됐죠" are
+   real and no longer taken; a worry in other words ("QA가 빠듯합니다") still
+   is. The list was fitted to the eight lines the rule took in the labelled
+   dummy meetings, of which it now takes three; it is not a measured
+   precision.
 5. **Build decision entities** — group the utterances classified as decisions
    into `Decision` records with a `dec_` id and the statement as settled. One
    decision often spans several utterances. **Module D depends on this**: it is
