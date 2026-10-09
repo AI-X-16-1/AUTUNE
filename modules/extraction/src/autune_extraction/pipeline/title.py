@@ -199,7 +199,7 @@ def accept(
         return None, "does not end in a noun"
     if says_a_pointing_word(title):
         # Its words are the sentence's own, so nothing below would refuse it:
-        # a sentence that kept "이거" gives a title of "이거".
+        # a sentence that kept "이거" gives a title of "이거". "그건 확인" too.
         return None, "a pointing word"
     if not _numbers(title) <= _numbers(request.text):
         return None, "a number the sentence does not say"

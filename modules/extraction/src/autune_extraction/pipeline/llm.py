@@ -564,13 +564,25 @@ two items' sentences began with it. Only a mark with a number stands for a
 name; any other spelling stands for nobody, and no screen can read it as a
 person."""
 
-_POINTING_WORD = re.compile(r"(?<![0-9A-Za-z가-힣])(?:이거|그거|저거|이것|그것)(?!저것|저거)")
-"""A word that points at something and names nothing: 이거, 그거, 저거, 이것,
-그것, with whatever is attached to it ("이거를", "그것은", "이거예요"). At the
-start of a word only, so the "이거나" that ends another word is not this, nor
-is "이것저것", which means several things and points at none. The five are
-the list module B's owner chose (2026-10-09); their contracted forms
-("이건", "그걸", "그게") and "저것" are not in it."""
+_POINTING_WORD = re.compile(
+    r"(?<![0-9A-Za-z가-힣])(?:"
+    r"(?:이거|그거|저거|이것|그것|저것)(?!저것|저거)"
+    r"|[이그저][건걸게](?:요|로|도|만)?(?![0-9A-Za-z가-힣])"
+    r")"
+)
+"""A word that points at something and names nothing (module B's owner,
+2026-10-09).
+
+이거, 그거, 저거, 이것, 그것, 저것, with whatever is attached ("이거를",
+"그것은", "이거예요"): at the start of a word only, so the "이거나" that ends
+another word is not this, nor is "이것저것", which means several things and
+points at none.
+
+And the same words run together with their particle -- 이건, 그건, 저건, 이걸,
+그걸, 저걸, 이게, 그게, 저게 -- as a whole word, with at most "요", "로", "도"
+or "만" after it ("그걸로"). Whole, because these are also how a name starts:
+"이건희" is a person, and a summary gets its names back before it is read
+here."""
 
 
 def says_a_pointing_word(text: str) -> bool:

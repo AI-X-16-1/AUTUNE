@@ -210,6 +210,17 @@ def test_a_summary_with_a_name_mark_that_stands_for_nobody_is_dropped(written: s
         "이것을 금요일까지 정리",
         "금요일까지 그것도 정리",
         "금요일까지 정리할 것은 이거예요",
+        "저것을 금요일까지 정리",
+        # Run together with the particle.
+        "이건 금요일까지 정리",
+        "그건 금요일까지 정리해서 공유",
+        "저건 금요일까지 정리",
+        "이걸 금요일까지 정리",
+        "그걸로 금요일까지 정리",
+        "저걸 금요일까지 정리",
+        "금요일까지 정리할 건 이게요",
+        "그게 금요일까지 정리할 것",
+        "저게 금요일까지 정리할 것",
     ],
 )
 def test_a_summary_that_kept_a_word_that_only_points_is_dropped(written: str) -> None:
@@ -231,10 +242,24 @@ def test_a_summary_that_kept_a_word_that_only_points_is_dropped(written: str) ->
         "그 시안을 정리해서 공유",  # says what
         "이번 시안을 정리해서 공유",
         "저희 시안을 정리해서 공유",
+        "그건물 시안을 정리해서 공유",  # run together, and another word
+        "이게임 시안을 정리해서 공유",
     ],
 )
 def test_a_summary_with_a_word_that_only_looks_like_one_is_kept(written: str) -> None:
     assert usable_summary(written, {}, "") == written
+
+
+def test_a_name_that_starts_like_a_pointing_word_is_a_name() -> None:
+    (promise,), provider = classify(
+        ["이건희 님 자료는 제가 금요일까지 정리할게요"],
+        {"정리할게요": "commitment"},
+        {"정리할게요": "[사람1] 님 자료를 금요일까지 정리"},
+        roster=("이건희",),
+    )
+
+    assert "이건희" not in provider.texts[0]
+    assert promise.summary == "이건희 님 자료를 금요일까지 정리"
 
 
 def test_a_number_said_in_the_lines_before_may_be_in_the_summary() -> None:

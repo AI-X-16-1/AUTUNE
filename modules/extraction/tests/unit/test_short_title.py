@@ -73,6 +73,8 @@ POSTPONED = "배포는 다음 주 금요일로 미루기로 함"
         # Several things, pointing at none; and the end of another word.
         ("이것저것 정리", "이것저것 정리 예정", "item"),
         ("시안이거나 초안 검토", "시안이거나 초안을 검토 예정", "item"),
+        # A name that starts as "이건" does is a word of its own.
+        ("이건우 대리 자료 검토", "이건우 대리 자료를 검토 예정", "item"),
     ],
 )
 def test_a_title_that_keeps_every_rule_is_accepted(answer: str, text: str, kind: str) -> None:
@@ -116,6 +118,16 @@ def test_a_title_that_keeps_every_rule_is_accepted(answer: str, text: str, kind:
         ("저거 수정", "저거를 수정 예정", "item", "a pointing word"),
         ("이것 검토", "이것을 검토 예정", "item", "a pointing word"),
         ("그것으로 변경", "그것으로 변경하기로 함", "decision", "a pointing word"),
+        ("저것 삭제", "저것은 삭제하기로 함", "decision", "a pointing word"),
+        ("이건 확인", "이건 제가 확인 예정", "item", "a pointing word"),
+        ("그건 보류", "그건 보류하기로 함", "decision", "a pointing word"),
+        ("저건 수정", "저건 수정 예정", "item", "a pointing word"),
+        ("이걸 검토", "이걸 검토 예정", "item", "a pointing word"),
+        ("그걸로 진행", "그걸로 진행하기로 함", "decision", "a pointing word"),
+        ("저걸 정리", "저걸 정리 예정", "item", "a pointing word"),
+        ("이게 문제", "이게 문제라서 수정 예정", "item", "a pointing word"),
+        ("그게 원인", "그게 원인이라 수정 예정", "item", "a pointing word"),
+        ("저게 원인", "저게 원인이라 수정 예정", "item", "a pointing word"),
     ],
 )
 def test_a_title_that_breaks_a_rule_is_refused_with_the_rule(
