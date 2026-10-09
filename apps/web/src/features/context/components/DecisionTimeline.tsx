@@ -1,5 +1,6 @@
 import { Quote, StatusDot } from "@/shared/ui";
 
+import { kstDay } from "../dates";
 import type { ChangeType, DecisionVersionRead, NliLabel } from "../types";
 
 const CHANGE_LABEL: Record<ChangeType, string> = {
@@ -72,7 +73,7 @@ export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[]
                 className="mt-1 text-[var(--color-ink-muted)]"
                 style={{ fontSize: "var(--text-metaSmall)" }}
               >
-                {version.meeting_id} · {version.created_at.slice(0, 10)}
+                {version.meeting_id} · {kstDay(version.created_at)}
               </div>
 
               {!isOriginal && (
