@@ -160,6 +160,33 @@ x-python: &python
     # TURNING IT OFF is putting `fake` back and removing the model line.
     AUTUNE_EXTRACTION_NLI_IMPL: llm
     AUTUNE_EXTRACTION_NLI_MODEL: gemini-3.8-flash
+    # Module B's short titles are written by the cloud model on this site
+    # (decided by module B's owner, 2026-10-09: on here once the follow-up to
+    # #1141 about deleted speech is merged). After an extraction, each action
+    # item and decision it wrote gets a title of twenty characters or fewer
+    # for the top line of its card; the sentence stays under it. A title that
+    # fails the rules in pipeline/title.py is dropped and the card shows the
+    # sentence cut, as it does with this off. The model is the code's default
+    # (`title_model`), with no line here.
+    #
+    # WHAT LEAVES THIS SERVER because of it: the sentences the pipeline wrote
+    # for that meeting's items and decisions -- masked, the roster's names
+    # replaced, a decision's owner and deadline left off -- numbered, with one
+    # fixed prompt of ours. One request a meeting (twenty rows a request).
+    # Never a sentence a person typed, edited or reworded, and never a row
+    # whose speech was deleted. No speaker, id or meeting. Same key
+    # (AUTUNE_LLM_API_KEY) and same acknowledgement as the classifier; the
+    # paid-key and real-meeting rule above binds this the same way.
+    #
+    # WHAT IT DOES NOT DO: nothing is written for meetings already extracted --
+    # only an extraction that runs after this is on asks for titles. And a
+    # title is shown on Autune's own screens only: Slack, Notion, Jira and a
+    # calendar still carry the sentence.
+    #
+    # TURNING IT OFF is removing the line (the default is `none`). Titles
+    # already written stay on their rows. While it is `llm` the key and the
+    # acknowledgement stay, whatever the classifier is.
+    AUTUNE_EXTRACTION_TITLE_IMPL: llm
     # Module D's NLI is the one scripts/up.sh runs without --real-models, for
     # the reason it gives: the checkpoint is a private repo (#172).
     AUTUNE_CONTEXT_NLI_IMPL: fake
