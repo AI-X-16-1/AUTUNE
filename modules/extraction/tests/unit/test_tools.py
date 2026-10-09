@@ -44,6 +44,8 @@ from autune_extraction.slots import KST
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
 TODAY = date.today()
+"""The server's day, which is the day ``tools`` reads on every call. Taken again
+before each test (``_the_day_the_test_runs_on``), and ``KOREA_TODAY`` with it."""
 KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
 TABLES = [
@@ -80,6 +82,21 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_settings",
         lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
     )
+
+
+@pytest.fixture(autouse=True)
+def _the_day_the_test_runs_on() -> None:
+    """A test's today is the day it runs on, not the day this file was imported.
+
+    ``tools`` asks for the day on every call. With both days taken once at
+    import, a run that began before midnight and reached these tests after it
+    built its rows around yesterday: "due today" was already late, "due
+    tomorrow" was due today. On CI that midnight is UTC's, 09:00 in Korea; for
+    ``KOREA_TODAY`` it is Korea's own.
+    """
+    global TODAY, KOREA_TODAY
+    TODAY = date.today()
+    KOREA_TODAY = datetime.now(tz=KST).date()
 
 
 @pytest.fixture
@@ -1249,7 +1266,7 @@ def test_a_second_followup_item_is_refused_while_one_is_open(
 
 # --- the day Follow-up recommends becomes the item's due date (#853) -------------------
 
-KOREA_TODAY = datetime.now(tz=KST).date()
+KOREA_TODAY = datetime.now(tz=KST).date()  # taken again before each test, as TODAY is
 
 
 def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
