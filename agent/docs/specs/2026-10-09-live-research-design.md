@@ -145,8 +145,8 @@ All routes need a signed-in current member of the meeting's team.
 
 | Route | Body | Answer |
 | --- | --- | --- |
-| `POST /detect` | `{rows: [{start, text}]}` (≤12) | `202 {queued: true}`, `409`, `429` |
-| `POST /research` | `{row: {start, text}, context: [...]}` | `202 {id}` |
+| `POST /detect` | `{rows: [{start, text}]}` (≤12) | `202 {queued: true}`, `429` |
+| `POST /research` | `{row: {start, text}, context: [...]}` | `202 {id}`, `409` (question already researched, or the meeting has 20 manual documents) |
 | `GET /documents` | — | `[{id, origin, status, question, body, web_sources, meeting_sources, created_at}]`, newest first |
 
 `assert_masked` runs on every incoming text before it is queued; a hit answers
@@ -162,9 +162,10 @@ pipeline's own events already carry for B and C. No audio, no file path.
   the session is live. A new document slides in at the top with a short
   highlight; a running one shows 조사 중….
 - **Meeting page:** the same list under 회의 중 조사, read once on load.
-- The client for the three routes lives in `features/agent/api.ts`; the panel
-  component in `features/agent/components/LiveResearchPanel.tsx`, mounted by
-  the live screen.
+- The panel lives in `apps/web/src/features/transcript/`, following
+  `ResearchCard`: `components/LiveResearchPanel.tsx`,
+  `hooks/useLiveResearch.ts`, and the client calls in
+  `features/transcript/api.ts`. The live screen mounts it.
 
 ## 7. After the meeting: Slack
 
@@ -202,7 +203,7 @@ type and skipped; only `PrivacyViolationError` raises.
 ## 9. Testing
 
 - Unit (SQLite, `FakeRouter`-style fakes for Gemini): detect parses and caps,
-  dedupe, 409/429, `assert_masked` refusal, research with each source failing,
+  dedupe, 429 (detect) and 409 (research), `assert_masked` refusal, research with each source failing,
   failed status, document routes' membership check, notice sent once, no text
   in the DM.
 - Postgres: the source trigger deletes a document when a quoted meeting goes;

@@ -95,8 +95,12 @@ def count(session: Session, table: str) -> int:
 
 def _doc(session: Session, team: Team, meeting: Meeting, *, quotes: Meeting | None = None) -> str:
     doc = AgentLiveResearch(
-        team_id=team.id, meeting_id=meeting.id, origin="auto", status="done",
-        question="배포일이 언제였지?", body="배포일\n- 지난 회의에서 금요일로 정했습니다",
+        team_id=team.id,
+        meeting_id=meeting.id,
+        origin="auto",
+        status="done",
+        question="배포일이 언제였지?",
+        body="배포일\n- 지난 회의에서 금요일로 정했습니다",
     )
     session.add(doc)
     session.flush()
@@ -552,7 +556,10 @@ class Scripted:
         return self._web
 
 
-ROWS = [Row(start=61.0, text="지난달에 가격 정책 뭐로 정했었지?"), Row(start=65.0, text="기억 안 나네")]
+ROWS = [
+    Row(start=61.0, text="지난달에 가격 정책 뭐로 정했었지?"),
+    Row(start=65.0, text="기억 안 나네"),
+]
 
 
 def test_detect_returns_at_most_two_new_questions() -> None:
@@ -802,7 +809,9 @@ class GeminiLive:
                 continue
             seen.add(normalise(question))
             found.append(
-                Detected(question=question, web=item.get("web") is True, terms=_terms(item.get("terms")))
+                Detected(
+                    question=question, web=item.get("web") is True, terms=_terms(item.get("terms"))
+                )
             )
             if len(found) == MAX_QUESTIONS:
                 break
@@ -901,7 +910,9 @@ from autune_core.errors import PrivacyViolationError
 
 
 class FakeModel:
-    def __init__(self, *, detected: list[Detected] | None = None, body: str = "제목\n- 내용") -> None:
+    def __init__(
+        self, *, detected: list[Detected] | None = None, body: str = "제목\n- 내용"
+    ) -> None:
         self.detected = detected or []
         self.body = body
         self.written: list[dict[str, object]] = []
@@ -939,7 +950,11 @@ def _search_tool(past_meeting_id: str) -> dict[str, Tool]:
             "confidence": 0.8,
         }
 
-    return {"audio.search_team_meetings": Tool("audio.search_team_meetings", "search", search_team_meetings)}
+    return {
+        "audio.search_team_meetings": Tool(
+            "audio.search_team_meetings", "search", search_team_meetings
+        )
+    }
 
 
 @pytest.fixture
@@ -950,10 +965,16 @@ def past(session: Session, team: dict[str, str]) -> str:
     return meeting.id
 
 
-def _open(session: Session, team: dict[str, str], question: str, origin: str = "auto") -> AgentLiveResearch | None:
+def _open(
+    session: Session, team: dict[str, str], question: str, origin: str = "auto"
+) -> AgentLiveResearch | None:
     return open_document(
-        session, team_id=team["team"], meeting_id=team["meeting"],
-        user_id=team["member"], origin=origin, question=question,
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=team["member"],
+        origin=origin,
+        question=question,
     )
 
 
@@ -1040,7 +1061,14 @@ def test_an_unmasked_body_is_never_stored(session: Session, team: dict[str, str]
     assert doc is not None
 
     with pytest.raises(PrivacyViolationError):
-        research(session, doc.id, context=[], model=FakeModel(body="연락처 010-1234-5678"), web=False, tools={})
+        research(
+            session,
+            doc.id,
+            context=[],
+            model=FakeModel(body="연락처 010-1234-5678"),
+            web=False,
+            tools={},
+        )
     session.rollback()
     assert session.get(AgentLiveResearch, doc.id).body is None  # type: ignore[union-attr]
 
@@ -1051,8 +1079,13 @@ def test_detect_and_research_makes_one_document_per_new_question(
     model = FakeModel(detected=[Detected("배포일?", False, ["배포"]), Detected("요금?", True, [])])
 
     made = detect_and_research(
-        session, team_id=team["team"], meeting_id=team["meeting"], user_id=team["member"],
-        rows=[Row(1.0, "배포일 언제였지")], model=model, tools=_search_tool(past),
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=team["member"],
+        rows=[Row(1.0, "배포일 언제였지")],
+        model=model,
+        tools=_search_tool(past),
     )
 
     assert len(made) == 2
@@ -1172,11 +1205,15 @@ def _quotes(
         found = box.call(SEARCH, query=term, exclude_meeting_id=doc.meeting_id)
         for item in found.items if found.ok else []:
             uid = getattr(item, "id", None)
-            meeting_id = (item.model_extra or {}).get("meeting_id") or getattr(item, "meeting_id", "")
+            meeting_id = (item.model_extra or {}).get("meeting_id") or getattr(
+                item, "meeting_id", ""
+            )
             if not uid or uid in seen or not meeting_id:
                 continue
             seen.add(uid)
-            quotes.append(Quote(meeting_id=meeting_id, title=_meeting_part(item.title), body=item.body))
+            quotes.append(
+                Quote(meeting_id=meeting_id, title=_meeting_part(item.title), body=item.body)
+            )
     return quotes[:MAX_QUOTES]
 
 
@@ -1252,12 +1289,18 @@ def detect_and_research(
     made: list[str] = []
     for item in found:
         doc = open_document(
-            session, team_id=team_id, meeting_id=meeting_id, user_id=user_id,
-            origin="auto", question=item.question,
+            session,
+            team_id=team_id,
+            meeting_id=meeting_id,
+            user_id=user_id,
+            origin="auto",
+            question=item.question,
         )
         if doc is None:
             continue
-        research(session, doc.id, context=rows, model=model, web=item.web, terms=item.terms, tools=tools)
+        research(
+            session, doc.id, context=rows, model=model, web=item.web, terms=item.terms, tools=tools
+        )
         made.append(doc.id)
     return made
 ```
@@ -1337,33 +1380,47 @@ ROWS = {"rows": [{"start": 1.0, "text": "배포일이 언제였지?"}]}
 
 
 def test_a_member_queues_a_detect(session: Session, team: dict[str, str], queued: list) -> None:
-    reply = _client(session, team["member"]).post(f"/api/agent/live/{team['meeting']}/detect", json=ROWS)
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=ROWS
+    )
 
     assert reply.status_code == 202
     assert queued == [("detect", (team["team"], team["meeting"], team["member"], ROWS["rows"]))]
 
 
-def test_an_outsider_gets_404_and_nothing_is_queued(session: Session, team: dict[str, str], queued: list) -> None:
-    reply = _client(session, team["outsider"]).post(f"/api/agent/live/{team['meeting']}/detect", json=ROWS)
+def test_an_outsider_gets_404_and_nothing_is_queued(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
+    reply = _client(session, team["outsider"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=ROWS
+    )
 
     assert reply.status_code == 404
     assert queued == []
 
 
-def test_someone_who_left_mid_meeting_gets_404(session: Session, team: dict[str, str], queued: list) -> None:
+def test_someone_who_left_mid_meeting_gets_404(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
     session.query(TeamMember).filter_by(user_id=team["member"]).delete()
     session.commit()
 
-    reply = _client(session, team["member"]).post(f"/api/agent/live/{team['meeting']}/detect", json=ROWS)
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=ROWS
+    )
 
     assert reply.status_code == 404
     assert queued == []
 
 
-def test_an_unmasked_row_is_refused_and_nothing_is_queued(session: Session, team: dict[str, str], queued: list) -> None:
+def test_an_unmasked_row_is_refused_and_nothing_is_queued(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
     rows = {"rows": [{"start": 1.0, "text": "제 번호는 010-1234-5678"}]}
 
-    reply = _client(session, team["member"]).post(f"/api/agent/live/{team['meeting']}/detect", json=rows)
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=rows
+    )
 
     assert reply.status_code >= 400
     assert queued == []
@@ -1372,26 +1429,46 @@ def test_an_unmasked_row_is_refused_and_nothing_is_queued(session: Session, team
 def test_too_many_rows_are_refused(session: Session, team: dict[str, str], queued: list) -> None:
     rows = {"rows": [{"start": float(i), "text": "말"} for i in range(13)]}
 
-    reply = _client(session, team["member"]).post(f"/api/agent/live/{team['meeting']}/detect", json=rows)
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=rows
+    )
 
     assert reply.status_code == 422
     assert queued == []
 
 
-def test_detect_answers_429_once_the_meeting_has_five(session: Session, team: dict[str, str], queued: list) -> None:
+def test_detect_answers_429_once_the_meeting_has_five(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
     for i in range(MAX_AUTO):
-        open_document(session, team_id=team["team"], meeting_id=team["meeting"], user_id=None, origin="auto", question=f"q{i}")
+        open_document(
+            session,
+            team_id=team["team"],
+            meeting_id=team["meeting"],
+            user_id=None,
+            origin="auto",
+            question=f"q{i}",
+        )
 
-    reply = _client(session, team["member"]).post(f"/api/agent/live/{team['meeting']}/detect", json=ROWS)
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=ROWS
+    )
 
     assert reply.status_code == 429
     assert queued == []
 
 
-def test_research_opens_a_running_document_and_queues_it(session: Session, team: dict[str, str], queued: list) -> None:
-    body = {"row": {"start": 5.0, "text": "그 API 요금 얼마지?"}, "context": [{"start": 3.0, "text": "외부 API 쓰자"}]}
+def test_research_opens_a_running_document_and_queues_it(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
+    body = {
+        "row": {"start": 5.0, "text": "그 API 요금 얼마지?"},
+        "context": [{"start": 3.0, "text": "외부 API 쓰자"}],
+    }
 
-    reply = _client(session, team["member"]).post(f"/api/agent/live/{team['meeting']}/research", json=body)
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/research", json=body
+    )
 
     assert reply.status_code == 202
     doc = session.get(AgentLiveResearch, reply.json()["id"])
@@ -1400,17 +1477,42 @@ def test_research_opens_a_running_document_and_queues_it(session: Session, team:
     assert queued == [("research", (doc.id, body["context"], True))]
 
 
-def test_documents_are_listed_newest_first_for_members_only(session: Session, team: dict[str, str]) -> None:
-    open_document(session, team_id=team["team"], meeting_id=team["meeting"], user_id=None, origin="auto", question="첫째")
-    open_document(session, team_id=team["team"], meeting_id=team["meeting"], user_id=None, origin="manual", question="둘째")
+def test_documents_are_listed_newest_first_for_members_only(
+    session: Session, team: dict[str, str]
+) -> None:
+    open_document(
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=None,
+        origin="auto",
+        question="첫째",
+    )
+    open_document(
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=None,
+        origin="manual",
+        question="둘째",
+    )
 
     member = _client(session, team["member"]).get(f"/api/agent/live/{team['meeting']}/documents")
-    outsider = _client(session, team["outsider"]).get(f"/api/agent/live/{team['meeting']}/documents")
+    outsider = _client(session, team["outsider"]).get(
+        f"/api/agent/live/{team['meeting']}/documents"
+    )
 
     assert member.status_code == 200
     assert [d["question"] for d in member.json()] == ["둘째", "첫째"]
     assert set(member.json()[0]) == {
-        "id", "origin", "status", "question", "body", "web_sources", "meeting_sources", "created_at"
+        "id",
+        "origin",
+        "status",
+        "question",
+        "body",
+        "web_sources",
+        "meeting_sources",
+        "created_at",
     }
     assert outsider.status_code == 404
 ```
@@ -1532,8 +1634,12 @@ def research(meeting_id: str, body: ResearchIn, user: CurrentUser, session: Sess
     row = _masked([body.row])[0]
     context = _masked(body.context)
     doc = open_document(
-        session, team_id=meeting.team_id, meeting_id=meeting.id, user_id=user.id,
-        origin="manual", question=row["text"],
+        session,
+        team_id=meeting.team_id,
+        meeting_id=meeting.id,
+        user_id=user.id,
+        origin="manual",
+        question=row["text"],
     )
     if doc is None:
         return JSONResponse(status_code=409, content={"code": "live_research_known_or_full"})
@@ -1622,8 +1728,13 @@ def test_a_detector_failure_makes_nothing(session: Session, team: dict[str, str]
             raise RuntimeError("no key")
 
     made = detect_and_research(
-        session, team_id=team["team"], meeting_id=team["meeting"], user_id=None,
-        rows=[Row(1.0, "말")], model=Off(), tools={},
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=None,
+        rows=[Row(1.0, "말")],
+        model=Off(),
+        tools={},
     )
 
     assert made == []
@@ -2149,14 +2260,29 @@ class FakeSlack:
 
 def _done(session: Session, team: dict[str, str], n: int = 2) -> None:
     for i in range(n):
-        session.add(AgentLiveResearch(
-            team_id=team["team"], meeting_id=team["meeting"], origin="auto", status="done",
-            question=f"q{i}", body="비밀 본문", web_sources=[], meeting_sources=[],
-        ))
-    session.add(AgentLiveResearch(
-        team_id=team["team"], meeting_id=team["meeting"], origin="auto", status="failed",
-        question="실패", web_sources=[], meeting_sources=[],
-    ))
+        session.add(
+            AgentLiveResearch(
+                team_id=team["team"],
+                meeting_id=team["meeting"],
+                origin="auto",
+                status="done",
+                question=f"q{i}",
+                body="비밀 본문",
+                web_sources=[],
+                meeting_sources=[],
+            )
+        )
+    session.add(
+        AgentLiveResearch(
+            team_id=team["team"],
+            meeting_id=team["meeting"],
+            origin="auto",
+            status="failed",
+            question="실패",
+            web_sources=[],
+            meeting_sources=[],
+        )
+    )
     session.commit()
 
 
@@ -2201,7 +2327,9 @@ def test_no_done_document_sends_nothing(session: Session, team: dict[str, str]) 
     assert slack.sent == []
 
 
-def test_a_participant_who_left_the_team_is_not_messaged(session: Session, team: dict[str, str]) -> None:
+def test_a_participant_who_left_the_team_is_not_messaged(
+    session: Session, team: dict[str, str]
+) -> None:
     _done(session, team)
     _participant(session, team, team["outsider"], "외부")
     slack = FakeSlack()
@@ -2407,9 +2535,13 @@ def test_deleting_a_persons_speech_takes_the_live_documents_of_their_meetings(
     assert remaining == {in_now, kept}
     assert quoting_past not in remaining
 
-    db_session.add(Utterance(meeting_id=now.id, speaker_label="S", start_sec=0.0, end_sec=1.0, text="말"))
+    db_session.add(
+        Utterance(meeting_id=now.id, speaker_label="S", start_sec=0.0, end_sec=1.0, text="말")
+    )
     db_session.flush()
-    now_utt = db_session.execute(sa.text("SELECT id FROM utterances WHERE meeting_id = :m"), {"m": now.id}).scalar_one()
+    now_utt = db_session.execute(
+        sa.text("SELECT id FROM utterances WHERE meeting_id = :m"), {"m": now.id}
+    ).scalar_one()
     assert forget_live_research(db_session, [now_utt]) == 1
     assert forget_live_research(db_session, [now_utt]) == 0
 ```
@@ -2467,7 +2599,9 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         gone = forget_live_research(session, utterance_ids)
     log.info(
         "agent_live_speech_forgotten user_id=%s utterances=%d documents=%d",
-        user_id, len(utterance_ids), gone,
+        user_id,
+        len(utterance_ids),
+        gone,
     )
 ```
 
