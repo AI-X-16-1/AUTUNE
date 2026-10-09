@@ -71,6 +71,15 @@ section 3 is binding.
 - **The influence map (Phase 2) goes to the person themselves and nobody
   else — decided on #28.** Same delivery as speaking ratio (subject-only,
   by DM); it must never land on the shared dashboard, and no admin override.
+- **A deleted meeting's statement is taken out of the other meetings' copies
+  of D's lineage (#1161).** E's per-meeting tables cascade;
+  `forget.forget_meeting` (`@on_meeting_deleted("intelligence")`, registered
+  in `service.py`) empties the meeting's statement where a later meeting's
+  copy of D's lineage quotes it. A report's text is not searched. A new
+  column that copies text from *another* meeting must be reachable from that
+  function, and the hook must not wait for a `meetings` or `teams` row: its
+  caller holds a lock on them. `/docs/modules/intelligence.md`, "Privacy
+  notes".
 
 ## Do not do here
 
