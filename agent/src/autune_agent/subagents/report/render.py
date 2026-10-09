@@ -37,8 +37,8 @@ def _actions(actions: ToolResult | None) -> list[str]:
     if usable is None:
         return []
     if not usable.items:
-        return ["✅ 확정된 액션 아이템 없음"]
-    lines = ["✅ 확정된 액션 아이템"]
+        return ["✅ 확정된 할 일 없음"]
+    lines = ["✅ 확정된 할 일"]
     lines += [f"• {i.title} — {i.body}" if i.body else f"• {i.title}" for i in usable.items]
     if usable.truncated:
         lines.append(MORE)

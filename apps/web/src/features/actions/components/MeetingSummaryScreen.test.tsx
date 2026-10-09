@@ -88,7 +88,7 @@ describe("MeetingSummaryScreen", () => {
     const sections = within(page)
       .getAllByRole("region")
       .map((r) => r.getAttribute("aria-label"));
-    expect(sections).toEqual(["결정 사항", "액션", "메모"]);
+    expect(sections).toEqual(["결정 사항", "할 일", "메모"]);
 
     const decisions = within(page).getByRole("region", { name: "결정 사항" });
     expect(decisions.querySelector("ol")).not.toBeNull();
@@ -97,7 +97,7 @@ describe("MeetingSummaryScreen", () => {
     expect(settled).toEqual(["회의실은 예약제로 한다", "출시를 다음 달로 미룬다 (자동 추출)"]);
     expect(decisions.textContent).not.toContain("확인 대기");
 
-    const actions = within(page).getByRole("region", { name: "액션" });
+    const actions = within(page).getByRole("region", { name: "할 일" });
     expect([...actions.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
       "설문 문항 다시 쓰기 — 김민경 · 2999년 1월 1일 화",
       "QA 일정 확인 — 담당 미지정 · 기한 없음 · 확인 필요",
@@ -168,8 +168,8 @@ describe("MeetingSummaryScreen", () => {
         { id: "d2", statement: "결정 B", status: "confirmed", project_id: "prj_b" },
       ],
       action_items: [
-        item({ id: "a1", description: "액션 A", project_id: "prj_a" }),
-        item({ id: "a2", description: "액션 밖", project_id: null }),
+        item({ id: "a1", description: "할 일 A", project_id: "prj_a" }),
+        item({ id: "a2", description: "할 일 밖", project_id: null }),
       ],
       projects: [
         { id: "prj_a", name: "Autune", aliases: [], jira_project_key: null },
@@ -190,8 +190,8 @@ describe("MeetingSummaryScreen", () => {
     );
     expect(page.textContent).toContain("결정 A");
     expect(page.textContent).not.toContain("결정 B");
-    expect(page.textContent).toContain("액션 A");
-    expect(page.textContent).not.toContain("액션 밖");
+    expect(page.textContent).toContain("할 일 A");
+    expect(page.textContent).not.toContain("할 일 밖");
 
     fireEvent.click(screen.getByRole("button", { name: "회의록 복사" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
@@ -245,7 +245,7 @@ describe("MeetingSummaryScreen", () => {
     expect(within(page).getByRole("region", { name: "결정 사항" }).textContent).toBe(
       "결정 사항없음",
     );
-    expect(within(page).getByRole("region", { name: "액션" }).textContent).toBe("액션없음");
+    expect(within(page).getByRole("region", { name: "할 일" }).textContent).toBe("할 일없음");
     expect(screen.getByRole("region", { name: "회의록에 없는 것" }).textContent).not.toContain(
       "넣지 않았습니다",
     );

@@ -10,7 +10,15 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
-from autune_extraction.slots import Assignee, DueDate, assignee_of, meeting_day, parse_due
+from autune_extraction.slots import (
+    Assignee,
+    DueDate,
+    assignee_of,
+    dates_named,
+    meeting_day,
+    parse_due,
+    past_form_at,
+)
 
 WEDNESDAY = date(2026, 9, 9)
 
@@ -614,3 +622,42 @@ def test_a_promise_keeps_the_date_a_decision_no_longer_takes(text: str, due: dat
     found = parse_due(text, THURSDAY)
 
     assert found is not None and found.date == due
+
+
+# --- what the stated-date rule asks of a sentence ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "count"),
+    [
+        ("회의록은 제가 올리겠습니다.", 0),
+        ("마감은 10월 30일입니다.", 1),  # "10월 30일" and the "30일" in it are one date
+        ("마감은 다음 주 금요일입니다.", 1),
+        ("원래 10월 30일이던 마감을 11월 5일로 확정했습니다.", 2),
+        ("출시는 10월 20일에서 11월 3일로 미뤄졌습니다.", 2),
+    ],
+)
+def test_dates_named_counts_each_date_once(text: str, count: int) -> None:
+    assert dates_named(text) == count
+
+
+@pytest.mark.parametrize(
+    ("syllable", "past"),
+    [
+        ("했", True),
+        ("됐", True),
+        ("었", True),
+        ("던", True),
+        ("겠", False),
+        ("있", False),
+        ("없", False),
+        ("하", False),
+    ],
+)
+def test_past_form_at_reads_one_syllable(syllable: str, past: bool) -> None:
+    assert past_form_at("가" + syllable, 1) is past
+
+
+def test_past_form_at_outside_the_text_is_not_past() -> None:
+    assert past_form_at("했", -1) is False
+    assert past_form_at("했", 1) is False

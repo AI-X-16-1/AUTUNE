@@ -1,7 +1,7 @@
 """What became of a meeting's extraction since it last went through.
 
 An extraction that raised used to leave nothing behind: no row, no retry, and
-a meeting whose 액션 tab stayed empty with nothing to say why (dev,
+a meeting whose 할 일 tab stayed empty with nothing to say why (dev,
 2026-10-05). ``ext_extraction_attempts`` keeps the count of failures in a row,
 so that the sweep can try again, the team can be told once the tries are spent,
 and the meeting's own screen can show it -- and a person's request to run the
@@ -98,7 +98,7 @@ was read, say a part was not, try again).
 Not an extraction that failed -- the rows are on the board -- and not one that
 went through: what was said in the unread part is unknown. So it is counted
 like a failure, which is what makes the sweep run the meeting again and the
-액션 tab say so, and the tab's sentence is its own. Each further run that
+할 일 tab say so, and the tab's sentence is its own. Each further run that
 still leaves a part unread counts one more, and so does one that fails
 outright -- the reason stays this one until a run reads everything, because the
 board still holds the partial read. After ``MAX_ATTEMPTS`` the sweep stops and
@@ -366,7 +366,7 @@ def transcribed(session: Session, meeting_id: str) -> bool:
 
 
 def state(session: Session, meeting_id: str, *, now: datetime | None = None) -> ExtractionState:
-    """What the meeting's 액션 screen says about its extraction.
+    """What the meeting's 할 일 screen says about its extraction.
 
     A transcript with neither a run nor a failure on record is a first run
     that has not finished: ``in_progress`` for as long as ``adopt_unextracted``

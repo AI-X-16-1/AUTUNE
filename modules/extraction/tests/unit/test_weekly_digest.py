@@ -42,7 +42,7 @@ def test_the_message_puts_the_late_first_escapes_and_stops_at_ten() -> None:
     text = build_weekly_digest(lines, today=MONDAY, board_url="https://autune.example/actions")
     body = text.split("\n")
 
-    assert body[0] == "이번 주 열린 액션 아이템 13개입니다."
+    assert body[0] == "이번 주 열린 할 일 13개입니다."
     assert body[1] == "• 늦은 일 &lt;!channel&gt; · 기한 지남(10월 1일 목) · 주간 회의"
     assert body[2] == "• 이번 주 일 · 이번 주 10월 8일 목"
     assert body[3] == "• 다음 달 일 · 기한 11월 20일 금"

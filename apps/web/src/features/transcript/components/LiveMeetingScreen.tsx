@@ -201,7 +201,7 @@ export function LiveMeetingScreen({
           <span>
             이 회의 참석자 전원이 녹음과 분석에 동의했습니다.
             <span className="block text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
-              체크하지 않으면 녹음은 되지만 액션 아이템과 갭은 분석되지 않습니다.
+              체크하지 않으면 녹음은 되지만 할 일과 갭은 분석되지 않습니다.
             </span>
           </span>
         </label>

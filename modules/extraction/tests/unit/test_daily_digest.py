@@ -111,7 +111,7 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
         "• 기한 지남(10월 1일 목): 늦은 일 · 기획 &lt;회의&gt;",
         "• 오늘 기한: 오늘 일",
         "• 진행 중: 하던 일",
-        "그 밖의 열린 액션 아이템 3개",
+        "그 밖의 열린 할 일 3개",
         "https://autune.example/actions",
     ]
 
@@ -123,7 +123,7 @@ def test_a_quiet_day_says_so_rather_than_leaving_a_heading_empty() -> None:
 
     assert "• 바뀐 것이 없습니다." in text
     assert "• 오늘 기한이거나 진행 중인 항목이 없습니다." in text
-    assert "그 밖의 열린 액션 아이템 2개" in text
+    assert "그 밖의 열린 할 일 2개" in text
 
 
 def test_a_late_items_date_says_its_year_only_when_it_is_not_this_mornings() -> None:

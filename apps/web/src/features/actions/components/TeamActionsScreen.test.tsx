@@ -318,12 +318,12 @@ describe("TeamActionsScreen, one team's items", () => {
     to("team_p");
     expect(onScreen()).toEqual(["a", "c"]);
     expect(screen.getByRole("status").textContent).toContain(
-      "플랫폼의 액션 아이템만 보고 있습니다.",
+      "플랫폼의 할 일만 보고 있습니다.",
     );
 
     to("team_d");
     expect(onScreen()).toEqual(["b"]);
-    expect(screen.getByRole("status").textContent).toContain("디자인의 액션 아이템만");
+    expect(screen.getByRole("status").textContent).toContain("디자인의 할 일만");
 
     to(null);
     expect(onScreen()).toEqual(["a", "b", "c"]);
@@ -352,7 +352,7 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(onScreen()).toEqual([]);
     expect(screen.getByRole("status").textContent).toContain(UNNAMED_TEAM);
-    expect(screen.getByText(/아직 액션 아이템이 없습니다/)).toBeTruthy();
+    expect(screen.getByText(/아직 할 일이 없습니다/)).toBeTruthy();
   });
 
   it("says the list is an earlier one, not that it failed, when the team has none of it", async () => {
@@ -362,7 +362,7 @@ describe("TeamActionsScreen, one team's items", () => {
     await show("team_gone");
 
     expect(screen.getByText(/이전 목록을 보여주고 있습니다/)).toBeTruthy();
-    expect(screen.queryByText("액션 아이템을 불러오지 못했습니다.")).toBeNull();
+    expect(screen.queryByText("할 일을 불러오지 못했습니다.")).toBeNull();
   });
 
   it("lists that team's projects in the filter, and lets another team's go", async () => {

@@ -420,7 +420,7 @@ export function NewMeetingScreen({
                   className="block text-[var(--color-ink-muted)]"
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
-                  동의가 기록되지 않은 회의는 전사만 저장되고 액션 · 갭 분석에서
+                  동의가 기록되지 않은 회의는 전사만 저장되고 할 일 · 갭 분석에서
                   제외됩니다.
                 </span>
               </span>

@@ -105,7 +105,7 @@ def test_a_finished_meeting_becomes_a_draft_at_l1_and_a_post_at_l2() -> None:
     assert set(draft.arguments) == {"body_markdown", "pending_review", "draft_id"}
     assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
     assert draft.arguments["pending_review"] is True
-    assert draft.arguments["body_markdown"].startswith("✅ 확정된 액션 아이템")
+    assert draft.arguments["body_markdown"].startswith("✅ 확정된 할 일")
 
 
 # --- a person edited the draft (#674) ---------------------------------------------
@@ -382,7 +382,7 @@ def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
     body = outcome.proposed[0].arguments["body_markdown"]
-    assert "열린 갭" not in body and "✅ 확정된 액션 아이템" in body
+    assert "열린 갭" not in body and "✅ 확정된 할 일" in body
 
 
 def _raising(name: str, exc: Exception) -> Tool:

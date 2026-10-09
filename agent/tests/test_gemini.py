@@ -254,9 +254,9 @@ def _limited_router(sent: list[dict[str, Any]]) -> GeminiRouter:
 
 def test_compose_falls_back_to_the_summary_when_the_model_is_out_of_quota() -> None:
     # The tools already answered; a 429 on the last call must not turn that into a 500.
-    outcome = SubagentResult(result=ToolResult(ok=True, summary="열린 액션 2건."))
+    outcome = SubagentResult(result=ToolResult(ok=True, summary="열린 할 일 2건."))
 
-    assert _limited_router([]).compose("열린 거?", outcome) == "열린 액션 2건."
+    assert _limited_router([]).compose("열린 거?", outcome) == "열린 할 일 2건."
 
 
 def test_compose_trims_its_findings_to_fit_the_outbound_limit() -> None:

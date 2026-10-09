@@ -803,7 +803,7 @@ def _team_for(
     session: Session, user_id: str, *, meeting_id: str | None, team_id: str | None
 ) -> str:
     """The team a team-integration request is about, after checking the person
-    belongs to it: named by a meeting the screen shows (the 액션 tab) or by the
+    belongs to it: named by a meeting the screen shows (the 할 일 tab) or by the
     team itself (S28 settings, #496). Any member may connect -- ``team_members``
     has no admin role yet (#592)."""
     if meeting_id:

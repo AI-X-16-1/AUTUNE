@@ -57,7 +57,7 @@ A stated risk or objection that was not resolved into a decision.
 Assent too weak to treat as a commitment — "네, 될 것 같아요", "한번 볼게요".
 Verified with NLI; when it stays ambiguous, the speaker gets a confirmation DM.
 
-**Action item (액션아이템)**
+**Action item (할 일)**
 A structured, trackable task: assignee, description, due date, source utterance,
 status. Syncs to Notion and Jira.
 

@@ -21,8 +21,21 @@ vi.mock("./SessionGate", () => ({
   }),
 }));
 vi.mock("@/features/agent", () => ({
-  Assistant: ({ teamId, teamName }: { teamId: string; teamName: string }) => (
-    <p>{`${teamId} ${teamName}`}</p>
+  Assistant: ({
+    teamId,
+    teamName,
+    onChooseTeam,
+  }: {
+    teamId: string;
+    teamName: string;
+    onChooseTeam?: (teamId: string) => void;
+  }) => (
+    <>
+      <p>{`${teamId} ${teamName}`}</p>
+      <button type="button" onClick={() => onChooseTeam?.("team_b")}>
+        B팀 리포트 열기
+      </button>
+    </>
   ),
 }));
 
@@ -44,6 +57,16 @@ describe("AssistantMount", () => {
 
     act(() => rememberTeam("team_b"));
 
+    expect(screen.getByText("team_b B팀")).toBeTruthy();
+  });
+
+  it("makes a report row's team the choice everywhere", () => {
+    render(<AssistantMount />);
+
+    act(() => screen.getByRole("button", { name: "B팀 리포트 열기" }).click());
+
+    // The sidebar's store, so the dashboard behind switches to it too.
+    expect(window.localStorage.getItem("autune.team")).toBe("team_b");
     expect(screen.getByText("team_b B팀")).toBeTruthy();
   });
 

@@ -4,7 +4,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { Assistant } from "@/features/agent";
-import { onTeamChosen, rememberedTeam } from "@/features/transcript";
+import { onTeamChosen, rememberedTeam, rememberTeam } from "@/features/transcript";
 
 import { useSessionUser } from "./SessionGate";
 
@@ -19,7 +19,8 @@ import { useSessionUser } from "./SessionGate";
  * value `features/transcript` keeps for every team-level screen, exactly as
  * `materials/page.tsx` reads it: the remembered team while the person is still
  * on it, else the first, and a new choice as soon as it is made. On a meeting
- * page the meeting names its own team.
+ * page the meeting names its own team. A report row the assistant opens makes
+ * its answer's team the choice, so the dashboard shows that team's reports.
  */
 export function AssistantMount() {
   const pathname = usePathname();
@@ -39,6 +40,7 @@ export function AssistantMount() {
       teamName={team.name}
       userName={user.display_name}
       pathname={pathname}
+      onChooseTeam={rememberTeam}
     />
   );
 }

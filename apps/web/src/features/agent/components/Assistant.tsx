@@ -50,7 +50,12 @@ type Turn =
       /** The team asked about; null on a meeting page, where the meeting names it. */
       team: { id: string; name: string } | null;
     }
-  | { role: "assistant"; reply: ChatReply }
+  | {
+      role: "assistant";
+      reply: ChatReply;
+      /** The team the question was about, so a report row opens on that team. */
+      team: { id: string; name: string } | null;
+    }
   | { role: "system"; text: string };
 
 const UNROUTED =
@@ -85,11 +90,16 @@ export function Assistant({
   teamName,
   userName,
   pathname,
+  onChooseTeam,
 }: {
   teamId: string;
   teamName: string;
   userName: string;
   pathname: string;
+  /** Makes a team the chosen one everywhere, as the sidebar's menu does. A
+   * report row calls it with its answer's team, so the dashboard it opens
+   * shows that team's reports (#1055 follow-up). */
+  onChooseTeam?: (teamId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -192,7 +202,7 @@ export function Assistant({
       const reply = context.meetingId
         ? await sendChat({ meetingId: context.meetingId }, message)
         : await sendChat({ teamId }, message);
-      setTurns((t) => [...t, { role: "assistant", reply }]);
+      setTurns((t) => [...t, { role: "assistant", reply, team }]);
       if (reply.executed > 0) announceAgentActed();
     } catch (e) {
       setTurns((t) => [
@@ -280,6 +290,7 @@ export function Assistant({
                   <TurnView
                     turn={turn}
                     onDashboard={pathname === "/dashboard"}
+                    onChooseTeam={onChooseTeam}
                   />
                 </Fragment>
               );
@@ -323,7 +334,7 @@ export function Assistant({
                 rows={1}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onComposerKey}
-                placeholder="회의·결정·액션에 대해 물어보세요"
+                placeholder="회의·결정·할 일에 대해 물어보세요"
                 aria-label="비서에게 물어보기"
                 maxLength={1000}
                 className="flex-1 resize-none rounded-[var(--radius)] border border-[rgba(22,25,31,.2)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)] outline-none focus:border-[var(--color-accent-default)] focus:ring-[0.5px] focus:ring-[var(--color-accent-default)]"
@@ -448,9 +459,11 @@ function TeamLine({ name }: { name: string }) {
 function TurnView({
   turn,
   onDashboard,
+  onChooseTeam,
 }: {
   turn: Turn;
   onDashboard: boolean;
+  onChooseTeam?: (teamId: string) => void;
 }) {
   if (turn.role === "user") {
     return (
@@ -479,15 +492,24 @@ function TurnView({
       </p>
     );
   }
-  return <AssistantReply reply={turn.reply} onDashboard={onDashboard} />;
+  const team = turn.team;
+  return (
+    <AssistantReply
+      reply={turn.reply}
+      onDashboard={onDashboard}
+      openTeam={team && onChooseTeam ? () => onChooseTeam(team.id) : undefined}
+    />
+  );
 }
 
 function AssistantReply({
   reply,
   onDashboard,
+  openTeam,
 }: {
   reply: ChatReply;
   onDashboard: boolean;
+  openTeam?: () => void;
 }) {
   const unrouted = reply.outcome === "unrouted";
   const decidable = reply.pending ?? [];
@@ -503,7 +525,11 @@ function AssistantReply({
         {unrouted ? UNROUTED : <MaskedText>{reply.answer}</MaskedText>}
       </p>
       {!unrouted && reply.items.length > 0 && (
-        <Evidence items={reply.items} onDashboard={onDashboard} />
+        <Evidence
+          items={reply.items}
+          onDashboard={onDashboard}
+          openTeam={openTeam}
+        />
       )}
       {!unrouted &&
         decidable.map((item) => <ChatProposal key={item.id} item={item} />)}
@@ -563,9 +589,12 @@ function AssistantReply({
 function Evidence({
   items,
   onDashboard,
+  openTeam,
 }: {
   items: ChatFinding[];
   onDashboard: boolean;
+  /** Chooses the answer's team before a report row opens the dashboard on it. */
+  openTeam?: () => void;
 }) {
   return (
     <ul className="mt-3 border-t border-[var(--color-hairline)]">
@@ -594,8 +623,13 @@ function Evidence({
         // Already on the dashboard only the hash changes: a plain anchor fires
         // `hashchange`, which the report card follows, and a router push would
         // not. Anywhere else the router keeps this conversation.
-        const inPage =
-          href !== null && onDashboard && href.startsWith("/dashboard#");
+        const toReport = href !== null && href.startsWith("/dashboard#");
+        const inPage = toReport && onDashboard;
+        // The dashboard shows the chosen team: a report from another team's
+        // answer would not be on it. Choosing the answer's team first makes
+        // the dashboard switch to it (TeamScope hears the choice), and the
+        // card then opens the report from the hash.
+        const onClick = toReport ? openTeam : undefined;
         return (
           <li
             key={item.id ?? i}
@@ -605,11 +639,15 @@ function Evidence({
             {href === null ? (
               <div className="flex gap-2">{body}</div>
             ) : inPage ? (
-              <a href={href.slice("/dashboard".length)} className="flex gap-2">
+              <a
+                href={href.slice("/dashboard".length)}
+                onClick={onClick}
+                className="flex gap-2"
+              >
                 {body}
               </a>
             ) : (
-              <Link href={href} className="flex gap-2">
+              <Link href={href} onClick={onClick} className="flex gap-2">
                 {body}
               </Link>
             )}

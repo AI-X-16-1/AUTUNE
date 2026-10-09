@@ -34,7 +34,7 @@ from autune_intelligence import service, tasks, tools
 from autune_intelligence.models import IntelMeetingReport
 from autune_intelligence.router import router
 
-BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
+BODY = "✅ 확정된 할 일\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
 
 
 def _user(db_session: Session, team: str | None, name: str = "이승환") -> User:

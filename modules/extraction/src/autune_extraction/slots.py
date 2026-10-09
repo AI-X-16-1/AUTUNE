@@ -561,6 +561,26 @@ def _what_was_decided(text: str, start: int, end: int) -> bool:
     )
 
 
+def past_form_at(text: str, index: int) -> bool:
+    """Whether the syllable at ``index`` of ``text`` carries the past tense, as
+    ``_said_of_the_past`` reads one: a final ㅆ other than 겠, 있 and 없, or 던."""
+    return 0 <= index < len(text) and _past_syllable(text[index])
+
+
+def dates_named(text: str) -> int:
+    """How many dates ``text`` names. Two readings of the same words -- "10월
+    17일" and the "17일" in it -- are one date."""
+    spans = sorted(
+        (match.start(), match.end()) for pattern, _ in _PHRASES for match in pattern.finditer(text)
+    )
+    count, reach = 0, -1
+    for start, end in spans:
+        if start >= reach:
+            count += 1
+        reach = max(reach, end)
+    return count
+
+
 def names_chosen_date(text: str) -> bool:
     """Whether ``text`` has a date phrase with (으)로 right after it: the date
     something was set to -- "10월 20일로 확정됐습니다", "금요일로 미뤘습니다".

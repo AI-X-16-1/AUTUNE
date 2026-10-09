@@ -80,7 +80,7 @@ const settle = async (ms = 0) => {
     await vi.advanceTimersByTimeAsync(ms);
   });
 };
-const NO_ITEMS = /이 회의에서 추출된 액션 아이템이 없습니다/;
+const NO_ITEMS = /이 회의에서 추출된 할 일이 없습니다/;
 const NO_DECISIONS = /이 회의에서 제안된 결정이 없습니다/;
 
 beforeEach(() => {
@@ -112,7 +112,7 @@ describe("ActionItemsScreen, an empty meeting", () => {
 
     expect(screen.queryByText(NO_ITEMS)).toBeNull();
     expect(screen.queryByText(NO_DECISIONS)).toBeNull();
-    expect(screen.getByText(/액션 아이템을 추출하고 있습니다\. 끝나면/)).toBeTruthy();
+    expect(screen.getByText(/할 일을 추출하고 있습니다\. 끝나면/)).toBeTruthy();
     expect(screen.getByText(/결정을 추출하고 있습니다\. 끝나면/)).toBeTruthy();
     expect(reload).not.toHaveBeenCalled();
     expect(reads.decisions).toBe(1);
@@ -134,7 +134,7 @@ describe("ActionItemsScreen, an empty meeting", () => {
 
     expect(screen.queryByText(NO_ITEMS)).toBeNull();
     expect(screen.queryByText(NO_DECISIONS)).toBeNull();
-    expect(screen.getByText(/^이 회의의 액션 아이템은 아직 추출되지 않았습니다/)).toBeTruthy();
+    expect(screen.getByText(/^이 회의의 할 일은 아직 추출되지 않았습니다/)).toBeTruthy();
     expect(screen.getByText(/^이 회의의 결정은 아직 추출되지 않았습니다/)).toBeTruthy();
   });
 });
