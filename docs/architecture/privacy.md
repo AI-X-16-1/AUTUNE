@@ -384,6 +384,51 @@ person's, those counts are that person's completion record. So:
   - **A voice profile is not deleted in the request.** It is the person's,
     not the team's. The hourly sweep deletes it once no remaining meeting
     names its owner, as it does after an expiry.
+- **Any member of a team may delete one of its meetings** (decided by the
+  module owners, 2026-10-09, #1161; before the legal review of ADR 0007,
+  #92 -- that ADR carries a dated note on it).
+  `DELETE /api/audio/meetings/{meeting_id}`, by anybody on the meeting's
+  team, with the meeting's title typed on the screen and sent in the
+  request's body. A meeting has no opener on its row, so there is nobody
+  narrower to ask.
+  - **What goes is what a meeting's expiry takes.** The `meetings` row and
+    every row PostgreSQL reaches from it by `ON DELETE CASCADE`: its
+    participants and utterances, its transcription jobs, and what modules A
+    to E and the agent layer keep for it. An open action item of the meeting
+    goes with it, carried over to a later meeting or not. The utterances of
+    everybody who spoke in it go, those of people still on the team and of
+    people who have left it. They are not told: no new message leaves Autune
+    for this.
+  - **The order is the retention sweep's.** The meeting's
+    `on_meeting_deleted` hooks run before its row goes. The cascade does not
+    run them, and they are what moves B's calendar events and
+    project-minutes copies and C's agenda lines to the clean-up queues, and
+    what clears the text other meetings' rows had copied from this one: D's
+    decision statements and thread labels, and the statement of this meeting
+    quoted in E's copies of D's lineage. D's and E's owners made those two
+    hooks a condition of this route on #1161. A hook that raises stops the
+    deletion and leaves the meeting in place to ask again; clean-up a hook
+    had already queued still runs, which is why every hook is safe to repeat.
+  - **Refused while the meeting is being processed** (409
+    `meeting_in_progress`): a transcription job of it that is queued or
+    running, or a live session of it that is open, for the reasons a team's
+    deletion is refused above. A job that failed, was cancelled or was
+    superseded holds nothing, and a recording it left for a restart is
+    deleted in the request. Also refused: when the title sent is not the
+    meeting's (422 `meeting_title_mismatch`). The row is locked before the
+    title is compared, so it is compared with the title a rename in flight
+    gave the meeting.
+  - **What stays is outside Autune**, as at a meeting's expiry, and the
+    screen says so before the title is typed: the Notion pages and Jira
+    issues of items and decisions, C's and D's notices and E's reports in
+    the team's Slack channel, and what was sent to a person's own Slack DM.
+    Unlike a team's deletion, the team's integration is still there, so the
+    project minutes in Notion, Slack and Jira are asked back as at an
+    expiry. B's due-date events and C's agenda lines on a person's own
+    Google Calendar are removed by the queued jobs; the event of a follow-up
+    meeting stays on its approver's calendar, without its gap lines
+    (section 6).
+  - **A voice profile is not deleted in the request**, as above.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.

@@ -172,6 +172,10 @@
  *   meeting that does NOT ask for the project minutes back -- the team's
  *   integration, and the queue of copies to take back, go with the team --
  *   so 제4조 ⑤ and terms 제13조 ③ say so where they promise the taking back.
+ * - any member of a team may delete one of its meetings (#1161): the meeting
+ *   and what was made from it go, everybody's lines in it among them, and
+ *   they are not told (privacy 제4조 ②). It takes what an expiry takes and
+ *   asks back what an expiry asks back, so 제4조 ⑤ reads for it as written.
  * - a pending invitation keeps the address of someone who has agreed to
  *   nothing (#739), and each sign-in keeps which document version was agreed
  *   to (#715): both are in 제2조 and 제3조.
@@ -441,6 +445,7 @@ const PRIVACY: LegalDocument = {
           "보유 기간이 만료된 회의는 1시간마다 확인하여 해당 회의에 부속된 자료 일체와 함께 삭제합니다.",
           "회원이 탈퇴하면 해당 회원의 발화, 음성 특징정보 및 회원 정보를 삭제합니다.",
           "팀에 남은 구성원이 한 명뿐인 경우 그 구성원은 팀을 삭제할 수 있습니다. 팀을 삭제하면 해당 팀, 팀의 모든 회의 및 그 회의에 부속된 자료 일체를 삭제하며, 여기에는 먼저 팀에서 나간 구성원이 그 팀의 회의에서 한 발화가 포함됩니다. 회사는 팀의 삭제를 먼저 팀에서 나간 구성원에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 팀을 삭제할 수 없습니다.",
+          "팀의 구성원은 그 팀의 회의를 삭제할 수 있습니다. 회의를 삭제하면 해당 회의 및 그 회의에 부속된 자료 일체를 삭제하며, 여기에는 다른 사람(먼저 팀에서 나간 구성원을 포함합니다)이 그 회의에서 한 발화가 포함됩니다. 회사는 회의의 삭제를 그 회의에서 발언한 다른 사람에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 그 회의를 삭제할 수 없습니다.",
         ),
         p(
           "③ 회사는 삭제 표시만 하고 정보를 남겨 두는 방식을 사용하지 않으며, 전자적 파일 형태로 기록·저장된 개인정보를 데이터베이스에서 삭제합니다.",
@@ -452,7 +457,7 @@ const PRIVACY: LegalDocument = {
           "⑤ 이용자 또는 팀이 연결한 외부 서비스에 전달된 사본의 처리는 다음과 같습니다.",
         ),
         ol(
-          "Notion 및 Jira에 전달된 할 일 및 결정 사항은 해당 팀의 기록으로서 보유 기간의 만료, 팀의 삭제 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
+          "Notion 및 Jira에 전달된 할 일 및 결정 사항은 해당 팀의 기록으로서 회의의 삭제, 보유 기간의 만료, 팀의 삭제 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
           "이용자가 할 일을 삭제한 경우 해당 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다. 이용자가 결정 사항의 확정을 취소하거나 결정 사항을 삭제한 경우에는 해당 Notion 페이지와 Jira 항목에서 결정 사항의 문장을 지운 뒤 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다(Jira 항목은 삭제하지 않습니다). 외부 서비스의 응답이 없어 처리하지 못한 사본은 기록해 두었다가 다시 시도하며, 거듭 실패한 사본은 해당 서비스에 남을 수 있습니다. Notion의 페이지 변경 이력과 Jira의 항목 변경 이력에는, 각 서비스가 자체적으로 보관하는 범위에서 지우기 전의 문장이 남을 수 있습니다.",
           "Slack, Notion 및 Jira에 보낸 프로젝트별 회의록은 해당 회의가 삭제되거나 보유 기간이 만료된 경우 회수(내용을 비우고 삭제 또는 종료)를 요청하고, 그 회의록에 포함된 내용이 삭제·정정·확정 취소된 경우 사본을 다시 작성합니다. 외부 서비스의 응답이 없으면 일정 기간 다시 시도하며, 그래도 처리하지 못한 사본은 해당 서비스에 남을 수 있습니다. 다만, 팀에 남은 마지막 구성원이 팀을 삭제한 경우에는 팀이 연결한 외부 서비스의 연동 정보가 함께 삭제되므로 회수를 요청하지 않으며, 그 사본은 해당 서비스에 남습니다.",
           "팀의 Slack 채널에 보낸 회의 리포트 및 주간 팀 리포트는 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 해당 채널에 남습니다.",
