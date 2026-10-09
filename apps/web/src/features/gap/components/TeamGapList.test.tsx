@@ -74,6 +74,16 @@ describe("TeamGapList", () => {
     expect(await screen.findByText("열린 갭이 없습니다.")).toBeTruthy();
   });
 
+  it("offers MEDIUM and LOW from the empty HIGH list itself", async () => {
+    list.mockResolvedValue([]);
+    render(<TeamGapList teamId="team_1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "중간·낮음 갭 보기" }));
+
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith("team_1", ["high", "medium", "low"]));
+    expect(screen.queryByText(/위에서/)).toBeNull();
+  });
+
   it("says it could not load, and can try again", async () => {
     list.mockRejectedValueOnce(new Error("500")).mockResolvedValue([]);
     render(<TeamGapList teamId="team_1" />);
