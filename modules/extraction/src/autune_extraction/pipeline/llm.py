@@ -618,6 +618,15 @@ stays, because a model can still make a mark up. Only a mark with a number
 stands for a name; any other spelling stands for nobody, and no screen can
 read it as a person."""
 
+_LINE_MARKER_LEFT = re.compile(r"\[\s*(?:대상|문맥)\s*\]")
+"""The request's own line marker, written into a summary. "[대상]" and "[문맥]"
+say which lines of the request to judge; they are no part of what anybody
+said. Measured on the four invented meetings, 2026-10-09, three rounds an arm:
+today's instructions wrote none in 367 summaries, the ones that show the name
+mark by number wrote "[대상]" in 4 of 361 and in 5 of 364 -- always that word,
+always in place of whatever the line was about. A summary with one says less
+than its line, and is the resolver's like the others below."""
+
 _POINTING_WORD = re.compile(
     r"(?<![0-9A-Za-z가-힣])(?:"
     r"(?:이거|그거|저거|이것|그것|저것)(?!저것|저거)"
@@ -718,9 +727,10 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
 
     And nothing that stands for something the sentence does not say (module
     B's owner, 2026-10-09): no name mark left once the numbered ones are back
-    (``_MARK_LEFT``), and no word that only points (``says_a_pointing_word``)
-    -- the instructions ask for "그거" to be replaced by what it meant, and a
-    summary that kept it says less than the line it is of. Either way the
+    (``_MARK_LEFT``), no line marker of the request (``_LINE_MARKER_LEFT``),
+    and no word that only points (``says_a_pointing_word``) -- the
+    instructions ask for "그거" to be replaced by what it meant, and a
+    summary that kept it says less than the line it is of. Each time the
     answer is "": a commitment or a decision without a summary is what the
     resolver is asked about, and it reads further back and further on than
     this request did, and gives the line as it was said when it cannot tell.
@@ -734,7 +744,9 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
         return ""
     restored = _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
-    if _MARK_LEFT.search(restored) or says_a_pointing_word(restored):
+    if _MARK_LEFT.search(restored) or _LINE_MARKER_LEFT.search(restored):
+        return ""
+    if says_a_pointing_word(restored):
         return ""
     return restored if _grounded(restored, window) else ""
 

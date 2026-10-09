@@ -204,6 +204,38 @@ def test_a_summary_with_a_name_mark_that_stands_for_nobody_is_dropped(written: s
 @pytest.mark.parametrize(
     "written",
     [
+        "[대상] 자료를 금요일까지 정리",  # the marker of a line to judge, as measured
+        "[문맥]에서 말한 자료를 금요일까지 정리",
+        "[ 대상 ] 자료를 금요일까지 정리",
+    ],
+)
+def test_a_summary_with_the_requests_own_line_marker_is_dropped(written: str) -> None:
+    (promise,), _ = classify(
+        ["김민경 님 자료는 제가 금요일까지 정리할게요"],
+        {"정리할게요": "commitment"},
+        {"정리할게요": written},
+        roster=("김민경",),
+    )
+
+    assert promise.kind is K.COMMITMENT  # the label stands; only the line is dropped
+    assert promise.summary == ""
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "발표 대상 고객 목록을 금요일까지 정리",  # the word, not the marker
+        "[중요] 자료를 금요일까지 정리",  # another bracket is the meeting's own
+        "대상] 자료를 금요일까지 정리",
+    ],
+)
+def test_a_word_that_is_not_the_line_marker_stays(written: str) -> None:
+    assert usable_summary(written, {}, "") == written
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
         "이거를 금요일까지 정리하겠다고 약속함",
         "그거 금요일까지 정리",
         "저거는 금요일까지 정리해서 공유",
