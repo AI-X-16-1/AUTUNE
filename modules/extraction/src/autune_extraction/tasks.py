@@ -2006,12 +2006,13 @@ def sync_action_item(action_item_id: str) -> str:
                 team_id=meeting.team_id,
             )
             return COPY_NOT_CONNECTED
+        notion_setup.ensure_content(session, meeting.team_id, config)
         service.sync_action_item_to_notion(
             session,
             NotionClient(config.secret),
             action_item_id=action_item_id,
             database_id=database_id,
-            property_names=config.config.get("action_properties"),
+            property_names=notion_setup.property_names(session, meeting.team_id, config, "action"),
         )
     return COPY_SENT
 
@@ -2659,7 +2660,11 @@ def trash_notion_page(action_item_id: str) -> None:
                 return
             client = NotionClient(config.secret)
             try:
-                service.trash_item_page(client, owed[1], config.config.get("action_properties"))
+                service.trash_item_page(
+                    client,
+                    owed[1],
+                    notion_setup.property_names(session, meeting.team_id, config, "action"),
+                )
             finally:
                 client.close()
             log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
@@ -3129,7 +3134,9 @@ def _clean_up_one(
             try:
                 # Retitled first, as at deletion (#768).
                 service.trash_item_page(
-                    notion, row.external_id, notion_config.config.get("action_properties")
+                    notion,
+                    row.external_id,
+                    notion_setup.property_names(session, row.team_id, notion_config, "action"),
                 )
             finally:
                 notion.close()
@@ -3211,12 +3218,15 @@ def _sync_decision_notion(decision_id: str) -> None:
                 team_id=meeting.team_id,
             )
             return
+        notion_setup.ensure_content(session, meeting.team_id, config)
         service.sync_decision_to_notion(
             session,
             NotionClient(config.secret),
             decision_id=decision_id,
             database_id=database_id,
-            property_names=config.config.get("decision_properties"),
+            property_names=notion_setup.property_names(
+                session, meeting.team_id, config, "decision"
+            ),
         )
 
 

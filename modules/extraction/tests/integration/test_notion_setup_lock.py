@@ -96,6 +96,8 @@ def test_two_first_setups_at_once_make_one_set_of_databases(
     monkeypatch.setattr(notion_setup, "create_database", create_database)
     monkeypatch.setattr(notion_setup, "create_home_page", lambda client, *, page_id: "home")
     monkeypatch.setattr(notion_setup, "retire_status_codes", lambda client, database_id: None)
+    # The second setup keeps the first's databases and asks each for 내용.
+    monkeypatch.setattr(notion_setup, "add_content_property", lambda client, database_id: True)
     monkeypatch.setattr(notion_connect.tasks.backfill_notion, "delay", lambda team: None)
 
     results: dict[str, Any] = {}

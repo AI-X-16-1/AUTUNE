@@ -1473,6 +1473,19 @@ class ExtNotionTarget(Base):
     workspace_id: Mapped[str | None] = mapped_column(String(64))
     """The Notion workspace these databases live in. A row naming another
     workspace than the team's current connection is ignored (#467 review)."""
+    content_asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """When Notion last answered about the 내용 property of the action and
+    decision databases (``notion_setup.content_of``). ``NULL`` is "not asked
+    yet": the next sync asks. Set, no sync asks again -- only a new setup."""
+    action_content: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """The action database has 내용 as a text property, so an item's page may
+    name it. False until Notion said so."""
+    decision_content: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    """The same, for the decision database."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
