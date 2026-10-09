@@ -350,16 +350,55 @@ uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
 (confirmed first, then pending; rejected left out), every action item, how many
 open questions were asked and how many ambiguous agreements still wait for
 their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
-memo, blank removes it). The tab reads it in three levels -- counts, then the
-decisions and items, each with what was said beneath it (`summary`, one line),
-then their source lines on the 액션 tab. Nothing leaves,
+memo, blank removes it), with the meeting's own title and start so the page
+can be headed when the meeting has no row to take them from. Nothing leaves,
 so it serves real meetings whatever #392 decides. v2 adds a prose summary by
 a cloud model over the whole meeting -- section summaries under the outbound
-limit, then a summary of those -- stored in `ext_meeting_summaries` and shown
-above v1's rows. It is off by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`)
-and, like every cloud implementation in this module, refused at start-up
-without `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until
-#392 is decided.
+limit, then a summary of those -- stored in `ext_meeting_summaries`. It is off
+by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`) and, like every cloud
+implementation in this module, refused at start-up without
+`AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until #392 is
+decided.
+
+**The tab is the meeting's minutes as one document, and "회의록 복사" copies
+that page** (the owner, 2026-10-09; `features/actions/minutes.ts`). One page
+model, `minutesOf`, is drawn by the tab and written as plain text by
+`minutesText`, so what is on the screen is what lands on the clipboard. Before
+this the two were built apart and listed different things: the tab had counts,
+candidates and a line of what was said under each row; the copy had none of
+them. The page, top to bottom:
+
+- "회의록 — {title}" and the day the meeting began, "2026년 10월 8일 (목)", in
+  the reader's time zone.
+- v2's summary, where the deployment wrote one, under a heading that says a
+  model wrote it -- "요약 · AI 작성" on the tab, "요약 (AI 작성)" in the copy --
+  so the label goes wherever the paragraph is pasted.
+- 결정 사항, numbered, in the order the route gives them. One nobody has
+  confirmed is listed and marked "(자동 추출)".
+- 액션, numbered: the item's sentence, then who, the due date and where it
+  stands, each set off by a dot -- "… — 김민경 · 10월 13일 (화) · 진행 중". The
+  state is not in brackets: the date already ends in them. A due date is
+  written as the date line writes a day; its year is written only when it is
+  not the meeting's, or the page has no date line. "진행 전" is not said,
+  since it is every item a meeting has just made; an item waiting for
+  confirmation says "확인 필요". The tab alone adds "기한 지남" to an item past
+  its date.
+- 메모, the team's own, edited in place. A change is in the copy once it is
+  saved.
+
+Left off the page, on the tab and in the copy alike: **candidates** -- the
+model was not sure they were items, and minutes that listed one would state a
+guess as an outcome -- and **every quotation**. The line of what was said
+(`summary`) is no longer shown here; an item's source lines are read one item
+at a time on the 액션 tab, and a page meant to be pasted into a chat or a wiki
+is where a transcript should not follow. Under the page the tab says how many
+candidates, open questions and unanswered ambiguous agreements it left out,
+and links to the 액션 tab. The per-project tool (#787) stays below that,
+unchanged; its rows still call an action item "할 일" (#1036).
+
+Only the page's own lines are formatted. A date inside a stored sentence --
+a decision that ends "(담당 도윤재, 기한 2026-10-13)" -- is that sentence's
+and is shown as stored.
 
 The written summary names no person (#1070). The lines go to the model without
 their speakers, as for every model step here, so it cannot know who said a
@@ -581,8 +620,9 @@ opening the whole turn in place. The card's line beneath the description
 (`ActionItemRead.summary`) is what was said -- the part, when one is recorded --
 whenever the description is a model's sentence, so the sentence has the words
 it stands for under it; a card is two lines at most for each. The 요약 tab
-shows the same line beneath each decision and item. Notion, Slack, Jira and the
-copied minutes carry what they carried before.
+showed the same line beneath each decision and item until 2026-10-09; it is
+the minutes as a document now, and the minutes quote nothing (see "The summary
+tab" above). Notion, Slack and Jira carry what they carried before.
 
 Rebuilding a meeting's decisions replaces them, but a decision's `dec_` id is
 derived from the meeting and the utterances it was settled in, so a rebuild over
