@@ -1,5 +1,6 @@
 import { OwnTeamMeetingsNotice } from "@/features/actions";
-import { LiveMeetingScreen } from "@/features/transcript";
+
+import { LiveMeeting } from "./LiveMeeting";
 
 /**
  * S13 — the meeting as it is being transcribed.
@@ -8,7 +9,8 @@ import { LiveMeetingScreen } from "@/features/transcript";
  * the screen brings its own top bar (`LiveTopBar`).
  *
  * Assembly only: the screen lives in `features/transcript`. This file names the
- * URL and hands the meeting id through.
+ * URL and hands the meeting id through; `LiveMeeting` beside it is the part of
+ * the assembly that has to run in the browser.
  *
  * The notice above the gate's consent row is module B's (#392's operating
  * rule, on a server that sends meeting text to a cloud model). The two
@@ -22,7 +24,7 @@ export default async function LiveMeetingPage({
 }) {
   const { meetingId } = await params;
   return (
-    <LiveMeetingScreen
+    <LiveMeeting
       meetingId={meetingId}
       notice={<OwnTeamMeetingsNotice entrance="live" className="mt-6" />}
     />

@@ -62,7 +62,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S03 | Onboarding empty home | MVP | 3-item checklist (connect Slack · enrol voice · Notion/Jira); done = ink dot, pending = hollow ring · dropzone (mp3/wav/m4a, 500MB; no duration limit, since nothing enforces one) · sample meeting |
 | S04 | Voice enrolment modal | MVP | Two sentences · waveform · circular accent button · timer (red dot) · quality verdict · disabled under 8 seconds · only the embedding vector is stored |
 | S05 | Home | MVP | Next meeting (single paper block) · "Things for me" (overdue → needs confirmation → due soon → in progress) · unresolved gaps · recent meetings (retention expiry D-n) |
-| S06 | Create meeting modal | MVP | Title · date · start · end (optional) · attendee chips (warn when a voice is not enrolled) · audio-source radio (web mic / file) · Notion DB and Jira project checkboxes (per-meeting override) · P2 items shown disabled |
+| S06 | Create meeting modal | MVP | Title · date · start · end (optional) · attendee chips (warn when a voice is not enrolled) · audio-source radio (web mic / file) · Notion DB and Jira project checkboxes (per-meeting override) · P2 items shown disabled, except the end-of-meeting alert row, which can be ticked under the web-mic source with an end time (S14's small cut, #1147) |
 
 ### Before · during the meeting (Spec 02)
 | ID | Screen | Stage | Key elements and states |
@@ -74,7 +74,7 @@ Modules: A Audio · B Extraction · C Gap · D Context · E Intelligence.
 | S11 | Attendee consent DM | MVP | 4 explanatory rows · "동의합니다" (accent) / "이번 회의는 제외" (sunken) · no response = logged only, excluded from analysis · follow-up message when no voice is enrolled |
 | S12 | File processing pipeline | MVP | 6 stages in the order the task runs them (upload → STT → diarization → delete original → PII masking · save → B/C/D); the original is deleted when diarization ends, before masking · done = ink + elapsed · running = accent · queued = hollow ring · failed = red + reason · detection counts on the right |
 | S13 | Live transcript | MVP | **Light theme + recording frame glow.** REC timer in top bar · P1 undecided band (P2) · transcript rows (time code · speaker · body · 5-kind tag) · unidentified-speaker row in ochre (assign / enter manually / send confirmation DM) · related-material card (quotation + open material / cite in minutes / not related) · PII tokens · right rail: 56px timer · elapsed bar · waveform · pause/stop · "Decided so far" (10 min) · "Needs confirmation" · 5-kind detection counts |
-| S14 | Undecided alert | P2 | Inverted ink band "종료 5분 전 · 결정되지 않은 사항 n건" · "질문으로 띄우기" inserts a suggested-question row into the transcript |
+| S14 | Undecided alert | P2 | Inverted ink band "종료 5분 전 · 결정되지 않은 사항 n건" · "질문으로 띄우기" inserts a suggested-question row into the transcript. **A small cut is built (#1147):** on a live recording only, five minutes before an end time typed on S06 and kept in the browser tab (not stored), the band reads "종료 5분 전 · 이전 회의의 미해결 갭 n건" and lists the team's open HIGH gaps from earlier meetings. It does not find what this meeting left undecided, and "질문으로 띄우기" is not built |
 
 ### After the meeting (Spec 03)
 | ID | Screen | Stage | Key elements and states |
