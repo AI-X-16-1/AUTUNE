@@ -1056,6 +1056,7 @@ here, so the no-deletion-hook sentence above still holds.
 | DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | POST | `/gaps/{id}/carry` | Mark a gap as sent on to the next meeting — "다음 회의 어젠다로" (#824) |
 | DELETE | `/gaps/{id}/carry` | Take that back |
+| POST | `/reports/{meeting_id}/slack` | Post the meeting's open `high` gaps on the team's Slack channel as question cards -- "질문 카드 Slack 전송" (#824). Nothing is stored |
 | GET | `/templates` | Available domain templates |
 | GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
@@ -1240,17 +1241,26 @@ polls them every five seconds while the rail says `analysed: false`.
 
 - Gap report thread in the meeting channel, `high` severity only by default
 - Generated question cards teams can act on
-- S20's two buttons post once on the team's channel (`team_notice`, #824).
-  "담당자 지정해 질문" mentions the member with the gap's question. "다음 회의
-  잡기" lists the gaps it put on the next meeting's event and says when that
-  event starts (`10월 15일(목) 14:00`, in the event's own time zone). Only the
-  event's date and time are read for it, never its title, which is Google's
-  unmasked text.
+- S20's three buttons post once per press on the team's channel
+  (`team_notice`, #824). "담당자 지정해 질문" mentions the member with the
+  gap's question. "다음 회의 잡기" lists the gaps it put on the next meeting's
+  event and says when that event starts (`10월 15일(목) 14:00`, in the event's
+  own time zone). Only the event's date and time are read for it, never its
+  title, which is Google's unmasked text.
 - Follow-up's proposal, once the team lead approves it, posts once that the
   follow-up meeting is on the approver's calendar: when it starts, how many
   were invited, and the open gaps on its agenda (`followup_meeting`), and
   DMs each guest who linked a Slack account that they are invited
   (`team_notice.dm_followup`).
+- "질문 카드 Slack 전송", at the top of S20, posts the meeting's open `high`
+  gaps as question cards, most risky first, one message per gap so each card
+  stays one gap (plan 3 on #824). At most `team_notice.SENT` (3); when there
+  are more, one last message counts them and links to the report. Nobody is
+  mentioned, and a gap sent on to the next meeting is still open. The first
+  card Slack does not take stops the rest, and the screen says how many went
+  before it. The cards are separate messages on the channel for now: putting
+  them under E's report thread (`MeetingReportPosted`) and the S21 buttons on
+  the card are the next steps.
 
 ## AI stack
 

@@ -129,8 +129,18 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
   }, [reloadReport, reloadRail, reloadExplanations]);
 
   usePollUntilAnalysed(comparison ? comparison.analysed : null, reloadAll);
-  const { pending, failure, notice, dismiss, undoDismiss, scheduleNext, ask, saveQuestion, choose } =
-    useGapActions(reloadAll);
+  const {
+    pending,
+    failure,
+    notice,
+    dismiss,
+    undoDismiss,
+    scheduleNext,
+    ask,
+    sendToSlack,
+    saveQuestion,
+    choose,
+  } = useGapActions(reloadAll);
 
   const [tab, setTab] = useState<Tab>("gaps");
   const [coverageTab, setCoverageTab] = useState<Coverage>("missing");
@@ -153,22 +163,16 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         title={explanations?.meeting_title ?? null}
         date={explanations?.meeting_date ?? null}
       >
-        {/* The one primary on the screen, and it is not wired: the Slack
-            question card is a surface this module has not built (#824). A
-            disabled button alone does not say why, so the reason is written
-            beside it rather than left to a tooltip nobody hovers. */}
-        <span
-          id="slack-send-status"
-          className="hidden text-[var(--color-ink-muted)] md:inline"
-          style={{ fontSize: "var(--text-metaSmall)" }}
-        >
-          Slack 전송은 준비 중입니다
-        </span>
+        {/* The one primary on the screen: the meeting's open high gaps go
+            to the team's Slack channel as question cards, a few at most and
+            a link for the rest (#824, plan 3). The server picks the gaps; the
+            button only waits for a report that has one. What happened is
+            said in the notice under the bar. */}
         <Button
           tone="primary"
-          disabled
-          aria-describedby="slack-send-status"
-          title="질문 카드를 Slack으로 보내는 기능은 아직 준비 중입니다"
+          disabled={!gaps.some((gap) => gap.severity === "high") || pending === "slack"}
+          title="이 회의의 high 갭을 질문 카드로 팀 Slack 채널에 올립니다"
+          onClick={() => void sendToSlack(meetingId)}
         >
           질문 카드 Slack 전송
         </Button>

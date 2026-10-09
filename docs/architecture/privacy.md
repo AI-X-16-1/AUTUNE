@@ -860,10 +860,11 @@ the feature needs.
     the account. The event itself is left on the calendar when the meeting or
     the account goes: it is a meeting people were invited to, and cancelling
     it is theirs to do; its gap lines come out as every other line does.
-  - **Slack, S20's team notices (module C, #824):** two messages to the
-    channel of the team that held the meeting, each once per press, with the
-    team's connection, and a third when Follow-up's meeting is approved --
-    the meeting's title, when the follow-up starts, how many were invited,
+  - **Slack, S20's team notices (module C, #824):** three kinds of message
+    to the channel of the team that held the meeting, each once per press,
+    with the team's connection, and one more when Follow-up's meeting is
+    approved -- the meeting's title, when the follow-up starts, how many were
+    invited,
     the open gaps' titles and questions and the approver's display name,
     once per meeting. Each guest of that meeting is also sent the same news
     as a DM, addressed to them, by the Slack account they linked themselves
@@ -878,6 +879,11 @@ the feature needs.
     "다음 회의 잡기" posts, once the calendar took them, the titles and
     questions of the gaps whose line is new on the event, the meeting's
     title and the presser's display name; pressing again posts nothing.
+    "질문 카드 Slack 전송" posts the meeting's open `high` gaps, at most
+    three, one message each: the gap's title and suggested question, the
+    meeting's title and the presser's display name, mentioning nobody; when
+    there are more, one line counts them and links to the meeting's report
+    on Autune.
     Titles and C's own questions are stored masked, and a question a
     member rewrote is pattern-checked (below); every value is escaped so it
     cannot become a mention or a link, and no utterance, score or
