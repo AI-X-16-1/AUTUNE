@@ -76,7 +76,7 @@ describe("ContextTab, the agenda draft's carried entries", () => {
 
     await waitFor(() => expect(draft()).not.toBeNull());
     expect(gaps.lines).not.toHaveBeenCalled();
-    expect(draft()!.textContent).toContain("초안에 넣을 것이 아직 없습니다.");
+    expect(draft()!.textContent).toContain("엮을 것이 없습니다.");
   });
 
   it("asks nothing for a meeting with no brief, and draws nothing", async () => {

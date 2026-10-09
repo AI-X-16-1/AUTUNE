@@ -117,14 +117,14 @@ describe("BriefPanel, the agenda draft", () => {
   it("says so when there is nothing to put in it, rather than drawing an empty draft", () => {
     render(<BriefPanel brief={brief({ agenda: [] })} error={null} carried={[]} />);
 
-    expect(draft()!.textContent).toContain("초안에 넣을 것이 아직 없습니다.");
+    expect(draft()!.textContent).toContain("엮을 것이 없습니다.");
   });
 
   it("is drawn from the Jira entries alone while the carried sources are still out", () => {
     render(<BriefPanel brief={brief()} error={null} carried={[]} />);
 
     expect(draft()!.textContent).toContain("열린 Jira 이슈 · 1건");
-    expect(draft()!.textContent).not.toContain("초안에 넣을 것이 아직 없습니다.");
+    expect(draft()!.textContent).not.toContain("엮을 것이 없습니다.");
   });
 
   it("leaves the recap above it as it was", () => {

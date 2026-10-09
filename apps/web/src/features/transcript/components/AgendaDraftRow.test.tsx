@@ -62,7 +62,7 @@ describe("AgendaDraftRow, when it is on", () => {
     render(<AgendaDraftRow teamId="team_1" sources={[source("열린 Jira 이슈", JIRA)]} />);
 
     await waitFor(() => expect(row().checked).toBe(true));
-    expect(detail()).toContain("“저장만”으로 연 회의의 시작 10분 전 브리프에 나옵니다");
+    expect(detail()).toContain("“저장만”으로 연 회의는 시작 10분 전 브리프에 초안이 나옵니다");
   });
 
   it("does not wait for a slow source once another has answered with a line", async () => {
@@ -84,7 +84,7 @@ describe("AgendaDraftRow, when it is on", () => {
     await waitFor(() => expect(detail()).toContain("아직 아무것도 없습니다"));
     expect(row().checked).toBe(false);
     expect(detail()).toContain("열린 Jira 이슈, 이전 회의의 미해결 갭");
-    expect(detail()).not.toContain("브리프에 나옵니다");
+    expect(detail()).not.toContain("브리프에 초안이 나옵니다");
   });
 
   it("treats sources that cannot be read as having nothing: off, and no error raised", async () => {

@@ -254,7 +254,7 @@ function BriefBody({
             </div>
           )}
           <CarriedEntries groups={carried} />
-          {entries === 0 && <Muted>초안에 넣을 것이 아직 없습니다.</Muted>}
+          {entries === 0 && <Muted>엮을 것이 없습니다.</Muted>}
         </section>
       ) : (
         <div>

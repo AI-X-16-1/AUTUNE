@@ -86,7 +86,7 @@ export function AgendaDraftRow({
 
   let detail: string;
   if (available) {
-    detail = `${found.map((source) => source.label).join(" · ")}에서 모읍니다 · 모델을 쓰지 않습니다 · “저장만”으로 연 회의의 시작 10분 전 브리프에 나옵니다`;
+    detail = `${found.map((source) => source.label).join(" · ")}에서 모읍니다 · 모델을 쓰지 않습니다 · “저장만”으로 연 회의는 시작 10분 전 브리프에 초안이 나옵니다`;
   } else if (teamId === "") {
     detail = "팀을 고르면 만들 수 있는지 확인합니다";
   } else if (waiting) {
