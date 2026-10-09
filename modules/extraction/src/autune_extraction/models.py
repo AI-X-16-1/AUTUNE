@@ -24,7 +24,7 @@ from sqlalchemy import (
     false,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from autune_core import Base
 from autune_core.ids import ACTION_ITEM, DECISION, new_id
@@ -321,6 +321,26 @@ class ExtActionItem(Base, TimestampMixin):
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
+
+    title: Mapped[str | None] = mapped_column(String(40))
+    """``description`` in twenty characters or fewer, ended by a noun, for the
+    card's top line (module B's owner, 2026-10-09). Written by a model and kept only
+    when it passed ``pipeline.title.accept``; ``NULL`` otherwise -- no titler
+    switched on, a refused title, a sentence a person typed -- and the card
+    then shows the sentence cut, as it did before. B's screens read it and
+    nothing else does: every message, Jira, Notion, a calendar and the event
+    to D and E carry ``description``.
+
+    **It is the title of one sentence.** Writing another sentence into
+    ``description`` takes the title away (``_a_new_sentence_has_no_title``),
+    whoever writes it -- a person's edit, the assistant's, a corrected source
+    line -- so no write has to remember to. Set it after ``description``."""
+
+    @validates("description")
+    def _a_new_sentence_has_no_title(self, _key: str, value: str) -> str:
+        if value != getattr(self, "description", None):
+            self.title = None
+        return value
 
     assignee_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="SET NULL"), index=True
@@ -650,6 +670,20 @@ class ExtDecision(Base, TimestampMixin):
     rewrite made for the screen must not move it. ``NULL`` for a decision a person
     typed and for rows from before this column: read it as
     ``original_statement or statement``."""
+
+    title: Mapped[str | None] = mapped_column(String(40))
+    """What was settled, in twenty characters or fewer, ended by a noun, for
+    the row's top line: ``ExtActionItem.title`` for a decision. It is of the
+    statement without its "(담당 …, 기한 …)" bracket, which the whole
+    statement keeps. ``NULL`` when there is none; never sent to module D,
+    which is given ``original_statement``. A person's rewording lives in the
+    review and has no title (``service._review_decision_row``)."""
+
+    @validates("statement")
+    def _a_new_statement_has_no_title(self, _key: str, value: str) -> str:
+        if value != getattr(self, "statement", None):
+            self.title = None
+        return value
 
     statement_resolved: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=false()

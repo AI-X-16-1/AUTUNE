@@ -11,7 +11,7 @@ import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
 import { shownStatement } from "../statement";
-import { shortTitle } from "../title";
+import { rowTitle } from "../title";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
 
 /**
@@ -157,13 +157,14 @@ function DecisionRow({
   onDelete: () => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
-  // The row's top line is the statement at twenty characters (`shortTitle`).
+  // The row's top line is twenty characters: the decision's short title
+  // when it has one, else the statement cut (`rowTitle`).
   // A decision has no detail window to hold the rest, so the line itself
   // opens: pressing it shows the whole statement, pressing again the short one.
   const [whole, setWhole] = useState(false);
   // The sentence as the row reads; the stored one is what `RewordForm` edits.
   const shown = shownStatement(decision.statement);
-  const title = shortTitle(shown);
+  const title = rowTitle(decision.title, shown);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, setPending] = useState(false);
   // Every change the row sends says so when it fails, the way the drawer does.

@@ -199,6 +199,12 @@ export interface ActionItemRead extends ActionItem {
    */
   assignee_name: string | null;
   /**
+   * `description` in twenty characters or fewer, for the card's top line
+   * (`rowTitle`). `null` when the item has none -- the card then cuts the
+   * description -- and absent from a server before titles.
+   */
+  title?: string | null;
+  /**
    * Whether `description` is a resolver's rewrite of the source utterance
    * rather than the utterance verbatim (#175, #366). S18 shows this so a
    * reviewer knows which descriptions are the speaker's own words and which
@@ -469,6 +475,12 @@ export interface ReviewDecision {
   id: string;
   /** What will be sent: the person's rewording when there is one. */
   statement: string;
+  /**
+   * `statement` in twenty characters or fewer, for the row's top line
+   * (`rowTitle`). `null` when there is none and for a decision a person
+   * reworded; absent from a server before titles.
+   */
+  title?: string | null;
   /** What the model proposed, kept so the screen can show both. */
   model_statement: string;
   confidence: number;

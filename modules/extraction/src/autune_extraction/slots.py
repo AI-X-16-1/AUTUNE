@@ -490,6 +490,21 @@ def _what_was_decided(text: str, start: int, end: int) -> bool:
     )
 
 
+def names_chosen_date(text: str) -> bool:
+    """Whether ``text`` has a date phrase with (으)로 right after it: the date
+    something was set to -- "10월 20일로 확정됐습니다", "금요일로 미뤘습니다".
+
+    Apart from ``parse_due`` because the tense means the opposite here. A past
+    verb after a deadline reports what happened; a past verb after "N일로"
+    reports the choosing, and the date chosen is still ahead. Nothing is
+    resolved: this says a date was named as a choice, not which day it is."""
+    return any(
+        _CHOSEN.match(text, match.end())
+        for pattern, _ in _PHRASES
+        for match in pattern.finditer(text)
+    )
+
+
 def parse_due(text: str, day: date | None, *, decided: bool = False) -> DueDate | None:
     """The first date phrase in ``text`` that is a deadline, not the past.
 
