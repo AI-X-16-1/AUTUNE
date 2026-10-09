@@ -5,6 +5,7 @@ import { useCallback, useRef, useState } from "react";
 import { Button } from "@/shared/ui";
 
 import { listJiraOpenIssues, type JiraIssue, type JiraProjectIssues } from "../api";
+import { shownDue } from "../dates";
 
 /**
  * What is already in the team's Jira, beside what Autune extracted (the user,
@@ -176,7 +177,7 @@ function IssueRow({ issue }: { issue: JiraIssue }) {
       ) : null}
       <span className="text-[var(--color-ink-muted)]" style={meta}>
         {issue.status ?? "상태 없음"} · {issue.assignee ?? "담당자 없음"} ·{" "}
-        {issue.due_date ?? "기한 없음"}
+        {issue.due_date ? shownDue(issue.due_date) : "기한 없음"}
       </span>
     </li>
   );

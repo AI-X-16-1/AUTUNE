@@ -64,7 +64,10 @@ describe("JiraOpenIssues", () => {
     expect(link.href).toBe("https://acme.atlassian.net/browse/AUT-7");
     expect(link.rel).toBe("noopener noreferrer");
     expect(screen.getByText("배포 일정 공유")).toBeTruthy();
-    expect(screen.getByText("진행 중 · 가나다 · 2026-10-09")).toBeTruthy();
+    // Jira's own due date, written as this feature writes one (this year's: no year).
+    expect(
+      screen.getByText(`진행 중 · 가나다 · ${new Date().getFullYear() === 2026 ? "" : "2026년 "}10월 9일 금`),
+    ).toBeTruthy();
     expect(screen.getByText("Autune에서 만든 이슈")).toBeTruthy();
     expect(screen.getByText("제품팀 · AUT")).toBeTruthy();
     expect(screen.getByText(/Autune에 저장하지 않습니다/)).toBeTruthy();
