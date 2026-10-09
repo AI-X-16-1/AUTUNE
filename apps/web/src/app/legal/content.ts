@@ -102,9 +102,10 @@
  *   with no person on it, like every other.
  * - a row's short title (B, 2026-10-09; `top_line.py`): the Notion, Jira and
  *   Google Calendar rows say a copy carries it beside the content it is made
- *   of. No new message, recipient or record: the title holds only words of
- *   the sentence the same copy already carried, and the kind mark before it
- *   ("[할 일] ", "[결정] ") is fixed text. The Slack row is unchanged: a line
+ *   of. No new message, recipient or record. The title is a model's short
+ *   wording of the sentence the same copy already carried -- one word of it
+ *   may be the model's own (`pipeline/title.py::accept`) -- and the kind mark
+ *   before it ("[할 일] ", "[결정] ") is fixed text. The Slack row is unchanged: a line
  *   there names an item, by its title or by its sentence.
  * - the notice after a meeting (B, 2026-10-07; `meeting_notice.py`) is named
  *   in the same places -- what is kept of it, for how long, the out-of-office

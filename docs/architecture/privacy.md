@@ -566,9 +566,23 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **What names a row in each copy (module B, 2026-10-09):** an action
-    item or a decision that a model wrote has a short title of twenty
-    characters or fewer, made of its sentence's own words and stored masked
-    beside it (`ext_action_items.title`, `ext_decisions.title`). A sentence
+    item or a decision that a model wrote can have a short title of twenty
+    characters or fewer, stored beside its sentence
+    (`ext_action_items.title`, `ext_decisions.title`). The title is a
+    model's answer and not a cut of the sentence. The model is given the
+    meeting's stored sentences, a batch at a call -- masked, as they are
+    stored, with the team's names replaced -- and the answer is kept only
+    if a rule accepts it
+    (`pipeline/title.py::accept`): one line; no bracket; no number and no
+    date the sentence does not say; none of the names taken out of the
+    request; and every word but one beginning, in its first two
+    characters, as some part of the sentence does. So a title can hold a
+    word that the sentence does not -- one that is the model's own
+    ("미루기로" said, "연기" written), or one that only starts as a word of
+    the sentence does. No masker reads the answer. What stands between a
+    person's data and a title is that the model is shown nothing of the
+    meeting but those sentences, the rule above, and the outbound check
+    on every copy that carries it. A sentence
     a person typed or edited has none, and a decision a person reworded
     leads with their wording. Where a row has one, it stands at the top of
     the row's copy in place of the sentence:
@@ -586,16 +600,22 @@ the feature needs.
     A row with no short title is its sentence in every copy, as before,
     behind the mark where the copy is marked. So "the item's description"
     in the entries below reads, for a row with a short title, as that title
-    and -- where the copy has a body -- the description beneath it. Nothing
-    new leaves: the title holds only words of the sentence the same copy
-    already carried, and passes the same outbound check. A Notion database
+    and -- where the copy has a body -- the description beneath it. What
+    is new in what leaves is the title itself, where it holds a word its
+    sentence does not; it goes to the same recipients, through the same
+    clients and the same outbound check, as the sentence did. A model's
+    wording leaving is not new: a row's sentence can itself be the
+    classifier's summary or the resolver's write-up. A Notion database
     with no 내용 property -- one made before the property existed, until it
     is added, or one whose team named its own properties without it -- has
     no place for the sentence, so its pages keep the sentence in the title.
     Adding the property is asked of Notion once per database -- a read of
     the database and, where the name is absent, one change: the database's
-    id and the property's name, nothing of a meeting; of the answer only
-    whether the property is there is kept (`ext_notion_targets`).
+    id and the property's name, nothing of a meeting. A property of that
+    name with another type is left as it is and counts as absent. Of the
+    answer two things are kept (`ext_notion_targets`): per database,
+    whether it has the property as text, and when Notion answered -- no
+    person, no text, no page.
     The copy on the 요약 tab's "회의록 복사" is the reader's own paste, and
     leads each line the same way; the tab shows the sentence under it.
   - **Notion:** a page in a team's workspace belongs to that team once written.

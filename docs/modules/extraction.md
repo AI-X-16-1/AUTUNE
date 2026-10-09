@@ -1210,9 +1210,10 @@ A card and a decision row show twenty characters. With
 with "…" by the web (`features/actions/title.ts`). With `llm`,
 `title_meeting` asks a cloud model for a summary instead -- twenty characters
 or fewer, ended by a noun ("보고서 정리", not "보고서를 정리함") -- and stores
-it in `title` beside the sentence, never instead of it: `description` and
-`statement` are made as before and remain what Jira, Notion, Slack, a
-calendar, the minutes, the agent's tools and module D are given.
+it in `title` beside the sentence: `description` and `statement` are made
+as before and remain what the agent's tools and module D are given. Since
+2026-10-09 the title leads the copies that leave -- Jira, Notion, a
+calendar, a Slack line, a project's minutes (the last bullet below).
 
 - **Only a sentence the pipeline wrote is titled.** Not a row a person
   typed, an item whose description a person edited, or a decision a person
@@ -1225,7 +1226,10 @@ calendar, the minutes, the agent's tools and module D are given.
   no number and no date its sentence does not say; no person; no date at all
   on an item, which has a due date of its own; no word that only points
   (이거, 그거, 저거, 이것, 그것, 저것, with or without a particle, and 이건, 그걸,
-  그게 and the like); words that are the sentence's. A decision's title may carry a date that is in the statement
+  그게 and the like); words that are the sentence's, all but one
+  (`_own_words`: one word may be the model's -- "미루기로" said, "연기"
+  written -- and each other word has to begin, in its first two characters,
+  as some part of the sentence does; no masker reads the answer). A decision's title may carry a date that is in the statement
   in the same words, since the date can be what was decided ("출시일 10월
   20일"). A refused title is dropped, not cut to fit, and the row shows the
   cut sentence.
