@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from autune_agent.results import SubagentResult
@@ -113,6 +114,40 @@ def _answer_text(body: Any) -> str:
         return ""
 
 
+MAX_WEB_SOURCES = 3
+
+
+@dataclass(frozen=True)
+class WebAnswer:
+    """What a grounded call found: the model's short answer and its web pages.
+
+    ``sources`` comes from the reply's ``groundingMetadata``, never from the
+    model's text, so a page is listed only when Google Search returned it."""
+
+    text: str
+    sources: list[tuple[str, str]] = field(default_factory=list)
+
+
+def _web_sources(body: Any) -> list[tuple[str, str]]:
+    try:
+        chunks = body["candidates"][0].get("groundingMetadata", {}).get("groundingChunks", [])
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return []
+    seen: list[tuple[str, str]] = []
+    for chunk in chunks if isinstance(chunks, list) else []:
+        web = chunk.get("web") if isinstance(chunk, dict) else None
+        if not isinstance(web, dict):
+            continue
+        url, title = web.get("uri"), web.get("title")
+        if isinstance(url, str) and url.startswith("https://") and isinstance(title, str):
+            pair = (title.strip()[:200], url)
+            if pair not in seen:
+                seen.append(pair)
+        if len(seen) == MAX_WEB_SOURCES:
+            break
+    return seen
+
+
 class GeminiText:
     """One generateContent call through ``check_outbound``. The router and any
     subagent that writes text use this, so there is one outbound path to audit."""
@@ -141,6 +176,20 @@ class GeminiText:
         return _answer_text(
             self._client.request("POST", f"/models/{self._model}:generateContent", json=body)
         )
+
+    def search(self, instructions: str, question: str) -> WebAnswer:
+        """One call with Google Search grounding (live-research spec section 3.3).
+
+        The question is the only user text: no meeting line, no name. Grounding
+        cannot be combined with a JSON answer, so the reply is plain text."""
+        body = {
+            "systemInstruction": {"parts": [{"text": instructions}]},
+            "contents": [{"role": "user", "parts": [{"text": question}]}],
+            "tools": [{"google_search": {}}],
+            "generationConfig": {"temperature": 0},
+        }
+        reply = self._client.request("POST", f"/models/{self._model}:generateContent", json=body)
+        return WebAnswer(text=_answer_text(reply), sources=_web_sources(reply))
 
 
 def gemini_text_from_settings() -> GeminiText:
