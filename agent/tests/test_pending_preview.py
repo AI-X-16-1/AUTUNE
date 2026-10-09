@@ -284,6 +284,7 @@ def _followup(
     *,
     chat: bool = False,
     due_date: str | None = None,
+    tool: str = "gap.schedule_followup_meeting",
 ) -> AgentPendingAction:
     """The two shapes Follow-up leaves (subagents/followup/graph.py).
 
@@ -293,7 +294,7 @@ def _followup(
     arguments: dict[str, Any] = {"meeting_id": team["meeting"]} if chat else {}
     if due_date is not None:
         arguments["due_date"] = due_date
-    row = _row(team, "extraction.add_followup_item", arguments)
+    row = _row(team, tool, arguments)
     if chat:
         row.meeting_id = None
     row.evidence = evidence
@@ -315,6 +316,19 @@ def test_a_followup_shows_the_gaps_behind_it_most_risky_first(
     assert asked == [
         {"team_id": team["team"], "meeting_id": team["meeting"], "gap_ids": ["gap_c", "gap_a"]}
     ]
+
+
+def test_a_followup_queued_under_the_board_item_tool_keeps_its_card(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#1105: a row queued before #1107 still names B's ``add_followup_item``
+    and is shown the same way until it is approved or retired."""
+    gaps, _ = _gaps_by_id(("gap_a", "일정 · 출시일"))
+    row = _followup(team, ["gap_a"], due_date="2026-10-15", tool="extraction.add_followup_item")
+
+    shown = preview(session, row, tools={"gap.gaps_by_id": gaps})
+
+    assert shown == {"title": "후속 회의 잡기", "body": "추천 날짜: 10월 15일(목)\n· 일정 · 출시일"}
 
 
 def test_a_followup_asked_in_chat_reads_the_meeting_it_names(
