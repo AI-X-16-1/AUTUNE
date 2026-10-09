@@ -6,7 +6,8 @@ The first, second and last mirror ``pipeline.classifier``. The cloud one
 is opt-in the way ``classifier_impl=llm`` is: handing a commitment's context to
 somebody else's model is a decision about where personal data goes (privacy.md
 section 6), so it is never the default, sends masked text with the team's names
-replaced, and belongs to dummy meetings until #392 is answered.
+replaced, and runs under #392's rule for which meetings may go through it
+(``config.llm_acknowledged_392``).
 
 ``torch`` and ``transformers`` are imported inside the class that needs them,
 same reason as ``LocalDeberta``: importing at module scope would make
