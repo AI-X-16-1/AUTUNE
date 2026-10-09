@@ -161,6 +161,25 @@ def test_a_date_that_is_what_was_decided_is_not_a_deadline(text: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        "QA는 10월 13일부터 시작하기로 하죠.",
+        "피드백 설문은 베타 시작 2주 뒤에 보내기로 하죠.",
+        "이번 분기부터 주간 보고는 월요일 오전에 하기로 합시다.",
+    ],
+)
+def test_a_start_an_offset_and_a_weekly_slot_put_no_deadline_on_a_decision(text: str) -> None:
+    """Each had "(기한 …)" after it: the day QA starts, the meeting's day plus
+    two weeks, and the next Monday."""
+    (group,) = group_decisions(
+        [utterance("utt_1", UtteranceKind.DECISION, text=text)], day=OCTOBER_8
+    )
+
+    assert "기한" not in group.statement
+    assert group.suffix == ""
+
+
+@pytest.mark.parametrize(
     ("text", "due"),
     [
         ("릴리스는 10월 20일에 내기로 했습니다", "2026-10-20"),
