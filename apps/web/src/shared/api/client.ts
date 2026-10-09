@@ -29,9 +29,44 @@ export class ApiError extends Error {
   }
 }
 
-/** The error body every endpoint returns (autune_core.errors). */
+/**
+ * The error body our own handlers return (autune_core.errors). Every field is
+ * read as possibly absent: not every failure is ours. The framework answers a
+ * route that is not mounted with `{"detail": "Not Found"}` and a body that
+ * fails its schema with `{"detail": [...]}`, and a proxy in front of the API
+ * answers with whatever it likes.
+ */
 interface ErrorBody {
-  error: { code: string; message: string; details?: Record<string, unknown> };
+  error?: { code?: unknown; message?: unknown; details?: unknown } | null;
+}
+
+/**
+ * A failed answer as an `ApiError`, whatever its body holds.
+ *
+ * Only `error`'s own fields are taken, each only when it is what `ApiError`
+ * says it is. A body without them is still a failure with a status: reading
+ * `error.code` off it used to throw a `TypeError` in place of the `ApiError`
+ * every caller checks for, so a screen showed "Cannot read properties of
+ * undefined" where it had a sentence ready for a 404. Nothing else of the body
+ * is kept -- the framework's 422 repeats what was sent, and what was sent can
+ * be a person's own words.
+ */
+async function failure(response: Response): Promise<ApiError> {
+  let error: NonNullable<ErrorBody["error"]> = {};
+  try {
+    const body = (await response.json()) as ErrorBody | null;
+    error = body?.error ?? {};
+  } catch {
+    // Non-JSON error body; the status is what there is.
+  }
+  return new ApiError(
+    response.status,
+    typeof error.code === "string" ? error.code : "unknown",
+    typeof error.message === "string" ? error.message : response.statusText,
+    error.details !== null && typeof error.details === "object" && !Array.isArray(error.details)
+      ? (error.details as Record<string, unknown>)
+      : {},
+  );
 }
 
 /** Where a developer's browser keeps its token. Set by hand; see environments.md. */
@@ -109,20 +144,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     headers: { "content-type": "application/json", ...authHeaders(), ...init.headers },
   });
 
-  if (!response.ok) {
-    let body: ErrorBody | undefined;
-    try {
-      body = (await response.json()) as ErrorBody;
-    } catch {
-      // Non-JSON error body; fall through to the status text.
-    }
-    throw new ApiError(
-      response.status,
-      body?.error.code ?? "unknown",
-      body?.error.message ?? response.statusText,
-      body?.error.details ?? {},
-    );
-  }
+  if (!response.ok) throw await failure(response);
 
   return (await response.json()) as T;
 }
