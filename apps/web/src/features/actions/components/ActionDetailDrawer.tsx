@@ -13,6 +13,7 @@ import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
 import { shownDue } from "../dates";
+import { shownLabel } from "../speaker";
 import { typedTextRefusal } from "../refusal";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
@@ -132,12 +133,14 @@ export function ActionDetailDrawer({
       role="dialog"
       aria-modal
       aria-label="할 일 상세"
-      className="fixed inset-0 z-40 flex items-center justify-center"
-      style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-page)" }}
+      // A panel at the right edge rather than a box in the middle: the board
+      // the person opened it from stays in view to its left.
+      className="fixed inset-0 z-40 flex items-stretch justify-end"
+      style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-12)" }}
       onClick={onClose}
     >
       <aside
-        className="flex w-full max-w-[480px] flex-col overflow-y-auto"
+        className="flex w-full max-w-[520px] flex-col overflow-y-auto"
         style={{
           background: "var(--color-surface-panel)",
           borderRadius: "var(--radius)",
@@ -145,7 +148,7 @@ export function ActionDetailDrawer({
           // Fixed to the viewport, so it opens where the person is looking
           // whatever the page's scroll -- the problem the sticky column once
           // solved for a card near the bottom of a 25-item board.
-          maxHeight: "calc(100vh - 2 * var(--space-page))",
+          maxHeight: "calc(100vh - 2 * var(--space-12))",
         }}
         onClick={(event) => event.stopPropagation()}
       >
@@ -163,7 +166,7 @@ export function ActionDetailDrawer({
             >
               {item.description}
             </h2>
-            <div className="mt-1 flex items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               <StatusDot
                 variant={isCandidate(item) ? "attention" : "progress"}
                 hollow={item.status === "needs_confirmation"}
@@ -176,14 +179,16 @@ export function ActionDetailDrawer({
                   ? "후보"
                   : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
               </span>
+              {/* A share a person can read; the raw score stays on hover. */}
               <span
                 className="text-[var(--color-ink-muted)]"
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--text-metaSmall)",
-                }}
+                style={{ fontSize: "var(--text-metaSmall)" }}
+                title={`AI 신뢰도 ${item.confidence.toFixed(2)}`}
               >
-                {item.confidence.toFixed(2)}
+                · AI 신뢰도{" "}
+                <span style={{ fontFamily: "var(--font-mono)" }}>
+                  {Math.round(item.confidence * 100)}%
+                </span>
               </span>
               {item.description_resolved ? (
                 <span
@@ -224,7 +229,7 @@ export function ActionDetailDrawer({
               item.needs_reassignment ? (
                 "재배정 필요 · 담당자가 이 팀에 없습니다"
               ) : (
-                (item.assignee_name ?? item.assignee_label ?? "미지정")
+                (item.assignee_name ?? shownLabel(item.assignee_label) ?? "미지정")
               )
             ) : (
               <div className="grid gap-2">
@@ -598,8 +603,8 @@ function SectionTitle({ children }: { children: string }) {
     <h3
       className="text-[var(--color-ink-strong)]"
       style={{
-        fontSize: "var(--text-status)",
-        fontWeight: "var(--text-status-weight)",
+        fontSize: "var(--text-heading)",
+        fontWeight: "var(--text-heading-weight)",
       }}
     >
       {children}
@@ -609,15 +614,15 @@ function SectionTitle({ children }: { children: string }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mb-4">
+    <div className="mb-5">
       <div
         className="text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
+        style={{ fontSize: "var(--text-label)", fontWeight: "var(--text-label-weight)" }}
       >
         {label}
       </div>
       <div
-        className="mt-1 text-[var(--color-ink-body)]"
+        className="mt-1.5 text-[var(--color-ink-body)]"
         style={{ fontSize: "var(--text-body)" }}
       >
         {children}

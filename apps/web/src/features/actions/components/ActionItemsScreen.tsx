@@ -73,6 +73,13 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   // An empty list is "not yet" while the first run is going, and "not
   // extracted" when it never came -- not "nothing" (dev, 2026-10-08).
   const [unrun, setUnrun] = useState<NotExtracted>(null);
+  // Back from a connection's consent screen, the folded section opens, so the
+  // line saying whether it worked is not hidden behind a click.
+  const [returning, setReturning] = useState(false);
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    setReturning(CONNECTION_RESULTS.some((key) => query.has(key)));
+  }, []);
 
   return (
     // The tab row's gutter (see the review layout, #534): starting at the same
@@ -82,40 +89,28 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
       style={{ padding: "20px var(--space-page) var(--space-page)" }}
     >
       <div className="min-w-0 flex-1">
-        <h1
-          className="text-[var(--color-ink-strong)]"
-          style={{
-            fontSize: "var(--text-title)",
-            fontWeight: "var(--text-title-weight)",
-            letterSpacing: "var(--text-title-tracking)",
-          }}
-        >
-          회의 검토
-        </h1>
-        <p
-          className="mt-2 text-[var(--color-ink-muted)]"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--text-metaSmall)",
-          }}
-        >
-          {meetingId}
-        </p>
-
-        <div className="mt-3 flex flex-col gap-2">
-          {/* Every connection, with no meeting needed, lives on S28 (#496). */}
-          <Link
-            href={"/settings/integrations" as Route}
-            className="text-[var(--color-accent-default)]"
-            style={{ fontSize: "var(--text-metaSmall)" }}
-          >
-            연동 설정
-          </Link>
-          <CalendarConnect />
-            <JiraConnect meetingId={meetingId} />
-          <SlackConnect meetingId={meetingId} />
-          <NotionConnect meetingId={meetingId} />
-        </div>
+        {/* What this tab is for, first: the items a person confirms. The
+            meeting's id was printed here and meant nothing to anyone. */}
+        <header>
+          <div>
+            <h1
+              className="text-[var(--color-ink-strong)]"
+              style={{
+                fontSize: "var(--text-title)",
+                fontWeight: "var(--text-title-weight)",
+                letterSpacing: "var(--text-title-tracking)",
+              }}
+            >
+              결정과 할 일 확인
+            </h1>
+            <p
+              className="mt-1 text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-meta)" }}
+            >
+              AI가 회의에서 찾은 항목입니다. 맞으면 확정하고, 틀린 곳은 고쳐 주세요.
+            </p>
+          </div>
+        </header>
 
         <div className="mt-4">
           <ReExtract
@@ -136,14 +131,14 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           <CarriedOverActions meetingId={meetingId} />
         </div>
 
-        <div className="mt-6">
+        <div className="mt-8">
           <DecisionReview key={extraction} meetingId={meetingId} unrun={unrun} />
         </div>
 
         <div className="mt-8">
           <h2
-            className="mb-3 border-b border-[var(--color-hairline)] pb-2 text-[var(--color-ink-strong)]"
-            style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
+            className="mb-4 text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-heading)", fontWeight: "var(--text-heading-weight)" }}
           >
             할 일
           </h2>
@@ -181,6 +176,37 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             </>
           )}
         </div>
+
+        {/* The connections, folded at the foot: they are set once and then
+            left alone, and on top they pushed the items below the fold. What
+            each one does stays beside its button, as the review of #838 and
+            #872 asked, just one click further in. Every connection is also on
+            설정 > 연동 (#496). */}
+        <details
+          open={returning || undefined}
+          className="group mt-10 border-t border-[var(--color-hairline)] pt-4"
+        >
+          <summary
+            className="flex cursor-pointer list-none items-center gap-2 text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
+            style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
+          >
+            <span aria-hidden className="transition-transform group-open:rotate-90">›</span>
+            연동 · 캘린더, Jira, Slack, Notion
+          </summary>
+          <div className="mt-4 flex flex-col gap-3">
+            <CalendarConnect />
+            <JiraConnect meetingId={meetingId} />
+            <SlackConnect meetingId={meetingId} />
+            <NotionConnect meetingId={meetingId} />
+            <Link
+              href={"/settings/integrations" as Route}
+              className="text-[var(--color-accent-default)] hover:text-[var(--color-accent-hover)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              모든 연동 설정 보기
+            </Link>
+          </div>
+        </details>
       </div>
 
       {selected !== undefined ? (
@@ -206,6 +232,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
     </main>
   );
 }
+
+/** The query keys each connect button reads when its consent screen sends the person back. */
+const CONNECTION_RESULTS = ["calendar", "jira", "slack", "notion"];
 
 function Note({ children }: { children: string }) {
   return (

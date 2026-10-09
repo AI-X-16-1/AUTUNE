@@ -35,9 +35,10 @@ export function BulkTriage({
       style={meta}
       aria-label="여러 개 한 번에"
     >
-      <label className="flex items-center gap-1 text-[var(--color-ink-muted)]">
+      <label className="flex items-center gap-1.5 px-1 text-[var(--color-ink-body)]">
         <input
           type="checkbox"
+          className="accent-[var(--color-accent-default)]"
           checked={all}
           onChange={(event) => onPickAll(event.target.checked)}
         />
@@ -63,6 +64,10 @@ export function BulkTriage({
             취소
           </Button>
         </>
+      ) : picked === 0 ? (
+        // Nothing ticked: the buttons would only be greyed-out noise above the
+        // cards, so they appear with the first tick.
+        <span className="text-[var(--color-ink-muted)]">체크해서 여러 개를 한 번에 확정하거나 삭제</span>
       ) : (
         <>
           <Button

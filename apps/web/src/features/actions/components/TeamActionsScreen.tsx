@@ -186,7 +186,7 @@ export function TeamActionsScreen({
   return (
     <main
       className="flex flex-col gap-6 md:flex-row"
-      style={{ padding: "var(--space-16) var(--space-page) var(--space-page)" }}
+      style={{ padding: "var(--space-24) var(--space-page) var(--space-page)" }}
     >
       <div className="min-w-0 flex-1">
         {teamName !== null ? (
@@ -213,14 +213,16 @@ export function TeamActionsScreen({
           onChange={setTab}
         />
 
-        <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+        {/* The tabs above filter; this row arranges what they let through.
+            "묶어 보기" says which of the two it is. */}
+        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-2">
           <div
             role="group"
             aria-label="보기"
             className="flex items-center gap-2 text-[var(--color-ink-muted)]"
-            style={{ fontSize: "var(--text-metaSmall)" }}
+            style={{ fontSize: "var(--text-label)", fontWeight: "var(--text-label-weight)" }}
           >
-            보기
+            묶어 보기
             {VIEWS.map(({ id, label }) => (
               <ChipToggle key={id} selected={view === id} onClick={() => setView(id)}>
                 {label}
@@ -250,7 +252,7 @@ export function TeamActionsScreen({
           ) : (
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
-              {shown.length === 0 ? <Note>{EMPTY[tab]}</Note> : null}
+              {shown.length === 0 ? <Empty>{EMPTY[tab]}</Empty> : null}
               {groups === null || shown.length === 0 ? (
                 board(shown)
               ) : (
@@ -263,10 +265,10 @@ export function TeamActionsScreen({
                       }
                     >
                       <h2
-                        className="mb-3 flex items-baseline gap-2 border-b border-[var(--color-hairline)] pb-2 text-[var(--color-ink-strong)]"
+                        className="mb-3 flex items-baseline gap-2 text-[var(--color-ink-strong)]"
                         style={{
-                          fontSize: "var(--text-status)",
-                          fontWeight: "var(--text-status-weight)",
+                          fontSize: "var(--text-heading)",
+                          fontWeight: "var(--text-heading-weight)",
                         }}
                       >
                         {group.title}
@@ -323,6 +325,26 @@ function Meta({ children }: { children: string }) {
     >
       {children}
     </span>
+  );
+}
+
+/**
+ * Nothing on this tab: said in a box of its own, at reading size, so it is
+ * not mistaken for a caption above an empty board.
+ */
+function Empty({ children }: { children: string }) {
+  return (
+    <p
+      className="mb-4 text-center text-[var(--color-ink-body)]"
+      style={{
+        fontSize: "var(--text-rowBody)",
+        padding: "var(--space-24)",
+        borderRadius: "var(--radius)",
+        border: "1px dashed var(--color-hairline)",
+      }}
+    >
+      {children}
+    </p>
   );
 }
 

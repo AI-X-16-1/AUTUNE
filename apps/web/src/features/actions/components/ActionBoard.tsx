@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { StatusDot } from "@/shared/ui";
+
 import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
 import { BulkTriage } from "./BulkTriage";
@@ -12,6 +14,18 @@ import { COLUMNS, COLUMN_LABELS } from "../types";
 import type { ActionItemDraft, BulkActionResult } from "../api";
 import type { Moves } from "../board";
 import type { ActionItemRead, ActionStatus } from "../types";
+
+/**
+ * The dot beside each column's name, from ui-spec section 0's status set:
+ * ochre waits on a person, indigo is in motion, ink is done, the hollow ring
+ * has not started.
+ */
+const COLUMN_DOT: Record<ActionStatus, "attention" | "idle" | "progress" | "confirmed"> = {
+  needs_confirmation: "attention",
+  todo: "idle",
+  in_progress: "progress",
+  done: "confirmed",
+};
 
 /**
  * S17. Four columns, left to right, in the order the work moves.
@@ -168,7 +182,7 @@ export function ActionBoard({
         </p>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
         {COLUMNS.map((status) => {
           // Only a column this card can go to takes the drop: its own column,
           // and anything dragged in from outside the board, fall through to
@@ -200,19 +214,28 @@ export function ActionBoard({
                     }
                   : undefined
               }
+              // Each column is a paper tray the white cards sit in, so the four
+              // groups read as four places at a glance. Where a dragged card
+              // can land, the tray turns the selection tint.
+              className="flex min-w-0 flex-col transition-colors"
               style={{
                 borderRadius: "var(--radius)",
-                background: accepts && over === status ? "var(--color-surface-sunken)" : undefined,
+                padding: "var(--space-12)",
+                background:
+                  accepts && over === status
+                    ? "var(--color-accent-selection)"
+                    : "var(--color-surface-paper)",
               }}
             >
               <header
-                className="flex items-baseline gap-2 border-b border-[var(--color-hairline)] pb-2"
-                style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
+                className="flex items-center gap-2 px-1 pb-1"
+                style={{ fontSize: "var(--text-heading)", fontWeight: "var(--text-heading-weight)" }}
               >
+                <StatusDot variant={COLUMN_DOT[status]} />
                 <span className="text-[var(--color-ink-strong)]">{COLUMN_LABELS[status]}</span>
                 <span
-                  className="text-[var(--color-ink-muted)]"
-                  style={{ fontFamily: "var(--font-mono)" }}
+                  className="ml-auto text-[var(--color-ink-muted)]"
+                  style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-dataSmall)" }}
                 >
                   {byColumn[status].length}
                 </span>
@@ -231,7 +254,7 @@ export function ActionBoard({
               ) : null}
 
               {/* A floor, so an empty column is still somewhere to drop. */}
-              <div className="mt-3 grid content-start gap-2" style={{ minHeight: "var(--space-48)" }}>
+              <div className="mt-2 grid content-start gap-2" style={{ minHeight: "var(--space-48)" }}>
                 {byColumn[status].map((item) => {
                   const card = (
                   <ActionCard
@@ -271,7 +294,7 @@ export function ActionBoard({
                     <div key={item.id} className="flex items-start gap-2">
                       <input
                         type="checkbox"
-                        className="mt-3"
+                        className="mt-4 shrink-0 accent-[var(--color-accent-default)]"
                         aria-label={`${item.description} 선택`}
                         checked={picked.has(item.id)}
                         onChange={(event) =>

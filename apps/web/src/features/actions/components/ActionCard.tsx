@@ -3,6 +3,7 @@ import { MaskedText, StatusDot } from "@/shared/ui";
 import { SYSTEM_LABEL } from "./SyncStatus";
 import { isOverdue, shownDue } from "../dates";
 import { staleLabel } from "../stale";
+import { shownLabel } from "../speaker";
 import { rowTitle } from "../title";
 import { isCandidate } from "../types";
 import type { ActionItemRead, SourceUtterance } from "../types";
@@ -82,11 +83,17 @@ export function ActionCard({
           : undefined
       }
       onDragEnd={draggable ? drag.onEnd : undefined}
-      className={`w-full border text-left ${draggable ? "cursor-grab" : "cursor-pointer"}`}
+      // A white card on the column's paper, so the card is the thing the eye
+      // lands on and the column reads as the group around it. Hover darkens
+      // the border only -- shadows belong to modals and drawers (ui-spec
+      // section 0).
+      className={`group w-full border text-left transition-colors focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)] ${
+        selected ? "" : "hover:border-[var(--color-ink-muted)]"
+      } ${draggable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"}`}
       style={{
-        background: drag?.moving ? "var(--color-surface-sunken)" : "var(--color-surface-paper)",
+        background: drag?.moving ? "var(--color-surface-sunken)" : "var(--color-surface-panel)",
         borderRadius: "var(--radius)",
-        padding: "var(--space-card)",
+        padding: "var(--space-16)",
         borderWidth: selected ? 1.5 : 1,
         borderColor: selected ? "var(--color-accent-default)" : "var(--color-hairline)",
       }}
@@ -139,14 +146,21 @@ export function ActionCard({
         </div>
       ) : null}
 
+      {reasonFor(item) ? (
+        <div
+          className="mt-1 line-clamp-2 text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {reasonFor(item)}
+        </div>
+      ) : null}
+
+      {/* Who and when: the line a person scans the board for, set apart from
+          the title by a hairline so the two never run together. */}
       <div
-        className="mt-1 line-clamp-2 text-[var(--color-ink-muted)]"
+        className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--color-hairline)] pt-2"
         style={{ fontSize: "var(--text-metaSmall)" }}
       >
-        {reasonFor(item)}
-      </div>
-
-      <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
         {staleLabel(item) ? (
           // Carried through meeting after meeting unfinished (2026-10-04): the
           // ochre of something waiting on a person, as text.
@@ -179,14 +193,23 @@ export function ActionCard({
             재배정 필요
           </span>
         ) : (
-          <span className="text-[var(--color-ink-body)]">
-            {item.assignee_name ?? item.assignee_label ?? "담당 미지정"}
+          <span
+            className={
+              item.assignee_name || item.assignee_label
+                ? "text-[var(--color-ink-body)]"
+                : "text-[var(--color-ink-muted)]"
+            }
+            style={{ fontWeight: "var(--text-status-weight)" }}
+          >
+            {item.assignee_name ?? shownLabel(item.assignee_label) ?? "담당 미지정"}
           </span>
         )}
         {item.due_date ? (
           <span
+            className="ml-auto whitespace-nowrap"
             style={{
               color: overdue ? "var(--color-signal-critical)" : "var(--color-ink-muted)",
+              fontWeight: overdue ? "var(--text-status-weight)" : undefined,
             }}
           >
             {shownDue(item.due_date)}
@@ -258,9 +281,13 @@ function reasonFor(item: ActionItemRead): string {
   const deleted = item.deleted_source_count ?? 0;
   // ADR 0007: a model item whose evidence was deleted says so, rather than
   // printing "근거 발화 0건" as if the model had made it up.
+  // "근거 발화 0건" on a model item says nothing a person can act on, so the
+  // line is left off; a candidate still says it is one.
+  if (sources === 0 && deleted === 0 && !item.summary) return isCandidate(item) ? "후보" : "";
   const base =
     sources === 0 && deleted > 0
       ? "근거 발화 삭제됨"
       : (item.summary ?? `근거 발화 ${sources}건`) + (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
   return isCandidate(item) ? `후보 · ${base}` : base;
 }
+
