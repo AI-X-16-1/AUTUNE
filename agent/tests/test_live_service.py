@@ -183,7 +183,44 @@ def test_an_unmasked_body_is_never_stored(session: Session, team: dict[str, str]
             tools={},
         )
     session.rollback()
-    assert session.get(AgentLiveResearch, doc.id).body is None  # type: ignore[union-attr]
+    stored = session.get(AgentLiveResearch, doc.id)
+    assert stored is not None
+    assert stored.body is None
+    assert stored.status == "failed"
+
+
+def test_an_unmasked_web_answer_is_left_out(
+    session: Session, team: dict[str, str], past: str
+) -> None:
+    doc = _open(session, team, "API 요금?", origin="manual")
+    assert doc is not None
+
+    class Leaky(FakeModel):
+        def web(self, question: str) -> WebAnswer:
+            return WebAnswer(text="문의 010-1234-5678", sources=[("p", "https://a.test")])
+
+    model = Leaky()
+    research(session, doc.id, context=[], model=model, web=True, tools=_search_tool(past))
+
+    session.refresh(doc)
+    assert doc.status == "done"
+    assert doc.web_sources == []
+    assert model.written[0]["web"] is None
+
+
+def test_an_unmasked_web_source_title_is_left_out(session: Session, team: dict[str, str]) -> None:
+    doc = _open(session, team, "API 요금?", origin="manual")
+    assert doc is not None
+
+    class Leaky(FakeModel):
+        def web(self, question: str) -> WebAnswer:
+            return WebAnswer(text="웹 답", sources=[("연락처 010-1234-5678", "https://a.test")])
+
+    research(session, doc.id, context=[], model=Leaky(), web=True, tools={})
+
+    session.refresh(doc)
+    assert doc.status == "done"
+    assert doc.web_sources == []
 
 
 def test_detect_and_research_makes_one_document_per_new_question(

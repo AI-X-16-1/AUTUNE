@@ -108,6 +108,11 @@ waiting forever. Errors are logged by type only. A `failed` document holds no
 answer, so it neither counts toward the 5 automatic and 20 manual documents nor
 keeps its question from being asked again.
 
+A web answer whose text or any source title fails `assert_masked` is left out,
+as a failed web call is, and logged by document id only. A
+`PrivacyViolationError` from any other step marks the document `failed` with
+no body before it is raised, so the panel never waits on it.
+
 ## 4. Storage
 
 New table `agent_live_research` (agent layer, `agent_` prefix, agent Alembic

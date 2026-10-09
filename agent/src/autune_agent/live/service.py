@@ -2,8 +2,10 @@
 
 A document is opened ``running`` before any model call, so the panel shows
 조사 중… at once, and always ends ``done`` or ``failed``. Only a
-``PrivacyViolationError`` escapes, as everywhere in the layer: the row stays
-``running`` with no body and the task fails loudly.
+``PrivacyViolationError`` escapes, as everywhere in the layer: the row is
+marked ``failed`` with no body first, so the panel does not wait forever, and
+the task fails loudly. A web answer that is not masked is left out, as a
+failed web call is.
 """
 
 from __future__ import annotations
@@ -137,6 +139,37 @@ def research(
     if doc is None or doc.status != "running":
         return
     try:
+        _research(session, doc, context=context, model=model, web=web, terms=terms, tools=tools)
+    except PrivacyViolationError:
+        session.rollback()
+        doc.status = "failed"
+        doc.body = None
+        session.commit()
+        raise
+
+
+def _masked_web(doc: AgentLiveResearch, answer: WebAnswer) -> WebAnswer | None:
+    try:
+        assert_masked(answer.text, destination="agent_live_research")
+        for title, _ in answer.sources:
+            assert_masked(title, destination="agent_live_research")
+    except PrivacyViolationError:
+        log.warning("live_research_web_masked doc=%s", doc.id)
+        return None
+    return answer
+
+
+def _research(
+    session: Session,
+    doc: AgentLiveResearch,
+    *,
+    context: Sequence[Row],
+    model: LiveModel,
+    web: bool,
+    terms: Sequence[str],
+    tools: Mapping[str, Tool] | None,
+) -> None:
+    try:
         wanted = list(terms) or model.terms(doc.question)
     except PrivacyViolationError:
         raise
@@ -158,6 +191,8 @@ def research(
             raise
         except Exception as exc:  # noqa: BLE001 - the web is one source of two
             log.warning("live_research_web_failed doc=%s error=%s", doc.id, type(exc).__name__)
+    if answer is not None:
+        answer = _masked_web(doc, answer)
     try:
         body = model.write(doc.question, context, quotes, answer)
     except PrivacyViolationError:
