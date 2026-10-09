@@ -299,6 +299,21 @@ def test_a_schedule_change_is_proposed_at_l1_without_a_person_or_team(monkeypatc
     assert all("user_id" not in str(d) and "team_id" not in str(d) for d in chat.declarations())
 
 
+def test_a_schedule_change_points_to_the_card_for_other_teams(monkeypatch) -> None:
+    """The chat changes one team (#449) and cannot ask a follow-up; the reply
+    says where the person's other teams are changed instead."""
+    model = Script([call("set_schedule", weekday=4, hour=18)])
+    out = _run("금요일 6시로 바꿔줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    assert chat.OTHER_TEAMS in out.result.summary
+    assert "내 모든 팀" in chat.OTHER_TEAMS and "팀 골라서" in chat.OTHER_TEAMS
+
+
+def test_no_schedule_change_says_nothing_about_other_teams(monkeypatch) -> None:
+    model = Script([call("set_schedule", weekday=7, hour=25)])
+    out = _run("이상한 시각으로 바꿔줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    assert out.proposed == [] and chat.OTHER_TEAMS not in out.result.summary
+
+
 def test_a_schedule_change_names_send_empty_only_when_asked(monkeypatch) -> None:
     model = Script([call("set_schedule", weekday=0, hour=9.0, send_empty=True)])
     out = _run("빈 주도 월요일 9시에 보내줘", model, _tools(), monkeypatch=monkeypatch)

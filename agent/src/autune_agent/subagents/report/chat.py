@@ -75,6 +75,11 @@ CHAT_READS = (
 )
 CHAT_ACTIONS = ("redraft", "request_post", "set_schedule")
 SCHEDULE_ACTION = "intelligence.set_weekly_report_schedule"
+OTHER_TEAMS = (
+    "다른 팀에도 같은 시각을 쓰려면 대시보드의 주간 리포트 카드에서 "
+    "'내 모든 팀'이나 '팀 골라서'를 고르세요."
+)
+"""After a schedule change: the chat changes this team only, the card any of them."""
 _WEEKDAYS = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
 
 _BUDGET = {BODY: 1500, "intelligence.weekly_reports": 1200, "intelligence.explain_metric": 400}
@@ -401,6 +406,9 @@ class _Turn:
                 else " 할 말이 없는 주에는 보내지 않습니다."
             )
         self.lines.append(line)
+        # A chat turn changes one team (#449) and remembers nothing to ask a
+        # follow-up with, so the way to the person's other teams is said here.
+        self.lines.append(OTHER_TEAMS)
         return ToolResult(ok=True, summary=line + " (요청만 했고 아직 실행되지 않았습니다)")
 
     def request_post(self, meeting_id: str | None = None) -> ToolResult:
