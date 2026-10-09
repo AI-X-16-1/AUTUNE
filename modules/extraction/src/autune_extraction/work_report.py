@@ -164,7 +164,7 @@ def build_text(report: WorkReport, *, board_url: str) -> str:
     team = f"{reminders.slack_escape(report.team_name)} " if report.team_name else ""
     out = [
         "오늘 업무 보고 초안입니다. 고쳐서 팀에 붙여 넣으셔도 됩니다.",
-        f"{team}업무 보고 ({report.day.isoformat()})",
+        f"{team}업무 보고 ({reminders.written_day(report.day, year=report.day.year)})",
     ]
     for heading, lines in (
         ("끝낸 일", report.done),

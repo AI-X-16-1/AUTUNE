@@ -4080,6 +4080,7 @@ def send_due_reminder(
             due_date=reminder.due_date,
             meeting_title=reminder.meeting_title,
             board_url=answer_url(reminder.meeting_id),
+            today=reminders.korean_day(now),
         ),
     )
     return True
@@ -4701,7 +4702,9 @@ def send_daily_digest(
     slack.send_dm(
         owed.user_id,
         reminders.build_daily_digest(
-            content, board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions"
+            content,
+            board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
+            today=owed.day,
         ),
     )
     return True

@@ -104,7 +104,7 @@ def test_the_text_is_a_line_to_the_person_then_the_draft_headed_by_its_team() ->
 
     assert text.split("\n") == [
         "오늘 업무 보고 초안입니다. 고쳐서 팀에 붙여 넣으셔도 됩니다.",
-        "플랫폼팀 업무 보고 (2026-10-07)",
+        "플랫폼팀 업무 보고 (10월 7일 수)",
         "끝낸 일",
         "• 로그인 고치기 · 주간 회의",
         "끝내지 않고 닫힌 일",
@@ -115,7 +115,7 @@ def test_the_text_is_a_line_to_the_person_then_the_draft_headed_by_its_team() ->
         "• 하던 일 · 기획 &lt;회의&gt;",
         "• 오늘까지인 일 (오늘 기한)",
         "늦은 일",
-        "• 늦은 일 (기한 10월 1일 (목) 지남)",
+        "• 늦은 일 (기한 10월 1일 목 지남)",
         "그 밖의 열린 액션 아이템 3개",
         BOARD,
     ]
@@ -135,8 +135,8 @@ def test_a_late_items_year_is_said_only_when_it_is_not_the_reports() -> None:
         board_url=BOARD,
     )
 
-    assert "• 지난해 일 (기한 2026년 12월 30일 (수) 지남)" in text
-    assert "• 올해 일 (기한 1월 1일 (금) 지남)" in text
+    assert "• 지난해 일 (기한 2026년 12월 30일 수 지남)" in text
+    assert "• 올해 일 (기한 1월 1일 금 지남)" in text
     assert "2026-12-30" not in text and "2027-01-01" not in text
 
 
@@ -148,7 +148,7 @@ def test_a_part_with_nothing_in_it_is_left_out_and_a_team_name_is_escaped() -> N
 
     assert text.split("\n") == [
         "오늘 업무 보고 초안입니다. 고쳐서 팀에 붙여 넣으셔도 됩니다.",
-        "&lt;팀&gt; 업무 보고 (2026-10-07)",
+        "&lt;팀&gt; 업무 보고 (10월 7일 수)",
         "끝낸 일",
         "• 끝낸 일",
         BOARD,
@@ -546,7 +546,8 @@ def test_it_is_claimed_then_sent_to_its_person_and_only_once(session: Session) -
     assert to == "user_kim"
     assert text.split("\n")[:4] == [
         "오늘 업무 보고 초안입니다. 고쳐서 팀에 붙여 넣으셔도 됩니다.",
-        f"플랫폼팀 업무 보고 ({today().isoformat()})",
+        # The wording is pinned above; this is the real day the test runs on.
+        f"플랫폼팀 업무 보고 ({reminders.written_day(today(), year=today().year)})",
         "끝낸 일",
         "• 보고서 쓰기 · team_1 회의",
     ]

@@ -163,7 +163,7 @@ def test_an_item_already_confirmed_is_named_with_its_date() -> None:
 
     assert text.split("\n") == [
         "'주간 회의'에서 내 담당으로 잡힌 일 1건이 확인을 기다립니다.",
-        "• 확정: 배포 &lt;점검&gt; (기한 10월 9일 (금))",
+        "• 확정: 배포 &lt;점검&gt; (기한 10월 9일 금)",
         "u",
     ]
     only = build_meeting_notice(
@@ -183,22 +183,22 @@ def test_an_item_already_confirmed_is_named_with_its_date() -> None:
 @pytest.mark.parametrize(
     ("day", "written"),
     [
-        (date(2026, 10, 12), "10월 12일 (월)"),
-        (date(2026, 10, 13), "10월 13일 (화)"),
-        (date(2026, 10, 14), "10월 14일 (수)"),
-        (date(2026, 10, 15), "10월 15일 (목)"),
-        (date(2026, 10, 16), "10월 16일 (금)"),
-        (date(2026, 10, 17), "10월 17일 (토)"),
-        (date(2026, 10, 18), "10월 18일 (일)"),
-        (date(2026, 1, 1), "1월 1일 (목)"),
+        (date(2026, 10, 12), "10월 12일 월"),
+        (date(2026, 10, 13), "10월 13일 화"),
+        (date(2026, 10, 14), "10월 14일 수"),
+        (date(2026, 10, 15), "10월 15일 목"),
+        (date(2026, 10, 16), "10월 16일 금"),
+        (date(2026, 10, 17), "10월 17일 토"),
+        (date(2026, 10, 18), "10월 18일 일"),
+        (date(2026, 1, 1), "1월 1일 목"),
         # Another year than the one it is read in is said.
-        (date(2027, 1, 4), "2027년 1월 4일 (월)"),
-        (date(2025, 12, 31), "2025년 12월 31일 (수)"),
+        (date(2027, 1, 4), "2027년 1월 4일 월"),
+        (date(2025, 12, 31), "2025년 12월 31일 수"),
     ],
 )
 def test_a_day_is_written_as_the_minutes_write_one(day: date, written: str) -> None:
     """The user, 2026-10-09: a due date here read ``2026-10-13`` while the 요약
-    tab's minutes read "10월 13일 (화)"."""
+    tab's minutes read "10월 13일 화"."""
     assert reminders.written_day(day, year=2026) == written
 
     text = build_meeting_notice(
@@ -224,8 +224,8 @@ def test_the_year_left_out_is_koreas_at_the_moment_it_is_sent(session: Session) 
     assert send_meeting_notice(session, slack, KIM, now=at) is True  # type: ignore[arg-type]
 
     ((_, text),) = slack.sent
-    assert "• 확정: 새해 첫 일 (기한 1월 4일 (월))" in text
-    assert "• 확정: 묵은 일 (기한 2026년 12월 30일 (수))" in text
+    assert "• 확정: 새해 첫 일 (기한 1월 4일 월)" in text
+    assert "• 확정: 묵은 일 (기한 2026년 12월 30일 수)" in text
 
 
 def test_nothing_of_an_unconfirmed_item_can_reach_the_message(session: Session) -> None:
@@ -252,7 +252,7 @@ def test_nothing_of_an_unconfirmed_item_can_reach_the_message(session: Session) 
         "11월 11일",
     ):
         assert forbidden not in text
-    assert "• 확정: 확정된 일 (기한 10월 9일 (금))" in text
+    assert "• 확정: 확정된 일 (기한 10월 9일 금)" in text
     assert text.endswith("/meetings/mtg_team_1/actions")
 
     content = meeting_notice.notice_content(session, KIM, now=AT_10)

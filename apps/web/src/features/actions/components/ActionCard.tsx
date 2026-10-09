@@ -1,7 +1,7 @@
 import { MaskedText, StatusDot } from "@/shared/ui";
 
 import { SYSTEM_LABEL } from "./SyncStatus";
-import { isOverdue } from "../dates";
+import { isOverdue, shownDue } from "../dates";
 import { staleLabel } from "../stale";
 import { shortTitle } from "../title";
 import { isCandidate } from "../types";
@@ -185,11 +185,10 @@ export function ActionCard({
         {item.due_date ? (
           <span
             style={{
-              fontFamily: "var(--font-mono)",
               color: overdue ? "var(--color-signal-critical)" : "var(--color-ink-muted)",
             }}
           >
-            {item.due_date}
+            {shownDue(item.due_date)}
           </span>
         ) : null}
       </div>

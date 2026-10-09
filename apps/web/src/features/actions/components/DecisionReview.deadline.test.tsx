@@ -23,7 +23,7 @@ vi.mock("../hooks/useDecisionReview", () => ({
 }));
 
 const STORED = "배포는 다음 주로 미룹니다 (담당 박지영, 기한 2026-10-13)";
-const SHOWN = "배포는 다음 주로 미룹니다 (담당 박지영, 기한 10월 13일 (화))";
+const SHOWN = "배포는 다음 주로 미룹니다 (담당 박지영, 기한 10월 13일 화)";
 
 const decision = (over: Partial<ReviewDecision>): ReviewDecision => ({
   id: "dec_1",
@@ -78,7 +78,7 @@ describe("a decision's deadline on its row", () => {
   it("reads so on a sentence short enough to need no cut", () => {
     const list = show(decision({ statement: "공지 (기한 2026-10-16)", model_statement: "공지 (기한 2026-10-16)" }));
 
-    expect(within(list).getByText("공지 (기한 10월 16일 (금))")).toBeTruthy();
+    expect(within(list).getByText("공지 (기한 10월 16일 금)")).toBeTruthy();
   });
 
   it("reads so in the line beneath and in the model's sentence", () => {
@@ -89,7 +89,7 @@ describe("a decision's deadline on its row", () => {
       }),
     );
 
-    expect(list.textContent).toContain("배포를 미루기로 했습니다 (기한 10월 13일 (화)) · 신뢰도 80%");
+    expect(list.textContent).toContain("배포를 미루기로 했습니다 (기한 10월 13일 화) · 신뢰도 80%");
     expect(list.textContent).toContain(`모델 문장: ${SHOWN}`);
     expect(list.textContent).not.toContain("2026-10-13");
   });

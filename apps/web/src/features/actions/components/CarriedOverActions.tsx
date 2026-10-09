@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { getCarriedOver } from "../api";
-import { isOverdue } from "../dates";
+import { isOverdue, shownDue } from "../dates";
 import type { CarriedOver, CarriedOverItem } from "../types";
 import { staleLabel } from "../stale";
 
@@ -185,12 +185,9 @@ function CarriedRow({ item }: { item: CarriedOverItem }) {
           </span>
           {item.due_date ? (
             <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                color: overdue ? "var(--color-signal-critical)" : undefined,
-              }}
+              style={{ color: overdue ? "var(--color-signal-critical)" : undefined }}
             >
-              {item.due_date}
+              {shownDue(item.due_date)}
             </span>
           ) : null}
           <span>

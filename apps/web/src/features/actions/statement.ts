@@ -4,8 +4,8 @@ import { writtenDay } from "./dates";
  * A decision's sentence as these screens show it (the user, 2026-10-09).
  *
  * The server ends a decision that set a deadline with it -- "… (담당 박지영,
- * 기한 2026-10-13)" -- and on a page whose other dates read "10월 13일 (화)"
- * that one read as another kind of date. Here it is written the page's way.
+ * 기한 2026-10-13)" -- and beside dates a person reads as "10월 13일 화" that
+ * one read as another kind of date. Here it is written the page's way.
  *
  * **Only what is shown.** The stored sentence keeps its form: the Meeting
  * Context Engine compares it with the same decision's earlier wording, and it

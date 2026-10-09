@@ -93,9 +93,9 @@ describe("ProjectGroups", () => {
     vi.useRealTimers();
 
     expect(screen.getByLabelText("App").textContent).toContain(
-      "배포는 미룹니다 (기한 10월 13일 (화))",
+      "배포는 미룹니다 (기한 10월 13일 화)",
     );
-    expect(screen.getByLabelText("배포는 미룹니다 (기한 10월 13일 (화)) 프로젝트")).toBeTruthy();
+    expect(screen.getByLabelText("배포는 미룹니다 (기한 10월 13일 화) 프로젝트")).toBeTruthy();
     expect(document.body.textContent).not.toContain("2026-10-13");
   });
 

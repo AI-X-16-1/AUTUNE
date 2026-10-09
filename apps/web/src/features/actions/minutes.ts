@@ -115,12 +115,13 @@ export function minutesText(summary: MeetingSummary, title?: string | null): str
 
 /**
  * Who, by when, and where it stands -- the same words on the tab and in the
- * copy, each set off by a dot: "김민경 · 10월 13일 (화) · 진행 중".
+ * copy, each set off by a dot: "김민경 · 10월 13일 화 · 진행 중".
  *
- * The state is not in brackets (the user, 2026-10-09): a due date ends with
- * its weekday in them, and "10월 13일 (화) (진행 중)" read as two asides in a
- * row. One mark for every part, so the line has the same shape with or
- * without a date.
+ * The state is not in brackets (the user, 2026-10-09): a due date then ended
+ * with its weekday in them, and "10월 13일 (화) (진행 중)" read as two asides
+ * in a row. One mark for every part, so the line has the same shape with or
+ * without a date. The weekday lost its own bracket the same day, with every
+ * other due date B shows.
  */
 export function actionMeta(item: MinutesAction): string {
   return [item.who, item.due ?? "기한 없음", ...(item.state ? [item.state] : [])].join(" · ");
@@ -158,8 +159,9 @@ function dayOf(at: Date): string {
 }
 
 /**
- * A due date as the date line writes a day -- "10월 13일 (화)" -- and not as it
- * is stored, "2026-10-13" (the user, 2026-10-09).
+ * A due date as B's screens write one -- "10월 13일 화" -- and not as it is
+ * stored, "2026-10-13" (the user, 2026-10-09). The date line above keeps its
+ * weekday in a bracket: it is the meeting's day, not a due date.
  *
  * The year is the date line's to say, so it is written here only where
  * reading it from there would be wrong: a due date in another year than the
