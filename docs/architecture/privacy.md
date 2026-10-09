@@ -592,7 +592,8 @@ the feature needs.
     with no 내용 property -- one made before the property existed, until it
     is added, or one whose team named its own properties without it -- has
     no place for the sentence, so its pages keep the sentence in the title.
-    Adding the property is one request per database, once: the database's
+    Adding the property is asked of Notion once per database -- a read of
+    the database and, where the name is absent, one change: the database's
     id and the property's name, nothing of a meeting; of the answer only
     whether the property is there is kept (`ext_notion_targets`).
     The copy on the 요약 tab's "회의록 복사" is the reader's own paste, and
