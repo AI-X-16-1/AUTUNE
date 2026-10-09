@@ -517,8 +517,17 @@ the feature needs.
   the lines around it, the summary the meeting in sections, and NLI only the
   utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
-  it makes sending speech out something a deployment says deliberately. Until
-  #392 is decided, only demo meetings go through a deployment that sets it.
+  it makes sending speech out something a deployment says deliberately. Which
+  meetings may go through a deployment that sets it is therefore a rule for
+  the people who run and use it, and #392 has answered it in part. On a
+  free-tier key, dummy meetings only: the provider may keep what it is sent.
+  The team's dev site sets it with a paid key and takes the team's own
+  meetings only, and none with a participant from outside the team -- a name
+  that is not on the team's roster is not replaced and leaves as it was
+  spoken (agreed on #392, 2026-10-05). Whether a real service sets it is not
+  decided: that is still open on #392, with the overseas-transfer question
+  behind it on #92, and until it is decided no meeting of anybody else's goes
+  through such a deployment.
   This is module B's alone: the agent's, C's and D's cloud switches are their
   owners' and have no second switch today.
 - What was delivered can outlive its source, for different reasons per

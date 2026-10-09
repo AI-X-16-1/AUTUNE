@@ -379,8 +379,12 @@ a cloud model over the whole meeting -- section summaries under the outbound
 limit, then a summary of those -- stored in `ext_meeting_summaries`. It is off
 by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`) and, like every cloud
 implementation in this module, refused at start-up without
-`AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until #392 is
-decided.
+`AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`. Which meetings may go through a
+deployment that sets that flag is an operating rule and not a check: on the
+team's dev site its own meetings only, none with a participant from outside
+the team (#392, 2026-10-05), and on a real service none until #392 decides
+that -- `../engineering/environments.md`, "The classifier's one external
+option is opt-in".
 
 **The tab is the meeting's minutes as one document, and "회의록 복사" copies
 that page** (the owner, 2026-10-09; `features/actions/minutes.ts`). One page
