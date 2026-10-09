@@ -60,8 +60,13 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         items = plan.stalled_from(state["stalled"])
         moves = plan.plan_moves(items, today=_today())
         if moves:
+            # Late items this run made no card for: the ones the tool counted
+            # past its five rows, and any it showed past ``MAX_PROPOSALS``.
+            late = sum(item.overdue for item in items)
+            more = late - len(moves) + plan.late_not_shown(state["stalled"])
+            rest = f"(가장 오래 지난 순서, {more}건 더 남음)" if more else ""
             summary = (
-                f"기한이 지난 확정 항목에 기한 옮기기 제안 {len(moves)}건. "
+                f"기한이 지난 확정 항목에 기한 옮기기 제안 {len(moves)}건{rest}. "
                 "관리자가 하나씩 승인해야 실행됩니다."
             )
         else:
