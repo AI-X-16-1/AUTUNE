@@ -117,18 +117,35 @@ describe("a decision row's top line", () => {
   const STATEMENT = "배포는 다음 주 금요일로 미루기로 함 (담당 민경, 기한 2026-10-16)";
   const SHORT = "배포 다음 주 금요일로 연기";
 
-  it("shows the decision's title and opens to the whole statement", () => {
+  it("shows the decision's title and opens the whole statement under it", () => {
     const list = decisions(decision("dec_1", STATEMENT, SHORT));
 
     const line = within(list).getByRole("button", { name: SHORT });
     expect(line.getAttribute("aria-expanded")).toBe("false");
+    expect(list.textContent).not.toContain("미루기로 함");
 
     fireEvent.click(line);
 
-    // The whole statement, its owner and deadline with it, as the row writes a date.
-    const whole = within(list).getByRole("button", { expanded: true });
-    expect(whole.textContent).toContain("배포는 다음 주 금요일로 미루기로 함 (담당 민경, 기한 ");
-    expect(within(list).queryByText(SHORT)).toBeNull();
+    // The title stays the line that was pressed (the user, 2026-10-09) ...
+    const pressed = within(list).getByRole("button", { expanded: true });
+    expect(pressed.textContent).toBe(SHORT);
+    // ... and the whole statement stands under it, its owner and deadline
+    // with it, as the row writes a date.
+    const whole = within(list).getByText(/^배포는 다음 주 금요일로 미루기로 함 \(담당 민경, 기한 /);
+    expect(whole.tagName).toBe("P");
+    expect(pressed.compareDocumentPosition(whole) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(pressed);
+
+    expect(list.textContent).not.toContain("미루기로 함");
+    expect(within(list).getByRole("button", { name: SHORT })).toBeTruthy();
+  });
+
+  it("shows a statement short enough to be the top line once, with nothing to open", () => {
+    const list = decisions(decision("dec_1", "배포 연기", null));
+
+    expect(within(list).getAllByText("배포 연기")).toHaveLength(1);
+    expect(within(list).queryByRole("button", { expanded: false })).toBeNull();
   });
 
   it("shows the statement cut for a decision with no title", () => {
