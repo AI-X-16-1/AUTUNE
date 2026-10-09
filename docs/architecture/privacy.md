@@ -973,13 +973,26 @@ the feature needs.
       a hand-written sentence carries, and a rule with no criterion for what
       to delete is a rule that cannot be kept.
 
-    The first rule is every module's, and three keep it today. C refuses a
+    The first rule is every module's, and four keep it today. C refuses a
     rewritten question (above). B refuses every field below. E refuses the
     two texts a person types into a meeting report, an edited body and a
     correction (`edit_meeting_report`, `correct_meeting_report`): both go
     through `assert_masked` before anything is stored and answer with the
-    categories and never the text. A's meeting title is not screened yet;
-    A's owner (mkkim68) has said it follows with #1161, which is still open.
+    categories and never the text. A refuses a meeting's title, when the
+    meeting is opened and when it is renamed (`autune_audio.meeting_title`,
+    #1161): the same detector, and a 422 whose details carry
+    `reason: "personal_data"` and the categories and never the title. The
+    title a meeting already has, sent back as it is, is not a write, so a
+    meeting titled before this keeps its title until somebody changes it;
+    nothing stored was rewritten.
+
+    A rename (`PATCH /api/audio/meetings/{meeting_id}`, any member of the
+    meeting's team) changes the `meetings` row and nothing else. No event is
+    published and no module is told: every message and document reads the
+    title when it is sent, so a copy already sent -- a Slack message, a
+    Notion page, a calendar event, a stored report draft -- keeps the title
+    it was sent with, and the screen says so before the title is saved (the
+    module owners, on #1161).
 
     Module B applies the first on every field a person types into: an
     action item's description and assignee label, a decision typed or
