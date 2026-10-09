@@ -963,15 +963,50 @@ def test_deleting_an_unknown_decision_is_not_found(client: TestClient) -> None:
 # --- the screen on the way out ----------------------------------------------------
 
 
+WITH_A_NUMBER = "담당 연락처 010-1234-5678 로 공유"
+
+
+def as_stored_before_the_rule(session: Session, decision_id: str) -> None:
+    """Put a number into a decision's wording the way no endpoint does any more.
+
+    Typed text is screened when it is saved (#1130), so a rewording or a typed
+    decision that holds a number is one stored before that rule -- or a line
+    module A's masker missed. The outbound check is what still stands between
+    such a row and a send, and these tests are about it. The number goes on the
+    rewording of a model's decision and on the statement of one a person typed,
+    which is where each keeps a person's words."""
+    decision = session.get(ExtDecision, decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    assert decision is not None and review is not None
+    if decision.origin == "user":
+        decision.statement = WITH_A_NUMBER
+    else:
+        review.statement = WITH_A_NUMBER
+    session.flush()
+
+
+def reworded_before_the_rule(client: TestClient, session: Session, decision_id: str) -> None:
+    """A pending decision of the model's whose rewording holds a number."""
+    client.patch(f"{PREFIX}/decisions/{decision_id}", json={"statement": "담당 연락처로 공유"})
+    as_stored_before_the_rule(session, decision_id)
+
+
+def typed_before_the_rule(client: TestClient, session: Session) -> str:
+    """A decision a person typed, confirmed as every typed one is, holding a number."""
+    typed = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": "연락처 공유"}
+    ).json()
+    as_stored_before_the_rule(session, typed["id"])
+    return str(typed["id"])
+
+
 def test_a_confirmed_rewording_with_personal_data_is_held_back_by_category(
     client: TestClient, session: Session
 ) -> None:
     """A rewording is typed by a person and never passed module A's masker."""
     first_id, second_id = (d.id for d in two_decisions(session))
-    client.patch(
-        f"{PREFIX}/decisions/{first_id}",
-        json={"status": "confirmed", "statement": "담당 연락처 010-1234-5678 로 공유"},
-    )
+    reworded_before_the_rule(client, session, first_id)
+    client.patch(f"{PREFIX}/decisions/{first_id}", json={"status": "confirmed"})
     client.patch(f"{PREFIX}/decisions/{second_id}", json={"status": "confirmed"})
 
     response = client.get(f"{PREFIX}/reviews/{MEETING}/outbound")
@@ -980,9 +1015,6 @@ def test_a_confirmed_rewording_with_personal_data_is_held_back_by_category(
     assert [d["id"] for d in outbound["decisions"]] == [second_id]
     assert outbound["blocked"] == [{"id": first_id, "kind": "decision", "categories": ["phone"]}]
     assert "1234-5678" not in response.text
-
-
-WITH_A_NUMBER = "담당 연락처 010-1234-5678 로 공유"
 
 
 def _rows(client: TestClient) -> dict[str, dict]:
@@ -996,9 +1028,8 @@ def test_a_decision_the_outbound_check_refuses_says_so_on_its_row(
     told nothing: a warning in the log, by id. The row now says it, from the
     same check, and names neither the value nor its category."""
     first, second = two_decisions(session)
-    answer = client.patch(
-        f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed", "statement": WITH_A_NUMBER}
-    )
+    reworded_before_the_rule(client, session, first.id)
+    answer = client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
     client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
 
     # What the send does with each: the real check, on the real request body.
@@ -1015,7 +1046,7 @@ def test_a_decision_the_outbound_check_refuses_says_so_on_its_row(
         is not None
     )
 
-    assert answer.json()["held_back"] is True, "said at once, in the answer to the rewording"
+    assert answer.json()["held_back"] is True, "said at once, in the answer to the verdict"
     rows = _rows(client)
     assert rows[first.id]["held_back"] is True
     assert rows[second.id]["held_back"] is False
@@ -1028,9 +1059,8 @@ def test_the_row_stops_saying_so_once_it_is_reworded_and_its_page_then_goes(
     client: TestClient, session: Session
 ) -> None:
     first, _ = two_decisions(session)
-    client.patch(
-        f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed", "statement": WITH_A_NUMBER}
-    )
+    reworded_before_the_rule(client, session, first.id)
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
 
     answer = client.patch(
         f"{PREFIX}/decisions/{first.id}", json={"statement": "담당자 연락처는 따로 공유"}
@@ -1051,28 +1081,27 @@ def test_only_a_confirmed_decision_is_said_to_be_held_back(
     """Nothing unconfirmed is sent anyway (#246): a pending or rejected row with
     the same text was not held back by this, and does not say it was."""
     first, second = two_decisions(session)
-    client.patch(f"{PREFIX}/decisions/{first.id}", json={"statement": WITH_A_NUMBER})
-    typed = client.post(
-        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": WITH_A_NUMBER}
-    ).json()
+    reworded_before_the_rule(client, session, first.id)
+    typed = typed_before_the_rule(client, session)
 
     rows = _rows(client)
     assert (rows[first.id]["status"], rows[first.id]["held_back"]) == ("pending", False)
     assert rows[second.id]["held_back"] is False
-    assert typed["held_back"] is True, "a typed decision is confirmed from the moment it exists"
+    assert rows[typed]["held_back"] is True, (
+        "a typed decision is confirmed from the moment it exists"
+    )
 
-    put_back = client.patch(f"{PREFIX}/decisions/{typed['id']}", json={"status": "pending"})
+    put_back = client.patch(f"{PREFIX}/decisions/{typed}", json={"status": "pending"})
     assert put_back.json()["held_back"] is False
 
 
 def test_the_rows_that_say_so_are_the_held_back_list(client: TestClient, session: Session) -> None:
     """One check, read two ways: the row's mark and ``blocked`` never disagree."""
     first, second = two_decisions(session)
-    client.patch(
-        f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed", "statement": WITH_A_NUMBER}
-    )
+    reworded_before_the_rule(client, session, first.id)
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
     client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
-    client.post(f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": WITH_A_NUMBER})
+    typed_before_the_rule(client, session)
 
     marked = {id_ for id_, row in _rows(client).items() if row["held_back"]}
     blocked = client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["blocked"]
