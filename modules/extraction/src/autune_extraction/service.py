@@ -142,7 +142,16 @@ from .schemas import (
     SyncFailureRead,
     TeamRead,
 )
-from .slots import KST, Assignee, assignee_of, meeting_day, names_chosen_date, parse_due
+from .slots import (
+    KST,
+    Assignee,
+    assignee_of,
+    dates_named,
+    meeting_day,
+    names_chosen_date,
+    parse_due,
+    past_form_at,
+)
 
 log = get_logger(__name__)
 
@@ -3181,6 +3190,124 @@ _NOT_SETTLED = re.compile(r"아직|미정")
 """Nor does one that says the date is open: "확정된 건 아직 없고 다음 주에
 다시 얘기하죠" names a milestone word and a date and settles neither."""
 
+# What the rule leaves alone (module B's owner, 2026-10-09: "가장 좁게"). A line
+# it takes wrongly is a decision nobody made: it waits in the review list, goes
+# to D with the other pending decisions and can be read there as a change of an
+# earlier one (mminjae97 on #1145). A line it leaves is where it was before the
+# rule -- unlabelled. So every doubt below is settled towards leaving.
+
+_LOOKS_BACK_ENDING = re.compile(r"(?:죠|지요|잖아요|잖습니까|는데요?|던데요?|거든요|더라고요)")
+"""After a past form these recall or ask agreement about what was: "잡혀
+있었죠", "확정됐잖아요", "10월 30일까지였는데"."""
+
+_STATE_THAT_WAS = re.compile(r"[혀져돼어아여와]\s*있었")
+"""잡혀 있었-, 예정돼 있었-, 정해져 있었-: how things stood. Not "문제가
+있었지만", where 있었 is not a state something was left in."""
+
+_LOOKS_BACK_WORD = re.compile(
+    r"원래(?!\s*(?:계획|일정|예정)?\s*대로)|당초|애초|처음에|예전에|지난번에|이전에|기존에"
+)
+"""Not "원래 계획대로", which says the plan holds."""
+
+_STILL_OPEN = re.compile(
+    r"(?:정해|결정해|확정해|봐|확인해|논의해|얘기해|검토해|잡아)야|모르겠"
+    r"|[갈될할올날낼줄칠킬출을]지(?:는|도|가|를)?(?=[\s,.?!]|$)"
+)
+"""Still to be decided: "오늘 안에 정해야 되는데", "마감을 봐야 되는데", "될지
+모르겠네요". An obligation to finish is not that -- "금요일까지 끝내야 합니다"
+states a deadline -- so only verbs of deciding and looking are listed."""
+
+_IF_WORD = re.compile(r"([가-힣]+면)(?:은|는|요)?(?=[\s,]|$)")
+"""A word ending in -면: "늦어지면", "없으면", "금요일이라면"."""
+
+_NOT_A_CONDITION = frozenset(
+    {
+        # Openers that carry on from what was said, not a condition on the date.
+        "그러면",
+        "그렇다면",
+        "그러시면",
+        "이러면",
+        "아니면",
+        "어쩌면",
+        "말하자면",
+        "왜냐하면",
+        "왜냐면",
+        "이를테면",
+        # Openers that sum up, which is where an announcement often comes.
+        "정리하면",
+        "요약하면",
+        "말하면",
+        "말씀드리면",
+        "말씀드리자면",
+        # Nouns that end the same way.
+        "화면",
+        "측면",
+        "방면",
+        "전면",
+        "후면",
+        "정면",
+        "장면",
+        "지면",
+        "표면",
+        "수면",
+        "국면",
+        "단면",
+        "평면",
+        "내면",
+        "대면",
+        "서면",
+        "반면",
+        "라면",
+    }
+)
+"""Whole words, not endings: "끝내면" ends like 내면 and "늦어지면" like 지면,
+and both are conditions. A noun written onto the word before it ("결제화면")
+is read as a condition and the line left, which is the side to err on."""
+
+_WORRIES = re.compile(r"걱정|빡빡|촉박|불안")
+"""The four the owner was shown. "출시가 금요일인데 걱정이네요" names a
+milestone and a day and announces nothing."""
+
+
+def _recalls(sentence: str) -> bool:
+    """Whether ``sentence`` looks back at a date instead of announcing one.
+
+    Three signs, each enough: a past form with an ending that recalls or asks
+    agreement; a state that was, or a past of a past ("확정됐었습니다"); a
+    look-back word with a past form, when one date is named -- two dates are a
+    change announced with its old date ("원래 10월 30일이던 마감을 11월 5일로
+    확정했습니다"), which is news."""
+    if any(
+        past_form_at(sentence, match.start() - 1) for match in _LOOKS_BACK_ENDING.finditer(sentence)
+    ):
+        return True
+    if _STATE_THAT_WAS.search(sentence) or any(
+        past_form_at(sentence, index) and sentence[index + 1] == "었"
+        for index in range(len(sentence) - 1)
+    ):
+        return True
+    return bool(
+        _LOOKS_BACK_WORD.search(sentence)
+        and any(past_form_at(sentence, index) for index in range(len(sentence)))
+        and dates_named(sentence) <= 1
+    )
+
+
+def _hangs_on_something(sentence: str) -> bool:
+    """Whether ``sentence`` is still open: something yet to be decided, a
+    condition (-면), or a worry."""
+    if _STILL_OPEN.search(sentence) or _WORRIES.search(sentence):
+        return True
+    return any(match.group(1) not in _NOT_A_CONDITION for match in _IF_WORD.finditer(sentence))
+
+
+def _only_a_settling_named(sentence: str) -> bool:
+    """Whether 확정 is the only milestone word and no date is what was chosen.
+    "목요일에 확정해서 말씀드릴게요" names the day someone will settle a thing;
+    "11월 15일로 확정됐습니다" names what it was settled as."""
+    return set(_MILESTONE.findall(sentence)) == {"확정"} and not names_chosen_date(sentence)
+
+
 STATED_DATE_CONFIDENCE = 0.9
 """A rule gives a label, not a probability: the constant the cloud
 classifier's labels carry (``pipeline.llm.LLM_CONFIDENCE``), which says
@@ -3197,11 +3324,18 @@ def _settled_date_sentence(text: str, day: date | None) -> str | None:
     30일이었죠" recalls a date and "지난 배포는 화요일에 했습니다" reports one.
     The exception is a date something was set *to*
     (``slots.names_chosen_date``): in "계약 갱신일은 11월 15일로 확정됐습니다"
-    the past verb is the settling, and that is the line this rule is for."""
+    the past verb is the settling, and that is the line this rule is for.
+
+    Left alone, since 2026-10-09: a sentence that looks back at a date
+    (``_recalls``), one that is still open (``_hangs_on_something``), and one
+    whose only milestone word is a settling still to come
+    (``_only_a_settling_named``)."""
     for sentence in _SENTENCE_BREAK.split(text.strip()):
         if not _MILESTONE.search(sentence):
             continue
         if _ASKS.search(sentence) or _NOT_SETTLED.search(sentence):
+            continue
+        if _recalls(sentence) or _hangs_on_something(sentence) or _only_a_settling_named(sentence):
             continue
         if parse_due(sentence, day) is not None or names_chosen_date(sentence):
             return sentence
