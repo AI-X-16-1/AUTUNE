@@ -476,7 +476,7 @@ describe("TeamMenu, making a team", () => {
   const makeButton = () => screen.getByRole("button", { name: "팀 만들기" }) as HTMLButtonElement;
 
   it("opens a small window in the middle of the screen, over a dimmed page", async () => {
-    // The user, 2026-10-07: "팀 추가버튼의 경우 할 일처럼 작은 화면 띄워줘".
+    // The user, 2026-10-07: "팀 추가버튼의 경우 액션처럼 작은 화면 띄워줘".
     open([A, B]);
     await waitFor(() => expect(names()).toEqual(["가 팀", "나 팀"]));
     expect(maker()).toBeNull();
