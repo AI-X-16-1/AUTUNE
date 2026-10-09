@@ -261,11 +261,14 @@ here.
 sentence names one confirmed item due by the 80% point -- the one due last of
 those with a title -- when B's row gives it as `title` on an entry, and counts
 the rest ("'API 연동' 등 할 일 4건"). An unconfirmed item's title is never
-used (B's rule 3). **B does not hand over titles today**: `meeting_due_dates`
-returns dates and counts only, by B's own rule, so the sentence counts the
-items without naming one until B's owner agrees to a `title` for confirmed
-entries (asked on an issue). A title is B's masked description, cut to 20
-characters, and is filled in by code; it never reaches the model.
+used (B's rule 3). B hands over a `title` on a confirmed entry
+(`meeting_due_dates`, #1038, #1062): the item's description when B's outbound
+screen finds no unmasked personal data in it, and no `title` key when it does
+(`_shown_title`); without one the sentence counts the items and names none. B
+does not mask the title itself -- it passes or withholds it. Cut to 20
+characters, it is filled in by code, and Follow-up's own wording call
+(`explain.py`) never sends it. In a chat turn the main agent's compose step
+does send it: see section 6.
 
 *Why this date: the sentence* (`explain.py`, Stage 2). Each `Suggestion`
 carries `why`, the values the rule used: the step (`overdue`, `due_share`,
@@ -341,13 +344,21 @@ text, as settled on #509.
   aggregate and section 3.1 allows it. But in a two- or three-person meeting a
   share of one-half says a lot about one person, and the rule does not need it.
   If a later rule wants it, that is a decision recorded here first.
-- **What leaves Autune: the reason's counts and blank names only** (decided
-  2026-10-08). The one outbound request is the reason sentence's model call
-  (section 5). It carries the rule's step, `basis`, the blanks it may use and
+- **What leaves Autune** (decided 2026-10-08; the chat turn added after
+  #1032's review, #1069). Follow-up's own outbound request is the reason
+  sentence's model call (section 5), and it carries the reason's counts and
+  blank names only: the rule's step, `basis`, the blanks it may use and
   counts. No date, no item title, no gap title, no owner, no meeting text:
   dates and the title are filled in by code after the call. It goes through
   `GeminiText`, so `check_outbound` sees it. Until then this read "nothing
-  leaves Autune". The only write is still B's, and it runs after the lead
+  leaves Autune".
+  A run asked for in chat makes a second request. The main agent's compose
+  step (`main/gemini.py::compose`) sends the run's `summary` and items to
+  the model, so the filled reason sentence -- with the item title in it,
+  when there is one -- and the cited gaps' titles reach the model there,
+  through `check_outbound` (`agent-layer.md` section 3.1, "Where a title can
+  reach a model"). A run started by an event composes nothing and makes the
+  wording call alone. The only write is still B's, and it runs after the lead
   approves. The item it stores holds B's fixed wording, not gap titles, so no
   topic label is copied into B.
 - **The lead is the only reader of the proposal**: approvers with scope
@@ -367,8 +378,10 @@ text, as settled on #509.
   there is nothing of a person for it to repeat. Its template is checked for
   blanks it was not offered, dates and numbers it was not given, and one that
   fails is replaced by the step's fixed template. The one title in the filled
-  sentence is a confirmed item's masked description, put there by code. The
-  earlier sketch's member-name check is not needed while no title is sent.
+  sentence is a confirmed item's description that B's outbound screen
+  passed, put there by code. The earlier sketch's member-name check is not
+  needed while the wording call sends no title; the chat turn's compose step
+  is the main agent's, and its outbound check applies there.
 
 ## 7. Open questions
 
