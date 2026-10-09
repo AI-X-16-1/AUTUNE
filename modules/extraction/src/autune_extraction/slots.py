@@ -469,7 +469,28 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
 )
 
 
-def parse_due(text: str, day: date | None) -> DueDate | None:
+_CHOSEN = re.compile(r"\s*(?:으로|로)(?![가-힣])")
+"""(으)로 right after a date: the date is what was chosen -- "화요일로
+바꾸기로", "10월 20일로 정했습니다" -- not when something is due. Not 로부터 or
+로서, which are other words."""
+_EVERY_BEFORE = re.compile(r"(?:매주|매달|매월|매일|매년|격주|격월)\s*$")
+_EVERY_AFTER = re.compile(r"\s*마다")
+"""A day that comes round -- "매주 월요일에", "금요일마다" -- is a schedule."""
+
+
+def _what_was_decided(text: str, start: int, end: int) -> bool:
+    """Whether the date phrase at ``text[start:end]`` is the content of a
+    decision and not its deadline: the date chosen (``_CHOSEN``) or a day that
+    repeats. Each is looked for right at the phrase, so a deadline word in
+    between -- "금요일까지로" -- leaves it a deadline."""
+    return bool(
+        _CHOSEN.match(text, end)
+        or _EVERY_AFTER.match(text, end)
+        or _EVERY_BEFORE.search(text, 0, start)
+    )
+
+
+def parse_due(text: str, day: date | None, *, decided: bool = False) -> DueDate | None:
     """The first date phrase in ``text`` that is a deadline, not the past.
 
     ``None`` when the utterance names no such date. When it names more than
@@ -502,6 +523,14 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
 
     A phrase with no resolvable day (no meeting day, or "2월 30일") cannot be
     judged past or not, and is returned with its words and no date.
+
+    ``decided`` is for the lines of a decision (``decisions._build``): there a
+    date can be the thing decided -- "배포 요일은 화요일로 바꾸기로 했습니다",
+    "정기 회의는 매주 월요일에 하기로 했습니다" -- and such a phrase is skipped
+    like one said of the past (``_what_was_decided``). Until 2026-10-09 the
+    first read "(기한 2026-10-13)" on a decision that sets no deadline. A
+    promise is read without it: "화요일로 옮기겠습니다" is still a card due
+    Tuesday, for a person to correct.
     """
     found: list[tuple[int, int, re.Match[str], Resolver]] = []
     for pattern, resolve in _PHRASES:
@@ -516,6 +545,8 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
         taken_until = match.end()
         stop = min((other for other, *_ in found if other >= match.end()), default=len(text))
         if _said_of_the_past(text, match.end(), stop):
+            continue
+        if decided and _what_was_decided(text, match.start(), match.end()):
             continue
         try:
             resolved = resolve(match, day)

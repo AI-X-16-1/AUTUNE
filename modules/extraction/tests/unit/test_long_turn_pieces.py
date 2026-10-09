@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -46,11 +46,13 @@ from autune_extraction.models import (
     ExtConfirmation,
     ExtDecision,
     ExtDecisionRelated,
+    ExtDecisionReview,
     ExtDecisionSource,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 from autune_extraction.pipeline.base import Resolution
 from autune_extraction.pipeline.llm import _prediction, strongest
+from autune_extraction.schemas import DecisionReviewUpdate
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -508,3 +510,130 @@ def test_a_summary_from_before_the_offsets_shows_the_start_of_the_whole_turn(
 
     assert len(long_turn) > service.SUMMARY_MAX_CHARS
     assert preview == long_turn[: service.SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+
+
+# --- a decision of a turn that a person marked (2026-10-09) --------------------------
+
+TWO = CUT.join([CHAT, DECIDED, LATER, CHAT])
+"""Two decisions back to back in one turn: two rows, the first with the turn's
+plain id (``identified``)."""
+
+
+def statements(session: Session) -> dict[str, str]:
+    session.expire_all()
+    return {d.id: d.statement for d in session.query(ExtDecision)}
+
+
+def test_confirming_one_decision_of_a_turn_leaves_the_other_its_own_row(wired: Session) -> None:
+    """The kept row holds its part of the turn, not the turn: the second
+    decision is still made, and with the id it had -- not the plain id the
+    kept row has."""
+    event = meeting(wired, TWO)
+    tasks.on_transcript_ready(event)
+    before = statements(wired)
+    plain = decision_id(MEETING, ["utt_1"])
+    (other,) = before.keys() - {plain}
+    service.review_decision(
+        wired, wired.get(ExtDecision, plain), DecisionReviewUpdate(status="confirmed")
+    )
+    wired.commit()
+
+    tasks.on_transcript_ready(event)
+
+    assert statements(wired) == before
+    review = wired.get(ExtDecisionReview, plain)
+    assert review is not None and review.status == "confirmed"
+    assert wired.get(ExtDecisionReview, other) is None
+
+
+def test_a_confirmed_decision_made_from_two_parts_of_a_turn_keeps_both(wired: Session) -> None:
+    """A row as the grouping left this turn before 2026-10-09 -- one decision
+    from the first part to the second -- that a person confirmed. Neither part
+    is made a row again, and the row is not rewritten as the first part alone,
+    which its id would otherwise name."""
+    event = meeting(wired, TWO)
+    tasks.on_transcript_ready(event)
+    plain = decision_id(MEETING, ["utt_1"])
+    (other,) = statements(wired).keys() - {plain}
+    wired.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id == other))
+    wired.execute(delete(ExtDecision).where(ExtDecision.id == other))
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    link.excerpt_start, link.excerpt_end = TWO.index(DECIDED), TWO.index(LATER) + len(LATER)
+    row = wired.get(ExtDecision, plain)
+    row.statement = "출시는 다음 달로 미루기로 함"
+    service.review_decision(wired, row, DecisionReviewUpdate(status="confirmed"))
+    wired.commit()
+
+    tasks.on_transcript_ready(event)
+
+    assert statements(wired) == {plain: "출시는 다음 달로 미루기로 함"}
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    assert TWO[link.excerpt_start : link.excerpt_end] == CUT.join([DECIDED, LATER])
+
+    # The turn is corrected, and the run writes up the first part under the
+    # plain id, which is also this row's. The row is read again from both of
+    # its parts and is not given a sentence written about one.
+    corrected = TWO.replace(CHAT, "[이름] 님 오셨네요", 1)
+    stored = wired.get(Utterance, "utt_1")
+    stored.text = corrected
+    wired.commit()
+    parts = corrected.split(CUT)
+    read = in_pieces(
+        [
+            turn(
+                "utt_1",
+                K.DECISION,
+                corrected,
+                pieces=tuple(zip(parts, (None, K.DECISION, K.DECISION, None), strict=True)),
+            )
+        ]
+    )
+    service.build_decisions(
+        wired,
+        meeting_id=MEETING,
+        utterances=read,
+        summaries={plain: Resolution("이번 분기는 A안으로 진행", used=())},
+    )
+
+    assert statements(wired) == {plain: "출시는 다음 달로 미루기로 함"}
+    assert not wired.get(ExtDecision, plain).statement_resolved
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    assert corrected[link.excerpt_start : link.excerpt_end] == CUT.join([DECIDED, LATER])
+
+
+def test_a_kept_decision_of_a_turn_is_read_again_from_its_decisions_not_the_talk_between(
+    wired: Session,
+) -> None:
+    """The part a row was made from runs from its first decision to its last,
+    and what was said in between is in it. Read again after a correction, the
+    row's sentence is still the decision's and not the longest thing there."""
+    aside = "오늘 날씨가 참 좋네요 다들 점심은 맛있게 드셨는지 모르겠네요"
+    assent = "그럼 그렇게 갑니다"
+    whole = CUT.join([DECIDED, aside, assent, CHAT])
+    tasks.on_transcript_ready(meeting(wired, whole))
+    plain = decision_id(MEETING, ["utt_1"])
+    before = statements(wired)
+    assert list(before) == [plain]
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    assert whole[link.excerpt_start : link.excerpt_end] == CUT.join([DECIDED, aside, assent])
+    service.review_decision(
+        wired, wired.get(ExtDecision, plain), DecisionReviewUpdate(status="confirmed")
+    )
+    corrected = whole.replace(CHAT, "[이름] 님 오셨네요")
+    wired.get(Utterance, "utt_1").text = corrected
+    wired.commit()
+
+    parts = corrected.split(CUT)
+    read = in_pieces(
+        [
+            turn(
+                "utt_1",
+                K.DECISION,
+                corrected,
+                pieces=tuple(zip(parts, (K.DECISION, None, K.DECISION, None), strict=True)),
+            )
+        ]
+    )
+    service.build_decisions(wired, meeting_id=MEETING, utterances=read)
+
+    assert statements(wired) == before
