@@ -34,6 +34,7 @@ from .schemas import (
     GapAsk,
     GapAskRequest,
     GapAskTargets,
+    GapCardsSent,
     GapCarry,
     GapDismissal,
     GapExplanations,
@@ -221,6 +222,14 @@ def ask_gap(gap_id: str, body: GapAskRequest, session: SessionDep, reader: Curre
     Slack channel, mentioning the member picked. Nothing is stored and no
     calendar is written."""
     return service.ask(session, gap_id, reader, user_id=body.user_id)
+
+
+@router.post("/reports/{meeting_id}/slack", response_model=GapCardsSent)
+def send_cards(meeting_id: str, session: SessionDep, reader: CurrentUser) -> GapCardsSent:
+    """ "질문 카드 Slack 전송" on S20 (#824): post the meeting's open ``high``
+    gaps on the team's Slack channel as question cards, a few at most, and a
+    link for the rest. Nothing is stored."""
+    return service.send_cards(session, meeting_id, reader)
 
 
 @router.get("/agenda/{meeting_id}/events", response_model=GapAgendaEvents)
