@@ -53,7 +53,7 @@ const NAV: NavItem[] = [
   // so home is the current entry anywhere inside one -- otherwise nothing in
   // the sidebar would be lit on the screens people spend most time on.
   { label: "홈", href: "/", isCurrent: (p) => p === "/" || p.startsWith("/meetings") },
-  { label: "액션아이템", href: "/actions", isCurrent: (p) => p === "/actions" },
+  { label: "할 일", href: "/actions", isCurrent: (p) => p === "/actions" },
   { label: "갭 리포트", href: "/gaps", isCurrent: (p) => p === "/gaps" },
   { label: "결정 히스토리", href: "/decisions", isCurrent: (p) => p.startsWith("/decisions") },
   // The team's Drive links (#817): a title and a link, opened in Google's own

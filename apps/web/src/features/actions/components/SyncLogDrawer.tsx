@@ -24,7 +24,7 @@ import { SYSTEM_LABEL, whatFailed } from "./SyncStatus";
  * copy to the item's assignee and an event to the person whose calendar holds
  * it, and this draws only what it was sent -- hence "내 캘린더".
  *
- * Nothing is retried from here. A row leads to the meeting's 액션 tab, where
+ * Nothing is retried from here. A row leads to the meeting's 할 일 tab, where
  * the card has "다시 시도" and the item can be corrected first.
  */
 export function SyncLogDrawer({ teamId, onClose }: { teamId: string; onClose: () => void }) {
@@ -81,7 +81,7 @@ export function SyncLogDrawer({ teamId, onClose }: { teamId: string; onClose: ()
               동기화 기록
             </h2>
             <p className="mt-1 text-[var(--color-ink-muted)]" style={META}>
-              이 팀의 액션 아이템을 Notion, Jira, 캘린더로 보낸 기록입니다. 캘린더는 내
+              이 팀의 할 일을 Notion, Jira, 캘린더로 보낸 기록입니다. 캘린더는 내
               캘린더의 것만 보이고, 각각 최근 30건까지 보입니다.
             </p>
           </div>
@@ -112,7 +112,7 @@ export function SyncLogDrawer({ teamId, onClose }: { teamId: string; onClose: ()
                 ) : (
                   <>
                     <p className="text-[var(--color-ink-muted)]" style={META}>
-                      다시 보내 성공하면 여기서 사라집니다. 다시 시도는 그 회의의 액션
+                      다시 보내 성공하면 여기서 사라집니다. 다시 시도는 그 회의의 할 일
                       탭에서 할 수 있습니다.
                     </p>
                     <ul className="grid gap-2">
@@ -179,7 +179,7 @@ const HEADING = {
   fontWeight: "var(--text-status-weight)",
 } as const;
 
-/** The item, as a way to its meeting's 액션 tab -- where its card is. */
+/** The item, as a way to its meeting's 할 일 tab -- where its card is. */
 function ItemLine({ row }: { row: { meeting_id: string; description: string } }) {
   return (
     <Link

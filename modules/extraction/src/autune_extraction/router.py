@@ -125,7 +125,7 @@ def get_extraction_state(
     meeting_id: str, session: SessionDep, reader: CurrentUser
 ) -> ExtractionState:
     """Whether this meeting's extraction went through, failed, or is waiting to
-    run again -- what the 액션 tab says above its board. Members of the
+    run again -- what the 할 일 tab says above its board. Members of the
     meeting's team only; anyone else gets the 404 an unknown meeting gets."""
     service.require_readable_meeting(session, meeting_id, reader)
     return attempts.state(session, meeting_id)
@@ -139,7 +139,7 @@ def get_extraction_state(
 def request_extraction(
     meeting_id: str, session: SessionDep, reader: CurrentUser
 ) -> ExtractionState:
-    """Extract this meeting's action items and decisions again -- the 액션
+    """Extract this meeting's action items and decisions again -- the 할 일
     tab's "다시 추출" (the user, 2026-10-06).
 
     Accepted, not done: the request is recorded and the worker runs it within
@@ -726,7 +726,7 @@ def _member_team(
     session: Session, reader: User, meeting_id: str | None, team_id: str | None = None
 ) -> str:
     """The team an integration-setup request is about, after checking the caller
-    belongs to it -- named by a meeting (the 액션 tab) or by the team itself (S28
+    belongs to it -- named by a meeting (the 할 일 tab) or by the team itself (S28
     settings, #496). Anyone else gets the 404 an unknown meeting or team gets
     (#189)."""
     if meeting_id:

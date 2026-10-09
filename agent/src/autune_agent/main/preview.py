@@ -47,7 +47,7 @@ def preview(
             item = result.items[0] if result.ok and result.items else None
         who = session.get(User, args.get("assignee_id", ""))
         if item is None:
-            return {"title": "액션아이템 재배정", "body": GONE}
+            return {"title": "할 일 재배정", "body": GONE}
         # Check if the assignee is a member of the team
         to = "알 수 없는 사람"
         if who is not None:
@@ -59,7 +59,7 @@ def preview(
             )
             if is_member:
                 to = who.display_name
-        return {"title": "액션아이템 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
+        return {"title": "할 일 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
     if row.tool in FOLLOWUP_TOOLS:
         gaps = _followup_gaps(session, row, tools)
         when = _suggested_date(row.arguments.get("due_date"))

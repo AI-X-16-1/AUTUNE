@@ -15,7 +15,7 @@ reason module A's ``/dev/token`` exists for sign-in.
 **One Notion page in, the databases created.** This takes the integration
 token and one page id (shared with the integration beforehand, Notion's own
 requirement) and hands them to ``notion_setup.provision_databases``, which
-creates "액션 아이템", "결정" and "회의록" under the page -- or keeps the ones
+creates "할 일", "결정" and "회의록" under the page -- or keeps the ones
 already made under it. That step lives in ``notion_setup`` because S28's
 one-click connect needs it too (#428); this page is one caller of it.
 

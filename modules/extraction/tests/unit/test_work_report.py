@@ -116,7 +116,7 @@ def test_the_text_is_a_line_to_the_person_then_the_draft_headed_by_its_team() ->
         "• 오늘까지인 일 (오늘 기한)",
         "늦은 일",
         "• 늦은 일 (기한 10월 1일 목 지남)",
-        "그 밖의 열린 액션 아이템 3개",
+        "그 밖의 열린 할 일 3개",
         BOARD,
     ]
 

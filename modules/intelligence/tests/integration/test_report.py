@@ -202,7 +202,7 @@ def test_the_weeks_report_shows_completion_overdue_and_carried_over(
     assert metrics["carried_over_action_items"] == 5
     assert metrics["action_item_confirmation_rate"] == pytest.approx(0.9)
     assert metrics["action_progress_as_of"] is not None
-    assert "액션 아이템 완료율 (최근 4주 회의): 40%" in report.body_markdown
+    assert "할 일 완료율 (최근 4주 회의): 40%" in report.body_markdown
     assert "기한 지난 항목 2건" in report.body_markdown
     assert "이월된 항목 5건" in report.body_markdown
     assert "90%" not in report.body_markdown  # the confirmation rate is not 완료율
@@ -265,7 +265,7 @@ def test_counts_that_did_not_arrive_are_said_so_not_shown_as_zero(
 
     assert report.metrics_json["action_item_completion_rate"] is None
     assert report.metrics_json["overdue_action_items"] is None
-    assert "액션 아이템 완료 현황을 받지 못했습니다" in report.body_markdown
+    assert "할 일 완료 현황을 받지 못했습니다" in report.body_markdown
 
 
 def test_a_past_weeks_report_leaves_todays_counts_out(db_session: Session, team: str) -> None:

@@ -205,7 +205,7 @@ describe("the carried-over list hears the assistant", () => {
       .mockResolvedValueOnce(left({}))
       .mockResolvedValueOnce(left({ due_date: "2026-10-16" }, { overdue: 0 }));
     render(<CarriedOverActions meetingId="mtg_2" />);
-    const popup = await screen.findByRole("dialog", { name: "지난 회의 미완료 액션" });
+    const popup = await screen.findByRole("dialog", { name: "지난 회의 미완료 할 일" });
     expect(popup.textContent).toContain("10월 6일 화");
     expect(popup.textContent).toContain("기한이 지난 1건부터");
 
@@ -225,7 +225,7 @@ describe("the carried-over list hears the assistant", () => {
       .mockResolvedValueOnce(left({}))
       .mockResolvedValueOnce(left({ due_date: "2026-10-16" }, { overdue: 0 }));
     render(<CarriedOverActions meetingId="mtg_2" />);
-    await screen.findByRole("dialog", { name: "지난 회의 미완료 액션" });
+    await screen.findByRole("dialog", { name: "지난 회의 미완료 할 일" });
     fireEvent.click(screen.getByRole("button", { name: "확인" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(document.body.textContent).toContain("기한 지남 1건");
@@ -239,12 +239,12 @@ describe("the carried-over list hears the assistant", () => {
   it("goes away when nothing is left open", async () => {
     carried.mockResolvedValueOnce(left({})).mockResolvedValueOnce(NONE);
     render(<CarriedOverActions meetingId="mtg_2" />);
-    await screen.findByRole("dialog", { name: "지난 회의 미완료 액션" });
+    await screen.findByRole("dialog", { name: "지난 회의 미완료 할 일" });
 
     act(() => announceAgentActed());
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(document.body.textContent).not.toContain("넘어온 미완료 액션");
+    expect(document.body.textContent).not.toContain("넘어온 미완료 할 일");
   });
 
   it("opens the popup on the first answer to land, and drops an older one landing after", async () => {
@@ -256,7 +256,7 @@ describe("the carried-over list hears the assistant", () => {
 
     act(() => announceAgentActed());
 
-    const popup = await screen.findByRole("dialog", { name: "지난 회의 미완료 액션" });
+    const popup = await screen.findByRole("dialog", { name: "지난 회의 미완료 할 일" });
     expect(popup.textContent).toContain("10월 16일 금");
     await act(async () => {
       first.give(left({}));
@@ -269,7 +269,7 @@ describe("the carried-over list hears the assistant", () => {
   it("stops listening when the screen is left", async () => {
     carried.mockResolvedValue(left({}));
     const { unmount } = render(<CarriedOverActions meetingId="mtg_2" />);
-    await screen.findByRole("dialog", { name: "지난 회의 미완료 액션" });
+    await screen.findByRole("dialog", { name: "지난 회의 미완료 할 일" });
     unmount();
 
     act(() => announceAgentActed());

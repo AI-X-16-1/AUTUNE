@@ -13,14 +13,14 @@ def _r(summary: str, items: list[dict[str, Any]] | None = None, **kw: Any) -> To
 
 
 ACTIONS = _r(
-    "확정된 액션아이템 2건, 확인 대기 1건.",
+    "확정된 할 일 2건, 확인 대기 1건.",
     [
         {"title": "결제 API 스펙 초안", "body": "백엔드 · 2026-10-02 · todo"},
         {"title": "결제 화면 시안", "body": "디자인 · 2026-10-04 · todo"},
     ],
 )
 REVIEW = _r(
-    "결정 확인 대기 1건, 액션아이템 확인 대기 1건, 답 없는 약한 동의 0건.",
+    "결정 확인 대기 1건, 할 일 확인 대기 1건, 답 없는 약한 동의 0건.",
     [{"title": "결정 확인 대기", "score": 1.0}],
 )
 GAPS = _r(
@@ -44,10 +44,10 @@ LINKS = _r(
 
 def test_every_section_in_order() -> None:
     assert render(ACTIONS, REVIEW, GAPS, LINKS) == (
-        "✅ 확정된 액션 아이템\n"
+        "✅ 확정된 할 일\n"
         "• 결제 API 스펙 초안 — 백엔드 · 2026-10-02 · todo\n"
         "• 결제 화면 시안 — 디자인 · 2026-10-04 · todo\n"
-        "⏳ 결정 확인 대기 1건, 액션아이템 확인 대기 1건, 답 없는 약한 동의 0건.\n"
+        "⏳ 결정 확인 대기 1건, 할 일 확인 대기 1건, 답 없는 약한 동의 0건.\n"
         "\n"
         "⚠️ 열린 갭 2건, 그중 높음 1건.\n"
         "• 리스크·예외 처리 — 충분히 다뤄지지 않았습니다\n"
@@ -98,8 +98,8 @@ def test_a_low_gap_is_left_out_as_c_s_own_screen_hides_it() -> None:
 
 
 def test_zero_confirmed_items_is_one_line() -> None:
-    assert render(_r("확정된 액션아이템 0건, 확인 대기 0건."), None, None, None) == (
-        "✅ 확정된 액션 아이템 없음"
+    assert render(_r("확정된 할 일 0건, 확인 대기 0건."), None, None, None) == (
+        "✅ 확정된 할 일 없음"
     )
 
 
@@ -111,7 +111,7 @@ def test_nothing_pending_drops_the_pending_line() -> None:
 
 
 def test_a_truncated_list_says_there_is_more() -> None:
-    actions = _r("확정된 액션아이템 7건.", ACTIONS.model_dump()["items"], truncated=True)
+    actions = _r("확정된 할 일 7건.", ACTIONS.model_dump()["items"], truncated=True)
     assert "더 있어요 — 상세보기에서" in render(actions, None, None, None)
 
 

@@ -261,7 +261,7 @@ export function PiiReportModal({
           style={{ fontSize: "var(--text-meta)" }}
         >
           <li className="text-[var(--color-ink-body)]">
-            ✓ 선택 구간을 즉시 마스킹 · 요약·액션·갭 분석에 다시 반영
+            ✓ 선택 구간을 즉시 마스킹 · 요약·할 일·갭 분석에 다시 반영
           </li>
           <li>
             <label className="flex items-center gap-2 text-[var(--color-ink-body)]">

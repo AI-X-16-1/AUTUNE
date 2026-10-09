@@ -781,14 +781,14 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
     if progress is None:
         return []
     if progress.as_of is None:
-        return ["액션 아이템 완료 현황을 받지 못했습니다."]
+        return ["할 일 완료 현황을 받지 못했습니다."]
     counted = progress.as_of.astimezone(_KST)
     if progress.completion_rate is not None:
-        lines = [f"액션 아이템 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
+        lines = [f"할 일 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
     elif 0 < (progress.completion_meetings or 0) < ACTION_PROGRESS_MIN_MEETINGS:
         lines = ["확정 항목이 있는 최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
     else:
-        lines = ["최근 4주 회의에서 확정된 액션 아이템이 없습니다."]
+        lines = ["최근 4주 회의에서 확정된 할 일이 없습니다."]
     counts = []
     if progress.overdue is not None:
         counts.append(f"기한 지난 항목 {progress.overdue}건")
@@ -798,7 +798,7 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
         )
     if counts:
         lines.append(" · ".join(counts))
-    lines.append(f"액션 아이템 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
+    lines.append(f"할 일 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
     return lines
 
 

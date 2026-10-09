@@ -177,7 +177,7 @@ def build_text(report: WorkReport, *, board_url: str) -> str:
             out.append(heading)
             out += _lines(lines, day=report.day)
     if report.others:
-        out.append(f"그 밖의 열린 액션 아이템 {report.others}개")
+        out.append(f"그 밖의 열린 할 일 {report.others}개")
     out.append(board_url)
     return "\n".join(out)
 

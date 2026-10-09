@@ -98,7 +98,7 @@ def build_confirmation_dm(
 ) -> tuple[str, list[dict]]:
     """The DM asking one speaker to resolve one ambiguous agreement.
 
-    The speaker answers on Autune, at ``answer_url`` -- the meeting's 액션 tab,
+    The speaker answers on Autune, at ``answer_url`` -- the meeting's 할 일 tab,
     where their own open questions are listed (decided with the user,
     2026-10-01). With ``buttons`` -- a deployment Slack can reach
     (``slack_buttons``, #585) -- the DM also carries the three answers, handled
@@ -134,7 +134,7 @@ def build_confirmation_dm(
                 {
                     "type": "mrkdwn",
                     "text": "이 발화를 약속으로 볼지 판단이 서지 않아 여쭙습니다. "
-                    "답하지 않으시면 미결정으로 남고 액션 아이템이 만들어지지 않습니다.",
+                    "답하지 않으시면 미결정으로 남고 할 일이 만들어지지 않습니다.",
                 }
             ],
         },
