@@ -1,11 +1,13 @@
 """Module C as tools an agent can call (agent-layer.md section 4).
 
-Two reads for the Follow-up subagent
-(``agent/docs/specs/2026-09-30-followup-subagent-design.md``), two for the
+Three reads for the Follow-up subagent
+(``agent/docs/specs/2026-09-30-followup-subagent-design.md``) -- the third,
+whether the team already has a follow-up meeting ahead -- two for the
 approvals card of a Follow-up proposal -- what it cited (#644) and the days
 people picked for the next meeting -- and one for what the team sent on to its
-next meeting (#824). Each returns a dict in the shape agent-layer.md calls
-``ToolResult``::
+next meeting (#824). One write: the follow-up meeting a Follow-up proposal
+asked for, once the team lead approves it. Each returns a dict in the shape
+agent-layer.md calls ``ToolResult``::
 
     {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
@@ -13,7 +15,7 @@ next meeting (#824). Each returns a dict in the shape agent-layer.md calls
 E's ``tools.py``. ADR 0010 forbids a module importing the agent layer, so the
 registry validates these dicts when it collects them.
 
-What holds for all five:
+What holds for the six reads:
 
 - **Topics, never people or roles** -- with one exception, below. No result
   carries participation, a
@@ -36,13 +38,17 @@ What holds for all five:
 - ``team_id`` comes from the run's scope (``RUN_SCOPE``), never from a model.
   The agent's toolbox also refuses a ``meeting_id`` from another team. The
   tools check it again, so another team's meeting reads as missing here too.
-- Only reads, safe to call twice. C has no ``ACTIONS``.
+- Only reads, safe to call twice.
+
+The write, ``schedule_followup_meeting``, is in ``ACTIONS`` and not in
+``TOOLS``: no model is offered it, and the agent layer runs it only once an
+approver approves the proposal, as that approver (``user_id``).
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -51,7 +57,8 @@ from sqlalchemy.orm import Session
 
 from autune_core import Meeting, TeamMember, User
 
-from .models import GapAgendaEvent, GapGap, GapRelatedTopic, GapTopic
+from . import followup_meeting, team_notice
+from .models import GapAgendaEvent, GapFollowupEvent, GapGap, GapRelatedTopic, GapTopic
 
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in C's tables."""
@@ -397,7 +404,153 @@ def next_meeting_days(session: Session, team_id: str, meeting_id: str) -> dict[s
     )
 
 
-TOOLS = [open_gaps, recurring_open_gaps, gaps_by_id, carried_gaps, next_meeting_days]
+def upcoming_followup(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this to see whether the team already has a follow-up meeting ahead:
+    one an approved Follow-up proposal put on a calendar
+    (``schedule_followup_meeting``) that starts today or later in Korea. Do not
+    use it for the days people picked with "다음 회의 잡기" --
+    ``next_meeting_days`` answers that.
+
+    Returns one row, ``후속 회의``, with the ``meeting_id`` it follows and its
+    ``day`` (ISO), the soonest first; there is no row when there is none.
+    Nothing about who approved it or whose calendar holds it.
+    """
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    rows = session.execute(
+        select(GapFollowupEvent.meeting_id, GapFollowupEvent.event_day)
+        .join(Meeting, Meeting.id == GapFollowupEvent.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            GapFollowupEvent.event_id.is_not(None),
+            GapFollowupEvent.event_day >= today,
+        )
+        .order_by(GapFollowupEvent.event_day, GapFollowupEvent.meeting_id)
+    ).all()
+    items = [
+        {"title": "후속 회의", "meeting_id": meeting_id, "day": day.isoformat()}
+        for meeting_id, day in rows
+    ]
+    return _result(
+        summary=(
+            f"앞으로 잡힌 후속 회의가 {len(items)}건 있습니다."
+            if items
+            else "앞으로 잡힌 후속 회의가 없습니다."
+        ),
+        items=items,
+        evidence=[],
+    )
+
+
+FOLLOWUP_SAID = {
+    "past_day": ("the day has passed", "승인한 날짜가 이미 지났습니다."),
+    "already_scheduled": (
+        "the meeting already has its follow-up event",
+        "이 회의의 후속 회의 일정은 이미 잡혀 있습니다.",
+    ),
+    "not_connected": (
+        "the approver has no calendar connected",
+        "승인한 사람의 Google 캘린더가 연결되어 있지 않아 일정을 만들지 못했습니다.",
+    ),
+    "reconnect_required": (
+        "the approver's calendar must be connected again",
+        "Google 캘린더 연결이 끊겨 일정을 만들지 못했습니다. 다시 연결해 주세요.",
+    ),
+    "failed": ("the calendar did not take the event", "캘린더에 일정을 만들지 못했습니다."),
+}
+
+SLACK_SAID = {
+    "posted": " 팀 슬랙 채널에 알렸습니다.",
+    "no_slack": " 팀에 슬랙 채널이 연결되어 있지 않아 알리지 않았습니다.",
+    "failed": " 팀 슬랙 채널에는 알리지 못했습니다.",
+    "refused": " 팀 슬랙 채널에는 알리지 못했습니다.",
+    "not_tried": "",
+}
+
+
+def schedule_followup_meeting(
+    session: Session,
+    team_id: str,
+    meeting_id: str,
+    due_date: str,
+    user_id: str,
+    basis: str | None = None,
+) -> dict[str, Any]:
+    """Put the follow-up meeting a Follow-up proposal asked for on the
+    approver's own Google Calendar, invite the meeting's team members who took
+    part, tell the team's Slack channel and DM each guest who linked Slack
+    (``followup_meeting``).
+
+    ``due_date`` (``YYYY-MM-DD``) is the day on the approved card -- the name
+    module B's ``add_followup_item`` gave it, which the card reads. The event
+    starts then at the meeting's clock time in Korea. Its description lists
+    the meeting's open gaps, and the channel's notice says when and what.
+    ``basis`` is what Follow-up took the day from, for the card; it is
+    accepted and nothing else, as B's write accepts it.
+
+    L2 -- runs only after a person (the team lead, for Follow-up) approves,
+    and ``user_id`` is that approver: the agent layer fills it, never a model.
+    One event per meeting: a second approval makes nothing and says so. A day
+    already past, a calendar not connected or one Google refuses makes
+    nothing either, so a later proposal for the meeting can still make it.
+    """
+    try:
+        wanted = date.fromisoformat(due_date)
+    except ValueError:
+        return _result(
+            ok=False,
+            reason=f"not a date: {due_date!r}",
+            summary="날짜 형식이 아닙니다 (YYYY-MM-DD).",
+            items=[],
+            evidence=[],
+        )
+    meeting = _meeting(session, team_id, meeting_id)
+    if meeting is None:
+        return _missing(meeting_id)
+    approver = session.get(User, user_id)
+    on_team = session.scalar(
+        select(func.count())
+        .select_from(TeamMember)
+        .where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    if approver is None or not on_team:
+        return _result(
+            ok=False,
+            reason=f"{user_id} is not on team {team_id}",
+            summary="이 팀의 팀원만 후속 회의를 잡을 수 있습니다.",
+            items=[],
+            evidence=[],
+        )
+    done = followup_meeting.schedule(session, meeting, approver, wanted)
+    if done.outcome != "scheduled" or done.starts is None:
+        reason, summary = FOLLOWUP_SAID[done.outcome]
+        return _result(ok=False, reason=reason, summary=summary, items=[], evidence=[])
+    agenda = f", 안건 {done.gaps}건" if done.gaps else ""
+    dms = f" 참석자 {done.dms}명에게 슬랙 DM을 보냈습니다." if done.dms else ""
+    return _result(
+        summary=(
+            f"후속 회의를 {team_notice.when(done.starts)}에 캘린더에 잡고 "
+            f"{done.invited}명을 초대했습니다{agenda}.{SLACK_SAID[done.slack]}{dms}"
+        ),
+        items=[],
+        evidence=[meeting_id],
+    )
+
+
+TOOLS = [
+    open_gaps,
+    recurring_open_gaps,
+    gaps_by_id,
+    carried_gaps,
+    next_meeting_days,
+    upcoming_followup,
+]
+
+ACTIONS = [schedule_followup_meeting]
+"""C's one write, L2: it invites people and posts to the team channel, so it
+waits for a person. Kept out of ``TOOLS``: the registry offers ``TOOLS`` to
+models, and the action executor alone runs this."""
+
+L1_ACTIONS: list[Any] = []
 
 RUN_SCOPE = ("team_id",)
 """Parameters the agent fills from the run's authenticated scope, never from a model."""

@@ -39,7 +39,8 @@ unread meeting as a meeting with none (#248, contract 2.5).
 
 PostgreSQL only: `gap_topics`, `gap_topic_utterances`, `gap_topic_edges`,
 `gap_participation`, `gap_gaps`, `gap_related_topics`,
-`gap_meeting_template`, `gap_scorings`, `gap_agenda_events`, `gap_agenda_cleanup`.
+`gap_meeting_template`, `gap_scorings`, `gap_agenda_events`, `gap_agenda_cleanup`,
+`gap_followup_events`.
 
 The list in `/docs/modules/gap.md` is the same set; keep the two together.
 
