@@ -293,9 +293,10 @@ def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
 ) -> None:
     """#1038, the first condition. A person's own item is confirmed as written
     and its text never passed module A's masker, so the title is screened: the
-    entry stays, with its date, and the text does not come out. Written and
-    reworded through the board's own writes, which is where such text comes
-    from."""
+    entry stays, with its date, and the text does not come out. The board's
+    own writes refuse such text now (#1130), so the rows here hold it as rows
+    stored before that rule do; the rewording that takes it out is the board's
+    write."""
     plain = service.create_action_item(
         session,
         ActionItemCreate(
@@ -306,10 +307,11 @@ def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
         session,
         ActionItemCreate(
             meeting_id=MEETING,
-            description="거래처 010-1234-5678 로 견적 요청",
+            description="거래처에 견적 요청하기",
             due_date=TODAY + timedelta(days=3),
         ),
     )
+    phone.description = "거래처 010-1234-5678 로 견적 요청"
     session.flush()
 
     result = tools.meeting_due_dates(session, MEETING)
@@ -328,10 +330,8 @@ def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
     assert (row["dated_open"], row["dated_confirmed"]) == (2, 2)
     assert result["evidence"] == [plain.id, phone.id]
 
-    # An edit can put personal data in, and a rewording can take it out.
-    service.update_action_item(
-        session, plain, ActionItemUpdate(description="담당 kim@example.com 에게 전달")
-    )
+    # Another old row, and a rewording that takes the number out of the first.
+    plain.description = "담당 kim@example.com 에게 전달"
     service.update_action_item(session, phone, ActionItemUpdate(description="거래처에 견적 요청"))
     session.flush()
 

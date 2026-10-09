@@ -11,6 +11,7 @@ import { ProjectGroups } from "./ProjectGroups";
 import { getSummary, putSummaryNote } from "../api";
 import { WRITTEN_BY_MODEL, actionMeta, minutesOf } from "../minutes";
 import { ALL_PROJECTS, type ProjectChoice } from "../projectFilter";
+import { typedTextRefusal } from "../refusal";
 import { MAX_NOTE_CHARS, UNCONFIRMED_DECISION } from "../types";
 import type { MeetingSummary } from "../types";
 
@@ -217,18 +218,20 @@ function MemoEditor({
 }) {
   const [draft, setDraft] = useState(summary.note ?? "");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(false);
+  // What the failed save says; null while there is nothing to say.
+  const [error, setError] = useState<string | null>(null);
   const changed = draft.trim() !== (summary.note ?? "");
 
   const save = async () => {
     setSaving(true);
-    setError(false);
+    setError(null);
     try {
       const answer = await putSummaryNote(meetingId, draft);
       setDraft(answer.note ?? "");
       onSaved(answer);
-    } catch {
-      setError(true);
+    } catch (cause) {
+      // A memo is typed text and is screened before it is stored (#1130).
+      setError(typedTextRefusal(cause) ?? "저장하지 못했습니다. 다시 시도해 주세요.");
     } finally {
       setSaving(false);
     }
@@ -259,7 +262,7 @@ function MemoEditor({
       >
         <span className="flex-1 text-[var(--color-ink-muted)]">
           {error
-            ? "저장하지 못했습니다. 다시 시도해 주세요."
+            ? error
             : changed
               ? "저장해야 회의록 복사에 들어갑니다."
               : summary.note_updated_at
