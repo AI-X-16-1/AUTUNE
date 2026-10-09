@@ -815,7 +815,10 @@ class ExtDecisionReview(Base):
     sources are unchanged is the same row across a rebuild, so its review is
     never at risk of the foreign key; one whose sources changed is a different
     decision, and ``build_decisions`` deletes its review along with it rather
-    than diffing the whole meeting's ids against a "kept" list to find it. The
+    than diffing the whole meeting's ids against a "kept" list to find it --
+    unless the review says something. A decision a person confirmed, rejected
+    or reworded is kept with its review while its source lines can be read,
+    whatever a rerun makes of them (2026-10-09, ``build_decisions``). The
     foreign key holds anyway, as a backstop against any other path that deletes
     a decision without going through there -- SQLite does not enforce it
     without being asked, which is why the delete is not left to it alone. The

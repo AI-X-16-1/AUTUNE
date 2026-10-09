@@ -169,13 +169,16 @@ function ProjectRow({
       className="flex flex-wrap items-center gap-2"
       style={{ listStyle: "none" }}
     >
+      {/* `max-w-full`: a text field is as wide as its twenty characters whatever
+          holds it, and in a column narrower than that the two here pushed the
+          page sideways (390 px screen). They stop at the row's width instead. */}
       <input
         aria-label="프로젝트 이름"
         placeholder={project ? undefined : "새 프로젝트 이름"}
         value={name}
         maxLength={100}
         onChange={(event) => setName(event.target.value)}
-        className="border border-[var(--color-hairline)]"
+        className="max-w-full border border-[var(--color-hairline)]"
         style={input}
       />
       <input
@@ -183,7 +186,7 @@ function ProjectRow({
         placeholder="별칭 (쉼표로 구분)"
         value={aliases}
         onChange={(event) => setAliases(event.target.value)}
-        className="border border-[var(--color-hairline)]"
+        className="max-w-full border border-[var(--color-hairline)]"
         style={input}
       />
       <input

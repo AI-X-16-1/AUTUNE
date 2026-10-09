@@ -330,7 +330,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
-| `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once |
+| `ext_meeting_summaries` | A meeting's summary written by a cloud model, only with `AUTUNE_EXTRACTION_SUMMARY_IMPL=llm` (#421 v2): an overview, points one per line, the model, and a digest of the lines it was written from. One per meeting, deleted with it. A summary whose lines have changed is not shown and is deleted by the next run; deleted speech deletes it at once. A row with `too_long` set is not a summary: it holds no text and says only that the meeting, as those lines, needs more model calls than one meeting is allowed, so the tab can say so and the same lines are not tried again; it is deleted by the same rules |
 | `ext_forgotten_utterances` | The ids of utterances a person deleted, from B's speech hook until module A has removed the rows, so no summary is written from them in between (#782). An id and a time, nothing said; each row goes with its utterance |
 | `ext_weekly_digests` | That a person was sent Monday's DM of their own open items for one week through one team's Slack (#792). The primary key is the "once"; the message is not kept |
 | `ext_daily_digests` | That a person was sent the morning DM for one day through one team's Slack. The primary key is the "once", and the latest row's time is where the next DM's "since the last one" starts; the message is not kept. Goes with the person and with the team |
@@ -360,6 +360,33 @@ above v1's rows. It is off by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`)
 and, like every cloud implementation in this module, refused at start-up
 without `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until
 #392 is decided.
+
+The written summary names no person (#1070). The lines go to the model without
+their speakers, as for every model step here, so it cannot know who said a
+first-person line: measured on three invented meetings (2026-10-08) it gave a
+task to the wrong person in 2 of 15 names. Sending the speaker would be new
+data leaving the module, and a stored summary saying who proposed and who
+objected would be one person's stance on a decision
+(`docs/architecture/privacy.md`, #168). So both prompts ask for no person, a
+sentence of the last answer that still carries a `[사람N]` placeholder or a
+speaker's own first person is dropped, and no name is put back; who took each
+task is in the item rows under the paragraph, where a person confirms it. The
+overview loses only such sentences, and the summary only when none is left.
+Its points are at most seven, kept by kind (decision, task, open question,
+discussion: one of every kind before a second of any) and shown in that order.
+A meeting that needs more than twelve calls gets no summary; the tab says the
+meeting was too long for one, from the `too_long` row.
+
+Known limits, as measured, to weigh before the summary is switched on anywhere:
+
+- A name that is not on the team's roster was never replaced by a placeholder,
+  so the check does not see it. A per-meeting guest (#836) is such a name.
+- A meeting with many decisions shows decisions only (two of three measured);
+  an open question is then in the overview or nowhere. A share per kind in
+  the prompt was tried and dropped: it changed the kinds and made the model
+  call three decided things undecided, each against a board row it was given.
+- The keeping by kind was not exercised by a real answer: after the prompt
+  change the model wrote 7, 6 and 7 points. Tests show what it does past seven.
 
 A meeting that is processed again replaces its model-made rows —
 classifications, decisions, and draft items — rather than adding a second set,

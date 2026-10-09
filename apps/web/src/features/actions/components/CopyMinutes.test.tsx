@@ -63,9 +63,11 @@ describe("minutesText", () => {
         "",
         "액션",
         // No date line on this page, so the due date says its own year.
-        "1. 스펙 초안 공유 — 김민경 · 2026년 10월 9일 (금) (진행 중)",
-        "2. QA 일정 확인 — 민구 · 기한 없음 (확인 필요)",
-        "3. 회고 자료 정리 — 담당 미지정 · 기한 없음 (완료)",
+        // The state after a dot like every other part, not in brackets: a due
+        // date already ends in them.
+        "1. 스펙 초안 공유 — 김민경 · 2026년 10월 9일 (금) · 진행 중",
+        "2. QA 일정 확인 — 민구 · 기한 없음 · 확인 필요",
+        "3. 회고 자료 정리 — 담당 미지정 · 기한 없음 · 완료",
         "",
         "메모",
         "다음 회의는 목요일.",
