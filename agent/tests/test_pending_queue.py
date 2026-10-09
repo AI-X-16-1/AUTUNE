@@ -520,6 +520,147 @@ def test_proposals_default_to_per_meeting() -> None:
     assert _proposing("research", _reassign()).proposals_per == "meeting"
 
 
+def _proposing_nothing(name: str, *, read: str = "ok", **declared: Any) -> Subagent:
+    """A subagent whose run proposes nothing: it judged and found nothing to do
+    (``ok``), its read failed (``failed``), or it broke (``raises``)."""
+
+    def build(toolbox: Toolbox) -> Any:
+        def act(state: SubagentState) -> SubagentState:
+            if read == "raises":
+                raise RuntimeError("the subagent broke")
+            if read == "failed":
+                result = ToolResult.failure("items unreadable", "읽지 못했습니다.")
+            else:
+                result = ToolResult(ok=True, summary="제안하지 않습니다.")
+            return {"outcome": SubagentResult(result=result)}
+
+        graph = StateGraph(SubagentState)
+        graph.add_node("act", act)
+        graph.add_edge(START, "act")
+        graph.add_edge("act", END)
+        return graph.compile()
+
+    return Subagent(name=name, description="Use this in tests.", tools=(), build=build, **declared)
+
+
+def _record(
+    session: Session,
+    team: dict[str, str],
+    subagent: Subagent,
+    *,
+    meeting: str | None = None,
+    kind: str = "chat",
+) -> AgentRun:
+    row, _ = run_and_record(
+        "업무 몰린 사람 있어?",
+        session=session,
+        router=FakeRouter({}),
+        team_id=team["team"],
+        meeting_id=meeting,
+        trigger={"kind": kind},
+        subagents={subagent.name: subagent},
+        tools={},
+        actions={},
+        route_to=subagent.name,
+    )
+    return row
+
+
+def _statuses(session: Session) -> dict[str | None, str]:
+    session.expire_all()
+    return {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+
+
+@pytest.mark.parametrize(
+    ("kind", "about"), [("chat", None), ("event", "meeting"), ("periodic", None)]
+)
+def test_a_team_wide_run_that_proposes_nothing_retires_what_was_waiting(
+    session: Session, team: dict[str, str], kind: str, about: str | None
+) -> None:
+    """#1096: "nothing needs doing now" is a judgment of the team too. The card
+    of the run before it stayed, and approving it ran a change the later run had
+    found no reason for -- whatever woke that later run."""
+    proposing = _proposing("workload", _reassign(), proposals_per="team")
+    first = _record(session, team, proposing, meeting=_another_meeting(session, team), kind="event")
+    assert _statuses(session) == {first.id: "pending"}
+
+    silent = _proposing_nothing("workload", proposals_per="team")
+    second = _record(session, team, silent, meeting=team[about] if about else None, kind=kind)
+
+    assert second.outcome == "answered" and second.proposed == []
+    assert _statuses(session) == {first.id: "superseded"}
+
+
+def test_a_team_wide_run_whose_read_failed_keeps_what_was_waiting(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#1096: that run proposed nothing because it saw nothing. It answered --
+    with the failure -- and it says nothing about the cards."""
+    first = _record(session, team, _proposing("workload", _reassign(), proposals_per="team"))
+
+    failed = _proposing_nothing("workload", read="failed", proposals_per="team")
+    second = _record(session, team, failed)
+
+    assert second.outcome == "answered" and second.proposed == []
+    assert _statuses(session) == {first.id: "pending"}
+
+
+def test_a_team_wide_run_that_broke_keeps_what_was_waiting(
+    session: Session, team: dict[str, str]
+) -> None:
+    first = _record(session, team, _proposing("workload", _reassign(), proposals_per="team"))
+
+    with pytest.raises(RuntimeError):
+        _record(session, team, _proposing_nothing("workload", read="raises", proposals_per="team"))
+
+    assert _statuses(session) == {first.id: "pending"}
+
+
+def test_a_per_meeting_run_that_proposes_nothing_leaves_its_meetings_card(
+    session: Session, team: dict[str, str]
+) -> None:
+    """Unchanged by #1096, and not a decision that it should stay so: a
+    per-meeting subagent has the same gap, with #879's rule about a chat and the
+    pipeline's cards in it, and its owners settle that separately."""
+    proposing = _proposing("research", _l2("agent.share_research_document", document_id="rdoc_1"))
+    first = _record(session, team, proposing, meeting=team["meeting"], kind="event")
+
+    _record(session, team, _proposing_nothing("research"), meeting=team["meeting"], kind="event")
+
+    assert _statuses(session) == {first.id: "pending"}
+
+
+def test_a_team_wide_run_that_proposes_nothing_retires_only_its_own_subagents_cards(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The rows ``queue_l2`` would have retired, and no others: another
+    subagent's, another team's and a decided one are left."""
+    workload = _proposing("workload", _reassign(), proposals_per="team")
+    decided = _record(session, team, workload)
+    session.scalars(select(AgentPendingAction)).one().status = "approved"
+    session.commit()
+    waiting = _record(session, team, workload)
+    tracker = _proposing(
+        "tracker",
+        _l2("extraction.set_action_item_due_date", action_item_id="act_1", due_date="2026-10-16"),
+        proposals_per="team",
+    )
+    others = _record(session, team, tracker)
+    elsewhere = Team(name="다른 팀")
+    session.add(elsewhere)
+    session.commit()
+    theirs = _record(session, {"team": elsewhere.id}, workload)
+
+    _record(session, team, _proposing_nothing("workload", proposals_per="team"))
+
+    assert _statuses(session) == {
+        decided.id: "approved",
+        waiting.id: "superseded",
+        others.id: "pending",
+        theirs.id: "pending",
+    }
+
+
 def _publish(meeting: str) -> ProposedAction:
     return _l2("intelligence.publish_meeting_report", meeting_id=meeting, draft_id="rdr_1")
 

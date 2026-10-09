@@ -885,6 +885,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again, and the day that event starts. Read by the cleanup, and by `gap.next_meeting_days` for each picked day and the display name of who picked it |
+| PostgreSQL `gap_followup_events` | The follow-up meeting an approver had C put on their own calendar when they approved Follow-up's proposal (`tools.schedule_followup_meeting`): one row per meeting, written before Google is asked so a second approval makes no second event, with the approver, the event and the day it starts. Nothing else of the event |
 | PostgreSQL `gap_agenda_cleanup` | Lines still to take off their owners' calendars, drained by the worker: those of a deleted or expired meeting, and those of an owner who left the meeting's team (#937). Keyed by the owner, not the meeting |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
@@ -1055,6 +1056,7 @@ here, so the no-deletion-hook sentence above still holds.
 | DELETE | `/gaps/{id}/dismiss` | Take a dismissal back |
 | POST | `/gaps/{id}/carry` | Mark a gap as sent on to the next meeting — "다음 회의 어젠다로" (#824) |
 | DELETE | `/gaps/{id}/carry` | Take that back |
+| POST | `/reports/{meeting_id}/slack` | Post the meeting's open `high` gaps on the team's Slack channel as question cards -- "질문 카드 Slack 전송" (#824). Nothing is stored |
 | GET | `/templates` | Available domain templates |
 | GET | `/templates/{meeting_id}` | Which template this meeting is held to, and how far it got with each item |
 | PUT | `/templates/{meeting_id}` | Point this meeting at a template and re-compare |
@@ -1239,12 +1241,26 @@ polls them every five seconds while the rail says `analysed: false`.
 
 - Gap report thread in the meeting channel, `high` severity only by default
 - Generated question cards teams can act on
-- S20's two buttons post once on the team's channel (`team_notice`, #824).
-  "담당자 지정해 질문" mentions the member with the gap's question. "다음 회의
-  잡기" lists the gaps it put on the next meeting's event and says when that
-  event starts (`10월 15일(목) 14:00`, in the event's own time zone). Only the
-  event's date and time are read for it, never its title, which is Google's
-  unmasked text.
+- S20's three buttons post once per press on the team's channel
+  (`team_notice`, #824). "담당자 지정해 질문" mentions the member with the
+  gap's question. "다음 회의 잡기" lists the gaps it put on the next meeting's
+  event and says when that event starts (`10월 15일(목) 14:00`, in the event's
+  own time zone). Only the event's date and time are read for it, never its
+  title, which is Google's unmasked text.
+- Follow-up's proposal, once the team lead approves it, posts once that the
+  follow-up meeting is on the approver's calendar: when it starts and the
+  open gaps on its agenda (`followup_meeting`). Nobody is invited to the
+  event and nobody is DMed until the team decides it after 10/12 (#756,
+  #1046).
+- "질문 카드 Slack 전송", at the top of S20, posts the meeting's open `high`
+  gaps as question cards, most risky first, one message per gap so each card
+  stays one gap (plan 3 on #824). At most `team_notice.SENT` (3); when there
+  are more, one last message counts them and links to the report. Nobody is
+  mentioned, and a gap sent on to the next meeting is still open. The first
+  card Slack does not take stops the rest, and the screen says how many went
+  before it. The cards are separate messages on the channel for now: putting
+  them under E's report thread (`MeetingReportPosted`) and the S21 buttons on
+  the card are the next steps.
 
 ## AI stack
 

@@ -31,5 +31,19 @@ def test_nothing_is_personal_only_and_no_name_looks_it() -> None:
         assert "speakingratio" not in fn.__name__.replace("_", "").lower()
 
 
-def test_c_offers_no_writes() -> None:
-    assert not hasattr(tools, "ACTIONS")
+def test_cs_one_write_waits_for_a_person_and_no_model_is_offered_it() -> None:
+    """The follow-up meeting invites people and posts to the team channel, so
+    it is L2; the registry offers ``TOOLS`` to models, the executor alone runs
+    ``ACTIONS``."""
+    assert [tools.schedule_followup_meeting] == tools.ACTIONS
+    assert tools.L1_ACTIONS == []
+    assert not set(tools.ACTIONS) & set(tools.TOOLS)
+
+
+def test_the_write_takes_the_run_scope_and_the_approver() -> None:
+    """``user_id`` is the parameter the agent layer fills with the approver,
+    never a model (``ASKER_PARAMETER``)."""
+    for fn in tools.ACTIONS:
+        params = list(inspect.signature(fn).parameters)
+        assert params[0] == "session"
+        assert set(tools.RUN_SCOPE) | {"meeting_id", "user_id"} <= set(params)

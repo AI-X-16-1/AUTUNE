@@ -69,6 +69,7 @@ from autune_gap.schemas import (
     GapAskTarget,
     GapAskTargets,
     GapCalendarEvent,
+    GapCardsSent,
     GapCarry,
     GapDismissal,
     GapExplanationRead,
@@ -839,6 +840,31 @@ def carry_meeting(session: Session, meeting_id: str, reader: User) -> list[GapGa
     session.flush()
     log.info("gap_meeting_carry_set", meeting_id=meeting_id, gaps=len(gaps))
     return gaps
+
+
+def send_cards(session: Session, meeting_id: str, reader: User) -> GapCardsSent:
+    """ "질문 카드 Slack 전송" at the top of S20 (#824, plan 3): post the
+    meeting's open ``high`` gaps on the team's Slack channel as question cards,
+    most risky first, at most ``team_notice.SENT`` of them. Open is not
+    dismissed, as on the report; a gap already sent on to the next meeting is
+    still open. Nothing is stored and nobody is mentioned."""
+    require_readable_meeting(session, meeting_id, reader)
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:  # require_readable_meeting has already refused it
+        raise NotFoundError("meeting", meeting_id)
+    gaps = list(
+        session.scalars(
+            select(GapGap)
+            .where(
+                GapGap.meeting_id == meeting_id,
+                GapGap.dismissed_at.is_(None),
+                GapGap.severity == GapSeverity.HIGH.value,
+            )
+            .order_by(GapGap.risk_score.desc(), GapGap.id)
+        )
+    )
+    outcome, sent = team_notice.post_cards(session, meeting, gaps, presser=reader)
+    return GapCardsSent(meeting_id=meeting_id, high=len(gaps), sent=sent, slack=outcome)
 
 
 def agenda_events(session: Session, meeting_id: str, reader: User) -> GapAgendaEvents:

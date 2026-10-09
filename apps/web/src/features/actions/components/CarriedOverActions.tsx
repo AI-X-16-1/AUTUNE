@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { onAgentActed } from "@/shared/lib/agentActed";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { getCarriedOver } from "../api";
@@ -22,6 +23,12 @@ import { staleLabel } from "../stale";
  * text, never a fill — red belongs to elapsing time (ui-spec section 0). The
  * list is read-only: an item is changed on its own meeting's board, where its
  * evidence is.
+ *
+ * Read again when the assistant changed something (#1055): a due date moved on
+ * a chat card is one of these rows, and the counts above them. Only the first
+ * answer may open the popup -- a later one changes what is shown and never
+ * puts the popup back in front of someone who closed it, which a browser that
+ * refuses storage would otherwise see on every approval.
  */
 export function CarriedOverActions({ meetingId }: { meetingId: string }) {
   const [result, setResult] = useState<CarriedOver | null>(null);
@@ -29,16 +36,27 @@ export function CarriedOverActions({ meetingId }: { meetingId: string }) {
 
   useEffect(() => {
     let alive = true;
-    getCarriedOver(meetingId)
-      .then((answer) => {
-        if (!alive) return;
-        setResult(answer);
-        if (answer.open > 0 && !seen(meetingId)) setOpen(true);
-      })
-      // Nothing to say when the read fails: the board below is the real work.
-      .catch(() => undefined);
+    let first = true;
+    // Of two reads in flight only the later one lands.
+    let latest = 0;
+    const read = () => {
+      const ticket = latest + 1;
+      latest = ticket;
+      getCarriedOver(meetingId)
+        .then((answer) => {
+          if (!alive || ticket !== latest) return;
+          setResult(answer);
+          if (first && answer.open > 0 && !seen(meetingId)) setOpen(true);
+          first = false;
+        })
+        // Nothing to say when the read fails: the board below is the real work.
+        .catch(() => undefined);
+    };
+    read();
+    const stop = onAgentActed(read);
     return () => {
       alive = false;
+      stop();
     };
   }, [meetingId]);
 

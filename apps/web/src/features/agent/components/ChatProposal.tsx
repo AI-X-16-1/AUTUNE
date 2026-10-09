@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
+import { announceAgentActed } from "@/shared/lib/agentActed";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { approvePending, listPending, rejectPending } from "../api";
@@ -85,7 +86,10 @@ export function ChatProposal({ item }: { item: PendingAction }) {
     setBusy(true);
     setError(null);
     try {
-      setResult(settled(await run()));
+      const decided = await run();
+      setResult(settled(decided));
+      // An approved action ran: the screen behind reads its values again (#1055).
+      if (approving && decided.status === "approved") announceAgentActed();
     } catch (e) {
       if (e instanceof ApiError && e.status === 404)
         setResult({ text: GONE, ok: false });

@@ -485,3 +485,42 @@ class GapAgendaCleanup(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class GapFollowupEvent(Base):
+    """The follow-up meeting an approver had C put on their own calendar --
+    Follow-up's proposal, approved (``tools.schedule_followup_meeting``).
+
+    One per meeting: the row is written before Google is asked, under a unique
+    ``meeting_id``, so a second approval for the same meeting -- even at the
+    same instant -- makes no second event. ``event_id`` is ``None`` only while
+    that first request is out; a request that fails takes the row back.
+
+    ``user_id`` is the approver, whose calendar holds the event: the event can
+    only be reached with their grant. ``event_day`` is the day it starts, in
+    Korea. Nothing else of the event is kept: not its title or time.
+    Goes with the meeting and with the approver. The event itself stays on
+    the approver's calendar -- a meeting they organised, and cancelling it
+    is theirs to do -- while its gap lines, recorded in ``GapAgendaEvent``,
+    come out as every other line does.
+    """
+
+    __tablename__ = "gap_followup_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("meetings.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    calendar_id: Mapped[str | None] = mapped_column(String(320))
+    event_id: Mapped[str | None] = mapped_column(String(1024))
+    event_day: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
