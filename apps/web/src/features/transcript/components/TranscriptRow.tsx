@@ -1,4 +1,4 @@
-import { MaskedText, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { timecode } from "../format";
 import type { LiveRow } from "../types";
@@ -87,19 +87,31 @@ export function TranscriptRow({
             ) : null}
           </span>
           {onResearch ? (
-            <button
+            // Accent text, not muted ink: everything clickable is the accent
+            // (Button), and a muted 조사 read as a label nobody tried.
+            <Button
+              tone="text"
+              size="compact"
               type="button"
               onClick={onResearch}
               aria-label={`${timecode(utterance.start)} 줄 조사`}
-              style={{
-                marginLeft: "auto",
-                fontSize: "var(--text-meta)",
-                fontWeight: "var(--text-meta-weight)",
-                color: "var(--color-ink-muted)",
-              }}
+              className="ml-auto gap-1"
             >
+              <svg
+                aria-hidden
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              >
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5 14 14" />
+              </svg>
               조사
-            </button>
+            </Button>
           ) : null}
         </div>
 
