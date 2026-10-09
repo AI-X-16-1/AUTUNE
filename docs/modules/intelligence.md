@@ -388,7 +388,7 @@ meeting record does.
 
 ## Metric glossary and explain_metric
 
-`explain_metric` answers "what does this number mean" from a glossary of 37
+`explain_metric` answers "what does this number mean" from a glossary of 40
 passages (`autune_intelligence/glossary/`, six files) and retrieves them with
 BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
 `python -m autune_intelligence.retrieval_eval` over `glossary/questions.json`:
