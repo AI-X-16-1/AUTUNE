@@ -404,12 +404,11 @@ person's, those counts are that person's completion record. So:
     run them, and they are what moves B's calendar events and
     project-minutes copies and C's agenda lines to the clean-up queues, and
     what clears the text other meetings' rows had copied from this one: D's
-    decision statements and thread labels, E's copy of D's lineage and the
-    line of another meeting's report draft that names this one. D's and E's
-    owners made those two hooks a condition of this route on #1161. A hook
-    that raises stops the deletion and leaves the meeting in place to ask
-    again; clean-up a hook had already queued still runs, which is why every
-    hook is safe to repeat.
+    decision statements and thread labels, and the statement of this meeting
+    quoted in E's copies of D's lineage. D's and E's owners made those two
+    hooks a condition of this route on #1161. A hook that raises stops the
+    deletion and leaves the meeting in place to ask again; clean-up a hook
+    had already queued still runs, which is why every hook is safe to repeat.
   - **Refused while the meeting is being processed** (409
     `meeting_in_progress`): a transcription job of it that is queued or
     running, or a live session of it that is open, for the reasons a team's
