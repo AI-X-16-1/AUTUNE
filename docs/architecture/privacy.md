@@ -508,14 +508,22 @@ the feature needs.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
 - A cloud model is never the default, and in module B it has to be switched on
-  twice (#392). B's classifier, resolver, meeting summary and step-4 NLI send
-  text to a provider only when their implementation is set to `llm` (or
-  `llm_checked`), and B's settings refuse to load that unless
+  twice (#392). B's classifier, resolver, meeting summary, short titles and
+  step-4 NLI send text to a provider only when their implementation is set to
+  `llm` (or `llm_checked`), and B's settings refuse to load that unless
   `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well. Each sends
   masked text of consenting speakers only, with the team's names replaced:
   the classifier every utterance in windows, the resolver a commitment and
   the lines around it, the summary the meeting in sections, and NLI only the
-  utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
+  utterances the classifier called ambiguous, with one fixed hypothesis. The
+  titles (`AUTUNE_EXTRACTION_TITLE_IMPL`, `none` by default) send the
+  sentences the pipeline itself wrote for a meeting's action items and
+  decisions, one request a meeting, to get a line of twenty characters back
+  for each: never a sentence a person typed, edited or reworded, a decision's
+  without the owner and deadline it ends with, and no id, speaker or meeting
+  with them. What comes back is kept only if it names no person and says no
+  number or date its sentence does not, and it is shown on Autune's own
+  screens only -- no outside tool is sent a title. The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
   it makes sending speech out something a deployment says deliberately. Which
   meetings may go through a deployment that sets it is therefore a rule for
