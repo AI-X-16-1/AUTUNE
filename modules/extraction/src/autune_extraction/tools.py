@@ -67,6 +67,18 @@ any retention window a team can set."""
 _OPEN = (ActionStatus.TODO, ActionStatus.IN_PROGRESS)
 
 
+def _today() -> date:
+    """Today, as every tool here means it: the date in Korea, not the server's.
+
+    There is no team time zone. A server's ``date.today()`` on UTC is a day
+    behind from 00:00 to 09:00 KST, and in those hours an item due today was
+    answered as due tomorrow and an item a day late as not late -- against the
+    reminders and ``service.team_action_progress`` (#619 review), which take
+    Korea's day.
+    """
+    return datetime.now(tz=KST).date()
+
+
 def _result(
     *,
     summary: str,
@@ -193,7 +205,7 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     """
     if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
-    today = date.today()
+    today = _today()
     confirmed = service.outbound_for_meeting(session, meeting_id).action_items
     waiting = [
         i
@@ -331,7 +343,7 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     window = _whole_days(within_days, low=0)
     if window is None:
         return _not_a_day_count("within_days")
-    today = date.today()
+    today = _today()
     horizon = today + timedelta(days=window)
     meeting_ids = set(
         session.scalars(
@@ -406,7 +418,7 @@ def stalled_action_items(
     if not meeting_ids:
         return _result(summary="이 팀의 회의가 없습니다.", items=[], evidence=[])
 
-    today = date.today()
+    today = _today()
     open_items = [
         i
         for status in _OPEN
@@ -519,7 +531,7 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
     span = _whole_days(days, low=1)
     if span is None:
         return _not_a_day_count("days")
-    today = date.today()
+    today = _today()
     cutoff = datetime.now(UTC) - timedelta(days=span)
     meeting_ids = set(
         session.scalars(
@@ -655,7 +667,7 @@ def open_item_owners(
     ):
         return _not_found("project", project_id)
 
-    today = date.today()
+    today = _today()
     live = set(
         session.scalars(
             select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
@@ -851,7 +863,7 @@ def person_action_items(session: Session, team_id: str, user_id: str) -> dict[st
             evidence=[],
             confidence=0.0,
         )
-    today = date.today()
+    today = _today()
     meeting_ids = set(
         session.scalars(
             select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
@@ -895,7 +907,7 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
         for i in service.list_action_items(session, meeting_id=row.meeting_id)
         if i.id == action_item_id
     ]
-    finding = _item_finding(read, date.today())
+    finding = _item_finding(read, _today())
     synced = [r.system for r in read.sync_refs if r.url]
     finding["body"] += f" · {'·'.join(synced)} 연동됨" if synced else " · 외부 연동 없음"
     return _result(summary="액션아이템 1건.", items=[finding], evidence=read.source_utterance_ids)
@@ -1341,7 +1353,7 @@ def add_followup_item(
         due = _as_date(due_date)
     except ValueError:
         return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
-    passed = due is not None and due < datetime.now(tz=KST).date()
+    passed = due is not None and due < _today()
     if passed:
         due = None
     with session_scope() as session:
