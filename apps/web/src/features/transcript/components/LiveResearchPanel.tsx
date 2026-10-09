@@ -1,5 +1,10 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 import { MaskedText, StatusDot } from "@/shared/ui";
 
+import { listLiveResearch } from "../api";
 import type { LiveResearchDocument } from "../types";
 
 /**
@@ -27,12 +32,23 @@ export function LiveResearchPanel({ docs }: { docs: LiveResearchDocument[] }) {
         회의 중 조사
       </h2>
       {docs.length === 0 ? (
-        <p style={{ color: "var(--color-ink-muted)", marginTop: "var(--space-8)" }}>
-          확인이 필요한 질문이 나오면 여기에 조사 결과를 띄웁니다. 줄 옆의 조사를 눌러 직접
-          요청할 수도 있습니다.
+        <p
+          style={{
+            color: "var(--color-ink-muted)",
+            marginTop: "var(--space-8)",
+          }}
+        >
+          확인이 필요한 질문이 나오면 여기에 조사 결과를 띄웁니다. 줄 옆의
+          조사를 눌러 직접 요청할 수도 있습니다.
         </p>
       ) : (
-        <ol style={{ display: "grid", gap: "var(--space-row)", marginTop: "var(--space-8)" }}>
+        <ol
+          style={{
+            display: "grid",
+            gap: "var(--space-row)",
+            marginTop: "var(--space-8)",
+          }}
+        >
           {docs.map((doc) => (
             <li key={doc.id}>
               <Card doc={doc} />
@@ -45,7 +61,9 @@ export function LiveResearchPanel({ docs }: { docs: LiveResearchDocument[] }) {
 }
 
 function Card({ doc }: { doc: LiveResearchDocument }) {
-  const [title, ...lines] = (doc.body ?? "").split("\n").filter((l) => l.trim());
+  const [title, ...lines] = (doc.body ?? "")
+    .split("\n")
+    .filter((l) => l.trim());
   return (
     <article
       style={{
@@ -68,7 +86,10 @@ function Card({ doc }: { doc: LiveResearchDocument }) {
         <MaskedText>{doc.question}</MaskedText>
       </div>
       {doc.status === "running" ? (
-        <p className="flex items-center" style={{ gap: "var(--space-8)", marginTop: "var(--space-8)" }}>
+        <p
+          className="flex items-center"
+          style={{ gap: "var(--space-8)", marginTop: "var(--space-8)" }}
+        >
           <StatusDot variant="progress" />
           조사 중…
         </p>
@@ -133,4 +154,28 @@ function Card({ doc }: { doc: LiveResearchDocument }) {
       )}
     </article>
   );
+}
+
+/** The meeting page's 회의 중 조사: read once, hidden when the meeting has none. */
+export function LiveResearchList({ meetingId }: { meetingId: string }) {
+  const [docs, setDocs] = useState<LiveResearchDocument[] | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    setDocs(null);
+    listLiveResearch(meetingId)
+      .then((list) => {
+        if (current) setDocs(list.filter((d) => d.status === "done"));
+      })
+      .catch(() => {
+        if (current) setDocs([]);
+      });
+    return () => {
+      current = false;
+    };
+  }, [meetingId]);
+
+  if (docs === null || docs.length === 0)
+    return <span data-testid="live-research-empty" hidden />;
+  return <LiveResearchPanel docs={docs} />;
 }

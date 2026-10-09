@@ -38,6 +38,7 @@ from autune_core.errors import (
 from autune_integrations.errors import TransientIntegrationError
 
 from .config import get_agent_settings
+from .live import deletion as _live_deletion  # noqa: F401  (registers the speech hook)
 from .live.routes import router as live_router
 from .main.actions import collect_actions
 from .main.approvers import SCOPE_ORDER, can_manage, list_members, set_scopes

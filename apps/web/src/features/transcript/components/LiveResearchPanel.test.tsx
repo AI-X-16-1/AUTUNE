@@ -1,8 +1,9 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as api from "../api";
 import type { LiveResearchDocument } from "../types";
-import { LiveResearchPanel } from "./LiveResearchPanel";
+import { LiveResearchList, LiveResearchPanel } from "./LiveResearchPanel";
 
 afterEach(cleanup);
 
@@ -22,7 +23,9 @@ describe("LiveResearchPanel", () => {
     render(<LiveResearchPanel docs={[DONE]} />);
 
     expect(screen.getByText("가격 정책")).toBeTruthy();
-    expect(screen.getByText("9월 10일 회의에서 월 구독으로 정했습니다")).toBeTruthy();
+    expect(
+      screen.getByText("9월 10일 회의에서 월 구독으로 정했습니다"),
+    ).toBeTruthy();
     expect(screen.getByText("2026-09-10 가격 회의")).toBeTruthy();
     const link = screen.getByRole("link", { name: "pricing.example.com" });
     expect(link.getAttribute("href")).toBe("https://a.test/1");
@@ -49,5 +52,19 @@ describe("LiveResearchPanel", () => {
     render(<LiveResearchPanel docs={[]} />);
 
     expect(screen.getByText(/확인이 필요한 질문이 나오면/)).toBeTruthy();
+  });
+});
+
+describe("LiveResearchList", () => {
+  it("is hidden for a meeting with none and lists them otherwise", async () => {
+    const list = vi.spyOn(api, "listLiveResearch").mockResolvedValueOnce([]);
+    const { container } = render(<LiveResearchList meetingId="mtg_1" />);
+    await screen.findByTestId("live-research-empty");
+    expect(container.querySelector("#live-research")).toBeNull();
+
+    cleanup();
+    list.mockResolvedValueOnce([DONE]);
+    render(<LiveResearchList meetingId="mtg_1" />);
+    expect(await screen.findByText("가격 정책")).toBeTruthy();
   });
 });

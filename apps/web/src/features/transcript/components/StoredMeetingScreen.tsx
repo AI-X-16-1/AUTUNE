@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useMeeting } from "../hooks/useMeeting";
 import { STATUS_LABEL } from "../status";
+import { LiveResearchList } from "./LiveResearchPanel";
 import { ProcessingStages } from "./ProcessingStages";
 import { ResearchCard } from "./ResearchCard";
 import { StoredTranscript } from "./StoredTranscript";
@@ -127,6 +128,7 @@ function body(state: ReturnType<typeof useMeeting>, meetingId: string) {
       return (
         <>
           <ResearchCard meetingId={meetingId} teamId={meeting.team_id} />
+          <LiveResearchList meetingId={meetingId} />
           <div className="border-t border-[var(--color-hairline)]">
             <StoredTranscript meetingId={meetingId} teamId={meeting.team_id} />
           </div>
