@@ -655,6 +655,18 @@ def test_only_what_the_run_cannot_fill_is_required() -> None:
     assert all("required" not in d.parameters for d in rest.values())
 
 
+def test_a_question_that_assumes_a_number_reads_the_actual_one_first() -> None:
+    """A D team asking "왜 C등급이야?" was answered from the glossary alone. The
+    instructions now say to read the actual grade first, and the reads they
+    name are ones the model is given: a renamed read would leave the rule
+    pointing nowhere."""
+    assert "read the actual one first" in " ".join(chat.INSTRUCTIONS.split())
+    named = {"intelligence.team_trend", "intelligence.meeting_quality"}
+    assert named <= set(chat._SPECS)
+    for name in named:
+        assert name.split(".", 1)[1] in chat.INSTRUCTIONS
+
+
 def test_the_instructions_carry_todays_korean_date(monkeypatch) -> None:
     """00:30 KST on 10/6 is still 10/5 in UTC."""
 

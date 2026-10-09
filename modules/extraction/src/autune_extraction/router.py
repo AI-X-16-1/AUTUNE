@@ -665,7 +665,10 @@ def place_decision(
 
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
 def get_outbound(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Outbound:
-    """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
+    """What of the meeting would go to Notion, Jira or Slack -- confirmed
+    decisions and accepted items -- and what is held back. A read: no sync
+    asks it before sending, each is checked on its own request
+    (``service.outbound_for_meeting``)."""
     service.require_readable_meeting(session, meeting_id, reader)
     return service.outbound_for_meeting(session, meeting_id)
 

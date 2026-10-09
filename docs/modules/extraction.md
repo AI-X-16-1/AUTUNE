@@ -379,8 +379,12 @@ a cloud model over the whole meeting -- section summaries under the outbound
 limit, then a summary of those -- stored in `ext_meeting_summaries`. It is off
 by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`) and, like every cloud
 implementation in this module, refused at start-up without
-`AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until #392 is
-decided.
+`AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`. Which meetings may go through a
+deployment that sets that flag is an operating rule and not a check: on the
+team's dev site its own meetings only, none with a participant from outside
+the team (#392, 2026-10-05), and on a real service none until #392 decides
+that -- `../engineering/environments.md`, "The classifier's one external
+option is opt-in".
 
 **The tab is the meeting's minutes as one document, and "회의록 복사" copies
 that page** (the owner, 2026-10-09; `features/actions/minutes.ts`). One page
@@ -702,12 +706,12 @@ other module's tables.
 | GET | `/materials?team_id=` | The Drive files the team keeps on its 자료 screen, the newest first (#817). Members of the team only |
 | POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
 | DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf. Any member; the Drive file is not touched |
-| GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
+| GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246). A confirmed decision carries `held_back` (#1133): true when its statement holds something that looks like personal data -- a phone number, an address, an id number -- so the clients' check would refuse its copy to Notion and Jira. A boolean worked out when the row is read, by the same pattern check as the row below, with neither the value nor its category; S15 says on that row that it was not sent and that rewording sends it, and it clears with the rewording that removes the value. Not a record of a send that failed: it is true of a team with no tool connected too. A typed text is checked for patterns only, so a name does not set it |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order, each with the same `excerpt` (S15 shows them beneath the statement), plus the same `context` |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
-| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
+| GET | `/reviews/{meeting_id}/outbound` | A read of what of a meeting would go to Notion, Slack or Jira and what would not: confirmed decisions and accepted items, each screened for personal data with the pattern check the integration clients run (`find_unmasked`); one that fails is in `blocked`, by id and category, and not in the lists. **It is a read, not the gate** (#1133). No sync reads it: each copy -- to Notion, Jira, Slack, a calendar -- reads the row it sends, and what stops a text there is the client's `check_outbound` on the request itself, at every exit (`autune_integrations`, `HttpClient.request`); a request it refuses is not sent, and the sender reports the refusal by id, never by the text. This was written as the one list every sender would read (#30) and the senders were never moved onto it. Its readers are this route, which no screen calls today, and the agent's `meeting_action_items` and `meeting_decisions` tools, which quote only what it lists and count the rest. When a text a person typed should be checked -- as it is stored, or as it leaves -- is open on #1130 |
 
 ## Celery tasks
 

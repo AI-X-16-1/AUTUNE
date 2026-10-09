@@ -459,7 +459,14 @@ class ProjectSendResult(BaseModel):
     project_id: str
     project_name: str
     target: Literal["notion", "slack", "jira", "calendar"]
-    outcome: Literal["created", "updated", "retracted", "not_connected", "no_date", "failed"]
+    outcome: Literal[
+        "created", "updated", "retracted", "not_connected", "no_date", "failed", "held"
+    ]
+    """``held``: the outbound check refused this copy -- something that looks
+    like personal data is in what it would carry: a confirmed decision or item
+    of the project, or the team's or project's name in its title. Which of
+    them is not known here; the check names a category and no place. A kind of
+    ``failed`` that sending again does not mend; changing the text does."""
 
 
 class ProjectSendReport(BaseModel):
@@ -859,6 +866,15 @@ class ReviewDecision(BaseModel):
     """A source line was corrected since a person typed or reworded this (#586):
     B cannot correct their wording, so it asks them to look. Cleared by their
     next review."""
+    held_back: bool = False
+    """Confirmed, and not sent: something that looks like personal data is in
+    the statement -- a phone number, an address, an id number -- so the
+    outbound check refuses its copy to Notion and Jira, and the agent's tool
+    counts it without quoting it. Worked out when the row is read
+    (``find_unmasked``), not a record of a send that failed: it is true of a
+    team with no tool connected too, and it clears with the rewording that
+    removes the value. Neither the value nor its category is here. A text a
+    person typed is checked for patterns only, so a name does not set this."""
     status: Literal["pending", "confirmed", "rejected"]
     suggested: bool | None
     """Whether the screen should pre-check it: the confidence clears
@@ -967,11 +983,18 @@ class OutboundBlocked(BaseModel):
 
 
 class Outbound(BaseModel):
-    """What confirm-and-send would send, and nothing else.
+    """What of a meeting would leave for Notion, Jira or Slack, and what is
+    held back: a read of that, not what lets a copy go.
 
-    The Notion, Jira and Slack sync (#30, #458) is to read this and only
-    this. A decision nobody confirmed is not in it, and neither is an item
-    still waiting for confirmation.
+    A decision nobody confirmed is not in it, and neither is an item still
+    waiting for confirmation. It was written as the one list every sender
+    would read (#30, #458), and the senders were never moved onto it: each
+    copy reads the row it sends, and what stops a text there is the client's
+    ``check_outbound`` on the request itself. Its readers are
+    ``GET /reviews/{meeting_id}/outbound`` and the agent's
+    ``meeting_action_items`` and ``meeting_decisions`` tools. When a text a
+    person typed should be checked -- as it is stored, or as it leaves -- is
+    open on #1130.
     """
 
     meeting_id: str
