@@ -24,15 +24,30 @@ from autune_core.errors import PrivacyViolationError
 
 class FakeModel:
     def __init__(
-        self, *, detected: list[Detected] | None = None, body: str = "제목\n- 내용"
+        self,
+        *,
+        detected: list[Detected] | None = None,
+        body: str = "제목\n- 내용",
+        asked_as: str | None = "",
     ) -> None:
         self.detected = detected or []
         self.body = body
+        self.asked_as = asked_as
         self.written: list[dict[str, object]] = []
         self.web_asked: list[str] = []
+        self.lines_asked: list[str] = []
+        self.detect_calls = 0
 
     def detect(self, rows: Sequence[Row], known: Sequence[str]) -> list[Detected]:
+        self.detect_calls += 1
         return [d for d in self.detected if d.question not in known]
+
+    def ask(self, line: str, context: Sequence[Row]) -> Detected | None:
+        """``asked_as`` "" keeps the line; None finds nothing to look up."""
+        self.lines_asked.append(line)
+        if self.asked_as is None:
+            return None
+        return Detected(question=self.asked_as or line, web=True, terms=["배포"])
 
     def terms(self, question: str) -> list[str]:
         return ["배포"]
@@ -280,3 +295,71 @@ def test_failed_automatic_documents_do_not_use_up_the_cap(
         _fail(session, _open(session, team, f"질문 {i}"))
 
     assert _open(session, team, "여섯째") is not None
+
+
+# A line a person pointed at is rewritten as one question before anything is
+# looked up: what was said -- a name, a number, small talk -- is not the search
+# query, and the question shown to the team is the rewritten one (#1162 review).
+def test_a_pointed_line_is_rewritten_before_the_web_is_asked(
+    session: Session, team: dict[str, str], past: str
+) -> None:
+    doc = _open(session, team, "아 근데 그 API 요금 얼마였더라 진짜", origin="manual")
+    assert doc is not None
+    model = FakeModel(asked_as="Gemini API 요금은 얼마인가?")
+
+    research(session, doc.id, context=[], model=model, web=True, tools=_search_tool(past))
+
+    session.refresh(doc)
+    assert model.lines_asked == ["아 근데 그 API 요금 얼마였더라 진짜"]
+    assert model.web_asked == ["Gemini API 요금은 얼마인가?"]
+    assert model.written[0]["question"] == "Gemini API 요금은 얼마인가?"
+    assert doc.question == "Gemini API 요금은 얼마인가?"
+    assert doc.status == "done"
+
+
+def test_a_pointed_line_with_nothing_to_look_up_fails_without_a_search(
+    session: Session, team: dict[str, str], past: str
+) -> None:
+    doc = _open(session, team, "네 좋아요", origin="manual")
+    assert doc is not None
+    model = FakeModel(asked_as=None)
+
+    research(session, doc.id, context=[], model=model, web=True, tools=_search_tool(past))
+
+    session.refresh(doc)
+    assert doc.status == "failed"
+    assert model.web_asked == []
+    assert model.written == []
+
+
+def test_a_detected_question_is_not_rewritten(
+    session: Session, team: dict[str, str], past: str
+) -> None:
+    doc = _open(session, team, "배포일이 언제였지?")
+    assert doc is not None
+    model = FakeModel()
+
+    research(session, doc.id, context=[], model=model, web=True, tools=_search_tool(past))
+
+    assert model.lines_asked == []
+
+
+def test_a_window_for_a_deleted_meeting_calls_no_model(
+    session: Session, team: dict[str, str]
+) -> None:
+    model = FakeModel(detected=[Detected(question="배포일?", web=False)])
+    meeting = session.get(Meeting, team["meeting"])
+    session.delete(meeting)
+    session.commit()
+
+    made = detect_and_research(
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=team["member"],
+        rows=[Row(start=1.0, text="배포일?")],
+        model=model,
+    )
+
+    assert made == []
+    assert model.detect_calls == 0

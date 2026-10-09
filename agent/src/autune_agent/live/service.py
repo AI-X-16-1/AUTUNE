@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from autune_agent.main.gemini import WebAnswer
 from autune_agent.main.registry import CallBudget, RunScope, Tool, Toolbox, collect_tools
 from autune_agent.models import AgentLiveResearch, AgentLiveResearchSource
+from autune_core import Meeting
 from autune_core.errors import PrivacyViolationError
 from autune_integrations import assert_masked
 
@@ -169,6 +170,24 @@ def _research(
     terms: Sequence[str],
     tools: Mapping[str, Tool] | None,
 ) -> None:
+    if doc.origin == "manual":
+        # The pointed line is what was said; the model keeps only what to find
+        # out, and that question is the one searched and shown (#1162 review).
+        try:
+            asked = model.ask(doc.question, context)
+        except PrivacyViolationError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - shown as 조사하지 못했습니다
+            log.warning("live_research_ask_failed doc=%s error=%s", doc.id, type(exc).__name__)
+            asked = None
+        if asked is None:
+            doc.status = "failed"
+            session.commit()
+            return
+        assert_masked(asked.question, destination="agent_live_research")
+        doc.question = asked.question
+        session.commit()
+        terms = terms or asked.terms
     try:
         wanted = list(terms) or model.terms(doc.question)
     except PrivacyViolationError:
@@ -224,7 +243,9 @@ def detect_and_research(
     model: LiveModel,
     tools: Mapping[str, Tool] | None = None,
 ) -> list[str]:
-    if remaining(session, meeting_id, "auto") == 0:
+    # A window that waited in the queue may outlive its meeting; nothing is sent
+    # for a meeting that is gone (#1162 review).
+    if session.get(Meeting, meeting_id) is None or remaining(session, meeting_id, "auto") == 0:
         return []
     try:
         found = model.detect(rows, known_questions(session, meeting_id))

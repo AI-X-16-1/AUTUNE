@@ -92,16 +92,22 @@ def _masked(rows: list[RowIn]) -> list[dict[str, Any]]:
     return [{"start": r.start, "text": r.text} for r in rows]
 
 
+QUEUE_EXPIRES_S = 120
+"""A queued window is meeting text in the broker. It expires rather than wait
+for a worker that is down -- a window minutes old is no use to a live meeting --
+so no deletion has to reach into the queue (#1162 review)."""
+
+
 def enqueue_detect(team_id: str, meeting_id: str, user_id: str, rows: list[dict[str, Any]]) -> None:
     from autune_agent.tasks import live_detect
 
-    live_detect.delay(team_id, meeting_id, user_id, rows)
+    live_detect.apply_async(args=(team_id, meeting_id, user_id, rows), expires=QUEUE_EXPIRES_S)
 
 
 def enqueue_research(document_id: str, context: list[dict[str, Any]], web: bool) -> None:
     from autune_agent.tasks import live_research
 
-    live_research.delay(document_id, context, web)
+    live_research.apply_async(args=(document_id, context, web), expires=QUEUE_EXPIRES_S)
 
 
 @router.post("/{meeting_id}/detect", status_code=202)

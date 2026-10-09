@@ -263,3 +263,19 @@ def test_documents_are_listed_newest_first_for_members_only(
         "created_at",
     }
     assert outsider.status_code == 404
+
+
+# A queued window is meeting text in the broker: it expires instead of waiting
+# for a worker that is down, and a stale one is useless anyway (#1162 review).
+def test_queued_live_work_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autune_agent import tasks
+
+    sent: list[dict[str, Any]] = []
+    for name in ("live_detect", "live_research"):
+        monkeypatch.setattr(getattr(tasks, name), "apply_async", lambda *a, **kw: sent.append(kw))
+
+    live_routes.enqueue_detect("tm", "mtg", "usr", [{"start": 1.0, "text": "말"}])
+    live_routes.enqueue_research("alr", [], True)
+
+    assert [kw["expires"] for kw in sent] == [live_routes.QUEUE_EXPIRES_S] * 2
+    assert live_routes.QUEUE_EXPIRES_S <= 120

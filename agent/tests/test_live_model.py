@@ -105,3 +105,18 @@ def test_write_sends_no_speaker_and_returns_the_text() -> None:
 
 def test_normalise_folds_space_and_case() -> None:
     assert normalise("  API   요금 ") == normalise("api 요금")
+
+
+def test_ask_rewrites_a_pointed_line_as_one_question() -> None:
+    text = Scripted('{"q": "Gemini API 요금은 얼마인가?", "terms": ["API 요금"]}')
+
+    found = GeminiLive(text).ask("아 근데 그 API 요금 얼마였더라", [Row(start=1.0, text="앞 줄")])
+
+    assert found == Detected(question="Gemini API 요금은 얼마인가?", web=True, terms=["API 요금"])
+    assert "아 근데 그 API 요금 얼마였더라" in text.sent[0]["text"]
+    assert "앞 줄" in text.sent[0]["text"]
+
+
+def test_ask_finds_nothing_in_small_talk() -> None:
+    assert GeminiLive(Scripted('{"q": ""}')).ask("네 좋아요", []) is None
+    assert GeminiLive(Scripted("not json")).ask("네 좋아요", []) is None

@@ -80,8 +80,11 @@ browser polls GET /api/agent/live/{meeting_id}/documents every 5 s while live
 ### 3.2 Research (on 조사)
 
 - `POST …/research` with `{row: {start, text}, context: [≤4 rows before it]}`.
-  The row's text is the question as spoken; the model turns it into one
-  sentence in the same call that writes the document.
+  The row's text is what was said, so before anything is looked up the model
+  rewrites it as one question (`ask`): no person, no personal detail, no
+  filler. That question is the search query and the one stored and shown; a
+  line with nothing to look up fails the document (#1162 review). Queued work
+  expires after 120 s, and a window whose meeting is gone calls no model.
 - No per-meeting cap beyond a guard of 20 manual documents per meeting.
 
 ### 3.3 Research steps (both entry points)
