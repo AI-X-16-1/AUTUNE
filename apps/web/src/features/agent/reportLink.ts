@@ -1,6 +1,6 @@
 import type { Route } from "next";
 
-import type { PendingAction } from "./types";
+import type { ChatFinding, PendingAction } from "./types";
 
 /**
  * Where an approver reads the draft a report post would publish: E's
@@ -11,4 +11,17 @@ export function reportLink(item: PendingAction): Route | null {
   if (item.tool !== "intelligence.publish_meeting_report" || !item.meeting_id)
     return null;
   return `/dashboard#report-${encodeURIComponent(item.meeting_id)}` as Route;
+}
+
+/**
+ * Where a row an answer rests on opens (#1055): a report row (`link:
+ * "report"`) on the dashboard card, like `reportLink`; any other row about a
+ * meeting on that meeting's screen. Null for a row about no meeting.
+ */
+export function findingLink(item: ChatFinding): Route | null {
+  if (!item.meeting_id) return null;
+  const id = encodeURIComponent(item.meeting_id);
+  return (
+    item.link === "report" ? `/dashboard#report-${id}` : `/meetings/${id}`
+  ) as Route;
 }

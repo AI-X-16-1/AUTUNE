@@ -16,29 +16,38 @@ import { DashboardCard } from "./DashboardCard";
  * edit goes back to `/approvals` as a new post proposal, and the approval given
  * for the earlier text lapses (#642 review, #674). A posted report is
  * read-only here. `#report-<meeting id>` opens one report directly, once per
- * page load.
+ * link: on load, and again when the hash changes on this page (a report row
+ * the assistant links to while the dashboard is open, #1055).
  */
 export function MeetingReportsCard({ teamId }: { teamId: string }) {
   const { reports, loading, error, save, correct } = useMeetingReports(teamId);
   const [open, setOpen] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const linkApplied = useRef(false);
+  const linkApplied = useRef<string | null>(null);
+  const [hash, setHash] = useState("");
 
   useEffect(() => {
-    // Once: a save refreshes `reports`, and re-applying the link would close
-    // the row being edited and jump to the linked one (#642 review).
-    if (linkApplied.current) return;
-    const target = /^#report-(mtg_[A-Za-z0-9]+)$/.exec(window.location.hash)?.[1];
+    const read = () => setHash(window.location.hash);
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
+
+  useEffect(() => {
+    // Once per link: a save refreshes `reports`, and re-applying the same link
+    // would close the row being edited and jump to the linked one (#642 review).
+    if (linkApplied.current === hash) return;
+    const target = /^#report-(mtg_[A-Za-z0-9]+)$/.exec(hash)?.[1];
     const index = reports.findIndex((r) => r.meeting_id === target);
     if (!target || index < 0) return;
-    linkApplied.current = true;
+    linkApplied.current = hash;
     if (index >= FIRST_SHOWN) setShowAll(true);
     setOpen(target);
     // After the row renders, so a report past the first five can be reached too.
     requestAnimationFrame(() =>
       document.getElementById(`report-${target}`)?.scrollIntoView({ block: "start" }),
     );
-  }, [reports]);
+  }, [reports, hash]);
 
   const shown = showAll ? reports : reports.slice(0, FIRST_SHOWN);
   const hidden = reports.length - shown.length;

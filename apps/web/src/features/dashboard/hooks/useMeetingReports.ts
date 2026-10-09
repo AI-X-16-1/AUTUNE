@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
+import { onAgentActed } from "@/shared/lib/agentActed";
 
 import { correctMeetingReport, editMeetingReport, getMeetingReports } from "../api";
 import type { MeetingReport } from "../types";
@@ -12,7 +13,8 @@ import type { MeetingReport } from "../types";
  * draft, or writes a correction to a posted one. Both go to the approval queue
  * (#674); nothing is posted from the card. Loaded on its own, apart
  * from the S26 rollup, so a failure here leaves the rest of the dashboard
- * standing.
+ * standing. Read again when the assistant changed something (#1055): a
+ * re-draft asked for in chat, or a post approved on a chat card.
  */
 export function useMeetingReports(teamId: string) {
   const [reports, setReports] = useState<MeetingReport[]>([]);
@@ -38,6 +40,8 @@ export function useMeetingReports(teamId: string) {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => onAgentActed(() => void reload()), [reload]);
 
   /** Saves an edit; resolves to an error message, or null when it was saved. */
   const save = useCallback(async (report: MeetingReport, body: string): Promise<string | null> => {
