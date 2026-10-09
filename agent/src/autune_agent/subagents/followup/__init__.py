@@ -17,7 +17,10 @@ from __future__ import annotations
 from autune_agent.main.subagents import Subagent
 from autune_contracts import INTELLIGENCE_COMPLETED
 
+from .card import card_hint
 from .graph import TOOLS, build
+
+__all__ = ["SUBAGENT", "card_hint"]
 
 SUBAGENT = Subagent(
     name="followup",
