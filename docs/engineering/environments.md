@@ -454,8 +454,11 @@ service may:
   uploaded there: a name that is not on the team's roster is not replaced
   (below) and leaves as it was spoken, and that is accepted for the team's own
   people only. Nothing in the code knows who was in the room, so this binds
-  whoever uploads. The owners agreed to it for the 10-09 gate and the 10-12
-  demo; whether the dev site keeps `llm` after the demo is #392's to say.
+  whoever uploads, and the upload form and the live gate say it above their
+  consent row on any server that sets a cloud implementation
+  (`../modules/extraction.md`, `GET /cloud-model`). The owners agreed to it
+  for the 10-09 gate and the 10-12 demo; whether the dev site keeps `llm`
+  after the demo is #392's to say.
 - **A real service: not decided.** Anybody else's meeting needs #392's answer,
   and with it an answer to the overseas-transfer question it put on #92.
 

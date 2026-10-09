@@ -379,6 +379,17 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class CloudModelUse(BaseModel):
+    """Whether this server sends meeting text to a cloud model -- one fact
+    about the deployment, the same for every caller.
+
+    It exists so a screen can say #392's operating rule where a recording is
+    put in, and only on a server the rule is about. It carries nothing else on
+    purpose: no model name, no implementation name, nothing about the key."""
+
+    in_use: bool
+
+
 class TeamRead(BaseModel):
     """One of the reader's teams, by name -- the heading over that team's items
     on the board across meetings."""
@@ -992,11 +1003,18 @@ class OutboundBlocked(BaseModel):
 
 
 class Outbound(BaseModel):
-    """What confirm-and-send would send, and nothing else.
+    """What of a meeting would leave for Notion, Jira or Slack, and what is
+    held back: a read of that, not what lets a copy go.
 
-    The Notion, Jira and Slack sync (#30, #458) is to read this and only
-    this. A decision nobody confirmed is not in it, and neither is an item
-    still waiting for confirmation.
+    A decision nobody confirmed is not in it, and neither is an item still
+    waiting for confirmation. It was written as the one list every sender
+    would read (#30, #458), and the senders were never moved onto it: each
+    copy reads the row it sends, and what stops a text there is the client's
+    ``check_outbound`` on the request itself. Its readers are
+    ``GET /reviews/{meeting_id}/outbound`` and the agent's
+    ``meeting_action_items`` and ``meeting_decisions`` tools. When a text a
+    person typed should be checked -- as it is stored, or as it leaves -- is
+    open on #1130.
     """
 
     meeting_id: str

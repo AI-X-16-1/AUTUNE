@@ -384,7 +384,12 @@ deployment that sets that flag is an operating rule and not a check: on the
 team's dev site its own meetings only, none with a participant from outside
 the team (#392, 2026-10-05), and on a real service none until #392 decides
 that -- `../engineering/environments.md`, "The classifier's one external
-option is opt-in".
+option is opt-in". A server that sets any such implementation says the rule to
+the person putting a meeting in, both halves of it: two sentences above the
+consent row of the upload form ("우리 팀 자신의 회의만 올려 주세요. 팀 밖
+사람이 참석한 회의는 올리지 마세요.") and of the live gate ("우리 팀 자신의
+회의만 녹음해 주세요. 팀 밖 사람이 참석하면 녹음하지 마세요."), drawn only
+where `GET /cloud-model` answers true. It is a notice and gates nothing.
 
 **The tab is the meeting's minutes as one document, and "회의록 복사" copies
 that page** (the owner, 2026-10-09; `features/actions/minutes.ts`). One page
@@ -695,6 +700,7 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
+| GET | `/cloud-model` | `{"in_use": bool}`: whether this server sends meeting text to a cloud model -- any of the classifier, resolver, summary, short-title or NLI switches set to a cloud implementation, the same list the start-up refusal walks. One fact about the deployment, the same for every signed-in caller, and nothing else: no implementation or model name, nothing about the key. The upload form and the live gate ask it to decide whether to show #392's operating rule above their consent row (`OwnTeamMeetingsNotice`, mounted by the two pages); a notice, which checks nothing |
 | GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order (each with `excerpt`, the part of it the item was made from, when one is recorded), up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
@@ -706,12 +712,12 @@ other module's tables.
 | GET | `/materials?team_id=` | The Drive files the team keeps on its 자료 screen, the newest first (#817). Members of the team only |
 | POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
 | DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf. Any member; the Drive file is not touched |
-| GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246) |
+| GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246). A confirmed decision carries `held_back` (#1133): true when its statement holds something that looks like personal data -- a phone number, an address, an id number -- so the clients' check would refuse its copy to Notion and Jira. A boolean worked out when the row is read, by the same pattern check as the row below, with neither the value nor its category; S15 says on that row that it was not sent and that rewording sends it, and it clears with the rewording that removes the value. Not a record of a send that failed: it is true of a team with no tool connected too. A typed text is checked for patterns only, so a name does not set it |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order, each with the same `excerpt` (S15 shows them beneath the statement), plus the same `context` |
 | PATCH | `/decisions/{id}` | Confirm, reject, reword, or put back to pending |
 | DELETE | `/decisions/{id}` | Delete a decision a person added; reject one the model proposed, which a rerun would otherwise bring back |
-| GET | `/reviews/{meeting_id}/outbound` | Exactly what may leave for Notion, Slack or Jira: confirmed decisions and accepted items, each screened for personal data (a hit is held back in `blocked`, by id and category). The sync reads this and nothing else |
+| GET | `/reviews/{meeting_id}/outbound` | A read of what of a meeting would go to Notion, Slack or Jira and what would not: confirmed decisions and accepted items, each screened for personal data with the pattern check the integration clients run (`find_unmasked`); one that fails is in `blocked`, by id and category, and not in the lists. **It is a read, not the gate** (#1133). No sync reads it: each copy -- to Notion, Jira, Slack, a calendar -- reads the row it sends, and what stops a text there is the client's `check_outbound` on the request itself, at every exit (`autune_integrations`, `HttpClient.request`); a request it refuses is not sent, and the sender reports the refusal by id, never by the text. This was written as the one list every sender would read (#30) and the senders were never moved onto it. Its readers are this route, which no screen calls today, and the agent's `meeting_action_items` and `meeting_decisions` tools, which quote only what it lists and count the rest. When a text a person typed should be checked -- as it is stored, or as it leaves -- is open on #1130 |
 
 ## Celery tasks
 

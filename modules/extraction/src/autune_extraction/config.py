@@ -446,13 +446,7 @@ class ExtractionSettings(BaseSettings):
         """
         if self.llm_acknowledged_392:
             return self
-        for name, value in (
-            ("CLASSIFIER_IMPL", self.classifier_impl),
-            ("RESOLVER_IMPL", self.resolver_impl),
-            ("SUMMARY_IMPL", self.summary_impl),
-            ("TITLE_IMPL", self.title_impl),
-            ("NLI_IMPL", self.nli_impl),
-        ):
+        for name, value in self._cloud_capable():
             if value in CLOUD_IMPLS:
                 raise ValueError(
                     f"AUTUNE_EXTRACTION_{name}={value} sends meeting text to a cloud "
@@ -476,6 +470,27 @@ class ExtractionSettings(BaseSettings):
             if value not in ("cpu", "cuda"):
                 raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")
         return self
+
+    def _cloud_capable(self) -> tuple[tuple[str, str], ...]:
+        """Every switch of this module that can name a cloud implementation,
+        with what it is set to. One list, so the refusal above and
+        ``sends_meeting_text_out`` cannot come to mean different things."""
+        return (
+            ("CLASSIFIER_IMPL", self.classifier_impl),
+            ("RESOLVER_IMPL", self.resolver_impl),
+            ("SUMMARY_IMPL", self.summary_impl),
+            ("TITLE_IMPL", self.title_impl),
+            ("NLI_IMPL", self.nli_impl),
+        )
+
+    @property
+    def sends_meeting_text_out(self) -> bool:
+        """Whether this deployment hands meeting text to a cloud model at all:
+        any of the switches above set to a cloud implementation.
+
+        What ``GET /cloud-model`` answers, and all it answers -- not which
+        switch, which model, or anything about the key."""
+        return any(value in CLOUD_IMPLS for _, value in self._cloud_capable())
 
 
 @lru_cache

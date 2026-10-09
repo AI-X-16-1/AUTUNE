@@ -52,6 +52,7 @@ from .schemas import (
     BulkActionItems,
     BulkActionResult,
     CarriedOver,
+    CloudModelUse,
     ConfirmationAnswerIn,
     DecisionCreate,
     DecisionDetail,
@@ -535,6 +536,17 @@ def my_projects(session: SessionDep, reader: CurrentUser) -> list[ProjectRead]:
     return [service.project_read(row) for row in projects.reader_projects(session, reader.id)]
 
 
+@router.get("/cloud-model", response_model=CloudModelUse)
+def cloud_model_use(reader: CurrentUser) -> CloudModelUse:
+    """Whether this server sends meeting text to a cloud model (#392).
+
+    A fact about the deployment and not about the caller or a meeting, so it
+    reads no row; it still takes the user, like every route here. The screens
+    that take a recording in ask it to decide whether to show the operating
+    rule -- a notice, which checks nothing."""
+    return CloudModelUse(in_use=get_settings().sends_meeting_text_out)
+
+
 @router.get("/teams/mine", response_model=list[TeamRead])
 def my_teams(session: SessionDep, reader: CurrentUser) -> list[TeamRead]:
     """The reader's own teams, by name -- for the board across meetings, which
@@ -665,7 +677,10 @@ def place_decision(
 
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
 def get_outbound(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Outbound:
-    """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
+    """What of the meeting would go to Notion, Jira or Slack -- confirmed
+    decisions and accepted items -- and what is held back. A read: no sync
+    asks it before sending, each is checked on its own request
+    (``service.outbound_for_meeting``)."""
     service.require_readable_meeting(session, meeting_id, reader)
     return service.outbound_for_meeting(session, meeting_id)
 

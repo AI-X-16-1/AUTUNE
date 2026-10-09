@@ -1,3 +1,4 @@
+import { OwnTeamMeetingsNotice } from "@/features/actions";
 import { LiveMeetingScreen } from "@/features/transcript";
 
 /**
@@ -8,6 +9,11 @@ import { LiveMeetingScreen } from "@/features/transcript";
  *
  * Assembly only: the screen lives in `features/transcript`. This file names the
  * URL and hands the meeting id through.
+ *
+ * The notice above the gate's consent row is module B's (#392's operating
+ * rule, on a server that sends meeting text to a cloud model). The two
+ * features do not import each other, so this file hands one to the other. The
+ * margin is the gate's own rhythm; the notice brings none.
  */
 export default async function LiveMeetingPage({
   params,
@@ -15,5 +21,10 @@ export default async function LiveMeetingPage({
   params: Promise<{ meetingId: string }>;
 }) {
   const { meetingId } = await params;
-  return <LiveMeetingScreen meetingId={meetingId} />;
+  return (
+    <LiveMeetingScreen
+      meetingId={meetingId}
+      notice={<OwnTeamMeetingsNotice entrance="live" className="mt-6" />}
+    />
+  );
 }
