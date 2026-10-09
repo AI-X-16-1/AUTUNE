@@ -16,13 +16,16 @@ from sqlalchemy.pool import StaticPool
 
 from autune_agent.models import (
     AgentApprover,
+    AgentLiveResearch,
+    AgentLiveResearchNotice,
+    AgentLiveResearchSource,
     AgentPendingAction,
     AgentResearchDocument,
     AgentResearchSource,
     AgentRun,
     AgentWorkItem,
 )
-from autune_core import Base, Meeting, Team, TeamMember, User, Utterance
+from autune_core import Base, Meeting, Participant, Team, TeamMember, User, Utterance
 
 TABLES = [
     Team.__table__,
@@ -36,6 +39,10 @@ TABLES = [
     AgentResearchDocument.__table__,
     AgentResearchSource.__table__,
     AgentPendingAction.__table__,
+    AgentLiveResearch.__table__,
+    AgentLiveResearchSource.__table__,
+    AgentLiveResearchNotice.__table__,
+    Participant.__table__,
 ]
 
 

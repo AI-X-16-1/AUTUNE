@@ -269,3 +269,76 @@ class AgentPendingAction(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+LIVE_RESEARCH = "alr"
+"""Id prefix for ``agent_live_research``, kept here like ``RESEARCH_DOC``."""
+LIVE_ORIGINS = ("auto", "manual")
+LIVE_STATUSES = ("running", "done", "failed")
+
+
+class AgentLiveResearch(Base):
+    """One question researched during a live meeting (live-research spec section 4).
+
+    Masked text only. ``meeting_sources`` and ``web_sources`` are for display;
+    deletion runs off ``agent_live_research_sources`` and the meeting's cascade.
+    """
+
+    __tablename__ = "agent_live_research"
+    __table_args__ = (
+        CheckConstraint(_in("origin", LIVE_ORIGINS), name="ck_agent_live_research_origin"),
+        CheckConstraint(_in("status", LIVE_STATUSES), name="ck_agent_live_research_status"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id(LIVE_RESEARCH)
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    requested_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    web_sources: Mapped[list[dict[str, str]]] = mapped_column(Json, nullable=False, default=list)
+    meeting_sources: Mapped[list[dict[str, str]]] = mapped_column(
+        Json, nullable=False, default=list
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AgentLiveResearchSource(Base):
+    """A past meeting a live document quotes. Deleting a row deletes the document (trigger)."""
+
+    __tablename__ = "agent_live_research_sources"
+
+    document_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("agent_live_research.id", ondelete="CASCADE"), primary_key=True
+    )
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+class AgentLiveResearchNotice(Base):
+    """The Slack notice for a meeting's live documents was sent: at most once."""
+
+    __tablename__ = "agent_live_research_notices"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
