@@ -34,7 +34,7 @@ agreement, and sync the result to Notion and Jira.
 | --- | --- | --- |
 | D, E | `ExtractionResult` | `autune.extraction.completed` |
 | Notion, Jira | Issue creation via `packages/integrations` | — |
-| Slack | Action-item card thread, confirmation DMs | — |
+| Slack | DMs to the person concerned (confirmation, reminders, digests); to the team's channel, a project's minutes when a person sends them and one notice when a meeting's extraction is out of tries | — |
 
 ## Pipeline
 
@@ -663,13 +663,25 @@ other module's tables.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.extraction.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
-| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `default` |
-| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `default` |
-| `autune.extraction.send_confirmations` | After extraction | `default` |
+| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `cpu_heavy` by its name; nothing queues it today -- every caller runs it in process |
+| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `cpu_heavy` where the module queues it itself (`_follow_corrections`, `_extract` and `forget_deleted_speech` in `tasks.py`); the confirmation in this row is not queued |
+| `autune.extraction.periodic.ask_confirmations` | Beat, every five minutes (step 6 of the pipeline). Not chained after extraction: a speaker who links Slack later is still asked within the window | `cpu_heavy` |
+
+The Queue column is where `autune_core.celery_app.TASK_ROUTES` sends the name:
+every `autune.extraction.*` task goes to `cpu_heavy`. This table is not the
+whole list -- `tasks.py` declares the rest, most of them beat tasks named
+`autune.extraction.periodic.*`.
 
 ## Slack surface
 
-- Action-item card thread posted to the meeting channel
+- To the team's connected channel, two kinds of message and no thread. A
+  project's minutes for one meeting, when a person sends them (#787,
+  `project_send.py`); sending again rewrites that message in place. And one
+  notice when a meeting's extraction is out of tries: its title, the count and
+  a link to its 액션 tab. No item is posted on its own and nothing is
+  threaded: an item reaches the channel only as a line of its project's
+  minutes (its sentence, assignee and due date), and not while it waits for
+  confirmation
 - A DM to each speaker with an ambiguous agreement, asking for confirmation
 - A DM to an item's assignee the day before its due date and once after it
   passes (`reminders.py`, `autune.extraction.periodic.remind_due_items`, every
@@ -811,7 +823,7 @@ other module's tables.
 | Utterance classification | `kakaobank/kf-deberta-base` (DeBERTa, [MIT](https://huggingface.co/kakaobank/kf-deberta-base)), fine-tuned |
 | Agreement verification | `klue/roberta-base` fine-tuned on KorNLI ([CC BY-SA 4.0](https://github.com/kakaobrain/kor-nlu-datasets) training data, server-only — #172) |
 | Reference resolution, report generation | LLM |
-| Due-date parsing | Rule-based Korean date parser plus LLM fallback |
+| Due-date parsing | Rule-based Korean date parser (`slots.parse_due`). No model reads a date |
 
 Target non-LLM share is roughly 60%: classification and verification are models
 we train, not prompts.
