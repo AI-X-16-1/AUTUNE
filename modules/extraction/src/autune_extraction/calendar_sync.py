@@ -43,6 +43,8 @@ Rules, each tested:
   finished keeps it too, titled ``[닫힘]``: the calendar is the assignee's own,
   and it must not tell them they finished what was closed (#856).
 - A due date removed in Autune removes the event.
+- An event dragged onto a timed slot is due on that moment's date in Korea
+  (``_due_day``), whatever zone the person's calendar answers in.
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ from . import service
 from .models import ExtActionItem, ExtCalendarCleanup, ExtCalendarEvent, ExtCalendarPoll
 from .schemas import ActionItemUpdate
 from .service import _insert_if_absent_into
+from .slots import KST
 
 log = get_logger(__name__)
 
@@ -300,6 +303,31 @@ def sync_due_date_to_calendar(
     return row
 
 
+def _due_day(start: datetime | date | None) -> date | None:
+    """The due date an event's start stands for.
+
+    An all-day event is a date already and is that date: it has no moment and
+    no zone, and it is what Autune writes itself.
+
+    A timed one -- the person dragged the event onto an hour -- is a moment,
+    and its due date is **that moment's date in Korea** (``slots.KST``), as
+    every other date in B is read: there is no team time zone. Google answers
+    in the calendar's own zone, so ``start.date()`` gave the day before for a
+    calendar set west of Korea: 01:00 on the 14th in Korea came back as 16:00
+    on the 13th from a calendar on UTC, and the item was due the 13th while
+    the board and the reminders counted by the 14th.
+
+    A time with no offset is not a moment and is read as the date written.
+    ``astimezone`` would take it for the server's local time -- UTC on a
+    server -- and move a late-evening slot to the next day.
+    """
+    if not isinstance(start, datetime):
+        return start
+    if start.utcoffset() is None:
+        return start.date()
+    return start.astimezone(KST).date()
+
+
 def pull_calendar_changes(
     session: Session,
     client: CalendarEvents,
@@ -327,7 +355,7 @@ def pull_calendar_changes(
             session.delete(row)
             log.info("extraction_calendar_let_go", action_item_id=item_id)
             continue
-        day = event.start.date() if isinstance(event.start, datetime) else event.start
+        day = _due_day(event.start)
         if day is None or day == row.synced_due_date:
             continue
         item = session.get(ExtActionItem, item_id, populate_existing=True)

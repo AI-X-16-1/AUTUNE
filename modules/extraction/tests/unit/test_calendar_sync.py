@@ -331,6 +331,56 @@ def test_a_date_autune_wrote_itself_is_not_an_edit(session: Session) -> None:
     assert session.scalars(select(ExtEditEvent)).all() == []
 
 
+def _dragged_to(session: Session, start: datetime | date) -> date | None:
+    """The due date after the person's event came back starting at ``start``."""
+    row, ref, cal = _synced(session)
+    cal.changed = [
+        CalendarEvent(
+            id=ref.event_id or "",
+            summary="",
+            start=start,
+            end=None,
+            private={TAG[0]: TAG[1], ITEM_KEY: row.id},
+        )
+    ]
+    _pull(session, cal)
+    return row.due_date
+
+
+@pytest.mark.parametrize(
+    "answered",
+    ["2026-10-14T01:00:00+09:00", "2026-10-13T16:00:00Z", "2026-10-13T09:00:00-07:00"],
+    ids=["calendar-in-korea", "calendar-on-utc", "calendar-in-los-angeles"],
+)
+def test_a_slot_early_on_the_14th_in_korea_is_due_the_14th_whatever_zone_answers(
+    session: Session, answered: str
+) -> None:
+    """One moment, 01:00 on the 14th in Korea, as Google gives it for three
+    calendars -- parsed as the client parses it. Read by the date in the
+    answer, the last two were due the 13th."""
+    assert _dragged_to(session, datetime.fromisoformat(answered)) == date(2026, 10, 14)
+
+
+def test_a_slot_late_on_the_13th_in_korea_is_due_the_13th(session: Session) -> None:
+    """The other side of midnight: 23:30 on the 13th in Korea is the 14th
+    nowhere, and 14:30 on the 13th by UTC."""
+    assert _dragged_to(session, datetime.fromisoformat("2026-10-13T14:30:00Z")) == date(
+        2026, 10, 13
+    )
+
+
+def test_an_all_day_event_is_due_the_day_it_is_on(session: Session) -> None:
+    """No moment and no zone: the date is the date, as Autune wrote it."""
+    assert _dragged_to(session, date(2026, 10, 13)) == date(2026, 10, 13)
+
+
+def test_a_time_with_no_offset_is_due_the_date_it_was_written_with(session: Session) -> None:
+    """Google gives an offset with every time; if one ever came without, it is
+    not taken for the server's local time. On a UTC server that reading puts
+    23:30 on the 13th at 08:30 on the 14th in Korea."""
+    assert _dragged_to(session, datetime(2026, 10, 13, 23, 30)) == date(2026, 10, 13)
+
+
 def test_a_timed_event_is_read_as_its_day(session: Session) -> None:
     row, ref, cal = _synced(session)
     cal.changed = [
