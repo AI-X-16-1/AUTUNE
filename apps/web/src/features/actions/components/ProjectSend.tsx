@@ -22,6 +22,8 @@ const OUTCOME: Record<ProjectSendReport["results"][number]["outcome"], string> =
     not_connected: "연결 안 됨",
     no_date: "회의 날짜 없음",
     failed: "실패",
+    // Not "실패": that reads as "try again", and trying again is refused again.
+    held: "개인정보로 보이는 값이 있어 보내지 않았습니다. 결정이나 할 일의 문장을 고친 뒤 다시 보내 주세요.",
   };
 
 /**

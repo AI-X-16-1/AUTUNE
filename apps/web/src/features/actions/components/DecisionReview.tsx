@@ -15,6 +15,13 @@ import { shortTitle } from "../title";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
 
 /**
+ * The item notice's first sentence (`SyncStatus`), and this screen's way out:
+ * "문장 고치기" sends the decision again by itself, so there is no retry to press.
+ */
+export const HELD_BACK =
+  "개인정보로 보이는 값이 있어 보내지 않았습니다. 문장을 고치면 다시 보냅니다.";
+
+/**
  * S15's decisions: what the meeting settled, as the model proposed it, for a
  * person to confirm before anything leaves Autune (#246, #247).
  *
@@ -26,6 +33,10 @@ import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
  * "삭제" appears only on a decision a person added. A model's decision is
  * rejected rather than deleted — a deleted one would be proposed again by the
  * next run — and "거부" already says that.
+ *
+ * A confirmed decision whose copy the outbound check refuses says so on its
+ * row. Before, only a log line knew: the page in Notion kept the earlier
+ * wording, or never appeared, and nothing here said why.
  */
 export function DecisionReview({
   meetingId,
@@ -253,6 +264,15 @@ function DecisionRow({
             {status.label} ·{" "}
             {decisionSourceLine(decision)}
           </p>
+          {decision.held_back ? (
+            <p
+              role="status"
+              className="mt-1 text-[var(--color-ink-body)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {HELD_BACK}
+            </p>
+          ) : null}
           {decision.sync_refs?.length ? (
             <div
               className="mt-1 flex items-center gap-2 text-[var(--color-ink-muted)]"

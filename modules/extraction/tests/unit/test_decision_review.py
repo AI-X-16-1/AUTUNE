@@ -21,7 +21,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import UtteranceKind
-from autune_core import AutuneError, Base, Meeting, Participant, TeamMember, Utterance, get_session
+from autune_core import (
+    AutuneError,
+    Base,
+    Meeting,
+    Participant,
+    PrivacyViolationError,
+    TeamMember,
+    Utterance,
+    get_session,
+)
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
@@ -971,6 +980,105 @@ def test_a_confirmed_rewording_with_personal_data_is_held_back_by_category(
     assert [d["id"] for d in outbound["decisions"]] == [second_id]
     assert outbound["blocked"] == [{"id": first_id, "kind": "decision", "categories": ["phone"]}]
     assert "1234-5678" not in response.text
+
+
+WITH_A_NUMBER = "담당 연락처 010-1234-5678 로 공유"
+
+
+def _rows(client: TestClient) -> dict[str, dict]:
+    return {d["id"]: d for d in client.get(f"{PREFIX}/reviews/{MEETING}").json()["decisions"]}
+
+
+def test_a_decision_the_outbound_check_refuses_says_so_on_its_row(
+    client: TestClient, session: Session
+) -> None:
+    """The copy to Notion was refused by the client's check and the person was
+    told nothing: a warning in the log, by id. The row now says it, from the
+    same check, and names neither the value nor its category."""
+    first, second = two_decisions(session)
+    answer = client.patch(
+        f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed", "statement": WITH_A_NUMBER}
+    )
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
+
+    # What the send does with each: the real check, on the real request body.
+    notion = FakeNotion()
+    with pytest.raises(PrivacyViolationError):
+        service.sync_decision_to_notion(
+            session, notion, decision_id=first.id, database_id="db_decisions"
+        )
+    assert notion.pages == []
+    assert (
+        service.sync_decision_to_notion(
+            session, notion, decision_id=second.id, database_id="db_decisions"
+        )
+        is not None
+    )
+
+    assert answer.json()["held_back"] is True, "said at once, in the answer to the rewording"
+    rows = _rows(client)
+    assert rows[first.id]["held_back"] is True
+    assert rows[second.id]["held_back"] is False
+    assert "categories" not in rows[first.id] and "phone" not in str(
+        {k: v for k, v in rows[first.id].items() if k != "statement"}
+    )
+
+
+def test_the_row_stops_saying_so_once_it_is_reworded_and_its_page_then_goes(
+    client: TestClient, session: Session
+) -> None:
+    first, _ = two_decisions(session)
+    client.patch(
+        f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed", "statement": WITH_A_NUMBER}
+    )
+
+    answer = client.patch(
+        f"{PREFIX}/decisions/{first.id}", json={"statement": "담당자 연락처는 따로 공유"}
+    )
+
+    assert answer.json()["held_back"] is False
+    assert _rows(client)[first.id]["held_back"] is False
+    notion = FakeNotion()
+    service.sync_decision_to_notion(
+        session, notion, decision_id=first.id, database_id="db_decisions"
+    )
+    assert len(notion.pages) == 1
+
+
+def test_only_a_confirmed_decision_is_said_to_be_held_back(
+    client: TestClient, session: Session
+) -> None:
+    """Nothing unconfirmed is sent anyway (#246): a pending or rejected row with
+    the same text was not held back by this, and does not say it was."""
+    first, second = two_decisions(session)
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"statement": WITH_A_NUMBER})
+    typed = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": WITH_A_NUMBER}
+    ).json()
+
+    rows = _rows(client)
+    assert (rows[first.id]["status"], rows[first.id]["held_back"]) == ("pending", False)
+    assert rows[second.id]["held_back"] is False
+    assert typed["held_back"] is True, "a typed decision is confirmed from the moment it exists"
+
+    put_back = client.patch(f"{PREFIX}/decisions/{typed['id']}", json={"status": "pending"})
+    assert put_back.json()["held_back"] is False
+
+
+def test_the_rows_that_say_so_are_the_held_back_list(client: TestClient, session: Session) -> None:
+    """One check, read two ways: the row's mark and ``blocked`` never disagree."""
+    first, second = two_decisions(session)
+    client.patch(
+        f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed", "statement": WITH_A_NUMBER}
+    )
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
+    client.post(f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": WITH_A_NUMBER})
+
+    marked = {id_ for id_, row in _rows(client).items() if row["held_back"]}
+    blocked = client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["blocked"]
+
+    assert len(marked) == 2
+    assert marked == {b["id"] for b in blocked if b["kind"] == "decision"}
 
 
 def test_an_accepted_item_whose_description_carries_personal_data_is_held_back(
