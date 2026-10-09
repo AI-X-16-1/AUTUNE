@@ -131,6 +131,23 @@ agreement, and sync the result to Notion and Jira.
    an acknowledgement ("네 알겠습니다."): it has no content to ask the speaker
    about, so it is not verified, recorded or asked. The same words labeled
    `commitment` -- an acceptance of a request -- are left alone.
+
+   A second fixed rule, also before this step and also with no model, works
+   the other way (module B's owner, 2026-10-09: a launch date, a settled date
+   or a deadline said in a meeting is a decision). A line the classifier left
+   unlabelled becomes a pending `decision` at confidence 0.9 when one of its
+   sentences has a milestone word (출시, 마감, 오픈, 배포, 확정, 론칭, 런칭,
+   릴리스, 릴리즈, 데드라인, 납기, 기한) and a date: one the due-date reader
+   takes, or one something was set to ("계약 갱신일은 11월 15일로
+   확정됐습니다", where the past verb is the settling). It never touches a line
+   that has any kind -- a promise with a deadline stays one item -- nor a turn
+   read in pieces, a question, or a sentence that says the date is open (아직,
+   미정); a date said of the past ("원래 마감은 10월 30일이었죠") is left
+   alone. The cost of a rule that reads words: a date somebody recalls or
+   worries about can be taken ("원래 마감은 10월 30일로 잡혀 있었죠", "출시가
+   금요일인데 걱정이네요"), and a person rejects it on the review screen. Until
+   then it is a pending decision like any other and reaches D and E in
+   `ExtractionResult`.
 5. **Build decision entities** — group the utterances classified as decisions
    into `Decision` records with a `dec_` id and the statement as settled. One
    decision often spans several utterances. **Module D depends on this**: it is
@@ -329,7 +346,7 @@ confirmation DM's quotation is #586's second part.
 | Table | Purpose |
 | --- | --- |
 | `ext_classifications` | Per-utterance kind, confidence, model version, NLI result. Kinds only — no row for `none` |
-| `ext_action_items` | Assignee, description, due date, status, origin |
+| `ext_action_items` | Assignee, description, due date, status, origin. `title` is the description in twenty characters or fewer, ended by a noun, for the card's top line: written by a cloud model only with `AUTUNE_EXTRACTION_TITLE_IMPL=llm`, null otherwise and whenever the answer failed a rule, and cleared when the description changes (see "Short titles" below) |
 | `ext_action_item_sources` | Which utterances an item came from, and for a row made from one sentence of a long turn, where that sentence is in the utterance: two character offsets (`excerpt_start`, `excerpt_end`), never the words. A row outlives its utterance with `utterance_id` NULL (#379) and the same trigger clears its offsets then |
 | `ext_decision_related` | The other lines of the meeting a decision's summary was written from, as the model said it used them; shown beneath the summary, never read by D |
 | `ext_action_item_related` | The other lines of the meeting the item's summary was written from, as the model said it used them (`LlmResolver`); shown beneath the summary, never read by D or E |
@@ -346,7 +363,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결), and Monday's DM of their own open items with them (#792): one switch for both. On unless a row says off; the person and when, nothing else. Goes with the account |
-| `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's, and of those only the ones no person has confirmed, rejected or reworded (see "Rebuilding a meeting's decisions" below) |
+| `ext_decisions` | Decision entities, their statements and source utterances. `title` is the statement's short title, as `ext_action_items.title` is the description's. `origin` is `model` or `user`; a rerun rebuilds only the model's, and of those only the ones no person has confirmed, rejected or reworded (see "Rebuilding a meeting's decisions" below) |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order, and the same two offsets for a decision settled in part of a long turn. A row outlives its utterance with `utterance_id` NULL (#400), as an action item's does: readers list the sources that exist and say how many were deleted (`deleted_source_count`), and the row keeps its `position` and nothing of the line -- no id, speaker, time or words, and no offsets: a trigger on the table clears `excerpt_start` and `excerpt_end` whenever the row has no `utterance_id`, so every path that deletes an utterance is covered without this module being told |
 | `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). A row that says something -- a verdict or a rewording -- also keeps its decision through a rerun that would group the lines differently; one put back to pending with no rewording does not. No reviewer column |
 | `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
@@ -700,7 +717,7 @@ other module's tables.
 | --- | --- | --- |
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
-| GET | `/cloud-model` | `{"in_use": bool}`: whether this server sends meeting text to a cloud model -- any of the classifier, resolver, summary or NLI switches set to a cloud implementation, the same list the start-up refusal walks. One fact about the deployment, the same for every signed-in caller, and nothing else: no implementation or model name, nothing about the key. The upload form and the live gate ask it to decide whether to show #392's operating rule above their consent row (`OwnTeamMeetingsNotice`, mounted by the two pages); a notice, which checks nothing |
+| GET | `/cloud-model` | `{"in_use": bool}`: whether this server sends meeting text to a cloud model -- any of the classifier, resolver, summary, short-title or NLI switches set to a cloud implementation, the same list the start-up refusal walks. One fact about the deployment, the same for every signed-in caller, and nothing else: no implementation or model name, nothing about the key. The upload form and the live gate ask it to decide whether to show #392's operating rule above their consent row (`OwnTeamMeetingsNotice`, mounted by the two pages); a notice, which checks nothing |
 | GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order (each with `excerpt`, the part of it the item was made from, when one is recorded), up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
@@ -727,6 +744,7 @@ other module's tables.
 | `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `cpu_heavy` by its name; nothing queues it today -- every caller runs it in process |
 | `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `cpu_heavy` where the module queues it itself (`_follow_corrections`, `_extract` and `forget_deleted_speech` in `tasks.py`); the confirmation in this row is not queued |
 | `autune.extraction.periodic.ask_confirmations` | Beat, every five minutes (step 6 of the pipeline). Not chained after extraction: a speaker who links Slack later is still asked within the window | `cpu_heavy` |
+| `autune.extraction.title_meeting` | Queued by `_extract` at the end of an extraction, only when `AUTUNE_EXTRACTION_TITLE_IMPL=llm` | `cpu_heavy` |
 
 The Queue column is where `autune_core.celery_app.TASK_ROUTES` sends the name:
 every `autune.extraction.*` task goes to `cpu_heavy`. This table is not the
@@ -1093,6 +1111,42 @@ harness scores a predictions file rather than loading a model, so a run can be
 rescored without a GPU and the metric means the same thing across model
 versions.
 
+## Short titles
+
+A card and a decision row show twenty characters. With
+`AUTUNE_EXTRACTION_TITLE_IMPL=none` (the default) that is the sentence cut
+with "…" by the web (`features/actions/title.ts`). With `llm`,
+`title_meeting` asks a cloud model for a summary instead -- twenty characters
+or fewer, ended by a noun ("보고서 정리", not "보고서를 정리함") -- and stores
+it in `title` beside the sentence, never instead of it: `description` and
+`statement` are made as before and remain what Jira, Notion, Slack, a
+calendar, the minutes, the agent's tools and module D are given.
+
+- **Only a sentence the pipeline wrote is titled.** Not a row a person
+  typed, an item whose description a person edited, or a decision a person
+  reworded; and a new sentence in a row takes its title away (a validator on
+  the two models), so a person's words are shown as they wrote them, cut if
+  long. No model writes a line over a person's.
+- **A title is accepted or it is not there** (`pipeline/title.py::accept`,
+  rules only): one line; twenty characters counting spaces; a noun at the
+  end -- no 함, 됨, 예정 or verb ending, and no 결정/확정 tail on a decision;
+  no number and no date its sentence does not say; no person; no date at all
+  on an item, which has a due date of its own; words that are the
+  sentence's. A decision's title may carry a date that is in the statement
+  in the same words, since the date can be what was decided ("출시일 10월
+  20일"). A refused title is dropped, not cut to fit, and the row shows the
+  cut sentence.
+- **One request a meeting**, after the extraction and outside it: a failed
+  call, a privacy refusal and a refused title all leave the rows as they
+  were shown before. A decision is sent without the "(담당 …, 기한 …)" it
+  ends with. Rows extracted before the switch was on get a title when the
+  meeting is extracted again.
+- Measured once (2026-10-09), on three invented meetings of twelve lines:
+  27 rows, 27 titles accepted. No refusal was seen from a real answer, and
+  no real meeting has been through it. Three of the 27 were accepted and
+  weak: a decision about who presents became "발표 진행", since a title
+  names nobody.
+
 ## Privacy notes
 
 - A team's materials (`ext_materials`, #817) are a title and a Drive file id,
@@ -1110,6 +1164,12 @@ versions.
   assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
   smallest window that resolves the reference.
+- The LLM used for short titles (`AUTUNE_EXTRACTION_TITLE_IMPL=llm`, off by
+  default, under the #392 acknowledgement) receives the pipeline-written
+  sentences of one meeting's items and decisions: masked text of consenting
+  speakers, the team's names replaced, no id, speaker, assignee or meeting.
+  A title that names a roster member is refused, and no title, sentence or
+  model answer is written to a log -- counts and the meeting's id only.
 - A failed copy to an outside tool is remembered by its kind and its time
   only (`ext_sync_failures`, #680): the service's own message may echo what
   was sent and is not stored or logged. Notion and Jira are the team's

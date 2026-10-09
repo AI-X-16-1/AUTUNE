@@ -51,6 +51,7 @@ def test_the_web_read_model_mirror_is_current() -> None:
         "sync_failures",
         "summary",
         "assignee_name",
+        "title",
         "description_resolved",
         "due_text",
         "deleted_source_count",
