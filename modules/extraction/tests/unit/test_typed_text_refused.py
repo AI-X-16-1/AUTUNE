@@ -1,8 +1,9 @@
 """Text a person typed is screened before it is stored (#1130).
 
 Every door through which typed text enters module B's store, driven through
-its own endpoint on a bare app over SQLite in memory: seven endpoints, nine
-fields. The rules under test: text the detector reads is refused with a 422
+its own endpoint on a bare app over SQLite in memory: eight routes (a project
+is saved by two) and the ten checks behind them, one for each field of each
+save. The rules under test: text the detector reads is refused with a 422
 and nothing is stored or changed; the refusal, the log line and the response
 carry the field and the categories and never the text; text sent back as it is
 stored is not a write, so a row from before the rule stays editable; a name
