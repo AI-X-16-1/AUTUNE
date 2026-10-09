@@ -44,7 +44,7 @@ describe("AgendaDraftRow, when it is on", () => {
   it("is on by one source with a line, though another has none and a third cannot be read", async () => {
     const sources = [
       source("열린 Jira 이슈", []),
-      source("최근 회의의 결정", new Error("boom")),
+      source("읽지 못한 출처", new Error("boom")),
       source("이전 회의의 미해결 갭", GAPS),
     ];
     render(<AgendaDraftRow teamId="team_1" sources={sources} />);

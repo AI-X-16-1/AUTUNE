@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import NewMeetingPage from "./page";
 
 // The route joins the upload form (module A's) to the notice of #392's
-// operating rule (module B's), and its agenda row to what modules B, C and D
+// operating rule (module B's), and its agenda row to what modules B and C
 // have to draft from (#1147): the features do not import each other. What
 // matters here is only the joining.
 
@@ -14,9 +14,6 @@ vi.mock("@/features/actions", () => ({
     <p role="note">the notice of module B, {entrance}</p>
   ),
   JIRA_AGENDA: { label: "B's Jira issues", lines: () => Promise.resolve([]) },
-}));
-vi.mock("@/features/context", () => ({
-  DECISIONS_AGENDA: { label: "D's decisions", lines: () => Promise.resolve([]) },
 }));
 vi.mock("@/features/gap", () => ({
   OPEN_GAPS_AGENDA: { label: "C's open gaps", lines: () => Promise.resolve([]) },
@@ -51,7 +48,6 @@ describe("the 새 회의 route", () => {
 
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "B's Jira issues",
-      "D's decisions",
       "C's open gaps",
     ]);
   });
