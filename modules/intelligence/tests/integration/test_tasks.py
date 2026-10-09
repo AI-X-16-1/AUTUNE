@@ -16,6 +16,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from autune_contracts import ContextLinks, ExtractionResult, GapReport, IntelligenceSnapshot
+from autune_contracts.fixtures import load
 from autune_intelligence import service, tasks
 from autune_intelligence.models import IntelCompletion
 
@@ -129,6 +130,48 @@ def test_aggregate_publishes_a_valid_snapshot(
     event, payload = stub_publish[0]
     assert event == "autune.intelligence.completed"
     IntelligenceSnapshot.model_validate(payload)  # contract conformance
+
+
+def _published_context(meeting_id: str) -> dict:
+    """D's payload as it publishes it -- the contract fixture, with a topic link
+    and a reversal that names an absent stakeholder -- for this meeting (#319).
+    The empty ``ContextLinks`` above checks only the meeting id."""
+    return {**load("context_links"), "meeting_id": meeting_id}
+
+
+@pytest.mark.usefixtures("use_test_session")
+def test_a_published_context_payload_is_kept_whole(
+    mock_aggregate: object, db_session: Session, meeting: str
+) -> None:
+    payload = _published_context(meeting)
+    assert payload["decision_lineage"] and payload["topic_links"]  # not the empty shape
+
+    tasks.on_context_completed(payload)
+
+    stored = db_session.get(IntelCompletion, meeting).context_payload
+    assert stored["decision_lineage"] == payload["decision_lineage"]
+    assert stored["topic_links"] == payload["topic_links"]
+    [change] = ContextLinks.model_validate(stored).decision_lineage
+    assert (change.change_type, change.key_stakeholders_absent) == ("reversed", ["user_002"])
+
+
+@pytest.mark.usefixtures("use_test_session", "mock_personal_feedback", "stub_publish")
+def test_a_published_context_payload_aggregates_like_an_empty_one(
+    db_session: Session, meeting: str, stub_publish: list[tuple]
+) -> None:
+    """A reversal in D's payload does not trip the aggregate: the snapshot is
+    valid and names no missing source once all three arrived."""
+    _seed(db_session, meeting, "extraction")
+    _seed(db_session, meeting, "gap")
+    service.record_completion(db_session, meeting, "context", _published_context(meeting))
+    db_session.flush()
+
+    tasks.aggregate(meeting)
+
+    [(event, payload)] = stub_publish
+    snapshot = IntelligenceSnapshot.model_validate(payload)
+    assert event == "autune.intelligence.completed"
+    assert "context" not in snapshot.missing_sources
 
 
 @pytest.mark.usefixtures("use_test_session", "mock_personal_feedback", "stub_publish")
