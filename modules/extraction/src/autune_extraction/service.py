@@ -58,7 +58,7 @@ from autune_integrations import (
 )
 from autune_integrations.privacy import find_unmasked
 
-from . import days_off, reminders, sync_state
+from . import days_off, reminders, sync_state, top_line
 from .config import get_settings
 from .confirmations import (
     CONFIRMATION_TIMEOUT,
@@ -4429,7 +4429,7 @@ def send_due_reminder(
         reminders.build_due_reminder(
             reminder.kind,
             # As it reads now, not as it read when the list was made.
-            description=item.description,
+            description=top_line.outbound_line("reminder", "item", item.title, item.description),
             due_date=reminder.due_date,
             meeting_title=reminder.meeting_title,
             board_url=answer_url(reminder.meeting_id),
@@ -4633,7 +4633,11 @@ def send_weekly_digest(
         digest.user_id,
         reminders.build_weekly_digest(
             [
-                reminders.DigestLine(item.description, item.due_date, title)
+                reminders.DigestLine(
+                    top_line.outbound_line("digest", "item", item.title, item.description),
+                    item.due_date,
+                    title,
+                )
                 for item, _, title in rows
             ],
             today=reminders.korean_day(now),
@@ -4890,7 +4894,11 @@ def daily_digest_content(
         .order_by(ExtActionItem.id)
     ).tuples():
         (closed if ended.id in not_finished else done).append(
-            reminders.DigestLine(ended.description, ended.due_date, meeting_title)
+            reminders.DigestLine(
+                top_line.outbound_line("digest", "item", ended.title, ended.description),
+                ended.due_date,
+                meeting_title,
+            )
         )
 
     taken_on: list[reminders.DigestLine] = []
@@ -4911,7 +4919,11 @@ def daily_digest_content(
         since=since,
     )
     for item, _team, title in open_rows:
-        line = reminders.DigestLine(item.description, item.due_date, title)
+        line = reminders.DigestLine(
+            top_line.outbound_line("digest", "item", item.title, item.description),
+            item.due_date,
+            title,
+        )
         if marks.get(item.id, set()) & {"created", "assignee_id"} or item.id in confirmed:
             taken_on.append(line)
         if item.due_date is not None and item.due_date < owed.day:
@@ -5332,6 +5344,7 @@ def meeting_summary(
                 status=d.status,  # type: ignore[arg-type]
                 project_id=placed.get(d.id),
                 summary=d.summary,
+                title=d.title,
             )
             for d in kept
         ],
@@ -5901,9 +5914,13 @@ def trash_item_page(
     (``privacy.md`` section 6)."""
     names = property_names or NOTION_PROPERTIES
     if "title" in names:
-        retitled = {
+        retitled: dict[str, Any] = {
             names["title"]: {"title": [{"type": "text", "text": {"content": ITEM_DELETED_TEXT}}]}
         }
+        # The sentence stands in the page's 내용 too; the trash must keep it
+        # in neither place.
+        if "content" in names:
+            retitled[names["content"]] = {"rich_text": []}
         try:
             notion.update_page(page_id, retitled)
         except PermanentIntegrationError:
@@ -6104,6 +6121,20 @@ def notion_url(page_id: str) -> str:
     return f"https://www.notion.so/{page_id.replace('-', '')}"
 
 
+def _page_title(
+    kind: top_line.Kind, title: str | None, sentence: str, names: Mapping[str, str]
+) -> str:
+    """A page's title: which kind of row it is, then the short title -- or the
+    sentence, for a row without one (the owner, 2026-10-09; ``top_line``).
+
+    The short title leads only where the page has a place for the sentence it
+    stands for: a ``content`` property in the map in force. A database without
+    one keeps the sentence in the title, so no page loses what the item says.
+    """
+    lead = title if "content" in names else None
+    return top_line.outbound_line("notion", kind, lead, sentence)[:NOTION_TEXT_LIMIT]
+
+
 def notion_properties(
     item: ExtActionItem,
     meeting_title: str | None,
@@ -6134,8 +6165,14 @@ def notion_properties(
 
     fields: dict[str, Any] = {
         "title": {
-            "title": [{"type": "text", "text": {"content": item.description[:NOTION_TEXT_LIMIT]}}]
+            "title": [
+                {
+                    "type": "text",
+                    "text": {"content": _page_title("item", item.title, item.description, names)},
+                }
+            ]
         },
+        "content": text(item.description),
         "status": {"select": {"name": NOTION_STATUS_LABELS.get(item.status, item.status)}},
         "confidence": {"number": round(item.confidence, 3)},
     }
@@ -6433,11 +6470,13 @@ def _retire_decision_page(
     if page_id is None:
         return None
     if "title" in names:
-        retitled = {
+        retitled: dict[str, Any] = {
             names["title"]: {
                 "title": [{"type": "text", "text": {"content": DECISION_PUT_BACK_TEXT}}]
             }
         }
+        if "content" in names:
+            retitled[names["content"]] = {"rich_text": []}
         try:
             notion.update_page(page_id, retitled)
         except PermanentIntegrationError:
@@ -6502,8 +6541,21 @@ def decision_notion_properties(
     counted, as it was not while the link went with it (#400): what leaves Autune
     is unchanged by the link's outliving the utterance.
     """
+    # The short title is of the model's sentence; a rewording is the
+    # person's own line and leads as it stands.
+    title = top_line.standing_title(decision.title, reworded=statement != decision.statement)
     fields: dict[str, Any] = {
-        "title": {"title": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]},
+        "title": {
+            "title": [
+                {
+                    "type": "text",
+                    "text": {"content": _page_title("decision", title, statement, names)},
+                }
+            ]
+        },
+        "content": {
+            "rich_text": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]
+        },
         "confidence": {"number": round(decision.confidence, 3)},
         "sources": {"number": len(live_decision_source_ids(decision))},
     }

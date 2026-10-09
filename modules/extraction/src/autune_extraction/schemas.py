@@ -504,6 +504,11 @@ class SummaryDecision(BaseModel):
     summary: str | None = None
     """``ReviewDecision.summary``: what was said, shown beneath the statement."""
 
+    title: str | None = None
+    """``ReviewDecision.title``: the model's short title, which the page of
+    minutes leads the row with (2026-10-09). ``None`` for a decision a person
+    reworded, and for one without a title."""
+
 
 MAX_NOTE_CHARS = 2000
 

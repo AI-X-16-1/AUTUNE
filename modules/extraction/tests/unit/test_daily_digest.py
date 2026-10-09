@@ -1008,3 +1008,25 @@ def test_the_screen_is_told_when_this_server_reads_leave_from_a_calendar(
         ).status_code
         == 422
     ), "it is the deployment's, not something a person sends"
+
+
+def test_a_row_with_a_short_title_is_said_by_it_in_the_morning_dm(session: Session) -> None:
+    """Module B's owner, 2026-10-09: what ended and what is open are both
+    named by the title where the row has one."""
+    for row_id, title in (("act_done", "끝낸 일 제목"), ("act_today", "오늘 일 제목")):
+        row = session.get(ExtActionItem, row_id)
+        assert row is not None
+        row.title = title
+    session.flush()
+    edited(session, "act_done", "status", at=MONDAY_NOON_KST)
+
+    content = service.daily_digest_content(
+        session,
+        owed_for(session),  # type: ignore[arg-type]
+        since=reminders.previous_morning(TUESDAY).astimezone(UTC),
+        now=TUESDAY_10_KST,
+    )
+
+    assert [line.description for line in content.done] == ["끝낸 일 제목"]
+    assert [line.description for line in content.due_today] == ["오늘 일 제목"]
+    assert [line.description for line in content.late] == ["늦은 일"]

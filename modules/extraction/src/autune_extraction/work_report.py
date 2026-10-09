@@ -76,7 +76,7 @@ from autune_core import Meeting, Team, TeamMember
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import SlackApi
 
-from . import days_off, reminders, service
+from . import days_off, reminders, service, top_line
 from .models import ExtActionItem, ExtDueReminderOptOut, ExtEditEvent, ExtWorkReport
 from .slots import KST
 
@@ -325,7 +325,11 @@ def report_content(session: Session, owed: WorkReportOwed, *, now: datetime) -> 
     for item, _team, title in _finished_or_started(
         session, edited | not_finished, user_id=owed.user_id, team_id=owed.team_id, now=now
     ):
-        line = reminders.DigestLine(item.description, item.due_date, title)
+        line = reminders.DigestLine(
+            top_line.outbound_line("report", "item", item.title, item.description),
+            item.due_date,
+            title,
+        )
         if item.id in not_finished:
             closed.append(line)
         elif item.status == ActionStatus.DONE.value:
@@ -342,7 +346,11 @@ def report_content(session: Session, owed: WorkReportOwed, *, now: datetime) -> 
     ):
         if item.id in said:
             continue
-        line = reminders.DigestLine(item.description, item.due_date, title)
+        line = reminders.DigestLine(
+            top_line.outbound_line("report", "item", item.title, item.description),
+            item.due_date,
+            title,
+        )
         if item.due_date is not None and item.due_date < owed.day:
             late.append(line)
         elif item.status == ActionStatus.IN_PROGRESS.value or item.due_date == owed.day:

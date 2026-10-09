@@ -68,7 +68,7 @@ from autune_core import Meeting, PrivacyViolationError, Team, get_logger
 from autune_integrations.errors import PermanentIntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
 
-from . import service
+from . import service, top_line
 from .models import (
     ExtActionItem,
     ExtCalendarCleanup,
@@ -178,7 +178,8 @@ def _item_line(item: Any) -> str:
     tail = [f"담당 {who}"] if who else []
     if item.due_date:
         tail.append(f"기한 {item.due_date.isoformat()}")
-    return item.description + (f" ({', '.join(tail)})" if tail else "")
+    line = top_line.outbound_line("minutes", "item", item.title, item.description)
+    return line + (f" ({', '.join(tail)})" if tail else "")
 
 
 def minutes(session: Session, meeting_id: str) -> tuple[list[Minutes], int]:
@@ -202,7 +203,10 @@ def minutes(session: Session, meeting_id: str) -> tuple[list[Minutes], int]:
     decisions: dict[str | None, list[str]] = {}
     for d in review.decisions:
         if d.status == "confirmed":
-            decisions.setdefault(placed.get(d.id), []).append(d.statement)
+            # ``d.title`` is already none for a decision a person reworded.
+            decisions.setdefault(placed.get(d.id), []).append(
+                top_line.outbound_line("minutes", "decision", d.title, d.statement)
+            )
     items: dict[str | None, list[str]] = {}
     for item in service.list_action_items(session, meeting_id=meeting_id):
         if item.status != ActionStatus.NEEDS_CONFIRMATION.value:

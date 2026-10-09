@@ -685,3 +685,19 @@ def test_every_refused_reminder_is_named_not_only_the_last(
         ("act_b_bad", "due_soon", TOMORROW),
         ("act_c_fine", "due_soon", TOMORROW),
     ]
+
+
+def test_a_reminder_names_the_item_by_its_short_title(session: Session, slack: FakeSlack) -> None:
+    """Module B's owner, 2026-10-09: "Slack·회의록까지 전부". The line is the
+    title alone, with no kind mark -- the message's first line says what it is."""
+    row = item(session, "act_1")
+    said = row.description
+    row.title = "짧은 제목"
+    session.flush()
+    (owed,) = service.due_reminders_to_send(session, now=NOW)
+
+    assert service.send_due_reminder(session, slack, owed, now=NOW) is True
+
+    text = slack.sent[0].text
+    assert "• 짧은 제목" in text.splitlines()
+    assert said not in text and "[할 일]" not in text

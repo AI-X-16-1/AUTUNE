@@ -328,6 +328,11 @@ export interface SummaryDecision {
   status: "pending" | "confirmed";
   /** `ReviewDecision.summary`: what was said, beneath the statement. */
   summary?: string | null;
+  /**
+   * The model's short title, which the page of minutes leads the row with.
+   * Null for a decision a person reworded; absent from a server before it.
+   */
+  title?: string | null;
   /** The team's project it is about, or null for none (미분류). */
   project_id?: string | null;
 }

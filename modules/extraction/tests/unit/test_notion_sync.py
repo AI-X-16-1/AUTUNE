@@ -139,7 +139,7 @@ def test_a_confirmed_item_becomes_one_page_with_the_item_and_no_transcript(
     database, properties = notion.pages[0]
     assert database == DATABASE
     assert properties == {
-        "작업": {"title": [{"type": "text", "text": {"content": "릴리스 노트 정리"}}]},
+        "작업": {"title": [{"type": "text", "text": {"content": "[할 일] 릴리스 노트 정리"}}]},
         "담당자": {"rich_text": [{"type": "text", "text": {"content": "김개발"}}]},
         "마감일": {"date": {"start": "2026-09-25"}},
         "상태": {"select": {"name": "진행 전"}},
@@ -186,7 +186,8 @@ def test_a_page_a_timed_out_create_made_is_kept_not_made_twice(session: Session)
     row = item(session)
     # The first create reached Notion; our side saw a timeout.
     notion.create_page(
-        DATABASE, {"작업": {"title": [{"type": "text", "text": {"content": "릴리스 노트 정리"}}]}}
+        DATABASE,
+        {"작업": {"title": [{"type": "text", "text": {"content": "[할 일] 릴리스 노트 정리"}}]}},
     )
     lost_create(session, row.id)
 
@@ -522,7 +523,9 @@ def test_a_sync_holding_the_ref_lock_sends_the_edit_committed_after_it_started(
     assert notion_a.pages == [], "A finds B's claim already there -- it updates, not creates"
     assert len(notion_a.updates) == 1
     sent_title = notion_a.updates[0][1]["작업"]["title"][0]["text"]["content"]
-    assert sent_title == "최신 설명 (B가 커밋)", "A must re-read, not send its own stale copy"
+    assert sent_title == "[할 일] 최신 설명 (B가 커밋)", (
+        "A must re-read, not send its own stale copy"
+    )
 
 
 def test_a_claim_that_lands_mid_flight_gets_an_update_not_a_dropped_edit(
@@ -857,3 +860,71 @@ def test_an_unreachable_notion_never_blocks_a_deletion(
     monkeypatch.setattr(tasks, "trash_notion_page", TRASH_NOTION_PAGE)
 
     tasks.trash_notion_page(row.id)  # must not raise
+
+
+WITH_CONTENT = {**service.NOTION_PROPERTIES, "content": "내용"}
+
+
+def _title(text: str) -> dict[str, object]:
+    return {"title": [{"type": "text", "text": {"content": text}}]}
+
+
+def _rich(text: str) -> dict[str, object]:
+    return {"rich_text": [{"type": "text", "text": {"content": text}}]}
+
+
+def test_a_short_title_heads_the_page_where_the_page_has_a_place_for_the_sentence(
+    session: Session,
+) -> None:
+    """Module B's owner, 2026-10-09: "'내용' 칸을 추가". The page's title is
+    the kind and the short title, the sentence is in 내용 -- and in 내용 for a
+    row without a title too ("문장으로 채우기")."""
+    notion = FakeNotion()
+    titled, plain = item(session), item(session)
+    titled.title = "릴리스 노트"
+    session.flush()
+
+    sync(session, notion, titled.id, property_names=WITH_CONTENT)
+    sync(session, notion, plain.id, property_names=WITH_CONTENT)
+
+    (_, first), (_, second) = notion.pages
+    assert first["작업"] == _title("[할 일] 릴리스 노트")
+    assert first["내용"] == _rich("릴리스 노트 정리")
+    assert second["작업"] == _title("[할 일] 릴리스 노트 정리")
+    assert second["내용"] == _rich("릴리스 노트 정리")
+
+
+def test_a_database_with_no_place_for_the_sentence_keeps_it_in_the_title(
+    session: Session,
+) -> None:
+    """A team whose database has no 내용 property -- every connected team
+    until its database is changed, and one that named its own properties --
+    must not lose the sentence to a title of twenty characters."""
+    notion = FakeNotion()
+    row = item(session)
+    row.title = "릴리스 노트"
+    session.flush()
+
+    sync(session, notion, row.id)
+
+    _, properties = notion.pages[0]
+    assert properties["작업"] == _title("[할 일] 릴리스 노트 정리")
+    assert "내용" not in properties
+
+
+def test_a_trashed_page_keeps_the_sentence_in_neither_place(session: Session) -> None:
+    """#768: a deleted item's page is retitled before it goes to Notion's
+    trash, which keeps a page for thirty days. The sentence is in 내용 too
+    now, and is emptied with the title."""
+    notion = FakeNotion()
+    row = item(session)
+    ref = sync(session, notion, row.id, property_names=WITH_CONTENT)
+    page_id = str(ref.external_id)  # type: ignore[attr-defined]
+
+    service.trash_item_page(notion, page_id, WITH_CONTENT)
+
+    assert notion.updates[-1] == (
+        page_id,
+        {"작업": _title(service.ITEM_DELETED_TEXT), "내용": {"rich_text": []}},
+    )
+    assert notion.page_state(page_id) == "archived"
