@@ -320,8 +320,8 @@ person's, those counts are that person's completion record. So:
   is written in the ADR, under *Not taken yet*. Until 2026-10-06 this line
   read "their utterances and everything derived from them are deleted", and
   nothing did that: there was no way to leave a team.
-- **The last member of a team may delete the team** (decided with the user
-  and the four other owners, 2026-10-09, #1007; before the legal review of
+- **The last member of a team may delete the team** (decided by the five
+  module owners, 2026-10-09, #1007; before the legal review of
   ADR 0007, #92 -- that ADR carries a dated note on it).
   `DELETE /api/audio/teams/{team_id}`, by the one person still on the team,
   with the team's name typed on the screen and sent in the request's body.
@@ -843,15 +843,47 @@ the feature needs.
       are queued to come out the same way. All best effort, as section 4
       says: a refused grant, an unreachable Google or a description the
       outbound check refuses leaves the line on the calendar, logged.
-  - **Slack, S20's team notices (module C, #824):** two messages to the
-    channel of the team that held the meeting, each once per press, with the
-    team's connection. "담당자 지정해 질문" posts one gap's title and suggested
+  - **Google Calendar, Follow-up's approved meeting (module C):** when the
+    team lead approves Follow-up's proposal, C's `schedule_followup_meeting`
+    runs as that approver and makes one event on the approver's own calendar,
+    with their own grant: approving is their act, and the meeting is one they
+    now organise. The event is titled `후속 회의 · <meeting title>`, starts on
+    the approved day at the meeting's clock time in Korea and lasts about as
+    long as it did. Its description is one line per open gap, in the form
+    above, each recorded in `gap_agenda_events` and taken out by the same
+    hooks. **Nobody is invited**: the event has no guests and Google is asked
+    to send no notice (`sendUpdates=none`), so no member's address leaves for
+    Google and nobody is mailed from the approver's account. Inviting the
+    meeting's members waits for the team's decision after 10/12, with "다음
+    회의 잡기"'s invitations (#756); the approver can invite people from their
+    own calendar. `gap_followup_events` keeps one row per meeting -- the
+    approver, the event and the day it starts, nothing else of it -- so a
+    second approval makes no second event. The row goes with the meeting and
+    the account. The event itself is left on the approver's calendar when the
+    meeting or the account goes: it is a meeting they organised, and
+    cancelling it is theirs to do; its gap lines come out as every other line
+    does. A title or line the outbound check refuses is not sent, and is
+    logged as an error with the meeting's id (`gap_followup_refused`), apart
+    from Google not answering.
+  - **Slack, S20's team notices (module C, #824):** three kinds of message
+    to the channel of the team that held the meeting, each once per press,
+    with the team's connection, and one more when Follow-up's meeting is
+    approved -- the meeting's title, when the follow-up starts, the open
+    gaps' titles and questions and the approver's display name, once per
+    meeting. Nobody is sent a DM about it: a DM to the meeting's members is a
+    new kind of message and waits for the team's decision after 10/12
+    (#1046). "담당자 지정해 질문" posts one gap's title and suggested
     question, mentioning the member the presser picked from the meeting's
     team -- by the Slack account that member linked themselves, or by their
     display name when they linked none -- and the presser's display name.
     "다음 회의 잡기" posts, once the calendar took them, the titles and
     questions of the gaps whose line is new on the event, the meeting's
     title and the presser's display name; pressing again posts nothing.
+    "질문 카드 Slack 전송" posts the meeting's open `high` gaps, at most
+    three, one message each: the gap's title and suggested question, the
+    meeting's title and the presser's display name, mentioning nobody; when
+    there are more, one line counts them and links to the meeting's report
+    on Autune.
     Titles and C's own questions are stored masked, and a question a
     member rewrote is pattern-checked (below); every value is escaped so it
     cannot become a mention or a link, and no utterance, score or

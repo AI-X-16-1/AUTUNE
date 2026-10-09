@@ -460,6 +460,35 @@ def test_reassignment_then_overdue_come_first(session: Session) -> None:
     assert "재배정이 필요한 항목 1건" in result["summary"]
 
 
+LATE_FIRST = {
+    "meeting_action_items": lambda s: tools.meeting_action_items(s, MEETING),
+    "open_action_items": lambda s: tools.open_action_items(s, TEAM),
+    "person_action_items": lambda s: tools.person_action_items(s, TEAM, "user_in"),
+}
+
+
+@pytest.mark.parametrize("read", sorted(LATE_FIRST))
+def test_of_more_late_items_than_are_shown_the_longest_late_are_the_ones_shown(
+    session: Session, read: str
+) -> None:
+    """Every late item has the one score, so by the score alone they came out
+    as they were written down: the item a week late was left out for ones a day
+    late, and Workload, which takes the first of a person's rows, moved those."""
+    for n in range(1, 8):  # written down the least late first
+        item(session, f"act_late_{n}", due=TODAY - timedelta(days=n))
+    item(session, "act_orphan", assignee="user_gone", due=TODAY - timedelta(days=1))
+    item(session, "act_soon", due=TODAY + timedelta(days=1))
+
+    result = LATE_FIRST[read](session)
+
+    shown = [i["id"] for i in result["items"] if i["id"] != "act_orphan"]
+    assert shown[:4] == ["act_late_7", "act_late_6", "act_late_5", "act_late_4"]
+    assert {i["score"] for i in result["items"] if i["id"] in shown} == {0.9}, (
+        "the score is as it was"
+    )
+    assert result["truncated"] is True
+
+
 def test_more_than_five_are_ranked_cut_and_marked_truncated(session: Session) -> None:
     for n in range(8):
         item(session, f"act_{n}", due=TODAY + timedelta(days=n))
@@ -1655,12 +1684,62 @@ def test_work_that_stopped_moving_is_named_with_the_way_it_stopped(session: Sess
         "act_both": ["overdue", "carried"],
         "act_late": ["overdue"],
         "act_carried": ["carried"],
-    }, "both ways first, late before carried; moving and finished work is not here"
+    }, "the longer late first, late before carried; moving and finished work is not here"
     assert [i["id"] for i in result["items"]] == ["act_both", "act_late", "act_carried"]
     (carried,) = [i for i in result["items"] if i["id"] == "act_carried"]
     assert carried["carried_meetings"] == service.STALE_AFTER
     assert "기한 지남 2건" in result["summary"]
     assert f"회의 {service.STALE_AFTER}번 이상 이월 2건" in result["summary"]
+
+
+def test_of_more_late_items_than_five_the_longest_late_are_given_and_the_rest_counted(
+    session: Session,
+) -> None:
+    """Eight late: the five rows are the five longest late, whatever order they
+    were written in, and each says eight are late in all -- so the Tracker can
+    say three more are, by a number and nothing else."""
+    a_month_of_meetings(session)
+    for n in range(1, 8):  # written down the least late first
+        item(session, f"act_late_{n}", due=TODAY - timedelta(days=n))
+    # A day late and long carried: not ahead of one longer late for that.
+    item(session, "act_both", due=TODAY - timedelta(days=1), meeting=THEN)
+    item(session, "act_carried", meeting=THEN)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert [i["id"] for i in result["items"]] == [f"act_late_{n}" for n in (7, 6, 5, 4, 3)]
+    assert {i["overdue_in_all"] for i in result["items"]} == {8}
+    assert result["truncated"] is True
+    assert "기한 지남 8건" in result["summary"]
+    for left_out in ("act_late_2", "act_late_1", "act_both", "act_carried"):
+        assert left_out not in str(result), "counted, and not named"
+
+
+def test_of_two_as_late_as_each_other_the_longer_carried_comes_first(session: Session) -> None:
+    a_month_of_meetings(session)
+    item(session, "act_a_late", due=TODAY - timedelta(days=3))
+    item(session, "act_z_both", due=TODAY - timedelta(days=3), meeting=THEN)
+    item(session, "act_later", due=TODAY - timedelta(days=2), meeting=THEN)
+    item(session, "act_carried", meeting=THEN)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert [i["id"] for i in result["items"]] == [
+        "act_z_both",
+        "act_a_late",
+        "act_later",
+        "act_carried",
+    ]
+    assert [i["overdue_in_all"] for i in result["items"]] == [3, 3, 3, 3]
+
+
+def test_with_nothing_late_the_count_of_the_late_is_zero(session: Session) -> None:
+    a_month_of_meetings(session)
+    item(session, "act_carried", meeting=THEN)
+
+    (row,) = tools.stalled_action_items(session, TEAM)["items"]
+
+    assert row["stalled"] == ["carried"] and row["overdue_in_all"] == 0
 
 
 def test_an_item_carried_through_fewer_meetings_is_not_stalled(session: Session) -> None:
@@ -1797,6 +1876,7 @@ def test_it_counts_items_and_never_people(session: Session) -> None:
         "needs_reassignment",
         "stalled",
         "carried_meetings",
+        "overdue_in_all",  # of the team's items, as the summary counts them
     }
 
 

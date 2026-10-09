@@ -1624,6 +1624,13 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     Reads only what the board already shows the same team: descriptions,
     assignees and dates, never an utterance. An earlier meeting past its
     retention window carries nothing over (``within_retention``, #656).
+
+    **Late is against ``today``, and with none given that is the date in
+    Korea** (``slots.KST``), as in ``team_action_progress``: the route gives
+    none, and a server's ``date.today()`` on UTC is a day behind from 00:00 to
+    09:00 KST. In those hours the popup's "기한 지남" count left out the item
+    that had gone late at midnight, while the browser, on Korea's day, drew
+    that same row's date as late.
     """
     meeting = live_meeting(session, meeting_id)
     if meeting is None:
@@ -1644,7 +1651,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     if not earlier:
         return CarriedOver(open=0, overdue=0, items=[])
 
-    day = today or date.today()
+    day = today or datetime.now(tz=KST).date()
     rows = list(
         session.scalars(
             select(ExtActionItem)
