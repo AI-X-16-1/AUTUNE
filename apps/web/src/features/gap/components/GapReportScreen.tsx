@@ -52,7 +52,9 @@ function coverageByGap(
   for (const item of comparison?.items ?? []) {
     if (item.gap_id && item.coverage) known.set(item.gap_id, item.coverage);
   }
-  return gaps.every((gap) => known.has(gap.id)) && comparison !== null ? known : null;
+  // A meeting not yet compared has no verdicts to split by: "누락 0" there
+  // would read as a verdict (#1177).
+  return gaps.every((gap) => known.has(gap.id)) && comparison?.analysed === true ? known : null;
 }
 
 /**
