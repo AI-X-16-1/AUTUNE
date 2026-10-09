@@ -484,6 +484,30 @@ text, as settled on #509.
     same standard, so a failed call costs little.
   - *Still open.* Where the sentence is kept and how the card shows it
     (`main/`, 김민경); B handing over confirmed items' titles (B, 강민구).
+- **Days people picked for the next meeting** (decided 2026-10-08 by the
+  owner). "다음 회의 잡기" on the gap report (#824) puts a meeting's gaps on a
+  calendar event somebody picks, and that event's day is a day a person
+  chose. The approvals card offers every such day and the rule's day, and the
+  approver picks one; two people who picked different days give two choices,
+  and nothing chooses between them for the approver.
+  - *Read when the card is read.* Follow-up proposes at
+    `intelligence.completed`, usually before anybody presses "다음 회의
+    잡기", so the days are not part of the proposal. The card reads C's
+    `gap.next_meeting_days` and calls
+    `followup.date_choices(rule_day, picked_days(result))`: each picked day
+    once, earliest first, with who picked it, then the rule's day, one choice
+    saying both when they are the same.
+  - *Who picked it is named* (the owner, 2026-10-08): the approver should
+    know whose day it is. C gives the display name only, the one its team
+    Slack notice already posts for the same press, and only for members
+    still on the team (#1049).
+  - *Approving a picked day* is **not decided yet** (#1051). Running the
+    proposal with a day other than the one it carries changes its arguments
+    at approval, which meets #972's "approve what you saw"; `main/`'s owner
+    (김민경) decides how, with the card's list. `date_choices` serves either
+    way.
+  - The reason sentence (Stage 2) explains the rule's day only; a picked day
+    is labelled as picked, not explained.
 - **Holidays** (#964). Settled: business days skip B's public holidays
   (section 5). A team's own days off (a company holiday) are not known; the
   lead moves the date on the board.

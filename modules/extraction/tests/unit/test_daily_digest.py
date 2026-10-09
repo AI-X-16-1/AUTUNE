@@ -98,6 +98,7 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
             others=3,
         ),
         board_url="https://autune.example/actions",
+        today=TUESDAY,
     )
 
     assert text.split("\n") == [
@@ -107,7 +108,7 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
         "• 끝내지 않고 닫힘: 접은 일 · 주간 회의",
         "• 새로 맡음: 새 일 &lt;!channel&gt;",
         "오늘 할 일",
-        "• 기한 지남(2026-10-01): 늦은 일 · 기획 &lt;회의&gt;",
+        "• 기한 지남(10월 1일 목): 늦은 일 · 기획 &lt;회의&gt;",
         "• 오늘 기한: 오늘 일",
         "• 진행 중: 하던 일",
         "그 밖의 열린 액션 아이템 3개",
@@ -116,17 +117,32 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
 
 
 def test_a_quiet_day_says_so_rather_than_leaving_a_heading_empty() -> None:
-    text = build_daily_digest(DailyDigest(others=2), board_url="https://autune.example/actions")
+    text = build_daily_digest(
+        DailyDigest(others=2), board_url="https://autune.example/actions", today=TUESDAY
+    )
 
     assert "• 바뀐 것이 없습니다." in text
     assert "• 오늘 기한이거나 진행 중인 항목이 없습니다." in text
     assert "그 밖의 열린 액션 아이템 2개" in text
 
 
+def test_a_late_items_date_says_its_year_only_when_it_is_not_this_mornings() -> None:
+    """The user, 2026-10-09: a due date as B's screens write one."""
+    late = [
+        DigestLine("올해 일", date(2026, 10, 2), None),
+        DigestLine("지난해 일", date(2025, 12, 31), None),
+    ]
+
+    text = build_daily_digest(DailyDigest(late=late), board_url="u", today=TUESDAY)
+
+    assert "• 기한 지남(10월 2일 금): 올해 일" in text
+    assert "• 기한 지남(2025년 12월 31일 수): 지난해 일" in text
+
+
 def test_a_long_list_is_cut_and_counted() -> None:
     late = [DigestLine(f"늦은 일 {n}", date(2026, 10, 1), None) for n in range(8)]
 
-    lines = build_daily_digest(DailyDigest(late=late), board_url="u").split("\n")
+    lines = build_daily_digest(DailyDigest(late=late), board_url="u", today=TUESDAY).split("\n")
 
     assert sum(1 for line in lines if line.startswith("• 기한 지남(")) == 5
     assert "• 기한 지남 외 3개" in lines
@@ -144,13 +160,14 @@ def test_what_has_stood_for_days_comes_after_todays_dates_and_says_how_long() ->
             in_progress=[DigestLine("하던 일", None, None)],
         ),
         board_url="https://autune.example/actions",
+        today=TUESDAY,
     )
 
     lines = text.split("\n")
     start = lines.index("오늘 할 일")
     assert lines[start : start + 5] == [
         "오늘 할 일",
-        "• 기한 지남(2026-10-01): 늦은 일",
+        "• 기한 지남(10월 1일 목): 늦은 일",
         "• 오늘 기한: 오늘 일",
         "• 12일째 그대로: 오래 둔 일 &lt;b&gt; · 기획 회의",
         "• 5일째 그대로: 며칠 둔 일",
@@ -161,7 +178,9 @@ def test_what_has_stood_for_days_comes_after_todays_dates_and_says_how_long() ->
 def test_a_long_list_of_standing_items_is_cut_and_counted_too() -> None:
     stalled = [DigestLine(f"둔 일 {n}", None, None, idle_days=30 - n) for n in range(7)]
 
-    lines = build_daily_digest(DailyDigest(stalled=stalled), board_url="u").split("\n")
+    lines = build_daily_digest(DailyDigest(stalled=stalled), board_url="u", today=TUESDAY).split(
+        "\n"
+    )
 
     assert sum(1 for line in lines if "일째 그대로: " in line) == 5
     assert "• 그대로인 일 외 2개" in lines
@@ -545,7 +564,9 @@ def test_an_item_closed_without_finishing_is_told_as_closed_and_not_as_done(
     assert [line.description for line in content.done] == ["어제 끝낸 일"]
     assert [line.description for line in content.closed] == ["하던 일"]
     assert content.in_progress == []
-    lines = build_daily_digest(content, board_url="https://autune.example/actions").split("\n")
+    lines = build_daily_digest(
+        content, board_url="https://autune.example/actions", today=TUESDAY
+    ).split("\n")
     assert lines[2:4] == [
         "• 완료: 어제 끝낸 일 · team_1 회의",
         "• 끝내지 않고 닫힘: 하던 일 · team_1 회의",
@@ -617,7 +638,7 @@ def test_a_dm_goes_to_its_person_once_a_day_with_their_own_items_only(
     ((who, text),) = slack.sent
     assert who == "user_kim"
     assert "• 완료: 어제 끝낸 일 · team_1 회의" in text
-    assert "• 기한 지남(2026-10-02): 늦은 일" in text
+    assert "• 기한 지남(10월 2일 금): 늦은 일" in text
     assert "다른 팀 일" not in text, "one team's bot, its own work"
     assert "이 님의 일" not in text and "팀에 없는 사람 일" not in text
     assert [

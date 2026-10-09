@@ -217,16 +217,21 @@ def notice_content(session: Session, owed: NoticeOwed, *, now: datetime) -> Meet
     return None if notice.empty else notice
 
 
-def build_meeting_notice(notice: MeetingNotice, *, actions_url: str) -> str:
+def build_meeting_notice(notice: MeetingNotice, *, actions_url: str, today: date) -> str:
     """The notice as plain text: the meeting, how many drafts wait, the items
-    already confirmed, and where to look."""
+    already confirmed, and where to look. ``today`` is the day it is read on:
+    a due date says its year only when it is another one."""
     title = reminders.slack_escape(notice.meeting_title)
     if notice.waiting:
         out = [f"'{title}'에서 내 담당으로 잡힌 일 {notice.waiting}건이 확인을 기다립니다."]
     else:
         out = [f"'{title}'에서 내 담당으로 정해진 일이 있습니다."]
     for line in notice.confirmed[: reminders.DAILY_MAX_LINES]:
-        when = f" (기한 {line.due_date.isoformat()})" if line.due_date is not None else ""
+        when = (
+            f" (기한 {reminders.written_day(line.due_date, year=today.year)})"
+            if line.due_date is not None
+            else ""
+        )
         out.append(f"• 확정: {reminders.slack_escape(line.description)}{when}")
     if len(notice.confirmed) > reminders.DAILY_MAX_LINES:
         out.append(f"• 확정 외 {len(notice.confirmed) - reminders.DAILY_MAX_LINES}개")
@@ -263,7 +268,11 @@ def send_meeting_notice(
         return False
     slack.send_dm(
         owed.user_id,
-        build_meeting_notice(content, actions_url=service.answer_url(owed.meeting_id)),
+        build_meeting_notice(
+            content,
+            actions_url=service.answer_url(owed.meeting_id),
+            today=reminders.korean_day(now),
+        ),
     )
     return True
 

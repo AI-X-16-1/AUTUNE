@@ -10,6 +10,7 @@ import type { NotExtracted } from "./ReExtract";
 import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
+import { shownStatement } from "../statement";
 import { shortTitle } from "../title";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
 
@@ -113,7 +114,7 @@ export function decisionSourceLine(
   const from =
     sources === 0 && deleted > 0
       ? "근거 발화 삭제됨"
-      : (decision.summary ?? `근거 발화 ${sources}건`) +
+      : (decision.summary ? shownStatement(decision.summary) : `근거 발화 ${sources}건`) +
         (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
   return `${from} · 신뢰도 ${Math.round(decision.confidence * 100)}%`;
 }
@@ -149,7 +150,9 @@ function DecisionRow({
   // A decision has no detail window to hold the rest, so the line itself
   // opens: pressing it shows the whole statement, pressing again the short one.
   const [whole, setWhole] = useState(false);
-  const title = shortTitle(decision.statement);
+  // The sentence as the row reads; the stored one is what `RewordForm` edits.
+  const shown = shownStatement(decision.statement);
+  const title = shortTitle(shown);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, setPending] = useState(false);
   // Every change the row sends says so when it fails, the way the drawer does.
@@ -210,19 +213,19 @@ function DecisionRow({
                   type="button"
                   className="text-left [text-decoration:inherit]"
                   aria-expanded={whole}
-                  title={whole ? undefined : decision.statement}
+                  title={whole ? undefined : shown}
                   onClick={() => setWhole((now) => !now)}
                 >
-                  {whole ? decision.statement : title.shown}
+                  {whole ? shown : title.shown}
                 </button>
               ) : (
-                decision.statement
+                shown
               )}
             </p>
           )}
           {reworded && !editing ? (
             <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-              모델 문장: {decision.model_statement}
+              모델 문장: {shownStatement(decision.model_statement)}
             </p>
           ) : null}
           {quotation.sources && quotation.sources.length > 0 ? (
@@ -333,7 +336,7 @@ function DecisionRow({
       {confirmingDelete ? (
         <ConfirmDelete
           noun="결정"
-          description={decision.statement}
+          description={shown}
           pending={pending}
           onCancel={() => setConfirmingDelete(false)}
           onConfirm={async () => {

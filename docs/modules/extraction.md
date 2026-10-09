@@ -34,7 +34,7 @@ agreement, and sync the result to Notion and Jira.
 | --- | --- | --- |
 | D, E | `ExtractionResult` | `autune.extraction.completed` |
 | Notion, Jira | Issue creation via `packages/integrations` | — |
-| Slack | Action-item card thread, confirmation DMs | — |
+| Slack | DMs to the person concerned (confirmation, reminders, digests); to the team's channel, a project's minutes when a person sends them and one notice when a meeting's extraction is out of tries | — |
 
 ## Pipeline
 
@@ -136,6 +136,26 @@ agreement, and sync the result to Notion and Jira.
    decision often spans several utterances. **Module D depends on this**: it is
    what a decision lineage is keyed on, and a `Classification` alone is not
    enough. See `../architecture/contracts.md`, "The B → D boundary".
+
+   **Which decision turns are one decision** (the owner, 2026-10-09). Turns
+   said back to back are one decision only while at most one of them says
+   something of its own: a turn with content, then "네 그렇게 하죠", is one
+   decision, and the assent belongs to the one it follows. A second turn with
+   content starts a new decision, so a wrap-up that lists three decisions is
+   three rows, and a date said for one is not attached to the next. "Content"
+   is at least twelve characters once the words that only point ("그렇게",
+   "그대로") are taken out (`decisions.says_something`). The cost, accepted: one
+   decision said twice in full sentences is two rows, and a person removes
+   one. Before this every decision turn in a row was one decision, and three
+   decisions read out together became one row with the last one's date.
+
+   **A date that is what was decided is not the decision's deadline.** "배포를
+   화요일로 바꾸기로" decides a day, and "매주 월요일에 하기로" a day that
+   repeats; neither is due by anything. In a decision a date followed by
+   (으)로, or said with 매주, 매달, 격주 or 마다, is left out of the deadline
+   (`slots.parse_due(decided=True)`); "10월 20일에 내기로" and "다음 주
+   금요일까지" are read as before, and "금요일까지로" stays a deadline. An
+   action item's date is read as it always was.
 6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
@@ -324,9 +344,9 @@ confirmation DM's quotation is #586's second part.
 | `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
 | `ext_due_reminders` | That an item's assignee was sent a due-date reminder of one kind (`due_soon`, `overdue`) for one due date — the "once" — or that the outbound check refused it, reported once and not tried again. No text, no person; goes with the item |
 | `ext_due_reminder_optouts` | A person who turned their own due-date reminders off (연동 screen › 내 연결), and Monday's DM of their own open items with them (#792): one switch for both. On unless a row says off; the person and when, nothing else. Goes with the account |
-| `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's |
+| `ext_decisions` | Decision entities, their statements and source utterances. `origin` is `model` or `user`; a rerun rebuilds only the model's, and of those only the ones no person has confirmed, rejected or reworded (see "Rebuilding a meeting's decisions" below) |
 | `ext_decision_sources` | Which utterances a decision was settled in, in order, and the same two offsets for a decision settled in part of a long turn. A row outlives its utterance with `utterance_id` NULL (#400), as an action item's does: readers list the sources that exist and say how many were deleted (`deleted_source_count`), and the row keeps its `position` and nothing of the line -- no id, speaker, time or words, and no offsets: a trigger on the table clears `excerpt_start` and `excerpt_end` whenever the row has no `utterance_id`, so every path that deletes an utterance is covered without this module being told |
-| `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). No reviewer column |
+| `ext_decision_reviews` | A person's verdict on each proposed decision (pending, confirmed, rejected) and an optional rewording, keyed by `dec_` id so a rerun over the same sources keeps it (#246). A row that says something -- a verdict or a rewording -- also keeps its decision through a rerun that would group the lines differently; one put back to pending with no rewording does not. No reviewer column |
 | `ext_extraction_attempts` | One row per meeting whose extraction failed, whose stored result could not be published, or that a person asked to extract again: failures in a row, the class of the last error (never its message), when, when the team's Slack channel was told, and the request the worker takes. Deleted with the meeting |
 | `ext_extraction_runs` | One row per extracted meeting: a digest of the consenting utterances the last run read, and when (#518) |
 | `ext_meeting_notes` | The team's memo on a meeting's summary tab (S15 요약, #421). Free text a member typed; no author column; a blank memo is no row |
@@ -350,16 +370,55 @@ uses no model: `GET /summary/{meeting_id}` gives the meeting's decisions
 (confirmed first, then pending; rejected left out), every action item, how many
 open questions were asked and how many ambiguous agreements still wait for
 their speaker, and the team's memo (`PUT /summary/{meeting_id}/note`, whole
-memo, blank removes it). The tab reads it in three levels -- counts, then the
-decisions and items, each with what was said beneath it (`summary`, one line),
-then their source lines on the 액션 tab. Nothing leaves,
+memo, blank removes it), with the meeting's own title and start so the page
+can be headed when the meeting has no row to take them from. Nothing leaves,
 so it serves real meetings whatever #392 decides. v2 adds a prose summary by
 a cloud model over the whole meeting -- section summaries under the outbound
-limit, then a summary of those -- stored in `ext_meeting_summaries` and shown
-above v1's rows. It is off by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`)
-and, like every cloud implementation in this module, refused at start-up
-without `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until
-#392 is decided.
+limit, then a summary of those -- stored in `ext_meeting_summaries`. It is off
+by default (`AUTUNE_EXTRACTION_SUMMARY_IMPL=none`) and, like every cloud
+implementation in this module, refused at start-up without
+`AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392`: demo meetings only until #392 is
+decided.
+
+**The tab is the meeting's minutes as one document, and "회의록 복사" copies
+that page** (the owner, 2026-10-09; `features/actions/minutes.ts`). One page
+model, `minutesOf`, is drawn by the tab and written as plain text by
+`minutesText`, so what is on the screen is what lands on the clipboard. Before
+this the two were built apart and listed different things: the tab had counts,
+candidates and a line of what was said under each row; the copy had none of
+them. The page, top to bottom:
+
+- "회의록 — {title}" and the day the meeting began, "2026년 10월 8일 (목)", in
+  the reader's time zone.
+- v2's summary, where the deployment wrote one, under a heading that says a
+  model wrote it -- "요약 · AI 작성" on the tab, "요약 (AI 작성)" in the copy --
+  so the label goes wherever the paragraph is pasted.
+- 결정 사항, numbered, in the order the route gives them. One nobody has
+  confirmed is listed and marked "(자동 추출)".
+- 액션, numbered: the item's sentence, then who, the due date and where it
+  stands, each set off by a dot -- "… — 김민경 · 10월 13일 (화) · 진행 중". The
+  state is not in brackets: the date already ends in them. A due date is
+  written as the date line writes a day; its year is written only when it is
+  not the meeting's, or the page has no date line. "진행 전" is not said,
+  since it is every item a meeting has just made; an item waiting for
+  confirmation says "확인 필요". The tab alone adds "기한 지남" to an item past
+  its date.
+- 메모, the team's own, edited in place. A change is in the copy once it is
+  saved.
+
+Left off the page, on the tab and in the copy alike: **candidates** -- the
+model was not sure they were items, and minutes that listed one would state a
+guess as an outcome -- and **every quotation**. The line of what was said
+(`summary`) is no longer shown here; an item's source lines are read one item
+at a time on the 액션 tab, and a page meant to be pasted into a chat or a wiki
+is where a transcript should not follow. Under the page the tab says how many
+candidates, open questions and unanswered ambiguous agreements it left out,
+and links to the 액션 tab. The per-project tool (#787) stays below that,
+unchanged; its rows still call an action item "할 일" (#1036).
+
+Only the page's own lines are formatted. A date inside a stored sentence --
+a decision that ends "(담당 도윤재, 기한 2026-10-13)" -- is that sentence's
+and is shown as stored.
 
 The written summary names no person (#1070). The lines go to the model without
 their speakers, as for every model step here, so it cannot know who said a
@@ -581,8 +640,9 @@ opening the whole turn in place. The card's line beneath the description
 (`ActionItemRead.summary`) is what was said -- the part, when one is recorded --
 whenever the description is a model's sentence, so the sentence has the words
 it stands for under it; a card is two lines at most for each. The 요약 tab
-shows the same line beneath each decision and item. Notion, Slack, Jira and the
-copied minutes carry what they carried before.
+showed the same line beneath each decision and item until 2026-10-09; it is
+the minutes as a document now, and the minutes quote nothing (see "The summary
+tab" above). Notion, Slack and Jira carry what they carried before.
 
 Rebuilding a meeting's decisions replaces them, but a decision's `dec_` id is
 derived from the meeting and the utterances it was settled in, so a rebuild over
@@ -591,6 +651,34 @@ whose sources changed gets a different id — and module A mints new `utt_` ids
 whenever it reprocesses a recording (#194), which changes every source — so a
 caller that rebuilds still republishes `ExtractionResult`. Matching an old decision to a reworded new one is the
 same-decision question, and #25 gave that to D.
+
+**A decision a person confirmed, rejected or reworded is not rebuilt** (the
+owner, 2026-10-09; `service._marked_decisions`). While every line it was made
+from can be read, it keeps its `dec_` id, its sentence, its sources, its review
+and its Notion page, however the run would group those lines now -- a label
+the classifier gave differently this time, or a grouping rule that changed
+since the row was made. No new decision is made from a line such a row holds:
+a run of decision turns that is partly held is built from the free turns only,
+and only if one of them says something of its own, so assent to a kept
+decision does not become a row. A decision nobody marked is rebuilt as above,
+and a review put back to pending with no rewording is no mark.
+
+Two things still move a kept row:
+
+- **A line of it was corrected since** (a PII report, #586). The model's
+  sentence is read again from the row's own lines, so a word masked since does
+  not stay in it; the id and the review are kept. A person's rewording is not
+  touched and is flagged "출처 발화가 정정됨 · 확인 필요", as before. A row
+  confirmed without a rewording stays confirmed with the re-read sentence and
+  is not flagged, and its Notion page follows -- the rule #586 already had for
+  a decision whose id did not change.
+- **A line of it was deleted, or its speaker's consent was withdrawn.** It is
+  a decision like any other again: rebuilt from what can still be read, or
+  gone.
+
+Rows stored before this rule change only when their meeting is extracted
+again: a row that joined several decisions and that nobody marked is split
+into new ids then, and a marked one stays as it is.
 
 `ext_action_items` references `utterances.id`. It does **not** reference any
 other module's tables.
@@ -604,9 +692,11 @@ other module's tables.
 | GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order (each with `excerpt`, the part of it the item was made from, when one is recorded), up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
+| POST | `/action-items/{id}/close` | Close a confirmed, open item that will not be finished (#856, #1077) -- what "끝내지 않고 닫기" in the detail window calls. Not a `PATCH` of the status: the item ends `done` either way, and the `closed` event is what tells a close from finished work. Answers with the item as `PATCH /action-items/{id}` does (`ActionItemRead`). Refused 409: an item still waiting for confirmation, one already finished, one already closed. An item the reader may not see is the 404 an unknown one gets. Copies outside follow as after any change of status |
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
+| GET | `/sync-log?team_id=` | S28's 동기화 기록, for a member of the team (anybody else gets the 404 an unknown team gets). Two lists about the team's action items, newest first, thirty of each: the copies that failed and still stand (`ext_sync_failures`: the item, its meeting, the system, the kind, the time) and the latest copies that were made (the Notion page or Jira issue with its link, from `ext_external_refs`; the reader's own calendar events, from `ext_calendar_events`, with no link). Not a log of every attempt: a failure leaves once a later copy goes through, and a copy's time is when it was first made. A claim with no page, issue or event yet is not listed. Decisions' pages and project minutes are not in it. A meeting past retention shows nothing |
 | GET | `/materials?team_id=` | The Drive files the team keeps on its 자료 screen, the newest first (#817). Members of the team only |
 | POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
 | DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf. Any member; the Drive file is not touched |
@@ -622,13 +712,25 @@ other module's tables.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.extraction.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
-| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `default` |
-| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `default` |
-| `autune.extraction.send_confirmations` | After extraction | `default` |
+| `autune.extraction.sync_action_item` | A person confirms an action item (`PATCH /action-items/{id}` out of `needs_confirmation`). Today it runs in the API process right after the response, as a FastAPI background task — apps/api builds no Celery app to queue it on | `cpu_heavy` by its name; nothing queues it today -- every caller runs it in process |
+| `autune.extraction.sync_decision` | A person confirms a decision (`PATCH /decisions/{id}` to `confirmed`) or adds one (`POST /decisions`). Runs in the API process after the response, like `sync_action_item` | `cpu_heavy` where the module queues it itself (`_follow_corrections`, `_extract` and `forget_deleted_speech` in `tasks.py`); the confirmation in this row is not queued |
+| `autune.extraction.periodic.ask_confirmations` | Beat, every five minutes (step 6 of the pipeline). Not chained after extraction: a speaker who links Slack later is still asked within the window | `cpu_heavy` |
+
+The Queue column is where `autune_core.celery_app.TASK_ROUTES` sends the name:
+every `autune.extraction.*` task goes to `cpu_heavy`. This table is not the
+whole list -- `tasks.py` declares the rest, most of them beat tasks named
+`autune.extraction.periodic.*`.
 
 ## Slack surface
 
-- Action-item card thread posted to the meeting channel
+- To the team's connected channel, two kinds of message and no thread. A
+  project's minutes for one meeting, when a person sends them (#787,
+  `project_send.py`); sending again rewrites that message in place. And one
+  notice when a meeting's extraction is out of tries: its title, the count and
+  a link to its 액션 tab. No item is posted on its own and nothing is
+  threaded: an item reaches the channel only as a line of its project's
+  minutes (its sentence, assignee and due date), and not while it waits for
+  confirmation
 - A DM to each speaker with an ambiguous agreement, asking for confirmation
 - A DM to an item's assignee the day before its due date and once after it
   passes (`reminders.py`, `autune.extraction.periodic.remind_due_items`, every
@@ -735,10 +837,17 @@ other module's tables.
   `AUTUNE_EXTRACTION_WORK_REPORT=true` turns it on
 - An item can be **closed without being finished** (#856; the user,
   2026-10-07) -- dropped, overtaken, no longer needed. There is no cancelled
-  status: `tools.close_action_item` (an L2 action, run only after a person
-  approves; no board control calls it yet) makes a confirmed, open item
-  `done` and records an edit event of kind `closed` in place of an edit of
-  the status (`service.close_without_finishing`). A closed item is in none
+  status: a close makes a confirmed, open item `done` and records an edit
+  event of kind `closed` in place of an edit of the status
+  (`service.close_without_finishing`). There are two ways to it, with the
+  same refusals -- an item still waiting for confirmation, a finished one,
+  one already closed: `tools.close_action_item` (an L2 action, run only
+  after a person approves), and `POST /action-items/{id}/close`, which
+  "끝내지 않고 닫기" in the detail window of an open item calls (#1077), on
+  the meeting's list and on the team board. The window asks for no
+  confirmation (the user, 2026-10-09): it says afterwards that the item was
+  closed without being finished, and changing the status re-opens it, as it
+  does a finished item. A closed item is in none
   of the counts B publishes for E's completion rate (`TeamActionProgress`,
   `service.team_action_progress`; asked by E's owner on #856) -- neither
   finished nor left undone, as a deleted item is. That event is all that
@@ -770,7 +879,7 @@ other module's tables.
 | Utterance classification | `kakaobank/kf-deberta-base` (DeBERTa, [MIT](https://huggingface.co/kakaobank/kf-deberta-base)), fine-tuned |
 | Agreement verification | `klue/roberta-base` fine-tuned on KorNLI ([CC BY-SA 4.0](https://github.com/kakaobrain/kor-nlu-datasets) training data, server-only — #172) |
 | Reference resolution, report generation | LLM |
-| Due-date parsing | Rule-based Korean date parser plus LLM fallback |
+| Due-date parsing | Rule-based Korean date parser (`slots.parse_due`). No model reads a date |
 
 Target non-LLM share is roughly 60%: classification and verification are models
 we train, not prompts.
@@ -997,6 +1106,18 @@ versions.
   assignee) is said to anybody, and everything past that -- an event being
   there, none being there, a failed calendar copy -- only to the assignee,
   since each says whether that person connected a calendar.
+- S28's 동기화 기록 (`GET /sync-log`) gathers those same rows for a team and
+  records nothing of its own. It follows the rule above and does not widen
+  it: a Notion or Jira row goes to any member of the team; a failed
+  calendar copy goes through the same `sync_state.failures_for` a card
+  uses, so only to the item's assignee; and an event that was made is
+  listed only for the person whose calendar holds it
+  (`ext_calendar_events.user_id` -- the assignee, or, between a
+  reassignment and the next copy, the person the item was assigned to
+  before). A row carries the item's text as the board shows it, its
+  meeting's title, the system, the kind or the link, and a time -- no
+  assignee and no service message. The window draws an address as a link
+  only when it is https.
 - Confirmation DMs go to the speaker, never to a channel.
 - Due-date reminders go to the item's assignee, never to a channel, a manager
   or the person who made the item, and nothing counts or ranks what a person

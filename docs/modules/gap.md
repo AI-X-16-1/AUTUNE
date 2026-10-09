@@ -884,7 +884,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_related_topics` | Which topics a gap was inferred from |
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
-| PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again. Read by nothing but the cleanup |
+| PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again, and the day that event starts. Read by the cleanup, and by `gap.next_meeting_days` for each picked day and the display name of who picked it |
 | PostgreSQL `gap_agenda_cleanup` | Lines still to take off their owners' calendars, drained by the worker: those of a deleted or expired meeting, and those of an owner who left the meeting's team (#937). Keyed by the owner, not the meeting |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
@@ -941,6 +941,20 @@ to hold the gap yet (#756), so the mark is what the next meeting's picture reads
 undismissed gaps, most recently sent first. Nothing is scheduled and nobody is
 invited; that is S25 (P2). A mark stays until somebody takes it back or
 dismisses the gap.
+
+`gap_agenda_events.event_day` keeps the day the event a line went onto
+starts, in Korea, as Google gave it at the write. A person who picks an event
+for the next meeting has chosen that day, so the Follow-up approval card offers
+it beside the day its own rule suggests: the agent tool `gap.next_meeting_days`
+lists a meeting's picked days, each once, from today on, with the display
+name of who picked each -- so the approver knows whose day it is (the owner,
+2026-10-08). Picking is an act a member took for the team, and where a Slack
+channel is connected C's team notice posts the same name for the same press;
+the tool serves the approvals card only, not the chat model, and gives nothing else of the calendar or the event, and only
+members still on the team are named. Two people who picked different days
+give two, and the approver chooses. An event moved later keeps its old day
+until somebody presses again; the event's attendees, all on the team, already
+see its day on the event itself.
 
 `gap_gaps.question_edited_at` marks a 해소용 질문 a member rewrote by hand
 ("편집" on S20, `PUT /gaps/{gap_id}/question`, #824), with the same rules: no

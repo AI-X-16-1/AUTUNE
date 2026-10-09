@@ -248,6 +248,13 @@ because both must be deletable on request:
   speech afterwards. ADR 0007 would clear that column on departure; it is
   Proposed and not followed on this point -- see `privacy.md` section 4 and
   the ADR's *Not taken yet*.
+- **Team deletion** (#1007): the last member of a team may delete it. Module
+  A runs every meeting's `on_meeting_deleted` hooks, deletes the meetings and
+  then the `teams` row; everything else follows by `ON DELETE CASCADE` from
+  `teams` or `meetings`. Every foreign key to `teams.id` is
+  `ON DELETE CASCADE`, and every one to `meetings.id` is that or `SET NULL`;
+  a key with neither would block the deletion. What is refused and what
+  stays outside Autune: `privacy.md` section 4.
 - **Retention sweep** deletes analysis results past the retention window (90
   days by default). Module A runs it (`autune.audio.periodic.expire_meetings`)
   by deleting the expired `meetings` rows, so a module table is covered by the

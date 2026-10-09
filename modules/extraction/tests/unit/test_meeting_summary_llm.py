@@ -217,6 +217,95 @@ def test_an_unusable_overview_means_no_summary() -> None:
     assert summarizer(provider).summarize(LINES) is None
 
 
+# A meeting long enough for several section calls, with no name and no number
+# a point below would have to match.
+LONG = [
+    f"고객 인터뷰에서 나온 요청 사항을 하나씩 검토했고 정리한 표를 같이 봤어요 {n}번"
+    for n in range(200)
+]
+SECTION = {"points": ["정리한 표를 검토했습니다"]}
+
+
+def test_a_point_in_a_list_of_its_own_is_read_as_the_point() -> None:
+    # 2026-10-09, an invented meeting: a section answered with every point
+    # wrapped, none was kept, and the summary was written from the other half.
+    parts = sections(LONG)
+    wrapped = {"points": [["정리한 표를 검토했습니다"], ["요청 사항을 하나씩 봤습니다"]]}
+    final = {
+        "overview": "요청 사항을 검토한 회의입니다.",
+        "points": [["결정: 표를 다시 정리하기로 했습니다"], "할 일: 요청 사항을 나눠 봅니다"],
+    }
+    provider = Provider(*([wrapped] * len(parts)), final)
+
+    written = summarizer(provider).summarize(LONG)
+
+    assert written is not None
+    last = provider.prompt(len(parts))
+    assert "정리한 표를 검토했습니다" in last and "요청 사항을 하나씩 봤습니다" in last
+    assert written.points == (
+        "결정: 표를 다시 정리하기로 했습니다",
+        "할 일: 요청 사항을 나눠 봅니다",
+    )
+
+
+def test_a_list_that_is_not_one_string_is_no_point() -> None:
+    provider = Provider(
+        {
+            "overview": FINAL["overview"],
+            "points": [
+                ["배포는 금요일로 미룹니다", "릴리스 노트는 3시까지 정리합니다"],
+                [],
+                [42],
+                [["배포는 금요일로 미룹니다"]],
+                "릴리스 노트는 3시까지 정리합니다",
+            ],
+        }
+    )
+
+    written = summarizer(provider).summarize(LINES)
+
+    assert written is not None
+    assert written.points == ("릴리스 노트는 3시까지 정리합니다",)
+
+
+def test_a_wrapped_point_that_names_someone_is_counted_like_any_other() -> None:
+    assert summary_module._named({"overview": "", "points": [["제가 정리하겠습니다"]]}) == 1
+
+
+@pytest.mark.parametrize(
+    "nothing",
+    [
+        {},
+        {"points": []},
+        {"points": "정리한 표를 검토했습니다"},
+        {"points": [42, ["정리한 표를", "검토했습니다"]]},
+        {"points": ["예산 500만 원을 쓰기로 했습니다"]},  # a number nobody said
+    ],
+)
+@pytest.mark.parametrize("failing", [0, 1])
+def test_a_section_that_gives_no_point_means_no_summary_and_no_further_call(
+    nothing: dict[str, Any], failing: int
+) -> None:
+    # Without it the last call is written from the other sections alone, and
+    # the tab shows that as the meeting.
+    parts = sections(LONG)
+    assert len(parts) > failing + 1
+    answers = [SECTION] * len(parts)
+    answers[failing] = nothing
+    provider = Provider(*answers, FINAL)
+
+    with capture_logs() as logs:
+        written = summarizer(provider).summarize(LONG)
+
+    assert written is None
+    assert len(provider.bodies) == failing + 1, "neither the next section nor the last call"
+    (event,) = [e for e in logs if e["event"].startswith("extraction_summary")]
+    assert {k: v for k, v in event.items() if k != "log_level"} == {
+        "event": "extraction_summary_section_unusable",
+        "calls": failing + 1,
+    }
+
+
 def test_nothing_to_summarise_sends_nothing() -> None:
     provider = Provider()
 
@@ -416,6 +505,17 @@ def test_the_task_stores_a_summary_and_does_not_ask_again_for_the_same_lines(
     assert "박재경" not in provider.sent, "the team's roster is given to the summarizer"
     row = task_session.get(ExtMeetingSummary, MEETING)
     assert row is not None and row.overview.startswith("로그인 오류 원인을 공유했고 배포를")
+
+
+def test_an_answer_that_could_not_be_used_stores_nothing_and_the_tab_has_no_written_summary(
+    task_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = summarizer(Provider({"overview": "", "points": ["배포는 금요일로 미룹니다"]}))
+    monkeypatch.setattr(tasks, "get_summarizer", lambda: s)
+
+    assert tasks.summarize_meeting(MEETING) is False
+    assert task_session.get(ExtMeetingSummary, MEETING) is None
+    assert service.meeting_summary(task_session, MEETING).generated is None
 
 
 def test_a_failed_call_leaves_the_tab_as_it_was(

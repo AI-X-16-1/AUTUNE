@@ -1077,3 +1077,66 @@ def test_the_notice_names_lines_new_on_the_next_meetings_event(
     assert response.json()["slack"] == "posted"
     assert len(channel.posted) == 1
     assert ("gap_old", MEMBER, "evt_meeting") in recorded(session)
+
+
+# --- the day the picked event starts (the Follow-up card's dates) ------------
+
+
+def days(session: Session) -> set[date | None]:
+    session.expire_all()
+    return {r.event_day for r in session.scalars(select(GapAgendaEvent))}
+
+
+def test_the_events_day_is_recorded_in_korea(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    next_meeting(session)
+    calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+
+    client.post(f"{PREFIX}/gaps/gap_1/carry")
+
+    assert days(session) == {calendar_writes.day_of(STARTS)}
+
+
+def test_pressing_again_on_a_moved_event_keeps_its_new_day(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+    google.events = [event("evt_meeting", STARTS + timedelta(days=3))]
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+
+    assert days(session) == {calendar_writes.day_of(STARTS + timedelta(days=3))}
+
+
+def test_pressing_again_without_a_readable_start_keeps_the_known_day(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+    google.events = [{**event("evt_meeting", STARTS), "start": {"dateTime": "not a time"}}]
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+
+    assert days(session) == {calendar_writes.day_of(STARTS)}
+
+
+@pytest.mark.parametrize(
+    ("starts", "expected"),
+    [
+        (datetime(2026, 10, 8, 16, 0, tzinfo=UTC), date(2026, 10, 9)),
+        (datetime(2026, 10, 8, 14, 59, tzinfo=UTC), date(2026, 10, 8)),
+        (datetime(2026, 10, 8, 16, 0), date(2026, 10, 9)),
+        (date(2026, 10, 20), date(2026, 10, 20)),
+        (None, None),
+    ],
+    ids=["utc-evening-is-korea-next-day", "utc-afternoon", "naive-is-utc", "all-day", "none"],
+)
+def test_an_events_day_is_its_day_in_korea(
+    starts: datetime | date | None, expected: date | None
+) -> None:
+    assert calendar_writes.day_of(starts) == expected
