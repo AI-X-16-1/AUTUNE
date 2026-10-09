@@ -70,7 +70,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
@@ -305,8 +305,9 @@ def write_agenda(
 ) -> tuple[AgendaOutcome, datetime | date | None]:
     """``update_agenda``, and when the event it wrote to starts, as Google gave
     it in the event's own time zone -- a ``date`` for an all-day event, ``None``
-    when nothing was written or Google did not say. Only the team channel's
-    notice reads it; it is not stored or logged."""
+    when nothing was written or Google did not say. The team channel's notice
+    reads it, and its day is kept as ``event_day`` (``next_meeting_days``); the
+    time itself is not stored or logged."""
     starts: datetime | None = None
     if event_id is None:
         meeting = next_meeting(session, team_id, now=now or datetime.now(UTC))
@@ -403,7 +404,8 @@ def _record(
     event_day: date | None = None,
 ) -> None:
     """Remember which event holds each gap's line, and the day it starts, or
-    forget it once taken out. Pressing again on a moved event keeps its new day."""
+    forget it once taken out. Pressing again on a moved event keeps its new day;
+    pressing again when Google gave no readable start keeps the day known."""
     if not gaps:
         return
     if not kept:
@@ -431,7 +433,8 @@ def _record(
             ]
         )
         .on_conflict_do_update(
-            index_elements=["gap_id", "user_id", "event_id"], set_={"event_day": event_day}
+            index_elements=["gap_id", "user_id", "event_id"],
+            set_={"event_day": func.coalesce(event_day, GapAgendaEvent.event_day)},
         )
     )
 

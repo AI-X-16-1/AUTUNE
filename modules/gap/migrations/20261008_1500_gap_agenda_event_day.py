@@ -3,8 +3,9 @@
 "다음 회의 잡기" (#824) now keeps the start day of the event a gap's line
 went onto (``gap_agenda_events.event_day``), so the Follow-up approval card
 can offer the days people picked for the next meeting beside the day its rule
-suggests (``tools.next_meeting_days``). The day only: who picked it stays
-read by the cleanup alone.
+suggests (``tools.next_meeting_days``). That read also names who picked
+each day, by the display name of the row's ``user_id`` while they are still
+on the team; nothing else of the calendar or the event leaves the table.
 
 Nullable, no backfill: the day was never stored before, and an old record's
 event is read again only when somebody presses again.

@@ -26,8 +26,9 @@ What holds for all five:
   text, so no raw utterance leaves here.
   The exception is ``next_meeting_days``: it names who picked each day for the
   next meeting, by display name. That is an act a member took for the team,
-  which C's team Slack notice already names (privacy.md), not anything they
-  said or how they took part.
+  not anything they said or how they took part; a team with a Slack channel
+  connected already sees the same name in C's notice (privacy.md). It is for
+  the Follow-up approvals card only and is not offered to the chat model.
 - **Undismissed gaps only.** A dismissal is a person saying the gap is wrong,
   and C's own report leaves those out too (``service.build_report``).
 - ``evidence`` is gap ids. ``items`` holds at most five, most risky first, and
@@ -329,7 +330,8 @@ def carried_gaps(session: Session, team_id: str) -> dict[str, Any]:
 
 
 def next_meeting_days(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
-    """Use this when a follow-up meeting's day is being chosen: the days people
+    """Use this when a follow-up meeting's day is being chosen, for the
+    approvals card only; not offered to the chat model. The days people
     picked for the next meeting with "다음 회의 잡기" on this meeting's gap
     report -- the start day of each calendar event a gap's line went onto.
     Do not use it to learn which gaps were sent on: that is ``carried_gaps``.
@@ -340,8 +342,9 @@ def next_meeting_days(session: Session, team_id: str, meeting_id: str) -> dict[s
     Two people who picked the same day are one day with both names; two who
     picked different days are two, for the person deciding to choose between.
 
-    ``picked_by`` names who pressed, so the approver knows whose day it is --
-    the name C's team Slack notice already posts for the same press. Only
+    ``picked_by`` names who pressed, so the approver knows whose day it is:
+    an act they took for the team, and the name C's team Slack notice posts
+    for the same press where a channel is connected. Only
     members still on the meeting's team are named, and a day nobody on it
     picked is left out. Nothing else of the event or the calendar: no user id,
     no calendar or event id, no title.

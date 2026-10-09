@@ -426,8 +426,9 @@ class GapAgendaEvent(Base):
     Korea, as Google gave it when the line was written. A person picking an
     event for the next meeting has chosen that day, and the Follow-up card
     offers it among its dates (``tools.next_meeting_days``), with the display
-    name of who picked it -- the name C's team Slack notice already posts for
-    the same press. Never the calendar or the event. The event's attendees,
+    name of who picked it: an act they took for the team, and the name C's
+    team Slack notice posts for the same press where a channel is connected.
+    Never the calendar or the event. The event's attendees,
     all on the team, already see that day on the event the line went onto.
     ``None`` when Google did not say, and on records from before it was kept.
 

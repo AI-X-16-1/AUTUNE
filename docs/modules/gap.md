@@ -948,8 +948,9 @@ for the next meeting has chosen that day, so the Follow-up approval card offers
 it beside the day its own rule suggests: the agent tool `gap.next_meeting_days`
 lists a meeting's picked days, each once, from today on, with the display
 name of who picked each -- so the approver knows whose day it is (the owner,
-2026-10-08). That name is the one C's team Slack notice already posts for the
-same press; the tool gives nothing else of the calendar or the event, and only
+2026-10-08). Picking is an act a member took for the team, and where a Slack
+channel is connected C's team notice posts the same name for the same press;
+the tool serves the approvals card only, not the chat model, and gives nothing else of the calendar or the event, and only
 members still on the team are named. Two people who picked different days
 give two, and the approver chooses. An event moved later keeps its old day
 until somebody presses again; the event's attendees, all on the team, already

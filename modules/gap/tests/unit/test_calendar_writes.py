@@ -1112,6 +1112,19 @@ def test_pressing_again_on_a_moved_event_keeps_its_new_day(
     assert days(session) == {calendar_writes.day_of(STARTS + timedelta(days=3))}
 
 
+def test_pressing_again_without_a_readable_start_keeps_the_known_day(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+    google.events = [{**event("evt_meeting", STARTS), "start": {"dateTime": "not a time"}}]
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+
+    assert days(session) == {calendar_writes.day_of(STARTS)}
+
+
 @pytest.mark.parametrize(
     ("starts", "expected"),
     [

@@ -753,8 +753,10 @@ the feature needs.
       tool reads it but the one below. It also keeps the day the event
       starts, which `gap.next_meeting_days` hands the Follow-up approval card
       as a candidate day for the follow-up meeting, with the display name of
-      who picked it -- the name the team Slack notice below already posts for
-      the same press -- and nothing else of the calendar or the event. Only
+      who picked it -- an act they took for the team, and the name the team
+      Slack notice below posts for the same press where a channel is
+      connected -- and nothing else of the calendar or the event. The tool
+      serves the approvals card only and is not offered to the chat model. Only
       members still on the meeting's team are named. The event's attendees,
       all on the team by the refusal above, already see that day on the
       event. Taking a gap back removes its line and its record. A
