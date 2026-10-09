@@ -423,7 +423,9 @@ Module B classifies every utterance in a meeting, so an external implementation
 sends the whole meeting's text to somebody else's model — which section 6 of
 `../architecture/privacy.md` makes a design conversation rather than a value you
 can set. Module B added `llm` as an opt-in after the 2026-09-23 mentoring, and
-the conversation is #392. Until #392 is settled:
+the conversation is #392. It has settled how the team's dev site -- the
+deployment built from the `dev` branch -- runs it, and not yet whether a real
+service may:
 
 - `llm` is never the default, and nothing selects it for you.
 - **It has to be switched on twice.** With `AUTUNE_EXTRACTION_CLASSIFIER_IMPL`
@@ -433,14 +435,25 @@ the conversation is #392. Until #392 is settled:
   `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — the worker and
   the API do not start (the API with every other module, since it imports each
   router), and the error names the variable.
-  "Dummy meetings only" and "a paid key" are rules the code cannot check; the
-  flag makes sending speech to a provider something a deployment says twice.
+  Which meetings go through and whether the key is a paid one are rules the
+  code cannot check; the flag makes sending speech to a provider something a
+  deployment says twice.
   It turns nothing on by itself, and deleting it is the migration once #392 is
   decided. It is not keyed on `AUTUNE_ENV`: `.env.example` ships
   `AUTUNE_ENV=local`, so a deployment made from that file would be the one let
   through.
-- Use it on dummy meetings only. A free-tier key may let the provider keep what
-  it is sent; a real meeting needs a paid key and #392's answer.
+- **On a free-tier key, dummy meetings only.** A free-tier key may let the
+  provider keep what it is sent.
+- **On the dev site, the team's own meetings only** (#392, 2026-10-05, out of
+  the review of #818; the four other owners approved #818 and #748 under it).
+  Its keys are paid. A meeting with a participant from outside the team is not
+  uploaded there: a name that is not on the team's roster is not replaced
+  (below) and leaves as it was spoken, and that is accepted for the team's own
+  people only. Nothing in the code knows who was in the room, so this binds
+  whoever uploads. The owners agreed to it for the 10-09 gate and the 10-12
+  demo; whether the dev site keeps `llm` after the demo is #392's to say.
+- **A real service: not decided.** Anybody else's meeting needs #392's answer,
+  and with it an answer to the overseas-transfer question it put on #92.
 
 What it sends is utterance text as module A masked it and a fixed instruction —
 no speaker, no id, no meeting title — in windows under the 4,000-character

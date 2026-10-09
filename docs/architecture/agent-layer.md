@@ -1206,8 +1206,10 @@ T3 mean.
 since added `classifier_impl=llm`, which sends masked utterance windows to
 Gemini through `check_outbound`, so the door the paragraph above describes is
 open in B's own code. Whether that meets section 6's second condition is a
-team decision on #392 (`decision`, `privacy`) rather than B's owner's alone,
-and it is still open; until it closes, `llm` runs on demo meetings only. This
+team decision on #392 (`decision`, `privacy`) rather than B's owner's alone.
+For the team's dev site it is answered -- the whole meeting, in windows, is
+what classifying needs, and `llm` runs there on the team's own meetings only
+(#392, 2026-10-05; #818). For a real service it is still open. This
 section keeps the old wording only so the history reads straight, and T2 now
 has a running implementation to measure.
 
@@ -1294,10 +1296,14 @@ the rule below is what holds until it is answered.
 What is undecided is narrower than the architecture: **which providers we send
 to, and under what agreement.** Two parts, and each carries a condition:
 
-- **The LLM provider: Gemini, on the same terms as B's `classifier_impl=llm` —
-  demo meetings only until #392 is decided and a paid key with recorded
-  data-processing terms replaces the free one.** Nothing in the code tells a
-  demo meeting from a real one, nor a free key from a paid one (#405), so this
+- **The LLM provider: Gemini, on the same terms as B's `classifier_impl=llm`.**
+  On the team's dev site those are the terms agreed on #392: the agent's key
+  there is a paid one (confirmed on #392, 2026-10-06), and the meetings it
+  reads are the ones B's rule lets onto that site -- the team's own, none with
+  a participant from outside the team. On a free-tier key, dummy meetings
+  only. Whether a real service calls the provider is not decided, and waits on
+  #392 and on recorded data-processing terms. Nothing in the code tells one
+  meeting from another, nor a free key from a paid one (#405), so this
   is a deployment rule and not a runtime check. Module B already calls Gemini
   through `check_outbound` (#393), so the agent layer adds no new provider;
   what is still owed is those terms, recorded next to the credential in
@@ -1316,8 +1322,9 @@ meeting now sends its raised questions and the matching past utterances to the
 model automatically**, through Research on `autune.intelligence.completed` —
 not only when someone chats. What is sent is masked text plus each quoted
 meeting's title and date; the speaker label is stripped before the prompt is
-built, so no speaker name is sent. The rule above applies unchanged: until #392
-is decided and the key is paid, demo meetings only.
+built, so no speaker name is sent. The rule above applies unchanged: the
+team's own meetings on the dev site, dummy meetings on a free-tier key, and no
+real service until #392 decides it.
 
 One thing is worth restating rather than rediscovering: `privacy.md` section 2's
 masking scope does not include a person's name, so a name does reach every
