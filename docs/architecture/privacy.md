@@ -883,7 +883,10 @@ the feature needs.
     three, one message each: the gap's title and suggested question, the
     meeting's title and the presser's display name, mentioning nobody; when
     there are more, one line counts them and links to the meeting's report
-    on Autune.
+    on Autune. Once E has posted the meeting's report, the cards and "담당자
+    지정해 질문" reply in its thread: C keeps where it is
+    (`gap_report_threads`: the channel id and the message `ts`, nothing the
+    message says), and the row goes with the meeting.
     Titles and C's own questions are stored masked, and a question a
     member rewrote is pattern-checked (below); every value is escaped so it
     cannot become a mention or a link, and no utterance, score or

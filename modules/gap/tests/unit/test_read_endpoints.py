@@ -45,6 +45,7 @@ from autune_gap.models import (
     GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
+    GapReportThread,
     GapTopic,
     GapTopicEdge,
     GapTopicUtterance,
@@ -84,6 +85,7 @@ TABLES = [
     GapAgendaEvent.__table__,
     GapAgendaCleanup.__table__,
     GapFollowupEvent.__table__,
+    GapReportThread.__table__,
 ]
 
 
