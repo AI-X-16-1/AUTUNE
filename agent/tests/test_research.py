@@ -12,6 +12,7 @@ from autune_agent.main import CallBudget, RunScope, Toolbox, collect_subagents
 from autune_agent.main.registry import Tool
 from autune_agent.subagents.research import SUBAGENT, make_subagent
 from autune_agent.subagents.research.graph import (
+    LIVE,
     OVERVIEW,
     QUESTIONS,
     RECENT,
@@ -53,6 +54,7 @@ def tools_for(
     recent: list[dict[str, Any]] | None = None,
     calls: list[str] | None = None,
     saved: dict[str, Any] | None = None,
+    live: list[dict[str, Any]] | None = None,
 ) -> dict[str, Tool]:
     log = [] if calls is None else calls
     qs = (
@@ -98,7 +100,13 @@ def tools_for(
         log.append(SAVE)
         return saved or {"ok": True, "summary": "저장", "evidence": ["rdoc_1"]}
 
+    def live_notes(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
+        log.append(LIVE)
+        notes = live or []
+        return {"ok": True, "summary": f"{len(notes)}건", "items": notes, "evidence": []}
+
     return {
+        LIVE: _tool(LIVE, live_notes),
         OVERVIEW: _tool(OVERVIEW, overview),
         QUESTIONS: _tool(QUESTIONS, unresolved),
         RECENT: _tool(RECENT, recent_meetings),
@@ -130,7 +138,7 @@ def invoke(
 def test_it_is_collected_woken_by_intelligence_completed_and_reads_only_its_list() -> None:
     assert collect_subagents()["research"] is SUBAGENT
     assert SUBAGENT.triggers == (INTELLIGENCE_COMPLETED,)
-    assert set(SUBAGENT.tools) == {OVERVIEW, QUESTIONS, RECENT, SEARCH, SAVE}
+    assert set(SUBAGENT.tools) == {OVERVIEW, QUESTIONS, RECENT, SEARCH, SAVE, LIVE}
 
 
 def test_a_meeting_with_questions_gets_a_document_and_one_l2_proposal(session, team) -> None:
@@ -337,3 +345,62 @@ def test_the_writer_gets_the_meeting_of_a_quote_but_never_its_speaker(session, t
     [match] = writer.written[0]["matches"]
     assert match.title == "2026-09-23 리뷰 · 배포"
     assert "김팀장" not in match.title
+
+
+# When B labelled nothing, the answer is what was looked up during the meeting,
+# or what to do next -- never a bare "nothing to research" (2026-10-09).
+NOTES = [
+    {
+        "title": "앱스토어 심사는 며칠 걸리나?",
+        "body": "보통 24~48시간 안에 끝납니다.",
+        "id": "alr_1",
+    },
+]
+
+
+def test_no_questions_answers_with_the_meetings_live_notes(session, team) -> None:
+    calls: list[str] = []
+
+    outcome = invoke(
+        tools_for(questions=[], live=NOTES, calls=calls),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
+
+    assert outcome.result.ok is True
+    assert "회의 중 조사 1건" in outcome.result.summary
+    assert [i.title for i in outcome.result.items] == ["앱스토어 심사는 며칠 걸리나?"]
+    assert outcome.result.items[0].body == "보통 24~48시간 안에 끝납니다."
+    assert outcome.proposed == []
+    assert SAVE not in calls
+
+
+def test_no_questions_and_no_live_notes_says_what_was_checked_and_what_to_do(session, team) -> None:
+    outcome = invoke(
+        tools_for(questions=[], live=[]),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
+
+    summary = outcome.result.summary
+    assert "열린 질문" in summary
+    assert "회의 중 조사" in summary
+    assert "조사" in summary and "버튼" in summary
+
+
+def test_live_notes_are_read_only_when_b_found_no_question(session, team) -> None:
+    calls: list[str] = []
+
+    invoke(
+        tools_for(live=NOTES, calls=calls),
+        FakeWriter(),
+        session=session,
+        team_id=team["team"],
+        meeting=team["meeting"],
+    )
+
+    assert LIVE not in calls
