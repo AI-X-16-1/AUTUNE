@@ -454,7 +454,9 @@ team inside those 14 days could not have shown a reversal — either its lineage
 was measured and came back without B's decisions (D publishes that way when B
 times out), or E never aggregated it at all, so nothing was measured. Either way
 a reversal there would have been invisible and "negative" would claim more than
-anything looked at. A meeting already seen
+anything looked at. A meeting still `scheduled` 14 days after its time is taken
+as never held (nobody recorded it) and withholds nothing; a failed or stuck one
+did happen and still does (#462). A meeting already seen
 to be reversed stays positive. Meetings held back this way are counted in the
 `intelligence_history_labels_blocked_by_blind_spot` log line, so "0 labeled
 meetings" can be told apart from short history. History is read back from E's own tables, and
