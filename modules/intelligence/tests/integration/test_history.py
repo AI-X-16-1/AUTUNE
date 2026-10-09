@@ -16,8 +16,10 @@ from autune_intelligence.history import labeled_examples
 NOW = datetime.now(UTC)
 
 
-def _meeting(session: Session, team: str, days_ago: float) -> str:
-    m = Meeting(team_id=team, title="m", started_at=NOW - timedelta(days=days_ago))
+def _meeting(session: Session, team: str, days_ago: float, status: str = "complete") -> str:
+    """A held meeting by default; an unaggregated one stuck in the pipeline is
+    ``analyzing``, and one nobody ever recorded stays ``scheduled`` (#462)."""
+    m = Meeting(team_id=team, title="m", started_at=NOW - timedelta(days=days_ago), status=status)
     session.add(m)
     session.flush()
     return m.id
@@ -108,6 +110,44 @@ def test_an_unaggregated_meeting_past_the_horizon_does_not_withhold(
     examples = {e.meeting_id: e for e in labeled_examples(db_session, now=NOW)}
 
     assert examples[earlier].reversed_within_horizon is False
+
+
+def test_a_meeting_never_held_does_not_withhold_the_earlier_label(
+    db_session: Session, team: str
+) -> None:
+    """Still ``scheduled`` two weeks after its time: nobody recorded it, and an
+    empty calendar slot cannot contain a reversal (#462)."""
+    earlier = _meeting(db_session, team, days_ago=30)
+    _aggregate(db_session, earlier)
+    _meeting(db_session, team, days_ago=25, status="scheduled")  # inside earlier's horizon
+
+    examples = {e.meeting_id: e for e in labeled_examples(db_session, now=NOW)}
+
+    assert examples[earlier].reversed_within_horizon is False
+
+
+def test_a_recent_scheduled_meeting_still_withholds(db_session: Session, team: str) -> None:
+    """Within a horizon of its time an upload may still be coming: until then a
+    ``scheduled`` meeting is a blind spot like any other (#462)."""
+    earlier = _meeting(db_session, team, days_ago=17)
+    _aggregate(db_session, earlier)
+    _meeting(db_session, team, days_ago=5, status="scheduled")  # inside earlier's horizon
+
+    labeled = {e.meeting_id for e in labeled_examples(db_session, now=NOW)}
+
+    assert earlier not in labeled
+
+
+def test_a_failed_meeting_still_withholds_however_old(db_session: Session, team: str) -> None:
+    """A failed transcription was a meeting that happened: it could have held a
+    reversal nobody measured, so it is not taken as never held."""
+    earlier = _meeting(db_session, team, days_ago=30)
+    _aggregate(db_session, earlier)
+    _meeting(db_session, team, days_ago=25, status="failed")
+
+    labeled = {e.meeting_id for e in labeled_examples(db_session, now=NOW)}
+
+    assert earlier not in labeled
 
 
 def test_a_seen_reversal_survives_an_unaggregated_later_meeting(
