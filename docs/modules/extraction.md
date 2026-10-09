@@ -131,6 +131,23 @@ agreement, and sync the result to Notion and Jira.
    an acknowledgement ("네 알겠습니다."): it has no content to ask the speaker
    about, so it is not verified, recorded or asked. The same words labeled
    `commitment` -- an acceptance of a request -- are left alone.
+
+   A second fixed rule, also before this step and also with no model, works
+   the other way (module B's owner, 2026-10-09: a launch date, a settled date
+   or a deadline said in a meeting is a decision). A line the classifier left
+   unlabelled becomes a pending `decision` at confidence 0.9 when one of its
+   sentences has a milestone word (출시, 마감, 오픈, 배포, 확정, 론칭, 런칭,
+   릴리스, 릴리즈, 데드라인, 납기, 기한) and a date: one the due-date reader
+   takes, or one something was set to ("계약 갱신일은 11월 15일로
+   확정됐습니다", where the past verb is the settling). It never touches a line
+   that has any kind -- a promise with a deadline stays one item -- nor a turn
+   read in pieces, a question, or a sentence that says the date is open (아직,
+   미정); a date said of the past ("원래 마감은 10월 30일이었죠") is left
+   alone. The cost of a rule that reads words: a date somebody recalls or
+   worries about can be taken ("원래 마감은 10월 30일로 잡혀 있었죠", "출시가
+   금요일인데 걱정이네요"), and a person rejects it on the review screen. Until
+   then it is a pending decision like any other and reaches D and E in
+   `ExtractionResult`.
 5. **Build decision entities** — group the utterances classified as decisions
    into `Decision` records with a `dec_` id and the statement as settled. One
    decision often spans several utterances. **Module D depends on this**: it is
