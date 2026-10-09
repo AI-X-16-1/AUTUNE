@@ -9,6 +9,7 @@
 - ``POST /pending/{id}/reject`` -- reject one, with a reason from a fixed list.
 - ``GET /approvers`` -- a team's members and the approver scopes each holds.
 - ``GET /meeting-label`` -- the title of a meeting the caller may read, for S34's header.
+- ``/live/{meeting_id}/detect``, ``/research``, ``/documents`` -- live research (``live/routes``).
 - ``PUT /approvers/{user_id}`` -- replace one member's scopes (``main/approvers``).
 
 Every route needs a signed-in member of the team it names. The layer answers on
@@ -37,6 +38,8 @@ from autune_core.errors import (
 from autune_integrations.errors import TransientIntegrationError
 
 from .config import get_agent_settings
+from .live import deletion as _live_deletion  # noqa: F401  (registers the speech hook)
+from .live.routes import router as live_router
 from .main.actions import collect_actions
 from .main.approvers import SCOPE_ORDER, can_manage, list_members, set_scopes
 from .main.gemini import GeminiRouter, gemini_tools_from_settings
@@ -51,6 +54,7 @@ from .models import AgentApprover, AgentPendingAction, AgentResearchDocument, Ag
 from .results import Finding
 
 router = APIRouter()
+router.include_router(live_router, prefix="/live")
 log = logging.getLogger(__name__)
 
 SessionDep = Annotated[Session, Depends(get_session)]

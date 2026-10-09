@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useMeeting } from "../hooks/useMeeting";
 import { STATUS_LABEL } from "../status";
+import { LiveResearchList } from "./LiveResearchPanel";
 import { ProcessingStages } from "./ProcessingStages";
 import { ResearchCard } from "./ResearchCard";
 import { StoredTranscript } from "./StoredTranscript";
@@ -104,29 +105,41 @@ function body(state: ReturnType<typeof useMeeting>, meetingId: string) {
 
   const { meeting } = state;
   switch (meeting.status) {
+    // A live session's documents exist before any recording does, and the
+    // Slack link lands here whatever the upload's state, so every branch
+    // lists them (hidden when there are none).
     case "scheduled":
       return (
-        <p
-          className="text-[var(--color-ink-muted)]"
-          style={{ fontSize: "var(--text-meta)" }}
-        >
-          아직 녹음이 없습니다.{" "}
-          <Link
-            href={`/meetings/new?meeting=${meetingId}`}
-            className="text-[var(--color-accent-default)]"
+        <>
+          <p
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-meta)" }}
           >
-            녹음 파일 올리기
-          </Link>
-        </p>
+            아직 녹음이 없습니다.{" "}
+            <Link
+              href={`/meetings/new?meeting=${meetingId}`}
+              className="text-[var(--color-accent-default)]"
+            >
+              녹음 파일 올리기
+            </Link>
+          </p>
+          <LiveResearchList meetingId={meetingId} />
+        </>
       );
     case "recording":
     case "analyzing":
     case "failed":
-      return <ProcessingStages meeting={meeting} />;
+      return (
+        <>
+          <ProcessingStages meeting={meeting} />
+          <LiveResearchList meetingId={meetingId} />
+        </>
+      );
     default:
       return (
         <>
           <ResearchCard meetingId={meetingId} teamId={meeting.team_id} />
+          <LiveResearchList meetingId={meetingId} />
           <div className="border-t border-[var(--color-hairline)]">
             <StoredTranscript meetingId={meetingId} teamId={meeting.team_id} />
           </div>
