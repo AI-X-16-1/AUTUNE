@@ -861,10 +861,9 @@ the feature needs.
     the account goes: it is a meeting people were invited to, and cancelling
     it is theirs to do; its gap lines come out as every other line does.
   - **Slack, S20's team notices (module C, #824):** three kinds of message
-    to the channel of the team that held the meeting, each once per press,
-    with the team's connection, and one more when Follow-up's meeting is
-    approved -- the meeting's title, when the follow-up starts, how many were
-    invited,
+    to the channel of the team that held the meeting, on each press, with
+    the team's connection, and one more when Follow-up's meeting is approved
+    -- the meeting's title, when the follow-up starts, how many were invited,
     the open gaps' titles and questions and the approver's display name,
     once per meeting. Each guest of that meeting is also sent the same news
     as a DM, addressed to them, by the Slack account they linked themselves
