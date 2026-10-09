@@ -1,7 +1,7 @@
 """``service.stated_dates_are_decisions`` -- the fixed rule after the classifier.
 
 A line the classifier left unlabelled that announces the date of a milestone
-is a decision (the user, 2026-10-09). No session and no model. See
+is a decision (module B's owner, 2026-10-09). No session and no model. See
 ``test_pipeline_classify.py`` for the rule wired into the task, where the
 decision row it makes is visible.
 """

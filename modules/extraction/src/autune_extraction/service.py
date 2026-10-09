@@ -3166,8 +3166,8 @@ def drop_bare_acknowledgements(
 
 _MILESTONE = re.compile(r"출시|마감|오픈|배포|확정|론칭|런칭|릴리스|릴리즈|데드라인|납기|기한")
 """What a settled date is the date *of*: a launch, a deadline, a thing fixed.
-The user's words were "출시 일자나 확정 날짜, 마감 같은 마지막 날짜"
-(2026-10-09); the first five are the ones he was shown, the rest are other
+Module B's owner's words were "출시 일자나 확정 날짜, 마감 같은 마지막 날짜"
+(2026-10-09); the first five are the ones the owner was shown, the rest are other
 words for the same things and are this module's reading."""
 
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
@@ -3213,7 +3213,7 @@ def stated_dates_are_decisions(
     milestone -- "3분기 리포트 제출 마감은 10월 30일까지입니다" -- is a
     ``decision``.
 
-    A fixed rule after the classifier, no model (the user, 2026-10-09: launch
+    A fixed rule after the classifier, no model (module B's owner, 2026-10-09: launch
     dates, settled dates and deadlines are to come out as decisions). The
     classifier's prompt defines a decision as "회의가 무엇을 하기로 정함" and
     names no date; a date stated plainly, with no "하기로", sits between that
