@@ -1,7 +1,8 @@
 """Module C as tools an agent can call (agent-layer.md section 4).
 
-Two reads for the Follow-up subagent
-(``agent/docs/specs/2026-09-30-followup-subagent-design.md``), two for the
+Three reads for the Follow-up subagent
+(``agent/docs/specs/2026-09-30-followup-subagent-design.md``) -- the third,
+whether the team already has a follow-up meeting ahead -- two for the
 approvals card of a Follow-up proposal -- what it cited (#644) and the days
 people picked for the next meeting -- and one for what the team sent on to its
 next meeting (#824). One write: the follow-up meeting a Follow-up proposal
@@ -14,7 +15,7 @@ agent-layer.md calls ``ToolResult``::
 E's ``tools.py``. ADR 0010 forbids a module importing the agent layer, so the
 registry validates these dicts when it collects them.
 
-What holds for the five reads:
+What holds for the six reads:
 
 - **Topics, never people or roles** -- with one exception, below. No result
   carries participation, a
@@ -57,7 +58,7 @@ from sqlalchemy.orm import Session
 from autune_core import Meeting, TeamMember, User
 
 from . import followup_meeting, team_notice
-from .models import GapAgendaEvent, GapGap, GapRelatedTopic, GapTopic
+from .models import GapAgendaEvent, GapFollowupEvent, GapGap, GapRelatedTopic, GapTopic
 
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in C's tables."""
@@ -403,6 +404,43 @@ def next_meeting_days(session: Session, team_id: str, meeting_id: str) -> dict[s
     )
 
 
+def upcoming_followup(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this to see whether the team already has a follow-up meeting ahead:
+    one an approved Follow-up proposal put on a calendar
+    (``schedule_followup_meeting``) that starts today or later in Korea. Do not
+    use it for the days people picked with "다음 회의 잡기" --
+    ``next_meeting_days`` answers that.
+
+    Returns one row, ``후속 회의``, with the ``meeting_id`` it follows and its
+    ``day`` (ISO), the soonest first; there is no row when there is none.
+    Nothing about who approved it or whose calendar holds it.
+    """
+    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
+    rows = session.execute(
+        select(GapFollowupEvent.meeting_id, GapFollowupEvent.event_day)
+        .join(Meeting, Meeting.id == GapFollowupEvent.meeting_id)
+        .where(
+            Meeting.team_id == team_id,
+            GapFollowupEvent.event_id.is_not(None),
+            GapFollowupEvent.event_day >= today,
+        )
+        .order_by(GapFollowupEvent.event_day, GapFollowupEvent.meeting_id)
+    ).all()
+    items = [
+        {"title": "후속 회의", "meeting_id": meeting_id, "day": day.isoformat()}
+        for meeting_id, day in rows
+    ]
+    return _result(
+        summary=(
+            f"앞으로 잡힌 후속 회의가 {len(items)}건 있습니다."
+            if items
+            else "앞으로 잡힌 후속 회의가 없습니다."
+        ),
+        items=items,
+        evidence=[],
+    )
+
+
 FOLLOWUP_SAID = {
     "past_day": ("the day has passed", "승인한 날짜가 이미 지났습니다."),
     "already_scheduled": (
@@ -496,7 +534,14 @@ def schedule_followup_meeting(
     )
 
 
-TOOLS = [open_gaps, recurring_open_gaps, gaps_by_id, carried_gaps, next_meeting_days]
+TOOLS = [
+    open_gaps,
+    recurring_open_gaps,
+    gaps_by_id,
+    carried_gaps,
+    next_meeting_days,
+    upcoming_followup,
+]
 
 ACTIONS = [schedule_followup_meeting]
 """C's one write, L2: it invites people and posts to the team channel, so it

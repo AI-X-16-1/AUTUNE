@@ -287,3 +287,32 @@ def test_the_cards_basis_is_accepted_and_changes_nothing(
 
     assert result["ok"] is True
     assert "cadence" not in str(google.made)
+
+
+def test_the_team_reads_its_follow_up_ahead_without_who_approved_it(
+    session: Session, meeting: Meeting, calendars: dict[str, Any]
+) -> None:
+    assert tools.upcoming_followup(session, TEAM)["items"] == []
+    calendars[MEMBER] = FakeGoogle()
+
+    schedule(session)
+
+    read = tools.upcoming_followup(session, TEAM)
+    assert read["items"] == [{"title": "후속 회의", "meeting_id": MEETING, "day": DAY.isoformat()}]
+    assert MEMBER not in str(read)
+    assert tools.upcoming_followup(session, "team_2")["items"] == []
+
+
+def test_a_follow_up_already_held_is_not_ahead(session: Session, meeting: Meeting) -> None:
+    session.add(
+        GapFollowupEvent(
+            meeting_id=MEETING,
+            user_id=MEMBER,
+            calendar_id="primary",
+            event_id="evt_old",
+            event_day=datetime.now(KST).date() - timedelta(days=1),
+        )
+    )
+    session.flush()
+
+    assert tools.upcoming_followup(session, TEAM)["items"] == []
