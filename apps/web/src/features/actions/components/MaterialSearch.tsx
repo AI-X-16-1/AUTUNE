@@ -22,7 +22,10 @@ import type { MaterialSearchAnswer } from "../types";
  * **What comes back is masked text, shown as text.** An excerpt is a cut of
  * what was kept of a file -- there is no original to open, so a hit names
  * its material and links to nothing. The server's notice is its own
- * sentence and is shown as it is.
+ * sentence and is shown as it is. Masked is not anonymous, and the box says
+ * so as the upload form does: values of a set shape are hidden, a name
+ * written in a sentence is not -- a member who only searches reads this
+ * box and never the form.
  *
  * An answer belongs to the question it was asked with: typing a new one
  * takes the old answer away. And an excerpt does not outlive its material
@@ -103,8 +106,9 @@ export function MaterialSearch({
       </form>
       <p className="text-[var(--color-ink-muted)]" style={meta}>
         올린 파일에서 보관 중인 글만 찾습니다. 링크로 등록한 Drive 파일은 Autune이
-        내용을 읽지 않으므로 찾지 않습니다. 보이는 글은 개인정보를 가린 글의
-        일부입니다.
+        내용을 읽지 않으므로 찾지 않습니다. 보이는 글은 전화번호처럼 형식이 정해진
+        개인정보를 가린 글의 일부입니다. 문장 속의 이름은 가려지지 않으므로 그대로
+        보일 수 있습니다.
       </p>
       {error ? (
         <span role="alert" className="text-[var(--color-signal-critical)]" style={meta}>

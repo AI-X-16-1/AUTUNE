@@ -110,7 +110,10 @@ describe("MaterialsScreen, whether a question can be asked at all", () => {
 
     expect(section.textContent).toContain("올린 파일에서 보관 중인 글만 찾습니다");
     expect(section.textContent).toContain("링크로 등록한 Drive 파일은");
-    expect(section.textContent).toContain("개인정보를 가린 글의 일부");
+    // Masked is not anonymous: only values of a set shape are hidden.
+    expect(section.textContent).toContain("전화번호처럼 형식이 정해진 개인정보를 가린 글의 일부");
+    expect(section.textContent).not.toMatch(/글은 개인정보를 가린/);
+    expect(section.textContent).toContain("문장 속의 이름은 가려지지 않으므로 그대로 보일 수 있습니다");
     // What the embedding server keeps of a question is not known here.
     expect(section.textContent).not.toMatch(/저장하지 않|보관하지 않|남기지 않/);
   });
