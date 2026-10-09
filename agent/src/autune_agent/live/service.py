@@ -28,13 +28,18 @@ MAX_AUTO = 5
 MAX_MANUAL = 20
 MAX_QUOTES = 5
 SEARCH = "audio.search_team_meetings"
+_COUNTED = ("running", "done")
+"""A ``failed`` document holds no answer: it neither blocks the question nor uses up a cap."""
 
 
 def known_questions(session: Session, meeting_id: str) -> list[str]:
     return list(
         session.scalars(
             select(AgentLiveResearch.question)
-            .where(AgentLiveResearch.meeting_id == meeting_id)
+            .where(
+                AgentLiveResearch.meeting_id == meeting_id,
+                AgentLiveResearch.status.in_(_COUNTED),
+            )
             .order_by(AgentLiveResearch.created_at)
         )
     )
@@ -44,7 +49,11 @@ def remaining(session: Session, meeting_id: str, origin: str) -> int:
     used = session.scalar(
         select(func.count())
         .select_from(AgentLiveResearch)
-        .where(AgentLiveResearch.meeting_id == meeting_id, AgentLiveResearch.origin == origin)
+        .where(
+            AgentLiveResearch.meeting_id == meeting_id,
+            AgentLiveResearch.origin == origin,
+            AgentLiveResearch.status.in_(_COUNTED),
+        )
     )
     cap = MAX_AUTO if origin == "auto" else MAX_MANUAL
     return max(cap - int(used or 0), 0)

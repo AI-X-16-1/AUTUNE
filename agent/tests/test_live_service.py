@@ -222,3 +222,24 @@ def test_a_detector_failure_makes_nothing(session: Session, team: dict[str, str]
     )
 
     assert made == []
+
+
+def _fail(session: Session, doc: AgentLiveResearch | None) -> None:
+    assert doc is not None
+    doc.status = "failed"
+    session.commit()
+
+
+def test_a_failed_question_can_be_asked_again(session: Session, team: dict[str, str]) -> None:
+    _fail(session, _open(session, team, "배포일이 언제였지?", origin="manual"))
+
+    assert _open(session, team, "배포일이 언제였지?", origin="manual") is not None
+
+
+def test_failed_automatic_documents_do_not_use_up_the_cap(
+    session: Session, team: dict[str, str]
+) -> None:
+    for i in range(MAX_AUTO):
+        _fail(session, _open(session, team, f"질문 {i}"))
+
+    assert _open(session, team, "여섯째") is not None

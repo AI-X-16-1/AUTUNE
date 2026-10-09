@@ -104,7 +104,9 @@ default queue:
 
 A failure in step 2 or 3 leaves that source out; a failure in step 4 saves a row
 with `status = "failed"`, so the panel shows 조사하지 못했습니다 instead of
-waiting forever. Errors are logged by type only.
+waiting forever. Errors are logged by type only. A `failed` document holds no
+answer, so it neither counts toward the 5 automatic and 20 manual documents nor
+keeps its question from being asked again.
 
 ## 4. Storage
 
