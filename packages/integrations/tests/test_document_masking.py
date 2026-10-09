@@ -11,8 +11,8 @@ import pytest
 
 from autune_core.errors import PrivacyViolationError
 from autune_integrations import document_masking
-from autune_integrations.document_masking import holds_mask, mask_document, screen_output
-from autune_integrations.privacy import MASK_CHAR, assert_masked, find_unmasked
+from autune_integrations.document_masking import mask_document, screen_output
+from autune_integrations.privacy import MASK_CHAR, assert_masked, find_pii, find_unmasked
 
 PHONE = "010-2345-6789"
 EMAIL = "minsu.kim@example.com"
@@ -37,7 +37,7 @@ def test_every_kind_of_personal_data_is_hidden_and_the_guard_agrees() -> None:
     assert find_unmasked(masked.text) == []
     assert_masked(masked.text, destination="a table")
     assert sum(masked.counts.values()) >= 5
-    assert holds_mask(masked.text)
+    assert MASK_CHAR in masked.text
 
 
 def test_what_is_not_personal_data_stays_readable() -> None:
@@ -45,7 +45,7 @@ def test_what_is_not_personal_data_stays_readable() -> None:
 
     assert mask_document(text).text == text
     assert mask_document(text).counts == {}
-    assert not holds_mask(mask_document(text).text)
+    assert mask_document(text).counts == {}
 
 
 def test_the_layout_of_a_hidden_value_stays_and_no_character_of_it_does() -> None:
@@ -116,6 +116,65 @@ def test_an_excerpt_is_screened_on_the_way_out() -> None:
     assert screen_output("3분기 로드맵") == "3분기 로드맵"
 
 
-def test_a_mask_in_the_text_is_what_tells_the_reader_something_was_hidden() -> None:
-    assert holds_mask(f"연락처 {MASK_CHAR * 3}")
-    assert not holds_mask("연락처 없음")
+# --- a star in a document is typed, not a mask ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "010*2345*6789",
+        "010 * 2345 * 6789",
+        "010-2345*6789",
+        "4111*1111*1111*1111",
+        "900101*1234567",
+        "123456*01*234567",
+    ],
+)
+def test_a_value_written_with_stars_between_its_parts_is_hidden(written: str) -> None:
+    """The detector cannot join the parts across a star, and lets go of a
+    match that holds one. Read with its stars as spaces, the value is found."""
+    masked = mask_document(f"담당자 {written} 입니다")
+
+    assert not any(char.isdigit() for char in masked.text)
+    assert masked.text.startswith("담당자 ") and masked.text.endswith(" 입니다")
+    assert len(masked.text) == len(f"담당자 {written} 입니다")
+    assert sum(masked.counts.values()) >= 1
+
+
+@pytest.mark.parametrize(
+    "written",
+    ["**010-2345-6789**", "* 010-2345-6789", "010-2345-6789*", "*minsu.kim@example.com*"],
+)
+def test_a_star_beside_a_value_does_not_keep_it_from_being_hidden(written: str) -> None:
+    masked = mask_document(f"연락처\n{written}\n끝")
+
+    assert not any(char.isdigit() for char in masked.text)
+    assert "minsu" not in masked.text and "example" not in masked.text
+
+
+def test_what_either_reading_finds_is_hidden_not_only_the_second() -> None:
+    """Neither reading holds the other. As typed, the detector reads the
+    account number after the star. With the star a space, it joins the figure
+    before the star to the number's first part, stops there, and leaves the
+    number's end alone."""
+    text = "59*04970309-60"
+    assert {span[:2] for span in find_pii(text)} == {(3, 14)}
+    assert {span[:2] for span in find_pii(text.replace(MASK_CHAR, " "))} == {(0, 11)}
+
+    assert mask_document(text).text == "*" * 11 + "-**"
+
+
+def test_stars_that_are_no_part_of_a_value_are_left_as_typed() -> None:
+    text = "**굵게** 쓴 제목\n* 첫째 항목\n* 둘째 항목\n3*4 = 12, 각주*"
+
+    masked = mask_document(text)
+
+    assert masked.text == text
+    assert masked.counts == {}, "a typed star is not something that was hidden"
+
+
+def test_a_value_somebody_half_hid_by_hand_is_left_as_they_typed_it() -> None:
+    """Stated, not wished for: what is left of it is not a value the detector
+    knows, with its stars or without them."""
+    text = "연락처 010-****-6789, 주민번호 900101-1******"
+    assert mask_document(text).text == text

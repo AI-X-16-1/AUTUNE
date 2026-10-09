@@ -19,6 +19,19 @@ sentence, or content that identifies somebody by what it describes, is not
 (ADR 0007, accepted cost). That is why masked document text still has a
 deletion path and a retention window (``docs/architecture/privacy.md``).
 
+**A ``*`` in a document is a character somebody typed.** In a transcript it
+is only ever a mask Autune wrote, and the detector lets go of any match that
+holds one. A document has ``**bold**``, a bullet, ``3*4`` -- and now and then
+a value written with stars between its parts (``010*1234*5678``), which the
+detector's patterns cannot join and which would be stored whole. So a
+document is read twice, as it stands and with every ``*`` taken for a space,
+and what either reading finds is hidden (``_spans``). Two things follow.
+A value somebody half hid by hand (``010-****-5678``) stays as typed: what is
+left of it is not a value the detector knows. And nothing in masked text
+tells a mask from a typed star, so this module does not offer to say whether
+a text "holds a mask"; whether anything was hidden is
+``MaskedDocument.counts``, known when the text is masked and not afterwards.
+
 The unmasked string is a parameter and a local here and nothing else: it is
 not returned, logged, cached or put in an exception.
 
@@ -59,13 +72,23 @@ def _merged(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
     return merged
 
 
+def _spans(text: str) -> list[tuple[int, int, str]]:
+    """What the detector reads in ``text`` as it stands, and what it reads
+    with every ``*`` taken for a space. The second text is the same length,
+    so its spans are positions in ``text`` too."""
+    spans = find_pii(text)
+    if MASK_CHAR in text:
+        spans = spans + find_pii(text.replace(MASK_CHAR, " "))
+    return spans
+
+
 def _hide(value: str) -> str:
     return "".join(MASK_CHAR if char.isalnum() else char for char in value)
 
 
 def mask_document(text: str) -> MaskedDocument:
     """``text`` with every span of personal data hidden."""
-    spans = _merged(find_pii(text))
+    spans = _merged(_spans(text))
     pieces: list[str] = []
     position = 0
     for start, end, _ in spans:
@@ -89,9 +112,3 @@ def screen_output(text: str) -> str:
     Stored text was masked when it was stored; this is for what was never
     masked (a typed title) and for a detector that has learned a shape since."""
     return mask_document(text).text
-
-
-def holds_mask(text: str) -> bool:
-    """Whether something in ``text`` was hidden -- the reader is then told
-    that the value is not kept and is in the file they have."""
-    return MASK_CHAR in text
