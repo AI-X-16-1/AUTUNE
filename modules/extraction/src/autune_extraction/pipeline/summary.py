@@ -283,7 +283,8 @@ def _named(data: dict[str, Any]) -> int:
     """How many sentences of the last answer named someone. A count, for the log."""
     overview, points = data.get("overview"), data.get("points")
     sentences = _SENTENCE_END.split(overview) if isinstance(overview, str) else []
-    sentences += [p for p in points if isinstance(p, str)] if isinstance(points, list) else []
+    if isinstance(points, list):
+        sentences += [p for p in map(_point, points) if isinstance(p, str)]
     return sum(1 for s in sentences if names_someone(s))
 
 
@@ -322,10 +323,23 @@ def by_kind(points: Sequence[str], limit: int = MAX_POINTS) -> list[str]:
     return [point for n, kind in enumerate(kinds) for point in kind[: taken[n]]]
 
 
+def _point(value: Any) -> Any:
+    """A point as the answer was asked to carry it: a string.
+
+    A section came back with every point in a list of its own --
+    ``[["..."], ["..."]]`` (2026-10-09, an invented meeting) -- and nothing
+    that is not a string is kept, so that half of the meeting reached the last
+    call as nothing at all. The one string of such a list is the point. Any
+    other shape is left as it is, and is not kept."""
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], str):
+        return value[0]
+    return value
+
+
 def _points(value: Any, surface: dict[str, str], said: str, *, shown: bool = False) -> list[str]:
     if not isinstance(value, list):
         return []
-    kept = (_kept(sentence, surface, said, shown=shown) for sentence in value)
+    kept = (_kept(_point(sentence), surface, said, shown=shown) for sentence in value)
     return by_kind([p for p in kept if p is not None])
 
 
@@ -338,7 +352,9 @@ class LlmSummarizer(GeminiClient):
         self, lines: Sequence[str], *, board: Sequence[str] = ()
     ) -> WrittenSummary | None:
         """The meeting's overview and points, or ``None`` when there is nothing
-        to summarise or the answer could not be used. ``TooLongError`` past
+        to summarise or an answer could not be used -- the last one, or a
+        section's: a summary written without one part of the meeting would be
+        stored and read as the whole of it. ``TooLongError`` past
         ``MAX_CALLS``; a failed call and a privacy refusal are raised -- the
         task logs them by meeting id and the tab stays as v1 built it.
 
@@ -380,9 +396,13 @@ class LlmSummarizer(GeminiClient):
                 answer = self._ask(_SECTION_PROMPT.format(lines=_render(part)), calls)
                 # Placeholders stay placeholders between levels, so the next
                 # call never sees a name; the last answer may not carry one.
-                points += _points(_json(answer).get("points"), surface, said)
-            if not points:
-                return None
+                kept = _points(_json(answer).get("points"), surface, said)
+                if not kept:
+                    # Nothing of this part would reach the last call, and the
+                    # tab would show the rest as the meeting. No further call.
+                    log.info("extraction_summary_section_unusable", calls=calls)
+                    return None
+                points += kept
             current, source = points, "부분별 요약"
         if not current:
             return None  # every line was too long for a call: nothing to send
