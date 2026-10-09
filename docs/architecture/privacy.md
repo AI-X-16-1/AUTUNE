@@ -687,7 +687,12 @@ the feature needs.
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes
     when the next copy goes through, and with the item. A failed copy to a
-    person's own calendar is shown only to that person.
+    person's own calendar is shown only to that person. S28's 동기화 기록
+    lists a team's standing failures and its latest copies from these
+    rows and the rows of the copies themselves, and keeps nothing of its
+    own: Notion and Jira rows to any member of the team, a calendar row --
+    failed or made -- only to the person whose calendar it is, and nothing
+    of a meeting past its retention window.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not

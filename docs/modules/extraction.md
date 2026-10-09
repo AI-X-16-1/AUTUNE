@@ -607,6 +607,7 @@ other module's tables.
 | POST | `/action-items` | Add an item the model missed |
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
+| GET | `/sync-log?team_id=` | S28's 동기화 기록, for a member of the team (anybody else gets the 404 an unknown team gets). Two lists about the team's action items, newest first, thirty of each: the copies that failed and still stand (`ext_sync_failures`: the item, its meeting, the system, the kind, the time) and the latest copies that were made (the Notion page or Jira issue with its link, from `ext_external_refs`; the reader's own calendar events, from `ext_calendar_events`, with no link). Not a log of every attempt: a failure leaves once a later copy goes through, and a copy's time is when it was first made. A claim with no page, issue or event yet is not listed. Decisions' pages and project minutes are not in it. A meeting past retention shows nothing |
 | GET | `/materials?team_id=` | The Drive files the team keeps on its 자료 screen, the newest first (#817). Members of the team only |
 | POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
 | DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf. Any member; the Drive file is not touched |
@@ -997,6 +998,18 @@ versions.
   assignee) is said to anybody, and everything past that -- an event being
   there, none being there, a failed calendar copy -- only to the assignee,
   since each says whether that person connected a calendar.
+- S28's 동기화 기록 (`GET /sync-log`) gathers those same rows for a team and
+  records nothing of its own. It follows the rule above and does not widen
+  it: a Notion or Jira row goes to any member of the team; a failed
+  calendar copy goes through the same `sync_state.failures_for` a card
+  uses, so only to the item's assignee; and an event that was made is
+  listed only for the person whose calendar holds it
+  (`ext_calendar_events.user_id` -- the assignee, or, between a
+  reassignment and the next copy, the person the item was assigned to
+  before). A row carries the item's text as the board shows it, its
+  meeting's title, the system, the kind or the link, and a time -- no
+  assignee and no service message. The window draws an address as a link
+  only when it is https.
 - Confirmation DMs go to the speaker, never to a channel.
 - Due-date reminders go to the item's assignee, never to a channel, a manager
   or the person who made the item, and nothing counts or ranks what a person
