@@ -73,6 +73,7 @@ def wake_subagents(self: Any) -> None:
 def live_detect(team_id: str, meeting_id: str, user_id: str, rows: list[dict[str, Any]]) -> None:
     """Live rows a browser relayed: detect questions and research each (live/service)."""
     from .live.model import GeminiLive, Row
+    from .live.names import roster
     from .live.service import detect_and_research
 
     with session_scope() as session:
@@ -82,7 +83,7 @@ def live_detect(team_id: str, meeting_id: str, user_id: str, rows: list[dict[str
             meeting_id=meeting_id,
             user_id=user_id,
             rows=[Row(start=float(r["start"]), text=str(r["text"])) for r in rows],
-            model=GeminiLive(),
+            model=GeminiLive(roster=roster(session, meeting_id)),
         )
 
 
@@ -90,13 +91,17 @@ def live_detect(team_id: str, meeting_id: str, user_id: str, rows: list[dict[str
 def live_research(document_id: str, context: list[dict[str, Any]], web: bool) -> None:
     """One row a person pointed at with 조사."""
     from .live.model import GeminiLive, Row
+    from .live.names import roster
     from .live.service import research
+    from .models import AgentLiveResearch
 
     with session_scope() as session:
+        doc = session.get(AgentLiveResearch, document_id)
+        names = roster(session, doc.meeting_id) if doc is not None else []
         research(
             session,
             document_id,
             context=[Row(start=float(r["start"]), text=str(r["text"])) for r in context],
-            model=GeminiLive(),
+            model=GeminiLive(roster=names),
             web=web,
         )

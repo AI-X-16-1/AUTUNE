@@ -2,7 +2,8 @@
 
 Every call goes through ``GeminiText`` and so through ``check_outbound``. A row
 reaches the model as ``[mm:ss] text`` -- never with its speaker label, which
-may be a name. Each call fits instructions plus text under ``BUDGET``.
+may be a name -- and with the meeting's roster names as ``[사람N]``
+(``names.NamedText``). Each call fits instructions plus text under ``BUDGET``.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from autune_agent.main.gemini import GeminiText, WebAnswer, gemini_text_from_settings
+from autune_agent.main.gemini import WebAnswer, gemini_text_from_settings
+
+from .names import NamedText, Text
 
 BUDGET = 3800
 MAX_QUESTIONS = 2
@@ -129,13 +132,16 @@ def _terms(raw: Any) -> list[str]:
 
 
 class GeminiLive:
-    def __init__(self, text: GeminiText | None = None) -> None:
+    def __init__(self, text: Text | None = None, *, roster: Sequence[str] = ()) -> None:
         self._text = text
+        self._roster = list(roster)
+        self._named: Text | None = None
 
-    def _gemini(self) -> GeminiText:
-        if self._text is None:
-            self._text = gemini_text_from_settings()
-        return self._text
+    def _gemini(self) -> Text:
+        if self._named is None:
+            inner: Text = self._text if self._text is not None else gemini_text_from_settings()
+            self._named = NamedText(inner, self._roster)
+        return self._named
 
     def detect(self, rows: Sequence[Row], known: Sequence[str]) -> list[Detected]:
         room = BUDGET - len(DETECT_INSTRUCTIONS)
