@@ -439,9 +439,10 @@ def test_a_refused_change_leaves_the_sync_working_in_todays_shape(
     assert seen == [None]
     ((_, properties),) = pages.pages
     assert set(properties) <= set(NOTION_PROPERTIES.values())
-    assert (
-        properties[NOTION_PROPERTIES["title"]]["title"][0]["text"]["content"] == "릴리스 노트 정리"
-    )
+    # The sentence is in the title, as before 내용. What a builder puts before
+    # it is ``service``'s to say, and is not this test's.
+    title = properties[NOTION_PROPERTIES["title"]]["title"][0]["text"]["content"]
+    assert title.endswith("릴리스 노트 정리")
 
 
 def test_a_refusal_is_recorded_so_later_syncs_do_not_ask_again(
