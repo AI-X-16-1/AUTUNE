@@ -728,9 +728,21 @@ The instructions are 1,304 characters with this (1,039 before), which leaves
 of them takes four requests where it took three. Looked at once, on three
 invented meetings of about a dozen lines each (three requests): ten planted
 lines, five naming one object and five naming two, came back as planted, and
-every piece was in its line. Not measured: what the longer instructions do to
-the labels on the labelled meetings, and how often the same line is cut
-differently from one run to the next.
+every piece was in its line.
+
+Measured once on the labelled meetings (2026-10-09, `gemini-3.8-flash`, 88
+requests): the instructions as they were and with this, three rounds each on
+the four dummy meetings -- 975 lines, 73 commitments. Commitment F1 over the
+three rounds was 0.954 before and 0.952 with it (207 found and 12 missed by
+both, 8 wrong against 9), and either one moves between 0.94 and 0.97 from one
+round to the next. One meeting was lower with it in two rounds of three (0.889
+and 0.857, against 0.941 to 1.0 before); three rounds cannot tell that from
+the meeting's own spread. One line of the 975 was cut, in all three rounds and
+at the same places, into two decisions. No commitment was cut. So the run says
+the longer instructions cost the labels nothing on these meetings, and says
+nothing of a commitment cut out of a line. A request carried about 10% more
+prompt tokens and 22% more thinking tokens. Not shown: whether a cut is right
+-- the labels have no mark for two things in one line.
 
 The offsets are counted on one text and are dropped when it changes. A
 transcript correction (#586) clears an item's, since the item is kept and the
