@@ -27,6 +27,16 @@ vi.mock("./ProjectSettings", () => ({ ProjectSettings: () => null }));
 vi.mock("./SlackConnect", () => ({
   SlackConnect: ({ teamId }: { teamId: string }) => <div data-testid="team">{teamId}</div>,
 }));
+vi.mock("./SyncLogDrawer", () => ({
+  SyncLogDrawer: ({ teamId, onClose }: { teamId: string; onClose: () => void }) => (
+    <div data-testid="log">
+      {teamId}
+      <button type="button" onClick={onClose}>
+        close the log
+      </button>
+    </div>
+  ),
+}));
 
 const TEAMS = [
   { id: "team_a", name: "가 팀" },
@@ -144,5 +154,57 @@ describe("IntegrationSettingsScreen, the team it is about", () => {
 
     expect(team()).toBe("team_b");
     expect(picker().value).toBe("team_b");
+  });
+});
+
+describe("IntegrationSettingsScreen, the team's 동기화 기록", () => {
+  const log = () => screen.queryByTestId("log");
+  const openLog = () => fireEvent.click(screen.getByRole("button", { name: "동기화 기록" }));
+
+  it("is closed until asked for, and opens for the team the screen is on", async () => {
+    session.mockResolvedValue(me());
+    render(<IntegrationSettingsScreen chosenTeamId="team_b" />);
+    await found();
+    expect(log()).toBeNull();
+
+    openLog();
+
+    expect(log()?.textContent).toContain("team_b");
+  });
+
+  it("closes when the window says so, and opens again", async () => {
+    session.mockResolvedValue(me());
+    render(<IntegrationSettingsScreen />);
+    await found();
+    openLog();
+
+    fireEvent.click(screen.getByRole("button", { name: "close the log" }));
+    expect(log()).toBeNull();
+
+    openLog();
+    expect(log()?.textContent).toContain("team_a");
+  });
+
+  it("closes when another team is chosen, and does not open by itself for that team", async () => {
+    session.mockResolvedValue(me());
+    render(<IntegrationSettingsScreen />);
+    await found();
+    openLog();
+    expect(log()?.textContent).toContain("team_a");
+
+    fireEvent.change(picker(), { target: { value: "team_b" } });
+    expect(log()).toBeNull();
+
+    // Back on the first team, a log opened before does not come back by itself.
+    fireEvent.change(picker(), { target: { value: "team_a" } });
+    expect(log()).toBeNull();
+  });
+
+  it("has no button for somebody on no team", async () => {
+    session.mockResolvedValue(me([]));
+    render(<IntegrationSettingsScreen />);
+
+    await waitFor(() => expect(screen.getByText(/속한 팀이 없습니다/)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: "동기화 기록" })).toBeNull();
   });
 });

@@ -30,20 +30,40 @@ vi.mock("../api", () => ({
 
 // The drawer reads an item's detail on its own; here only whether it is open
 // matters, and for which item.
+// It can also ask for the item to be closed without being finished; the
+// button carries no text, so the window still reads as the item's id.
 vi.mock("./ActionDetailDrawer", () => ({
-  ActionDetailDrawer: ({ item }: { item: ActionItemRead }) => (
-    <aside aria-label="상세">{item.id}</aside>
+  ActionDetailDrawer: ({
+    item,
+    onCloseUnfinished,
+  }: {
+    item: ActionItemRead;
+    onCloseUnfinished?: () => Promise<void>;
+  }) => (
+    <aside aria-label="상세">
+      {item.id}
+      {onCloseUnfinished !== undefined ? (
+        <button
+          type="button"
+          aria-label="끝내지 않고 닫기"
+          onClick={() => void onCloseUnfinished()}
+        />
+      ) : null}
+    </aside>
   ),
 }));
 
 let items: ActionItemRead[] = [];
 let error: string | null = null;
+const close = vi.fn<(id: string) => Promise<void>>(async () => undefined);
+const edit = vi.fn(async () => undefined);
 vi.mock("../hooks/useActionItems", () => ({
   useActionItems: () => ({
     items,
     settled: true,
     error,
-    edit: vi.fn(),
+    edit: (...args: unknown[]) => edit(...(args as [])),
+    close: (id: string) => close(id),
     remove: vi.fn(),
     reload: vi.fn(),
   }),
@@ -406,6 +426,17 @@ describe("TeamActionsScreen, one team's items", () => {
     to("team_p");
 
     expect(drawer()?.textContent).toBe("a");
+  });
+
+  it("closes the open item without finishing it through the list's close, not an edit (#856)", async () => {
+    await show(null);
+    fireEvent.click(screen.getByText("항목 a"));
+
+    press("끝내지 않고 닫기");
+
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    expect(close).toHaveBeenCalledWith("a");
+    expect(edit).not.toHaveBeenCalled();
   });
 
   it("lists that team's Jira project alone under the board", async () => {

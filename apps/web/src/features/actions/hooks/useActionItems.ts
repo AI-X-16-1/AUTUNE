@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  closeActionItem,
   createActionItem,
   deleteActionItem,
   listActionItems,
@@ -116,6 +117,16 @@ export function useActionItems(filter: ActionItemFilter = {}) {
     [update],
   );
 
+  /** Close an item without finishing it: it moves to 완료, marked 닫힘. */
+  const close = useCallback(
+    async (id: string) => {
+      const closed = await closeActionItem(id);
+      update((items) => items.map((item) => (item.id === id ? closed : item)));
+      return closed;
+    },
+    [update],
+  );
+
   /**
    * Remove an item the model got wrong.
    *
@@ -136,7 +147,17 @@ export function useActionItems(filter: ActionItemFilter = {}) {
   // The reset in `reload` runs in an effect, so the render that first sees a
   // new filter still holds the previous one's state. It reads as loading.
   if (state.key !== key) {
-    return { items: [], loading: true, settled: false, error: null, reload, add, edit, remove };
+    return {
+      items: [],
+      loading: true,
+      settled: false,
+      error: null,
+      reload,
+      add,
+      edit,
+      close,
+      remove,
+    };
   }
-  return { ...state, reload, add, edit, remove };
+  return { ...state, reload, add, edit, close, remove };
 }

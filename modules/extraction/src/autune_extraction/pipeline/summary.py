@@ -55,6 +55,7 @@ from autune_core import get_logger
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .llm import GeminiClient, _answer_text, substitute_names_mapped, unquoted
+from .resolver import _numbers
 
 log = get_logger(__name__)
 
@@ -165,7 +166,6 @@ _PLACEHOLDER = re.compile(r"\[사람\d+\]")
 _FIRST_PERSON = re.compile(r"(?<![가-힣])(?:제가|저는|저도|제게|내가)(?![가-힣])")
 """A speaker's word for themselves, as its own word: not the 제가 of 문제가."""
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-_DIGIT_RUN = re.compile(r"\d+")
 
 
 class TooLongError(RuntimeError):
@@ -249,6 +249,10 @@ def _kept(
     a string, blank, several lines, too long, a placeholder never sent, or a
     number the meeting never said.
 
+    A number is compared whole (``_numbers``). Looked for as text it was
+    found inside any longer one: "10월 2일" passed for a meeting that said
+    "10월 20일" (2026-10-09, an answer written by hand).
+
     ``shown`` is a sentence of the last answer, the one a person reads: it is
     not kept when it names someone either. A section's point may keep its
     placeholder: it goes to the next call and is never stored."""
@@ -261,7 +265,7 @@ def _kept(
         return None
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
         return None
-    if any(number not in said for number in _DIGIT_RUN.findall(text)):
+    if not _numbers(text) <= _numbers(said):
         return None
     return text
 

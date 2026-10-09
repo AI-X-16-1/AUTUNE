@@ -4804,6 +4804,8 @@ def meeting_summary(
     )
     return MeetingSummary(
         meeting_id=meeting_id,
+        meeting_title=meeting.title if meeting is not None else None,
+        meeting_started_at=meeting.started_at if meeting is not None else None,
         decisions=[
             SummaryDecision(
                 id=d.id,

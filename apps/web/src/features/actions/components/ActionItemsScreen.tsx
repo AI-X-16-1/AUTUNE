@@ -50,7 +50,7 @@ import { bulkActionItems } from "../api";
  * whole width and the board renders at zero. Raised in review of #292.
  */
 export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
-  const { items, settled, error, add, edit, remove, reload } = useActionItems({
+  const { items, settled, error, add, edit, close, remove, reload } = useActionItems({
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -190,6 +190,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           onClose={() => setSelectedId(undefined)}
           onStatusChange={async (status) => {
             await edit(selected.id, { status });
+          }}
+          onCloseUnfinished={async () => {
+            await close(selected.id);
           }}
           onAssigneeChange={async (change) => {
             await edit(selected.id, change);

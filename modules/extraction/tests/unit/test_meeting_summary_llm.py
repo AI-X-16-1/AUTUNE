@@ -163,6 +163,38 @@ def test_a_point_the_meeting_does_not_support_is_dropped() -> None:
     assert written.points == ("배포는 금요일로 미룹니다",)
 
 
+def test_a_number_inside_a_longer_one_was_not_said() -> None:
+    """ "20일" does not say 2: a date the answer shortened is a date nobody said."""
+    lines = ["릴리스는 10월 20일에 내기로 했습니다", "점검은 09시에 시작하죠"]
+    provider = Provider(
+        {
+            "overview": "릴리스 일정을 정한 회의입니다.",
+            "points": [
+                "결정: 릴리스는 10월 2일에 내기로 했습니다.",
+                "결정: 릴리스는 10월 20일에 내기로 했습니다.",
+                "결정: 릴리스는 1월 20일에 내기로 했습니다.",
+                "논의: 점검은 9시에 시작합니다.",
+            ],
+        }
+    )
+
+    written = summarizer(provider).summarize(lines)
+
+    assert written is not None
+    assert written.points == (
+        "결정: 릴리스는 10월 20일에 내기로 했습니다.",
+        "논의: 점검은 9시에 시작합니다.",
+    )
+
+
+def test_an_overview_with_a_number_nobody_said_is_no_summary() -> None:
+    provider = Provider(
+        {"overview": "릴리스를 10월 2일에 내기로 한 회의입니다.", "points": ["배포를 논의했습니다"]}
+    )
+
+    assert summarizer(provider).summarize(["릴리스는 10월 20일에 내기로 했습니다"]) is None
+
+
 def test_a_point_that_starts_with_a_quoted_phrase_keeps_both_marks() -> None:
     final = {
         "overview": '"처리 중입니다" 문구를 넣기로 한 회의입니다.',

@@ -21,6 +21,7 @@ import type {
   ProjectSendReport,
   TeamName,
   SendTarget,
+  SyncLog,
 } from "./types";
 
 export { api };
@@ -109,6 +110,18 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
   });
 
 /**
+ * Close an item that will not be finished -- dropped, overtaken, no longer
+ * needed (#856). It ends in 완료 like finished work and comes back marked
+ * `closed_unfinished`. Not a status edit: the server keeps a different event
+ * for it, which is all that tells the two apart. A 409 for an item that is not
+ * open (still waiting for confirmation, finished, or closed already).
+ */
+export const closeActionItem = (id: string) =>
+  api.extraction<ActionItemRead>(`/action-items/${encodeURIComponent(id)}/close`, {
+    method: "POST",
+  });
+
+/**
  * Remove an item the model got wrong. **The row is gone, not flagged.**
  *
  * `docs/architecture/privacy.md` allows no soft deletes and no tombstones
@@ -192,6 +205,10 @@ export const putSummaryNote = (meetingId: string, body: string) =>
 /** The team's projects, named by one of its meetings or by the team. */
 export const listProjects = (scope: IntegrationScope) =>
   api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
+
+/** S28's "동기화 기록": the team's standing failures and its latest copies. */
+export const getSyncLog = (teamId: string) =>
+  api.extraction<SyncLog>(`/sync-log?team_id=${encodeURIComponent(teamId)}`);
 
 /** Words said often in the team's meetings that no project has yet. */
 export const listProjectSuggestions = (teamId: string) =>
