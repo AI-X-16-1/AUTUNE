@@ -19,6 +19,8 @@ import { listProjects } from "../api";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import type { Project } from "../types";
 import { useActionItems } from "../hooks/useActionItems";
+import { useTitleReads } from "../hooks/useTitleReads";
+import { awaitsTitle } from "../titleReads";
 import { bulkActionItems } from "../api";
 
 /**
@@ -50,7 +52,7 @@ import { bulkActionItems } from "../api";
  * whole width and the board renders at zero. Raised in review of #292.
  */
 export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
-  const { items, settled, error, add, edit, close, remove, reload } = useActionItems({
+  const { items, settled, error, add, edit, close, remove, reload, readTitles } = useActionItems({
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -70,6 +72,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   // Bumped when a "다시 추출" has run: the decisions below read themselves, so
   // they are mounted again rather than told.
   const [extraction, setExtraction] = useState(0);
+  // The run's rows get their titles a little after it ends; the board asks
+  // for them, and the decisions below do the same for theirs.
+  useTitleReads(extraction, awaitsTitle(items), () => void readTitles());
   // An empty list is "not yet" while the first run is going, and "not
   // extracted" when it never came -- not "nothing" (dev, 2026-10-08).
   const [unrun, setUnrun] = useState<NotExtracted>(null);
@@ -137,7 +142,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </div>
 
         <div className="mt-6">
-          <DecisionReview key={extraction} meetingId={meetingId} unrun={unrun} />
+          <DecisionReview key={extraction} run={extraction} meetingId={meetingId} unrun={unrun} />
         </div>
 
         <div className="mt-8">

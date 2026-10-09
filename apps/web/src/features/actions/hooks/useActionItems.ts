@@ -13,6 +13,7 @@ import {
   type ActionItemDraft,
   type ActionItemFilter,
 } from "../api";
+import { withTitles } from "../titleReads";
 import type { ActionItemRead, ActionStatus } from "../types";
 
 /** What the last settled request for one filter left behind. */
@@ -110,6 +111,21 @@ export function useActionItems(filter: ActionItemFilter = {}) {
     [key],
   );
 
+  /**
+   * Take the titles written since the list was read, and nothing else
+   * (`titleReads`): the rows on screen stay the screen's, so a change made
+   * while this read was in flight is not undone by it. A read that fails says
+   * nothing -- the rows are as they were, each showing its sentence cut.
+   */
+  const readTitles = useCallback(async () => {
+    try {
+      const read = await listActionItems(JSON.parse(key) as ActionItemFilter);
+      update((items) => withTitles(items, read, (item) => item.description));
+    } catch {
+      // Nothing to say: no row changed, and the next read asks again.
+    }
+  }, [key, update]);
+
   const add = useCallback(
     async (draft: ActionItemDraft) => {
       const created = await createActionItem(draft);
@@ -164,11 +180,12 @@ export function useActionItems(filter: ActionItemFilter = {}) {
       settled: false,
       error: null,
       reload,
+      readTitles,
       add,
       edit,
       close,
       remove,
     };
   }
-  return { ...state, reload, add, edit, close, remove };
+  return { ...state, reload, readTitles, add, edit, close, remove };
 }
