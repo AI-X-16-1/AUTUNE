@@ -23,7 +23,10 @@ const OUTCOME: Record<ProjectSendReport["results"][number]["outcome"], string> =
     no_date: "회의 날짜 없음",
     failed: "실패",
     // Not "실패": that reads as "try again", and trying again is refused again.
-    held: "개인정보로 보이는 값이 있어 보내지 않았습니다. 결정이나 할 일의 문장을 고친 뒤 다시 보내 주세요.",
+    // The copy carries the project's decisions and items under a title made of
+    // the team's and the project's names, and the server does not know which
+    // of them was refused (#1133 review): the sentence points at all of them.
+    held: "개인정보로 보이는 값이 있어 보내지 않았습니다. 결정·할 일의 문장이나 팀·프로젝트 이름을 고친 뒤 다시 보내 주세요.",
   };
 
 /**

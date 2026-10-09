@@ -35,7 +35,9 @@ describe("ProjectSend", () => {
 
     const held = await screen.findByText(/Autune · Slack/);
     expect(held.textContent).toContain("개인정보로 보이는 값이 있어 보내지 않았습니다");
-    expect(held.textContent).toContain("문장을 고친 뒤 다시 보내 주세요");
+    expect(held.textContent).toContain(
+      "결정·할 일의 문장이나 팀·프로젝트 이름을 고친 뒤 다시 보내 주세요",
+    );
     expect(held.textContent).not.toContain("실패");
     expect(screen.getByText(/App · Slack 보냄/)).toBeTruthy();
   });

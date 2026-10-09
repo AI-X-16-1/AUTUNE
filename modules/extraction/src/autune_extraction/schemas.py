@@ -463,8 +463,10 @@ class ProjectSendResult(BaseModel):
         "created", "updated", "retracted", "not_connected", "no_date", "failed", "held"
     ]
     """``held``: the outbound check refused this copy -- something that looks
-    like personal data is in a confirmed decision or item of the project. A
-    kind of ``failed`` that sending again does not mend; rewording does."""
+    like personal data is in what it would carry: a confirmed decision or item
+    of the project, or the team's or project's name in its title. Which of
+    them is not known here; the check names a category and no place. A kind of
+    ``failed`` that sending again does not mend; changing the text does."""
 
 
 class ProjectSendReport(BaseModel):
