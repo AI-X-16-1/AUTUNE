@@ -324,7 +324,7 @@ class ExtActionItem(Base, TimestampMixin):
 
     title: Mapped[str | None] = mapped_column(String(40))
     """``description`` in twenty characters or fewer, ended by a noun, for the
-    card's top line (the user, 2026-10-09). Written by a model and kept only
+    card's top line (module B's owner, 2026-10-09). Written by a model and kept only
     when it passed ``pipeline.title.accept``; ``NULL`` otherwise -- no titler
     switched on, a refused title, a sentence a person typed -- and the card
     then shows the sentence cut, as it did before. B's screens read it and

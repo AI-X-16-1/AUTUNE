@@ -99,7 +99,7 @@ export function ActionCard({
           {item.meeting_title}
         </div>
       ) : null}
-      {/* Twenty characters at most (the user, 2026-10-08): a card is a
+      {/* Twenty characters at most (module B's owner, 2026-10-08): a card is a
           line to recognise the item by -- the item's own short title when
           it has one, else the sentence cut (`rowTitle`). The sentence itself is
           unchanged -- it is in the detail window this card opens, and in the

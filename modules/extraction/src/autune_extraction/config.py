@@ -360,7 +360,7 @@ class ExtractionSettings(BaseSettings):
 
     title_impl: str = "none"
     """``none`` or ``llm``: whether an action item and a decision get a title
-    of twenty characters or fewer written by a cloud model (the user,
+    of twenty characters or fewer written by a cloud model (module B's owner,
     2026-10-09; ``pipeline.title``). ``llm`` sends each row's masked sentence
     out, the team's names replaced, so it is opt-in and needs
     ``llm_acknowledged_392`` like every other cloud setting. ``none`` leaves

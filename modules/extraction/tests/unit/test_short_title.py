@@ -1,4 +1,4 @@
-"""A short title beside an item's and a decision's sentence (the user, 2026-10-09).
+"""A short title beside an item's and a decision's sentence (module B's owner, 2026-10-09).
 
 No network: a provider stands in for the model and answers what it is told to.
 The rules under test: a title is kept only when it is twenty characters or

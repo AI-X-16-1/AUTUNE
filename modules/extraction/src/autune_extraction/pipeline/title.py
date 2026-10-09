@@ -1,5 +1,5 @@
 """A short title for an action item or a decision, written by a cloud LLM
-(``title_impl=llm``; the user, 2026-10-09).
+(``title_impl=llm``; module B's owner, 2026-10-09).
 
 The card and the decision row show twenty characters. Until now that was the
 stored sentence cut off with "…" (``apps/web/.../actions/title.ts``); what was

@@ -153,7 +153,7 @@ export function shortTitle(sentence: string, max: number = TITLE_MAX): ShownTitl
 }
 
 /**
- * The top line of a row that may have a title of its own (the user,
+ * The top line of a row that may have a title of its own (module B's owner,
  * 2026-10-09): the summary the server wrote for the sentence -- twenty
  * characters or fewer, ended by a noun -- or, when it has none, the sentence
  * cut as above. Most rows have none: a sentence a person typed or edited,

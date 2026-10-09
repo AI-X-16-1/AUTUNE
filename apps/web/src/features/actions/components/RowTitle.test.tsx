@@ -8,7 +8,7 @@ import type { ActionItemRead, MeetingReview, ReviewDecision } from "../types";
 
 // A card's and a decision row's top line is the row's own short title when
 // the server wrote one -- a summary of twenty characters or fewer, ended by a
-// noun (the user, 2026-10-09) -- and the sentence cut when it did not. The
+// noun (module B's owner, 2026-10-09) -- and the sentence cut when it did not. The
 // sentence itself stays one step away either way.
 
 const review = vi.fn<() => MeetingReview>();
