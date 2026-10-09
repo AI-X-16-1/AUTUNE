@@ -66,8 +66,8 @@ browser polls GET /api/agent/live/{meeting_id}/documents every 5 s while live
   name). It sends when 6 new rows have arrived or 45 s have passed with at least
   one new row.
 - **Route:** `POST …/detect` answers `202` at once and queues the task. It
-  answers `409` while a detect for the meeting is still running (one at a time
-  per meeting), and `429` once the meeting has 5 automatic documents.
+  answers `429` once the meeting has 5 automatic documents. The browser keeps
+  one detect request in flight, so the server has no `409` for detect.
 - **Model call:** one Gemini call. Instructions ask for JSON
   `{"questions": [{"q": "<one sentence>", "web": true|false}]}`, at most 2, only
   for a question or a disputed fact that the speakers could not settle in the
@@ -203,8 +203,8 @@ type and skipped; only `PrivacyViolationError` raises.
 ## 9. Testing
 
 - Unit (SQLite, `FakeRouter`-style fakes for Gemini): detect parses and caps,
-  dedupe, 429 (detect) and 409 (research), `assert_masked` refusal, research with each source failing,
-  failed status, document routes' membership check, notice sent once, no text
+  dedupe, 429 (detect) and 409 (research), `assert_masked` refusal, research
+  with each source failing, failed status, document routes' membership check, notice sent once, no text
   in the DM.
 - Postgres: the source trigger deletes a document when a quoted meeting goes;
   the meeting cascade; the speech-deletion receiver.
