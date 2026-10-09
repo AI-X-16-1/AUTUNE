@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 import { Button } from "@/shared/ui/Button";
 
@@ -101,8 +101,11 @@ function asInstant(date: string, time: string): string | undefined {
  */
 export function NewMeetingScreen({
   existingMeetingId,
+  notice,
 }: {
   existingMeetingId?: string;
+  /** Drawn above the upload's consent row. The page fills it; see its file. */
+  notice?: ReactNode;
 }) {
   const router = useRouter();
   const [teams, setTeams] = useState<TeamSummary[] | null>(null);
@@ -399,6 +402,7 @@ export function NewMeetingScreen({
               ) : null}
             </Field>
 
+            {notice}
             <label
               className="flex items-start gap-3"
               style={{ fontSize: "var(--text-meta)" }}
