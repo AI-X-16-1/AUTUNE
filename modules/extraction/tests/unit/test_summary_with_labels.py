@@ -250,6 +250,13 @@ def test_a_summary_with_a_word_that_only_looks_like_one_is_kept(written: str) ->
     assert usable_summary(written, {}, "") == written
 
 
+def test_the_request_asks_for_a_summary_without_the_one_who_spoke() -> None:
+    # Who promised is the row's owner, which the speaker's label fills; the
+    # model is sent no speaker, so a subject it writes names nobody.
+    assert "주어로 쓰지 말고" in llm_module.INSTRUCTIONS
+    assert "할 일부터 적으세요" in llm_module.INSTRUCTIONS
+
+
 def test_a_name_that_starts_like_a_pointing_word_is_a_name() -> None:
     (promise,), provider = classify(
         ["이건희 님 자료는 제가 금요일까지 정리할게요"],

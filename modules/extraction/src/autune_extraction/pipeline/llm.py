@@ -82,7 +82,7 @@ INSTRUCTIONS = (
     "concern: 앞 말에 대한 반대·문제 제기. "
     "ambiguous: '검토해 볼게요'처럼 구체적 약속 없는 약한 동의, 다른 팀이 할 일 전달. "
     "그 외(설명·잡담·맞장구·투표·예상 수치)는 적지 마세요.\n"
-    "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람N]은 가린 사람 이름입니다. "
+    "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람1], [사람2] 같은 표시는 가린 사람 이름입니다. "
     'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}, '
     '"summaries": {"줄번호": "요약", ...}, "parts": {"줄번호": "옮긴 부분", ...}}. '
     '해당 없으면 {"labels": {}}. '
@@ -90,7 +90,9 @@ INSTRUCTIONS = (
     "적으세요"
     "(약속: 무엇을 언제까지 하는지, 결정: 무엇을 하기로 했는지). "
     "'그거' 같은 말은 문맥이 가리키는 것으로 바꾸되, 줄과 문맥에 없는 날짜·숫자·이름은 "
-    "쓰지 말고 [사람N]은 그대로 두세요. parts에는 같은 줄마다, 그 약속·결정을 말한 "
+    "쓰지 마세요. 줄에 있는 [사람1] 같은 표시는 그대로 옮기고 새로 만들지 마세요. "
+    "말한 사람 자신은 주어로 쓰지 말고('제가', '화자는' 없이) 할 일부터 적으세요. "
+    "parts에는 같은 줄마다, 그 약속·결정을 말한 "
     "부분만 줄에서 글자 그대로 옮겨 적으세요(고치거나 줄이지 말고, 줄 전체가 그 "
     "내용이면 줄 전체). "
     "한 줄에 대상이 서로 다른 약속·결정이 둘 이상이면(대상마다 기한·담당이 따로) "
@@ -609,11 +611,12 @@ _PLACEHOLDER = re.compile(r"\[사람\d+\]")
 
 _MARK_LEFT = re.compile(r"\[\s*사람[^\]]*\]")
 """A name mark still in a sentence once every numbered one is put back. The
-instructions explain the mark by its general form, "[사람N]", and the model
-can write that form back as somebody it has no name for: on dev, 2026-10-09,
-two items' sentences began with it. Only a mark with a number stands for a
-name; any other spelling stands for nobody, and no screen can read it as a
-person."""
+instructions used to explain the mark by its general form, "[사람N]", and the
+model wrote that form back as somebody it had no name for: on dev, 2026-10-09,
+two items' sentences began with it. They show numbered ones now, and this
+stays, because a model can still make a mark up. Only a mark with a number
+stands for a name; any other spelling stands for nobody, and no screen can
+read it as a person."""
 
 _POINTING_WORD = re.compile(
     r"(?<![0-9A-Za-z가-힣])(?:"
