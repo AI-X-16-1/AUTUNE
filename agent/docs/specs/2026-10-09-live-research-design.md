@@ -97,9 +97,11 @@ default queue:
    call with the `google_search` tool, the question only (no meeting text). The
    reply's grounding metadata gives the source titles and URLs; at most 3 are
    kept.
-4. **Write:** one Gemini call writes Korean: a one-line title, 3–5 lines of
-   summary, and the sources (past meetings by date and title, web pages by
-   title and URL). It says plainly when nothing was found.
+4. **Write:** one Gemini call writes Korean: the answer in one line, then one
+   to three lines backing it (지난 회의, 웹, 확인 필요 -- each only when it has
+   something). The current meeting's lines are context, never repeated. When
+   the material does not settle the question, the first line says
+   확실한 답을 찾지 못했습니다. Sources come from the stored columns.
 5. **Save:** `assert_masked(body)` then one `agent_live_research` row.
 
 A failure in step 2 or 3 leaves that source out; a failure in step 4 saves a row

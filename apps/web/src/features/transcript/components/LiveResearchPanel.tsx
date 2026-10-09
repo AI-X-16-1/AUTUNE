@@ -10,8 +10,8 @@ import type { LiveResearchDocument } from "../types";
 /**
  * 회의 중 조사: what the agent looked up while the meeting runs, newest first.
  *
- * A document's first line is its title and the rest are "- " lines (live
- * model's instructions); sources come from the stored columns, never from the
+ * A document's first line is the answer and the rest are "- " lines backing
+ * it (live model's instructions); sources come from the stored columns, never from the
  * model's text, so a page is listed only when Google Search returned it. Text
  * goes through MaskedText: it was masked before it was stored.
  */
