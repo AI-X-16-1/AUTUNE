@@ -55,7 +55,6 @@ def _client(session: Session, user_id: str) -> TestClient:
 def departed(session: Session, team: dict[str, str]) -> str:
     """A person who was on the team and left it: the membership row is gone,
     and everything else that names them is still there."""
-    Participant.__table__.create(session.get_bind())
     person = User(email="departed@example.com", display_name="나간 사람")
     session.add(person)
     session.flush()

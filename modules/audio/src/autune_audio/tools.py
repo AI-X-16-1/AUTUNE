@@ -50,6 +50,8 @@ from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Participant, User, Utterance
 
+from .models import AudConsentAttestation
+
 MAX_ITEMS = 5
 """agent-layer.md section 4: a tool ranks and keeps five; the rest stay in A's tables."""
 
@@ -401,6 +403,18 @@ def search_team_meetings(
         evidence=[u.id for u, _ in rows],
         truncated=count > MAX_ITEMS,
     )
+
+
+def consent_attested(session: Session, meeting_id: str) -> bool:
+    """Whether the meeting's recording was started with the consent box ticked
+    (``aud_consent_attestations``).
+
+    Not a tool the model calls -- it is not in ``TOOLS`` -- but the one place
+    the agent layer reads A's consent: live research runs only for a meeting
+    with an attestation, the same line a stored meeting's analysis draws
+    ("stored, not analysed" without one, ``docs/modules/audio.md``).
+    """
+    return session.get(AudConsentAttestation, meeting_id) is not None
 
 
 TOOLS = [

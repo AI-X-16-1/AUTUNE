@@ -1,8 +1,8 @@
 /**
  * Calls to /api/audio. This feature calls no other module's endpoints, with one
- * exception: /api/agent/research, where the research card on the meeting screen
- * reads the agent layer's documents for this meeting (Research subagent spec,
- * section 4 ④).
+ * exception: /api/agent, where the research card on the meeting screen reads the
+ * agent layer's documents for this meeting (Research subagent spec, section 4 ④)
+ * and the live screen relays masked lines and reads live research documents.
  */
 import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shared/api/client";
 
@@ -10,6 +10,7 @@ export { api };
 
 import type {
   AccountDeleted,
+  LiveResearchDocument,
   MaskingRule,
   MeetingDetail,
   MeetingSummary,
@@ -411,6 +412,24 @@ export const getResearch = (teamId: string, meetingId: string) =>
   api.agent<ResearchDocument[]>(
     `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
   );
+
+type LiveLine = { start: number; text: string };
+
+/** Live research: relay masked live lines (never the speaker) to the agent layer. */
+export const detectLive = (meetingId: string, rows: LiveLine[]) =>
+  api.agent<{ queued: boolean }>(`/live/${encodeURIComponent(meetingId)}/detect`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+
+export const researchLive = (meetingId: string, row: LiveLine, context: LiveLine[]) =>
+  api.agent<{ id: string }>(`/live/${encodeURIComponent(meetingId)}/research`, {
+    method: "POST",
+    body: JSON.stringify({ row, context }),
+  });
+
+export const listLiveResearch = (meetingId: string) =>
+  api.agent<LiveResearchDocument[]>(`/live/${encodeURIComponent(meetingId)}/documents`);
 
 /** S29 "내 데이터": counts of what Autune holds about the caller. Only theirs. */
 export const getMyData = () => api.audio<MyData>("/me/data");
