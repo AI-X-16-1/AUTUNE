@@ -61,15 +61,15 @@ describe("NewMeetingScreen, the agenda row", () => {
     await waitFor(() => expect(live().checked).toBe(false));
   });
 
-  it("replaces S06's row and leaves the other one as it was", async () => {
+  it("replaces S06's agenda row and leaves the end-of-meeting alert's row beside it", async () => {
     render(<NewMeetingScreen agendaSources={SOURCES} />);
     await screen.findByRole("option", { name: "검색팀" });
 
     expect(screen.queryByRole("checkbox", { name: /자료 연결 후/ })).toBeNull();
-    const alert = screen.getByRole("checkbox", {
-      name: /종료 5분 전 미결정 사항 알림/,
-    }) as HTMLInputElement;
-    expect(alert.disabled).toBe(true);
+    // Module C's alert (#1152) is the other option row; whether it can be
+    // ticked is its own test's business.
+    expect(screen.getAllByRole("checkbox", { name: /종료 5분 전 미해결 갭 알림/ })).toHaveLength(1);
+    expect(screen.getAllByRole("checkbox", { name: /어젠다 초안/ })).toHaveLength(1);
   });
 
   it("draws none of the draft on the form and puts nothing of it into the meeting it opens", async () => {

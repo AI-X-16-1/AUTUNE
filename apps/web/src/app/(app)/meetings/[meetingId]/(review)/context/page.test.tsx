@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import MeetingContextPage from "./page";
 
 // The route joins the context tab (module D's) to what the brief's agenda
-// draft carries from module C (#1147): the features do not import each other.
+// draft carries from modules C and B (#1147): the features do not import each
+// other.
 // What matters here is only the joining.
 
 vi.mock("@/features/context", () => ({
@@ -25,6 +26,12 @@ vi.mock("@/features/context", () => ({
     </div>
   ),
 }));
+vi.mock("@/features/actions", () => ({
+  EARLIER_ITEMS_AGENDA: {
+    label: "B's unfinished to-dos of the earlier meeting",
+    lines: () => Promise.resolve([]),
+  },
+}));
 vi.mock("@/features/gap", () => ({
   EARLIER_GAPS_AGENDA: { label: "C's gaps of the earlier meeting", lines: () => Promise.resolve([]) },
 }));
@@ -38,11 +45,12 @@ describe("the 컨텍스트 route", () => {
     expect(screen.getByRole("status").textContent).toBe("mtg_7");
   });
 
-  it("hands the tab what the agenda draft carries: the earlier meeting's open gaps", async () => {
+  it("hands the tab what the agenda draft carries: the earlier meeting's open gaps, then its unfinished to-dos", async () => {
     render(await MeetingContextPage({ params: Promise.resolve({ meetingId: "mtg_7" }) }));
 
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "C's gaps of the earlier meeting",
+      "B's unfinished to-dos of the earlier meeting",
     ]);
   });
 });

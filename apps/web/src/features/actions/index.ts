@@ -10,6 +10,10 @@ export { IntegrationSettingsScreen } from "./components/IntegrationSettingsScree
 export { MaterialsScreen } from "./components/MaterialsScreen";
 export { MeetingSummaryScreen } from "./components/MeetingSummaryScreen";
 export { OwnTeamMeetingsNotice } from "./components/OwnTeamMeetingsNotice";
-/** What the new-meeting form's agenda row may draft from (#1147). */
-export { JIRA_AGENDA } from "./agendaSources";
+/**
+ * What an agenda draft has from this module (#1147): the team's open Jira
+ * issues, for the new-meeting form's row, and an earlier meeting's unfinished
+ * to-dos, which the pre-meeting brief lists.
+ */
+export { EARLIER_ITEMS_AGENDA, JIRA_AGENDA } from "./agendaSources";
 export { TeamActionsScreen } from "./components/TeamActionsScreen";

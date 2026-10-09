@@ -1,14 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { JIRA_AGENDA } from "./agendaSources";
-import type { JiraIssue, JiraProjectIssues } from "./api";
+import { EARLIER_ITEMS_AGENDA, JIRA_AGENDA } from "./agendaSources";
+import type { ActionItemFilter, JiraIssue, JiraProjectIssues } from "./api";
+import type { ActionItemRead } from "./types";
 
-// Module B's source for the new-meeting form's agenda draft (#1147).
+// Module B's sources for an agenda draft (#1147): the team's open Jira issues
+// for the new-meeting form, an earlier meeting's unfinished to-dos for the brief.
 
 const jira = vi.fn<() => Promise<JiraProjectIssues[]>>();
-vi.mock("./api", () => ({ listJiraOpenIssues: () => jira() }));
+const items = vi.fn<(filter: ActionItemFilter) => Promise<ActionItemRead[]>>();
+vi.mock("./api", () => ({
+  listJiraOpenIssues: () => jira(),
+  listActionItems: (filter: ActionItemFilter) => items(filter),
+}));
 
-afterEach(() => jira.mockReset());
+afterEach(() => {
+  jira.mockReset();
+  items.mockReset();
+});
 
 const issue = (overrides: Partial<JiraIssue>): JiraIssue => ({
   key: "SRCH-12",
@@ -71,5 +80,69 @@ describe("JIRA_AGENDA", () => {
 
     expect(await JIRA_AGENDA.lines("team_1")).toEqual([]);
     expect(await JIRA_AGENDA.lines("team_without_jira")).toEqual([]);
+  });
+});
+
+const item = (overrides: Partial<ActionItemRead>): ActionItemRead =>
+  ({
+    id: "act_1",
+    meeting_id: "mtg_earlier",
+    title: "색인 재구축",
+    description: "검색 색인을 다음 주까지 다시 만든다",
+    status: "todo",
+    assignee_id: "user_kim",
+    assignee_name: "김담당",
+    due_date: "2026-10-01",
+    ...overrides,
+  }) as ActionItemRead;
+
+describe("EARLIER_ITEMS_AGENDA", () => {
+  it("asks for the one meeting the brief named, and nothing wider", async () => {
+    items.mockResolvedValue([]);
+
+    await EARLIER_ITEMS_AGENDA.lines("mtg_earlier");
+
+    expect(items.mock.calls).toEqual([[{ meeting_id: "mtg_earlier" }]]);
+  });
+
+  it("keeps what is not finished, in the server's order: 진행 전 and 진행 중", async () => {
+    items.mockResolvedValue([
+      item({ id: "act_1", title: "하나", status: "in_progress" }),
+      item({ id: "act_2", title: "확인 전", status: "needs_confirmation" }),
+      item({ id: "act_3", title: "끝난 일", status: "done" }),
+      item({ id: "act_4", title: "둘", status: "todo" }),
+      item({ id: "act_5", title: "상태 없음", status: undefined }),
+    ]);
+
+    expect(await EARLIER_ITEMS_AGENDA.lines("mtg_earlier")).toEqual([{ title: "하나" }, { title: "둘" }]);
+  });
+
+  it("is the title alone: no assignee, no due date, nothing under the line", async () => {
+    items.mockResolvedValue([item({})]);
+
+    const [line] = await EARLIER_ITEMS_AGENDA.lines("mtg_earlier");
+
+    expect(Object.keys(line ?? {})).toEqual(["title"]);
+    expect(JSON.stringify(line)).not.toContain("김담당");
+    expect(JSON.stringify(line)).not.toContain("2026-10-01");
+    expect(JSON.stringify(line)).not.toContain("user_kim");
+  });
+
+  it("draws the line the board draws: the written title, or the sentence cut when there is none", async () => {
+    items.mockResolvedValue([
+      item({ title: "색인 재구축" }),
+      item({ id: "act_2", title: null, description: "검색 색인을 다음 주 화요일까지 다시 만들고 결과를 공유한다" }),
+    ]);
+
+    const lines = await EARLIER_ITEMS_AGENDA.lines("mtg_earlier");
+
+    expect(lines[0]).toEqual({ title: "색인 재구축" });
+    expect(lines[1]?.title.endsWith("…")).toBe(true);
+    expect([...(lines[1]?.title ?? "")].length).toBeLessThanOrEqual(20);
+    expect("검색 색인을 다음 주 화요일까지 다시 만들고 결과를 공유한다".startsWith((lines[1]?.title ?? "").slice(0, -1))).toBe(true);
+  });
+
+  it("is named for what the list is", () => {
+    expect(EARLIER_ITEMS_AGENDA.label).toBe("지난 회의의 미완료 할 일");
   });
 });
