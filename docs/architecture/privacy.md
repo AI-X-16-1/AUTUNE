@@ -932,6 +932,61 @@ the feature needs.
     (#587); words copied in by hand stay, as anything a person wrote does.
     Whether hand-written text should follow another rule is open with
     mkkim68 for B and C alike (#872 review).
+  - **Slack, the Meeting Context Engine's messages (`autune_context`):**
+    three kinds to the channel of the team that held the meeting, and one
+    DM (`notify.py`; `docs/modules/context.md`, "Slack surface").
+    - The topic-link notice, once a meeting's topics are linked: a topic
+      label and the day of the earlier meeting that discussed it. Only
+      links the engine asserted by itself; at most
+      `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` (default 3), and one line that
+      counts the rest.
+    - The decision-drift warning, when a decision changed in a meeting a
+      key stakeholder of it was absent from: the thread's label, the new
+      statement, whether it was changed or reversed, and that meeting's
+      day. It names none of the absent and does not count them -- in a
+      small team "one was absent" is a name (#339); the statement itself
+      can name the person it assigns, as below. Each absent stakeholder
+      hears it by a DM of their own, the same statement and that they were
+      not there, sent through `assert_personal_delivery` to that person
+      only.
+    - The pre-meeting brief, `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` (default
+      10) before a scheduled meeting: its title and start; the title and day
+      of the past meeting it follows, with at most five of its topic labels
+      and five decision statements; and at most six of the team's open Jira
+      issues as B last published them (key, title, status, link). When the
+      past meeting is only the team's latest -- nothing ties it to this
+      one -- its title and day are named and none of its topics or
+      decisions is posted.
+
+    Topic labels are masked text stored by this module. A decision
+    statement is the sentence B hands this module (`decisions_for_meeting`),
+    whether or not anyone has reviewed it yet -- only a decision a person
+    rejected is left out, and the contract's `Decision` carries no status
+    this module could filter on (#246, question 2). So a drift warning, a
+    DM or a brief can quote a statement a model drew that nobody has
+    looked at, unlike B's own draft DM above. Unless a person reworded it,
+    the statement is the turn that settled it as said and masked, with its
+    owner and deadline (B's `original_statement`), so it can name the
+    person it assigns; a person's rewording, or a decision a person typed,
+    is sent as typed, never through module A's masker, and screened only
+    by the outbound check before Slack. Issue titles are B's item
+    descriptions as stored. Meeting titles are values a person typed and
+    are sent as stored, as B's are. Apart from those statements no
+    utterance is sent, and no participation figure. Every value is escaped
+    so it cannot become a mention or a link, and clipped so the largest
+    brief stays under the outbound size limit. The one link is built on
+    purpose: a Jira issue's key links to its address (`<url|key>`,
+    `_agenda_line`), and only when the address holds no `|` or space and
+    fits its length cap; otherwise the key is sent as plain text. A
+    message the outbound check refuses is not sent and is not tried
+    again: each send runs after its claim commits
+    (`ctx_meeting_status.notified_at`, `late_drift_notified_at`, the
+    `ctx_briefs` row), and only a transient Slack failure releases the
+    claim. Those claims are times and ids; the
+    module keeps no message and no message id. A team with no channel
+    connected gets no message, and its brief is still read in the app. So a
+    message already posted stays in the channel or the DM -- when speech
+    it quoted is deleted, and when its meeting expires or is deleted.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
