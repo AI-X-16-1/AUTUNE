@@ -67,6 +67,20 @@ def test_the_refusal_names_which_setting_and_what_it_does() -> None:
     assert "#392" in message
 
 
+def test_the_refusal_says_which_meetings_may_go_through() -> None:
+    """The rule as #392 has it, in the one place a person setting the flag is
+    sure to read: a free-tier key, a paid key, and what is not decided."""
+    with pytest.raises(ValidationError) as caught:
+        settings(classifier_impl="llm")
+
+    message = str(caught.value)
+    assert "free-tier key, dummy meetings only" in message
+    assert "your own team's meetings only" in message
+    assert "none with a participant from outside the team" in message
+    assert "a real service is not decided" in message
+    assert "demo meetings only" not in message
+
+
 def test_the_flag_turns_nothing_on_by_itself() -> None:
     """It is a second switch, never the first."""
     loaded = settings(llm_acknowledged_392=True)
