@@ -382,7 +382,9 @@ export interface ProjectSendReport {
       | "retracted"
       | "not_connected"
       | "no_date"
-      | "failed";
+      | "failed"
+      /** Refused by the outbound check: sending again does not mend it. */
+      | "held";
   }[];
   /** Confirmed rows with no project, left out. */
   unsorted: number;
@@ -473,6 +475,14 @@ export interface ReviewDecision {
   origin: "model" | "user";
   /** A source line was corrected since a person typed or reworded it (#586). */
   needs_recheck: boolean;
+  /**
+   * Confirmed and not sent: the statement holds something that looks like
+   * personal data, so its copy to the team's tools is refused. The server
+   * works it out as it reads the row and says neither the value nor its
+   * kind; it clears with the rewording that removes it. Absent from a server
+   * before the mark existed.
+   */
+  held_back?: boolean;
   status: DecisionStatus;
   /** Pre-check it? `null` while the candidate line is unset. */
   suggested: boolean | null;
