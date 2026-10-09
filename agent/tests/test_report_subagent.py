@@ -455,3 +455,14 @@ def test_the_allow_list_is_the_template_reads_and_es_chat_reads() -> None:
     assert SUBAGENT.description.startswith("Use this")
     # E refuses a report already posted, so the subagent must not promise a resend.
     assert "resend" not in SUBAGENT.description
+
+
+def test_the_description_claims_the_teams_completion_rate() -> None:
+    """With the real router, "액션 아이템 완료율 어때?" reached Report 0 of 5 while the
+    description said only "trend and completion" and kept "action items" out
+    whole; naming the team's completion rate and keeping out only one item or
+    one person's items took it to 5 of 5, with B's questions unchanged."""
+    description = SUBAGENT.description
+    assert "action-item completion rate" in description
+    assert "one person's items" in description
+    assert "Do not use it for action items" not in description
