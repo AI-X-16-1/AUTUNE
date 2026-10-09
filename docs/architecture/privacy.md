@@ -213,8 +213,10 @@ who was stopped. The title is typed by a member and can hold a name; it is
 kept out of logs and error messages and is screened before it leaves Autune.
 
 **Who reads it.** Members of the team: masked excerpts on the 자료 screen.
-Every excerpt is screened again on the way out. **No model is given a
-material's text under this rule.** A tool that hands excerpts to the
+Every excerpt is screened again on the way out. **No language model is
+given a material's text under this rule.** The masked text goes to one model
+only, the embedder on our own inference server that makes the vectors, and to
+nothing outside Autune's own servers. A tool that hands excerpts to the
 chatbot's model is a later change to this section, approved on its own.
 Live transcript text is not searched against materials; that boundary is a
 separate decision (#817 point 6).
