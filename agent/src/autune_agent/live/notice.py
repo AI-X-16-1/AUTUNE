@@ -56,8 +56,9 @@ def notify_participants(
     if not done:
         return []
     recipients = sorted(
-        set(
-            session.scalars(
+        {
+            user_id
+            for user_id in session.scalars(
                 select(Participant.user_id)
                 .join(
                     TeamMember,
@@ -66,7 +67,8 @@ def notify_participants(
                 )
                 .where(Participant.meeting_id == meeting_id, Participant.user_id.is_not(None))
             )
-        )
+            if user_id is not None
+        }
     )
     if not recipients:
         return []
