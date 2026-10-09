@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useMeeting } from "../hooks/useMeeting";
 import { STATUS_LABEL } from "../status";
 import { LiveResearchList } from "./LiveResearchPanel";
+import { MeetingDeletion } from "./MeetingDeletion";
 import { MeetingTitle, TITLE_STYLE } from "./MeetingTitle";
 import { ProcessingStages } from "./ProcessingStages";
 import { ResearchCard } from "./ResearchCard";
@@ -37,6 +38,10 @@ import { StoredTranscript } from "./StoredTranscript";
  * repeat a title and `useMeeting` reads once for a meeting at rest, so the
  * title just saved is kept beside the meeting it was saved for and shown
  * until the hook has read it.
+ *
+ * The meeting can be deleted here as well (#1161, `MeetingDeletion`), once it
+ * has been read: the server refuses a meeting still being transcribed, and
+ * says so.
  */
 export function StoredMeetingScreen({ meetingId }: { meetingId: string }) {
   const state = useMeeting(meetingId);
@@ -82,6 +87,13 @@ export function StoredMeetingScreen({ meetingId }: { meetingId: string }) {
             실시간 보기
           </Link>
         </p>
+        {state.status === "ready" ? (
+          // Keyed by the meeting: a title typed to delete one meeting is
+          // never left in the field for another.
+          <div className="mt-2">
+            <MeetingDeletion key={meetingId} meetingId={meetingId} />
+          </div>
+        ) : null}
       </header>
 
       <div className="mt-6">{body(state, meetingId)}</div>

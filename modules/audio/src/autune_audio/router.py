@@ -26,6 +26,7 @@ from . import (
     invitation_mail,
     invitations,
     masking_rules,
+    meeting_deletion,
     pii_report,
     service,
     storage,
@@ -46,6 +47,7 @@ from .schemas import (
     InvitationIssued,
     MaskingRule,
     MeetingCreate,
+    MeetingDeletion,
     MeetingDetail,
     MeetingRename,
     MeetingState,
@@ -360,6 +362,18 @@ def rename_meeting(
     title. See ``service.rename_meeting``."""
     meeting = service.rename_meeting(session, meeting_id=meeting_id, member=user, title=body.title)
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_meeting(
+    meeting_id: str, body: MeetingDeletion, user: CurrentUser, session: SessionDep
+) -> None:
+    """Delete a meeting and everything kept for it, for any member of its team
+    (#1161). The body carries the meeting's title as they typed it. Refused
+    with 409 ``meeting_in_progress`` while it is being transcribed or recorded,
+    or 422 ``meeting_title_mismatch``; see ``meeting_deletion.delete_meeting``
+    for what goes and in what order."""
+    meeting_deletion.delete_meeting(session, meeting_id=meeting_id, member=user, title=body.title)
 
 
 @router.post(
