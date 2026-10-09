@@ -30,6 +30,7 @@ CLOUD = [
     {"classifier_impl": "llm_checked", "classifier_checkpoint": "runs/ckpt"},
     {"resolver_impl": "llm"},
     {"summary_impl": "llm"},
+    {"title_impl": "llm"},
     {"nli_impl": "llm"},
 ]
 
@@ -46,6 +47,7 @@ def _a_clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "AUTUNE_EXTRACTION_CLASSIFIER_IMPL",
         "AUTUNE_EXTRACTION_RESOLVER_IMPL",
         "AUTUNE_EXTRACTION_SUMMARY_IMPL",
+        "AUTUNE_EXTRACTION_TITLE_IMPL",
         "AUTUNE_EXTRACTION_NLI_IMPL",
         "AUTUNE_EXTRACTION_LLM_API_KEY",
         "AUTUNE_LLM_API_KEY",

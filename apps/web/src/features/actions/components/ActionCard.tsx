@@ -3,7 +3,7 @@ import { MaskedText, StatusDot } from "@/shared/ui";
 import { SYSTEM_LABEL } from "./SyncStatus";
 import { isOverdue, shownDue } from "../dates";
 import { staleLabel } from "../stale";
-import { shortTitle } from "../title";
+import { rowTitle } from "../title";
 import { isCandidate } from "../types";
 import type { ActionItemRead, SourceUtterance } from "../types";
 
@@ -99,8 +99,9 @@ export function ActionCard({
           {item.meeting_title}
         </div>
       ) : null}
-      {/* Twenty characters at most (`shortTitle`; the user, 2026-10-08): a
-          card is a line to recognise the item by. The sentence itself is
+      {/* Twenty characters at most (module B's owner, 2026-10-08): a card is a
+          line to recognise the item by -- the item's own short title when
+          it has one, else the sentence cut (`rowTitle`). The sentence itself is
           unchanged -- it is in the detail window this card opens, and in the
           `title` on hover. Two lines stay the limit for a narrow column. The
           mark stays beside the lines so a cut never takes it. */}
@@ -109,7 +110,7 @@ export function ActionCard({
         style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
       >
         <span className="line-clamp-2 min-w-0" title={item.description}>
-          {shortTitle(item.description).shown}
+          {rowTitle(item.title, item.description).shown}
         </span>
         {item.description_resolved ? (
           <span

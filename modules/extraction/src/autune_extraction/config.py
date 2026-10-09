@@ -358,6 +358,20 @@ class ExtractionSettings(BaseSettings):
     summary_fallback_model: str = "gemini-3.8-flash"
     """Asked instead when ``summary_model`` stays unavailable. Blank disables it."""
 
+    title_impl: str = "none"
+    """``none`` or ``llm``: whether an action item and a decision get a title
+    of twenty characters or fewer written by a cloud model (module B's owner,
+    2026-10-09; ``pipeline.title``). ``llm`` sends each row's masked sentence
+    out, the team's names replaced, so it is opt-in and needs
+    ``llm_acknowledged_392`` like every other cloud setting. ``none`` leaves
+    the screens cutting the sentence at twenty characters, as they did."""
+
+    title_model: str = "gemini-3.5-flash-lite"
+    """The model ``title_impl=llm`` asks. The cheap one: a meeting is one call."""
+
+    title_fallback_model: str = "gemini-3.8-flash"
+    """Asked instead when ``title_model`` stays unavailable. Blank disables it."""
+
     embedder_impl: str = "fake"
     """Which embedder backs the resolver's similarity check: ``local``,
     ``hosted`` or ``fake`` (#175, #366). No ``hosted`` yet -- see
@@ -465,6 +479,7 @@ class ExtractionSettings(BaseSettings):
             ("CLASSIFIER_IMPL", self.classifier_impl),
             ("RESOLVER_IMPL", self.resolver_impl),
             ("SUMMARY_IMPL", self.summary_impl),
+            ("TITLE_IMPL", self.title_impl),
             ("NLI_IMPL", self.nli_impl),
         )
 

@@ -70,6 +70,7 @@ from .decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
     DecisionGroup,
+    core_of,
     decision_of,
     group_decisions,
     identified,
@@ -1168,6 +1169,7 @@ def read_model(
         meeting_title=meeting_title,
         team_id=team_id,
         description=item.description,
+        title=item.title,
         description_resolved=item.description_resolved,
         assignee_id=None if assignee_departed else item.assignee_id,
         assignee_label=item.assignee_label,
@@ -3689,6 +3691,90 @@ class SourceCorrections:
     flagged: int = 0
 
 
+@dataclass(frozen=True)
+class TitleTarget:
+    """A row that may be given a title, and the sentence the title would be of."""
+
+    kind: Literal["item", "decision"]
+    id: str
+    text: str
+    """The sentence as stored, which ``store_titles`` looks for again."""
+    asked: str
+    """What the model is shown: a decision's sentence without its bracket."""
+
+
+def title_targets(session: Session, meeting_id: str) -> list[TitleTarget]:
+    """The meeting's rows with no title whose sentence the pipeline wrote.
+
+    Not a row a person typed, an item whose description a person edited, or a
+    decision a person reworded: their words are shown as they wrote them, cut
+    if long, and no model writes a line over them. A row whose title was
+    refused has none and is asked about again by the next run."""
+    items = session.scalars(
+        select(ExtActionItem)
+        .where(
+            ExtActionItem.meeting_id == meeting_id,
+            ExtActionItem.origin == "model",
+            ExtActionItem.title.is_(None),
+        )
+        .order_by(ExtActionItem.id)
+    ).all()
+    targets = [
+        TitleTarget("item", item.id, item.description, item.description)
+        for item in items
+        if not _edited_description(session, item.id)
+    ]
+    reworded = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                ExtDecisionReview.statement.is_not(None),
+            )
+        )
+    )
+    decisions = session.scalars(
+        select(ExtDecision)
+        .where(
+            ExtDecision.meeting_id == meeting_id,
+            ExtDecision.origin == "model",
+            ExtDecision.title.is_(None),
+        )
+        .order_by(ExtDecision.id)
+    ).all()
+    targets += [
+        TitleTarget("decision", row.id, row.statement, core_of(row.statement))
+        for row in decisions
+        if row.id not in reworded
+    ]
+    return targets
+
+
+def store_titles(
+    session: Session, targets: Sequence[TitleTarget], titles: Sequence[str | None]
+) -> int:
+    """Each title onto its row, if the row still says the sentence it is of.
+
+    The model answered with no session open: a row edited, rebuilt or deleted
+    in that time keeps what it has. Returns how many were written."""
+    written = 0
+    for target, title in zip(targets, titles, strict=True):
+        if title is None:
+            continue
+        if target.kind == "item":
+            item = session.get(ExtActionItem, target.id)
+            if item is None or item.description != target.text or item.title is not None:
+                continue
+            item.title = title
+        else:
+            decision = session.get(ExtDecision, target.id)
+            if decision is None or decision.statement != target.text or decision.title is not None:
+                continue
+            decision.title = title
+        written += 1
+    session.flush()
+    return written
+
+
 def _edited_description(session: Session, action_item_id: str) -> bool:
     for fields in session.scalars(
         select(ExtEditEvent.fields).where(
@@ -4943,6 +5029,8 @@ def _review_decision_row(
             if ref.external_id is not None or (review is not None and review.status == "confirmed")
         ],
         summary=summary,
+        # Of the model's sentence. A rewording is the person's own line.
+        title=None if review is not None and review.statement else decision.title,
     )
 
 
