@@ -1248,10 +1248,10 @@ polls them every five seconds while the rail says `analysed: false`.
   own time zone). Only the event's date and time are read for it, never its
   title, which is Google's unmasked text.
 - Follow-up's proposal, once the team lead approves it, posts once that the
-  follow-up meeting is on the approver's calendar: when it starts, how many
-  were invited, and the open gaps on its agenda (`followup_meeting`), and
-  DMs each guest who linked a Slack account that they are invited
-  (`team_notice.dm_followup`).
+  follow-up meeting is on the approver's calendar: when it starts and the
+  open gaps on its agenda (`followup_meeting`). Nobody is invited to the
+  event and nobody is DMed until the team decides it after 10/12 (#756,
+  #1046).
 - "질문 카드 Slack 전송", at the top of S20, posts the meeting's open `high`
   gaps as question cards, most risky first, one message per gap so each card
   stays one gap (plan 3 on #824). At most `team_notice.SENT` (3); when there

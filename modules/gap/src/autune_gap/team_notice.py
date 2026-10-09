@@ -14,9 +14,8 @@ Three buttons post here, each once per press, and one approval:
 - **Follow-up's proposal, approved** posts once that the approver put the
   follow-up meeting on their calendar, when it starts, and which of the
   meeting's open gaps are on its agenda (``followup_meeting``). There is one
-  event per meeting, so there is one notice. Each guest of that meeting is
-  also sent the news as a DM (``dm_followup``), by the Slack account they
-  linked themselves; a guest who linked none is skipped, not named.
+  event per meeting, so there is one notice. Nobody is DMed: a DM to the
+  meeting's members waits for the team's decision after 10/12 (#1046).
 - **"질문 카드 Slack 전송"**, at the top of S20, posts the meeting's open
   ``high`` gaps as question cards, one message per gap so each card stays one
   gap (plan 3 on #824, accepted by mkkim68 on 2026-10-06). At most ``SENT``
@@ -63,7 +62,6 @@ from autune_core import Meeting, User, get_logger, load_integration, load_user_i
 from autune_core.errors import PrivacyViolationError
 from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import IntegrationError, SlackClient
-from autune_integrations.errors import SlackRecipientNotLinkedError
 
 from .models import GapGap
 
@@ -207,37 +205,13 @@ def build_followup(
     *,
     approver: str,
     starts: datetime,
-    invited: int,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """The one notice that the follow-up meeting is on the calendar: when, how
-    many were invited, and the open gaps on its agenda."""
+    """The one notice that the follow-up meeting is on the calendar: when, and
+    the open gaps on its agenda."""
     meeting_title = _escape(meeting.title)
     text = f"{approver}님이 '{meeting_title}' 회의의 후속 회의를 {when(starts)}에 잡았습니다."
     blocks = [
         _section(f"*후속 회의* · {meeting_title}"),
-        _section(f"*일시:* {when(starts)} · 초대 {invited}명"),
-    ]
-    if gaps:
-        blocks.append(_section("*안건*\n" + _gap_lines(gaps)))
-    blocks.append(_context(f"{approver}님이 후속 회의 제안을 승인 · Autune 갭 분석"))
-    return text, blocks
-
-
-def build_followup_dm(
-    meeting: Meeting,
-    gaps: Sequence[GapGap],
-    *,
-    approver: str,
-    starts: datetime,
-) -> tuple[str, list[dict[str, Any]]]:
-    """The DM to one guest: they are invited, when, and the agenda."""
-    meeting_title = _escape(meeting.title)
-    text = (
-        f"{approver}님이 '{meeting_title}' 회의의 후속 회의({when(starts)})에 "
-        "초대했습니다. 캘린더 초대를 확인해 주세요."
-    )
-    blocks = [
-        _section(f"*후속 회의 초대* · {meeting_title}"),
         _section(f"*일시:* {when(starts)}"),
     ]
     if gaps:
@@ -348,13 +322,10 @@ def post_followup(
     *,
     approver: User,
     starts: datetime,
-    invited: int,
 ) -> SlackOutcome:
     """Say once on the team channel that the follow-up meeting is on the
     calendar, when it starts and what is on its agenda."""
-    text, blocks = build_followup(
-        meeting, gaps, approver=_name(approver), starts=starts, invited=invited
-    )
+    text, blocks = build_followup(meeting, gaps, approver=_name(approver), starts=starts)
     outcome = _post(
         session,
         meeting.team_id,
@@ -364,44 +335,3 @@ def post_followup(
     )
     log.info("gap_followup_posted", meeting_id=meeting.id, gaps=len(gaps), outcome=outcome)
     return outcome
-
-
-def dm_followup(
-    session: Session,
-    meeting: Meeting,
-    gaps: Sequence[GapGap],
-    *,
-    approver: User,
-    starts: datetime,
-    guests: Sequence[str],
-) -> int:
-    """DM each guest of the follow-up meeting that they are invited, with the
-    team's Slack connection. Returns how many were sent.
-
-    A guest who linked no Slack account is skipped. Every DM says the same,
-    so one the outbound check refuses means them all: it is logged with the
-    ids and the rest are not tried. A send Slack does not take is logged by
-    kind and the next guest is still tried."""
-    config = load_integration(session, meeting.team_id, "slack")
-    if config is None or not config.secret or not guests:
-        return 0
-    text, blocks = build_followup_dm(meeting, gaps, approver=_name(approver), starts=starts)
-    client = SlackClient(config.require_secret())
-    sent = 0
-    try:
-        for user_id in guests:
-            try:
-                client.send_dm(user_id, text, blocks)
-            except SlackRecipientNotLinkedError:
-                continue
-            except PrivacyViolationError:
-                log.error("gap_slack_refused", team_id=meeting.team_id, meeting_id=meeting.id)
-                break
-            except IntegrationError as exc:
-                log.warning("gap_slack_failed", team_id=meeting.team_id, error=type(exc).__name__)
-                continue
-            sent += 1
-    finally:
-        client.close()
-    log.info("gap_followup_dms", meeting_id=meeting.id, guests=len(guests), sent=sent)
-    return sent

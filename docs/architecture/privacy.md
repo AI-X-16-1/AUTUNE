@@ -851,28 +851,28 @@ the feature needs.
     the approved day at the meeting's clock time in Korea and lasts about as
     long as it did. Its description is one line per open gap, in the form
     above, each recorded in `gap_agenda_events` and taken out by the same
-    hooks. The guests are the meeting's participants who resolved to a member
-    still on its team, the approver aside, and Google invites them
-    (`sendUpdates=all`): nobody outside the team is invited, so the agenda
-    reaches the team only. `gap_followup_events` keeps one row per meeting --
-    the approver, the event and the day it starts, nothing else of it -- so a
+    hooks. **Nobody is invited**: the event has no guests and Google is asked
+    to send no notice (`sendUpdates=none`), so no member's address leaves for
+    Google and nobody is mailed from the approver's account. Inviting the
+    meeting's members waits for the team's decision after 10/12, with "다음
+    회의 잡기"'s invitations (#756); the approver can invite people from their
+    own calendar. `gap_followup_events` keeps one row per meeting -- the
+    approver, the event and the day it starts, nothing else of it -- so a
     second approval makes no second event. The row goes with the meeting and
-    the account. The event itself is left on the calendar when the meeting or
-    the account goes: it is a meeting people were invited to, and cancelling
-    it is theirs to do; its gap lines come out as every other line does.
+    the account. The event itself is left on the approver's calendar when the
+    meeting or the account goes: it is a meeting they organised, and
+    cancelling it is theirs to do; its gap lines come out as every other line
+    does. A title or line the outbound check refuses is not sent, and is
+    logged as an error with the meeting's id (`gap_followup_refused`), apart
+    from Google not answering.
   - **Slack, S20's team notices (module C, #824):** three kinds of message
     to the channel of the team that held the meeting, each once per press,
     with the team's connection, and one more when Follow-up's meeting is
-    approved -- the meeting's title, when the follow-up starts, how many were
-    invited,
-    the open gaps' titles and questions and the approver's display name,
-    once per meeting. Each guest of that meeting is also sent the same news
-    as a DM, addressed to them, by the Slack account they linked themselves
-    (`user_integrations`, read only to tell them); a guest who linked none
-    gets the calendar invitation alone and is not named anywhere for it. The
-    DM goes to guests only -- members of the meeting's team who took part --
-    never to the approver or anyone outside the team, and nothing about it
-    is stored. "담당자 지정해 질문" posts one gap's title and suggested
+    approved -- the meeting's title, when the follow-up starts, the open
+    gaps' titles and questions and the approver's display name, once per
+    meeting. Nobody is sent a DM about it: a DM to the meeting's members is a
+    new kind of message and waits for the team's decision after 10/12
+    (#1046). "담당자 지정해 질문" posts one gap's title and suggested
     question, mentioning the member the presser picked from the meeting's
     team -- by the Slack account that member linked themselves, or by their
     display name when they linked none -- and the presser's display name.
