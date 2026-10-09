@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { createProject, listProjectSuggestions, updateProject } from "../api";
+import { typedTextRefusal } from "../refusal";
 import type { Project } from "../types";
 
 const NEW = "__new__";
@@ -58,8 +59,10 @@ export function NameSuggestions({
           ? `"${word}" 프로젝트를 만들었습니다.`
           : `"${word}"를 ${saved.name}의 별칭에 넣었습니다.`,
       );
-    } catch {
-      setNote("넣지 못했습니다. 이미 같은 이름이 있는지 확인해 주세요.");
+    } catch (cause) {
+      setNote(
+        typedTextRefusal(cause) ?? "넣지 못했습니다. 이미 같은 이름이 있는지 확인해 주세요.",
+      );
     }
   };
 

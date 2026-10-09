@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/shared/api/client";
+
 import { MeetingSummaryScreen } from "./MeetingSummaryScreen";
 import { minutesText } from "../minutes";
 import type { ActionItemRead, MeetingSummary } from "../types";
@@ -9,9 +11,10 @@ import type { ActionItemRead, MeetingSummary } from "../types";
 // and the page "회의록 복사" copies is the page on screen.
 
 const getSummary = vi.fn<(id: string) => Promise<MeetingSummary>>();
+const putSummaryNote = vi.fn<(id: string, text: string) => Promise<MeetingSummary>>();
 vi.mock("../api", () => ({
   getSummary: (id: string) => getSummary(id),
-  putSummaryNote: vi.fn(),
+  putSummaryNote: (id: string, text: string) => putSummaryNote(id, text),
 }));
 
 function item(over: Partial<ActionItemRead>): ActionItemRead {
@@ -67,6 +70,7 @@ const MEETING: MeetingSummary = {
 afterEach(() => {
   cleanup();
   getSummary.mockReset();
+  putSummaryNote.mockReset();
   vi.unstubAllGlobals();
 });
 
@@ -249,5 +253,53 @@ describe("MeetingSummaryScreen", () => {
     expect(screen.getByRole("region", { name: "회의록에 없는 것" }).textContent).not.toContain(
       "넣지 않았습니다",
     );
+  });
+});
+
+describe("MeetingSummaryScreen, the memo", () => {
+  const memo = () => screen.getByRole("textbox", { name: "메모" }) as HTMLTextAreaElement;
+  const save = () =>
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "메모" })).getByRole("button", { name: "저장" }),
+    );
+
+  it("says which kind of value to take out of a memo refused as personal data (#1130)", async () => {
+    getSummary.mockResolvedValue(BASE);
+    putSummaryNote.mockRejectedValue(
+      new ApiError(422, "validation_error", "this text looks like it holds personal data", {
+        field: "body",
+        reason: "personal_data",
+        categories: ["email"],
+      }),
+    );
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+    await document_();
+
+    fireEvent.change(memo(), { target: { value: "문의는 kim@example.com 으로" } });
+    save();
+
+    const section = screen.getByRole("region", { name: "메모" });
+    await waitFor(() =>
+      expect(section.textContent).toContain(
+        "이메일 주소로 보이는 값이 있어 저장하지 않았습니다. 그 값을 지우고 다시 저장해 주세요.",
+      ),
+    );
+    expect(memo().value).toBe("문의는 kim@example.com 으로");
+  });
+
+  it("says only that the save failed for any other failure", async () => {
+    getSummary.mockResolvedValue(BASE);
+    putSummaryNote.mockRejectedValue(new ApiError(500, "internal", "boom"));
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+    await document_();
+
+    fireEvent.change(memo(), { target: { value: "다음 회의는 금요일." } });
+    save();
+
+    const section = screen.getByRole("region", { name: "메모" });
+    await waitFor(() =>
+      expect(section.textContent).toContain("저장하지 못했습니다. 다시 시도해 주세요."),
+    );
+    expect(section.textContent).not.toContain("boom");
   });
 });
