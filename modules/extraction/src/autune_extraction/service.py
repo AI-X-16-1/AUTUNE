@@ -3709,13 +3709,19 @@ def title_targets(session: Session, meeting_id: str) -> list[TitleTarget]:
     Not a row a person typed, an item whose description a person edited, or a
     decision a person reworded: their words are shown as they wrote them, cut
     if long, and no model writes a line over them. A row whose title was
-    refused has none and is asked about again by the next run."""
+    refused has none and is asked about again by the next run.
+
+    Nor a row that reads ``SPEECH_DELETED_TEXT``: its sentence was a person's
+    speech and they deleted it (``forget_speech``). What is left is a fixed
+    line that says so, there is nothing to summarise, and a title over it would
+    hide the one thing the row has to say (reviews of #1141)."""
     items = session.scalars(
         select(ExtActionItem)
         .where(
             ExtActionItem.meeting_id == meeting_id,
             ExtActionItem.origin == "model",
             ExtActionItem.title.is_(None),
+            ExtActionItem.description != SPEECH_DELETED_TEXT,
         )
         .order_by(ExtActionItem.id)
     ).all()
@@ -3738,6 +3744,7 @@ def title_targets(session: Session, meeting_id: str) -> list[TitleTarget]:
             ExtDecision.meeting_id == meeting_id,
             ExtDecision.origin == "model",
             ExtDecision.title.is_(None),
+            ExtDecision.statement != SPEECH_DELETED_TEXT,
         )
         .order_by(ExtDecision.id)
     ).all()
