@@ -23,7 +23,16 @@ import { KindTag } from "./KindTag";
  * still the right name for the voice, only not yet a person.
  */
 
-export function TranscriptRow({ row, name }: { row: LiveRow; name?: string | null }) {
+export function TranscriptRow({
+  row,
+  name,
+  onResearch,
+}: {
+  row: LiveRow;
+  name?: string | null;
+  /** Live screen only: ask the agent to look this line up. */
+  onResearch?: () => void;
+}) {
   const { utterance, kind } = row;
   // `name` is who the label was confirmed as, when the caller knows. The live
   // screen never does -- no one is named during a recording -- and passes none.
@@ -77,6 +86,21 @@ export function TranscriptRow({ row, name }: { row: LiveRow; name?: string | nul
               </span>
             ) : null}
           </span>
+          {onResearch ? (
+            <button
+              type="button"
+              onClick={onResearch}
+              aria-label={`${timecode(utterance.start)} 줄 조사`}
+              style={{
+                marginLeft: "auto",
+                fontSize: "var(--text-meta)",
+                fontWeight: "var(--text-meta-weight)",
+                color: "var(--color-ink-muted)",
+              }}
+            >
+              조사
+            </button>
+          ) : null}
         </div>
 
         {/* `data-utterance-id` lets S30 turn a text selection into offsets in this utterance. */}

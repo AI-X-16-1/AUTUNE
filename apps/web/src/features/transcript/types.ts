@@ -177,3 +177,15 @@ export type PiiReported = {
 };
 /** One of a team's own masking shapes — `schemas.MaskingRule`. */
 export type MaskingRule = { id: number; shape: string; category: string; created_at: string };
+
+/** A question researched during a live meeting (agent live research). Masked text. */
+export type LiveResearchDocument = {
+  id: string;
+  origin: "auto" | "manual";
+  status: "running" | "done" | "failed";
+  question: string;
+  body: string | null;
+  web_sources: { title: string; url: string }[];
+  meeting_sources: { meeting_id: string; title: string }[];
+  created_at: string;
+};

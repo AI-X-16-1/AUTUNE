@@ -8,12 +8,14 @@ import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
 import { useEndingSoon } from "../hooks/useEndingSoon";
+import { useLiveResearch } from "../hooks/useLiveResearch";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
 import { useMeetingTeam } from "../hooks/useMeetingTeam";
 import { useMeetingTitle } from "../hooks/useMeetingTitle";
 import { useMicrophone, type Microphone } from "../hooks/useMicrophone";
 import { forgetPlannedEnd } from "../plannedEnd";
 import type { RecordingState } from "../types";
+import { LiveResearchPanel } from "./LiveResearchPanel";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
 import { UploadFailed } from "./UploadFailed";
@@ -79,6 +81,7 @@ export function LiveMeetingScreen({
   const microphone = useMicrophone();
   const title = useMeetingTitle(meetingId);
   const live = useLiveSession(meetingId, microphone.stream);
+  const liveResearch = useLiveResearch(meetingId, live.rows, live.phase === "recording");
   const [consented, setConsented] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -328,6 +331,8 @@ export function LiveMeetingScreen({
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}
+        onResearch={(index) => void liveResearch.research(index)}
+        research={<LiveResearchPanel docs={liveResearch.docs} />}
       />
     </>,
   );

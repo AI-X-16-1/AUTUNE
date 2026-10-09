@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { RecordingFrame, StatusDot } from "@/shared/ui";
 
 import type { LiveRow, RecordingState, UtteranceKind } from "../types";
@@ -57,6 +59,8 @@ export function LiveTranscript({
   onStop,
   classified = false,
   microphone,
+  onResearch,
+  research,
 }: {
   state: RecordingState;
   rows: LiveRow[];
@@ -75,6 +79,10 @@ export function LiveTranscript({
   classified?: boolean;
   /** Undefined when the caller has no microphone to report on. */
   microphone?: MicrophoneStatus;
+  /** Ask the agent to look up the row at this index (the 조사 button). */
+  onResearch?: (index: number) => void;
+  /** The 회의 중 조사 panel, drawn in the right rail under the controls. */
+  research?: ReactNode;
 }) {
   const counts = classified ? countKinds(rows) : undefined;
 
@@ -102,15 +110,19 @@ export function LiveTranscript({
                   : "전사된 내용이 없습니다."}
               </p>
             ) : (
-              rows.map((row) => (
-                <TranscriptRow key={row.utterance.id} row={row} />
+              rows.map((row, i) => (
+                <TranscriptRow
+                  key={row.utterance.id}
+                  row={row}
+                  onResearch={onResearch ? () => onResearch(i) : undefined}
+                />
               ))
             )}
           </main>
           <StatusBar microphone={microphone} />
         </div>
 
-        <div className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
+        <div className="overflow-y-auto border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
           <LiveRail
             state={state}
             elapsedSeconds={elapsedSeconds}
@@ -121,6 +133,7 @@ export function LiveTranscript({
             onResume={onResume}
             onStop={onStop}
           />
+          {research}
         </div>
       </div>
     </>
