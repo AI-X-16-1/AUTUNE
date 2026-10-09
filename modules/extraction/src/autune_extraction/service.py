@@ -312,7 +312,7 @@ _ANSWER_OF = {kind.value: answer for answer, kind in WEB_ANSWERS.items()}
 
 
 def answer_url(meeting_id: str) -> str:
-    """Where a speaker answers their own open questions: the meeting's 액션 tab."""
+    """Where a speaker answers their own open questions: the meeting's 할 일 tab."""
     return f"{get_core_settings().web_base_url.rstrip('/')}/meetings/{meeting_id}/actions"
 
 
@@ -5842,7 +5842,7 @@ none. Raised in review of #294.
 """
 
 
-ITEM_DELETED_TEXT = "삭제된 액션아이템"
+ITEM_DELETED_TEXT = "삭제된 할 일"
 """What a deleted item's page is retitled to before it goes to Notion's trash
 (#768), as a decision's is (``DECISION_PUT_BACK_TEXT``, #669): the trash keeps
 a page restorable for 30 days, and with this title the item's sentence is not

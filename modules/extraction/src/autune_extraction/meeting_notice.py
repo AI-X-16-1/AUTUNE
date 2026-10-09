@@ -9,7 +9,7 @@ Right after a meeting almost everything this module has made is a draft a
 model wrote, waiting for a person (``needs_confirmation``), and unconfirmed
 content from B does not reach an outbound surface (#246; agent-layer.md, rule
 3). So the message carries the meeting's title, **how many** drafts wait for
-this person, and the address of that meeting's 액션 tab -- never a draft's
+this person, and the address of that meeting's 할 일 tab -- never a draft's
 text, its date, or anything else of it. An item of theirs that a person has
 already confirmed is named with its date, as the morning DM names one.
 

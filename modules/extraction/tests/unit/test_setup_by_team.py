@@ -1,6 +1,6 @@
 """B's integration-setup routes take the team itself, for S28 settings (#496).
 
-The 액션 tab names a meeting; the settings page has none and names the team.
+The 할 일 tab names a meeting; the settings page has none and names the team.
 Same check either way: a member gets the team's answer, anyone else the 404 an
 unknown meeting or team gets (#189).
 """

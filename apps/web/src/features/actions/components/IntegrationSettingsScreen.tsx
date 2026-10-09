@@ -31,7 +31,7 @@ type Team = SessionUser["teams"][number];
  * Under the three, "동기화 기록" opens what the team's action items did on
  * their way out lately (`SyncLogDrawer`).
  *
- * The same components the 액션 tab shows, given the team instead of a meeting;
+ * The same components the 할 일 tab shows, given the team instead of a meeting;
  * the server checks membership either way.
  */
 export function IntegrationSettingsScreen({

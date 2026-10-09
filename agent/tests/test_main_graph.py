@@ -23,7 +23,7 @@ SCOPE = RunScope(team_id="team_a")
 
 OPEN_ITEMS = {
     "ok": True,
-    "summary": "마감이 가까운 액션아이템 2건.",
+    "summary": "마감이 가까운 할 일 2건.",
     "items": [{"title": "API 문서 올리기", "score": 0.8}, {"title": "QA 일정", "score": 0.5}],
     "evidence": ["utt_aa11", "utt_bb22"],
 }
@@ -46,7 +46,7 @@ def test_a_request_goes_to_the_subagent_the_router_picks() -> None:
     assert state["route"] == "workload"
     assert state["outcome"].result.ok is True
     assert [i.title for i in state["outcome"].result.items] == ["API 문서 올리기", "QA 일정"]
-    assert state["answer"] == "마감이 가까운 액션아이템 2건."
+    assert state["answer"] == "마감이 가까운 할 일 2건."
     assert router.seen == [{"workload": "Use this in tests. Example subagent workload."}]
 
 
@@ -133,7 +133,7 @@ def test_a_turn_no_subagent_fits_is_asked_when_a_model_is_given() -> None:
     assert state["route"] == "ask"
     assert state["outcome"].result.ok is True
     assert state["outcome"].proposed == []
-    assert state["answer"] == "마감이 가까운 액션아이템 2건."
+    assert state["answer"] == "마감이 가까운 할 일 2건."
 
 
 def test_without_a_model_an_unfit_turn_is_still_unrouted() -> None:

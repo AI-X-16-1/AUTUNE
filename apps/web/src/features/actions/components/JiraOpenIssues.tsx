@@ -33,8 +33,8 @@ type State =
   | { kind: "ready"; projects: JiraProjectIssues[] };
 
 const WHY_EMPTY: Record<Exclude<JiraProjectIssues["state"], "ok">, string> = {
-  no_project: "Jira 프로젝트를 아직 고르지 않았습니다. 회의의 액션 탭에서 고를 수 있습니다.",
-  needs_reconnect: "Jira 연결이 끊어졌습니다. 회의의 액션 탭에서 다시 연결해 주세요.",
+  no_project: "Jira 프로젝트를 아직 고르지 않았습니다. 회의의 할 일 탭에서 고를 수 있습니다.",
+  needs_reconnect: "Jira 연결이 끊어졌습니다. 회의의 할 일 탭에서 다시 연결해 주세요.",
   unavailable: "Jira가 응답하지 않습니다. 잠시 후 다시 불러와 주세요.",
 };
 
@@ -105,7 +105,7 @@ export function JiraOpenIssues({ teamId = null }: { teamId?: string | null }) {
         </p>
       ) : projects.length === 0 ? (
         <p className="text-[var(--color-ink-muted)]" style={meta}>
-          연결한 Jira 프로젝트가 없습니다. 회의의 액션 탭에서 Jira를 연결하면 열린 이슈가 이곳에
+          연결한 Jira 프로젝트가 없습니다. 회의의 할 일 탭에서 Jira를 연결하면 열린 이슈가 이곳에
           보입니다.
         </p>
       ) : (

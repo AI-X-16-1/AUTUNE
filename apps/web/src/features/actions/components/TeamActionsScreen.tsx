@@ -24,7 +24,7 @@ import { projectProgress } from "../projectProgress";
 import type { ActionItemRead, Project, TeamName } from "../types";
 
 /**
- * S17 across every meeting — the sidebar's "액션아이템".
+ * S17 across every meeting — the sidebar's "할 일".
  *
  * `ActionItemsScreen` is one meeting's review: its decisions, its connections
  * and its board. This is the board alone, over every item the caller can see.
@@ -195,7 +195,7 @@ export function TeamActionsScreen({
             className="mb-3 flex flex-wrap items-center gap-3 text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)" }}
           >
-            <span>{`${teamName}의 액션 아이템만 보고 있습니다.`}</span>
+            <span>{`${teamName}의 할 일만 보고 있습니다.`}</span>
             {onEveryTeam !== undefined ? (
               <Button tone="text" size="compact" onClick={onEveryTeam}>
                 전체 보기
@@ -244,9 +244,9 @@ export function TeamActionsScreen({
 
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
-            <Note>액션 아이템을 불러오는 중입니다.</Note>
+            <Note>할 일을 불러오는 중입니다.</Note>
           ) : error !== null && every.length === 0 ? (
-            <Note>액션 아이템을 불러오지 못했습니다.</Note>
+            <Note>할 일을 불러오지 못했습니다.</Note>
           ) : (
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
@@ -310,9 +310,9 @@ export function TeamActionsScreen({
 }
 
 const EMPTY: Record<Tab, string> = {
-  all: "아직 액션 아이템이 없습니다. 회의가 분석되면 이곳에 모입니다.",
-  mine: "나에게 배정된 액션 아이템이 없습니다.",
-  overdue: "기한이 지난 액션 아이템이 없습니다.",
+  all: "아직 할 일이 없습니다. 회의가 분석되면 이곳에 모입니다.",
+  mine: "나에게 배정된 할 일이 없습니다.",
+  overdue: "기한이 지난 할 일이 없습니다.",
 };
 
 function Meta({ children }: { children: string }) {

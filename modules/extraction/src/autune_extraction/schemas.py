@@ -530,7 +530,7 @@ class ConfirmationAnswerIn(BaseModel):
 
 
 class ExtractionState(BaseModel):
-    """What a meeting's 액션 tab says about its extraction.
+    """What a meeting's 할 일 tab says about its extraction.
 
     ``failures`` is how many runs in a row raised; zero is "nothing wrong".
     ``will_retry`` says the worker tries again by itself, so the screen does
@@ -675,7 +675,7 @@ class MeetingSummary(BaseModel):
     """S15's 요약 tab, v1 (#421, WBS 4.9): B's own rows in three levels, no model.
 
     The tab reads these top down -- counts, then the decisions and items
-    themselves, then (through the 액션 tab's drawer) the lines they came from.
+    themselves, then (through the 할 일 tab's drawer) the lines they came from.
     Nothing here is a verbatim quotation: descriptions and statements are the
     same fields the board already lists. A summary written by an LLM over the
     whole meeting is v2, and waits on #392.

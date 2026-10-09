@@ -70,7 +70,7 @@ export function AddActionItem({
         <AddForm meetingId={meetingId} onAdd={onAdd} onClose={() => setOpen(false)} />
       ) : (
         <Button tone="text" size="compact" onClick={() => setOpen(true)}>
-          + 액션 아이템 추가
+          + 할 일 추가
         </Button>
       )}
     </div>
@@ -138,7 +138,7 @@ function AddForm({
       onKeyDown={(event) => {
         if (event.key === "Escape" && !pending) onClose();
       }}
-      aria-label="액션 아이템 추가"
+      aria-label="할 일 추가"
       className="grid gap-3 border border-[var(--color-hairline)]"
       style={{
         background: "var(--color-surface-panel)",

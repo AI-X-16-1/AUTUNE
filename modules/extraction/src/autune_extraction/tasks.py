@@ -930,7 +930,7 @@ def _extract_counted(meeting_id: str, utterances: Sequence[TranscriptUtterance])
 @shared_task(name="autune.extraction.reextract_meeting", acks_late=True)
 def reextract_meeting(meeting_id: str) -> None:
     """Extract one meeting again from its stored transcript -- a failed run's
-    next try, or the 액션 tab's "다시 추출".
+    next try, or the 할 일 tab's "다시 추출".
 
     The event's own run (``_extract``): model rows are replaced, an item list
     a person has edited is kept (``service.build_action_items``), and
@@ -974,21 +974,21 @@ def _republish_counted(meeting_id: str) -> None:
 def _failure_notice(title: str, board_url: str, *, not_published: bool = False) -> str:
     if not_published:
         return (
-            f"「{title}」 회의의 액션 아이템과 결정은 추출했지만, 그 결과를 회의 연결과 "
+            f"「{title}」 회의의 할 일과 결정은 추출했지만, 그 결과를 회의 연결과 "
             f"리포트 분석에 전달하지 못했습니다. {attempts.MAX_ATTEMPTS}번 시도했고, "
-            "자동으로는 더 시도하지 않습니다. 회의의 액션 화면에서 '다시 추출'을 눌러 "
+            "자동으로는 더 시도하지 않습니다. 회의의 할 일 화면에서 '다시 추출'을 눌러 "
             f"다시 시도할 수 있습니다.\n{board_url}"
         )
     return (
-        f"「{title}」 회의에서 액션 아이템과 결정을 추출하지 못했습니다. "
+        f"「{title}」 회의에서 할 일과 결정을 추출하지 못했습니다. "
         f"{attempts.MAX_ATTEMPTS}번 시도했고, 자동으로는 더 시도하지 않습니다. "
-        f"회의의 액션 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
+        f"회의의 할 일 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
     )
 
 
 def _tell_teams() -> list[str]:
     """One message to the team's Slack channel for each meeting out of tries:
-    its title, the count and a link to its 액션 tab, nothing that was said in
+    its title, the count and a link to its 할 일 tab, nothing that was said in
     it. A team with no channel
     connected is not told here; the meeting's own screen says it either way.
 
@@ -1056,7 +1056,7 @@ def retry_failed_extractions() -> list[str]:
     most, and stops (the user, 2026-10-06: three in all, and after them no
     automatic attempt of any kind). A failure that repeats every time -- a refusal by the outbound
     check, a bug -- is spent in twenty minutes and then said, in the team's
-    channel and on the meeting's 액션 tab, instead of being retried for good.
+    channel and on the meeting's 할 일 tab, instead of being retried for good.
 
     **A meeting with a transcript and no extraction on record is taken for a
     failed one** (``attempts.adopt_unextracted``): a run that raised before

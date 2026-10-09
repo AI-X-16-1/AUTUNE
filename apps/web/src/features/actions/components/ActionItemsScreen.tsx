@@ -145,12 +145,12 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             className="mb-3 border-b border-[var(--color-hairline)] pb-2 text-[var(--color-ink-strong)]"
             style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
           >
-            액션 아이템
+            할 일
           </h2>
           {!settled ? (
-            <Note>액션 아이템을 불러오는 중입니다.</Note>
+            <Note>할 일을 불러오는 중입니다.</Note>
           ) : error !== null && items.length === 0 ? (
-            <Note>이 회의의 액션 아이템을 불러오지 못했습니다.</Note>
+            <Note>이 회의의 할 일을 불러오지 못했습니다.</Note>
           ) : (
             <>
               {error !== null ? (
@@ -159,10 +159,10 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
               {items.length === 0 ? (
                 <Note>
                   {unrun === "in_progress"
-                    ? "이 회의의 액션 아이템을 추출하고 있습니다. 끝나면 여기에 나타납니다."
+                    ? "이 회의의 할 일을 추출하고 있습니다. 끝나면 여기에 나타납니다."
                     : unrun === "overdue"
-                      ? "이 회의의 액션 아이템은 아직 추출되지 않았습니다. 놓친 항목은 직접 추가할 수 있습니다."
-                      : "이 회의에서 추출된 액션 아이템이 없습니다. 놓친 항목은 직접 추가할 수 있습니다."}
+                      ? "이 회의의 할 일은 아직 추출되지 않았습니다. 놓친 항목은 직접 추가할 수 있습니다."
+                      : "이 회의에서 추출된 할 일이 없습니다. 놓친 항목은 직접 추가할 수 있습니다."}
                 </Note>
               ) : null}
               <ProjectFilter projects={projects} value={project} onChange={setProject} />

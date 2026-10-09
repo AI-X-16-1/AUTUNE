@@ -102,7 +102,7 @@ export function minutesText(summary: MeetingSummary, title?: string | null): str
     );
   });
 
-  lines.push("", "액션");
+  lines.push("", "할 일");
   if (page.actions.length === 0) lines.push("없음");
   page.actions.forEach((item, n) => {
     lines.push(`${n + 1}. ${item.description} — ${actionMeta(item)}`);

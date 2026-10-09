@@ -126,7 +126,7 @@ export function ActionDetailDrawer({
     <div
       role="dialog"
       aria-modal
-      aria-label="액션 아이템 상세"
+      aria-label="할 일 상세"
       className="fixed inset-0 z-40 flex items-center justify-center"
       style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-page)" }}
       onClick={onClose}

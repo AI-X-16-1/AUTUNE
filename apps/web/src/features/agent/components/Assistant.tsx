@@ -334,7 +334,7 @@ export function Assistant({
                 rows={1}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onComposerKey}
-                placeholder="회의·결정·액션에 대해 물어보세요"
+                placeholder="회의·결정·할 일에 대해 물어보세요"
                 aria-label="비서에게 물어보기"
                 maxLength={1000}
                 className="flex-1 resize-none rounded-[var(--radius)] border border-[rgba(22,25,31,.2)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)] outline-none focus:border-[var(--color-accent-default)] focus:ring-[0.5px] focus:ring-[var(--color-accent-default)]"

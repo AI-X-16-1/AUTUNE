@@ -277,7 +277,7 @@ describe("MembersSettingsScreen, for the one person left on the team (#1007)", (
     await askToDelete();
 
     // What goes: everything in Autune, other people's lines among it.
-    expect(screen.getByText(/모든 회의, 전사, 액션 아이템, 결정 사항/)).toBeTruthy();
+    expect(screen.getByText(/모든 회의, 전사, 할 일, 결정 사항/)).toBeTruthy();
     expect(screen.getByText(/먼저 팀에서 나간 사람들이 이 팀 회의에서 한 말도 함께\s+삭제/)).toBeTruthy();
     expect(screen.getByText(/그 사람들에게 알림은 가지 않습니다/)).toBeTruthy();
     expect(screen.getByText(/되돌릴 수 없습니다/)).toBeTruthy();

@@ -61,7 +61,7 @@ describe("SyncLogDrawer", () => {
     expect(getSyncLog).toHaveBeenCalledWith("team_a");
   });
 
-  it("says a failure by its tool and its kind, and leads to the meeting's 액션 tab", async () => {
+  it("says a failure by its tool and its kind, and leads to the meeting's 할 일 tab", async () => {
     open({ failures: [failure()], copies: [] });
 
     const list = await failures();

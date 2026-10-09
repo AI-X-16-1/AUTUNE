@@ -268,7 +268,7 @@ never stated stays without them, rather than print today's numbers as that
 week's. Weeks run from midnight KST. "Before `period_start`" goes by when a
 meeting was held, while the week's meetings are those *scored* in it, so a
 meeting held on the eve and scored the next morning counts in both. Missing or stale counts read
-"액션 아이템 완료 현황을 받지 못했습니다". A week with no scored meeting still
+"할 일 완료 현황을 받지 못했습니다". A week with no scored meeting still
 reports what earlier meetings carry. They are team totals in the team's
 channel -- never a direct message, never one meeting's counts (the contract's
 usage rule). `metrics_json` keeps the quality score's confirmation rate as
