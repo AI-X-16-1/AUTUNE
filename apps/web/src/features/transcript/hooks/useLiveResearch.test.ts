@@ -2,7 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
-import type { LiveRow } from "../types";
+import type { LiveResearchDocument, LiveRow } from "../types";
 import { useLiveResearch } from "./useLiveResearch";
 
 function row(i: number): LiveRow {
@@ -72,6 +72,33 @@ describe("useLiveResearch", () => {
     await act(async () => {});
 
     expect(detect).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps reading while a document is running, even when paused", async () => {
+    const running = { id: "alr_1", status: "running" } as LiveResearchDocument;
+    const done = { id: "alr_1", status: "done" } as LiveResearchDocument;
+    const list = vi
+      .spyOn(api, "listLiveResearch")
+      .mockResolvedValueOnce([running])
+      .mockResolvedValueOnce([running])
+      .mockResolvedValue([done]);
+    const { result } = renderHook(() => useLiveResearch("mtg_1", [], false));
+    await act(async () => {});
+    expect(result.current.docs).toEqual([running]);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(result.current.docs).toEqual([done]);
+
+    const calls = list.mock.calls.length;
+    await act(async () => {
+      vi.advanceTimersByTime(20_000);
+    });
+    expect(list).toHaveBeenCalledTimes(calls);
   });
 
   it("asks about one row with up to four rows before it", async () => {

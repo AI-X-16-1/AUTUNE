@@ -65,10 +65,16 @@ export function useLiveResearch(meetingId: string, rows: LiveRow[], active: bool
 
   useEffect(() => {
     refresh();
-    if (!active) return;
+  }, [refresh]);
+
+  // A document still running keeps the list polling after a pause or stop;
+  // reading only while recording froze it at 조사 중 for good.
+  const running = docs.some((doc) => doc.status === "running");
+  useEffect(() => {
+    if (!active && !running) return;
     const timer = setInterval(refresh, POLL_MS);
     return () => clearInterval(timer);
-  }, [active, refresh]);
+  }, [active, running, refresh]);
 
   const research = useCallback(
     async (index: number) => {
