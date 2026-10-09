@@ -610,7 +610,10 @@ whole list -- `tasks.py` declares the rest, most of them beat tasks named
   project's minutes for one meeting, when a person sends them (#787,
   `project_send.py`); sending again rewrites that message in place. And one
   notice when a meeting's extraction is out of tries: its title, the count and
-  a link to its 액션 tab. Action items are not posted to a channel
+  a link to its 액션 tab. No item is posted on its own and nothing is
+  threaded: an item reaches the channel only as a line of its project's
+  minutes (its sentence, assignee and due date), and not while it waits for
+  confirmation
 - A DM to each speaker with an ambiguous agreement, asking for confirmation
 - A DM to an item's assignee the day before its due date and once after it
   passes (`reminders.py`, `autune.extraction.periodic.remind_due_items`, every
