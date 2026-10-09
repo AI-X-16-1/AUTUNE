@@ -401,6 +401,39 @@ export interface MaterialUploadRules {
   max_title_chars: number;
   /** How many rows a team may keep, links and uploads together. */
   max_materials: number;
+  /**
+   * Whether this server answers a question over the uploaded materials. A
+   * server that takes uploads and has no search route does not send it, and
+   * the screen draws no search box.
+   */
+  search?: boolean;
+  /** The longest question the search takes; 0 or absent where there is none. */
+  max_question_chars?: number;
+}
+
+/**
+ * One uploaded material that answers a question -- `MaterialHit` in
+ * `modules/extraction/src/autune_extraction/schemas.py`. A Drive link is
+ * never one: Autune does not read it.
+ */
+export interface MaterialSearchHit {
+  material_id: string;
+  title: string;
+  /**
+   * A cut of the masked text that was kept, with "…" at an end where it was
+   * cut out of a longer piece and `*` where a value was masked. There is no
+   * original behind it to open.
+   */
+  excerpt: string;
+}
+
+/** `MaterialAnswer`: at most five materials, best first. */
+export interface MaterialSearchAnswer {
+  hits: MaterialSearchHit[];
+  /** A sentence of the server's own, shown as it is; it can come with no hit. */
+  notice: string | null;
+  /** More materials answered than the ones in `hits`. */
+  more: boolean;
 }
 
 /**

@@ -13,12 +13,15 @@ import {
   getMaterialUploadRules,
   listMaterials,
   registerMaterial,
+  searchMaterials,
   uploadMaterial,
 } from "../api";
 import { localToday } from "../dates";
+import { questionLimit } from "../materialSearch";
 import { deletionDay, notReadNote, shelfFull } from "../materialUpload";
 import { typedTextRefusal } from "../refusal";
 import type { Material, MaterialUploadRules } from "../types";
+import { MaterialSearch } from "./MaterialSearch";
 import { MaterialUploadForm } from "./MaterialUploadForm";
 
 type Team = SessionUser["teams"][number];
@@ -148,6 +151,9 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   // Null until the server says, and null when it cannot: a server without the
   // route is one that takes no uploads, and the screen is the link shelf.
   const [rules, setRules] = useState<MaterialUploadRules | null>(null);
+  // Deleted here since the screen opened: an excerpt found earlier must not
+  // stay on it after its material's text is gone.
+  const [removed, setRemoved] = useState<string[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -256,6 +262,7 @@ function TeamMaterials({ teamId }: { teamId: string }) {
                 setMaterials((list) =>
                   (list ?? []).filter((m) => m.id !== material.id),
                 );
+                setRemoved((ids) => [...ids, material.id]);
                 setNote(
                   gone
                     ? "이미 삭제된 자료입니다."
@@ -268,6 +275,13 @@ function TeamMaterials({ teamId }: { teamId: string }) {
           ))}
         </ul>
       )}
+      {rules?.enabled && rules.search === true ? (
+        <MaterialSearch
+          limit={questionLimit(rules)}
+          removed={removed}
+          onSearch={(question) => searchMaterials(teamId, question)}
+        />
+      ) : null}
     </div>
   );
 }
