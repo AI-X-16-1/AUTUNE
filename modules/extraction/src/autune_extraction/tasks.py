@@ -97,8 +97,15 @@ from .models import (
     ExtProjectSendCleanup,
 )
 from .pipeline.base import give_roster
-from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
+from .pipeline.registry import (
+    get_classifier,
+    get_nli,
+    get_resolver,
+    get_summarizer,
+    get_titler,
+)
 from .pipeline.summary import TooLongError
+from .pipeline.title import TitleRequest
 
 log = get_logger(__name__)
 
@@ -370,12 +377,59 @@ def _announce(meeting_id: str, result: ExtractionResult) -> None:
             summarize_meeting.delay(meeting_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
             log.warning("extraction_summary_not_queued", error=type(exc).__name__)
+    if get_settings().title_impl != "none":
+        try:
+            title_meeting.delay(meeting_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
+            log.warning("extraction_titles_not_queued", error=type(exc).__name__)
     # The project minutes that already went out, brought in line with what
     # this run left confirmed: a corrected line, and also a confirmed decision
     # the rebuild no longer has, which no correction names (#787 review). A
     # meeting that sent nothing costs one query; a copy that already says the
     # minutes is not written to.
     refresh_project_minutes(meeting_id)
+
+
+@shared_task(name="autune.extraction.title_meeting", acks_late=True)
+def title_meeting(meeting_id: str) -> int:
+    """A short title for each of the meeting's items and decisions that has
+    none (``title_impl``; ``pipeline.title``). Returns how many were written.
+
+    Its own task, after the run that built the rows: the rows are already
+    there and already announced, and a title is a way of showing them. Reads,
+    then calls the model with no session open, then writes -- only onto a row
+    that still says the sentence its title is of. A failed call, a refused
+    title and a privacy refusal all leave the row without one, and the screen
+    shows the sentence cut as it did before; logged by meeting id and counts,
+    never the text.
+    """
+    try:
+        titler = get_titler()
+    except ValueError as exc:
+        log.error("extraction_titles_not_configured", error=type(exc).__name__)
+        return 0
+    if titler is None:
+        return 0
+    with session_scope() as session:
+        targets = service.title_targets(session, meeting_id)
+        if not targets:
+            return 0
+        roster = service.team_roster(session, meeting_id)
+    give_roster(titler, roster)
+    try:
+        titles = titler.titles([TitleRequest(t.asked, t.kind) for t in targets])
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_titles_blocked_by_privacy_guard", meeting_id=meeting_id, rows=len(targets)
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 -- the rows keep no title; logged by id, never the text
+        log.warning("extraction_titles_failed", meeting_id=meeting_id, error=type(exc).__name__)
+        return 0
+    with session_scope() as session:
+        written = service.store_titles(session, targets, [t.text for t in titles])
+    log.info("extraction_titles_stored", meeting_id=meeting_id, rows=len(targets), written=written)
+    return written
 
 
 @shared_task(name="autune.extraction.summarize_meeting", acks_late=True)

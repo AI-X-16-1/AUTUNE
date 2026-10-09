@@ -563,6 +563,9 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
         "meeting_id",
         "statement",
         "original_statement",
+        # The statement in twenty characters, for the row's top line: about
+        # the text, and carrying no person (``pipeline.title.accept``).
+        "title",
         # Whether a model wrote the statement or it is the line tidied: about
         # the text, as ``origin`` is, and about no person.
         "statement_resolved",

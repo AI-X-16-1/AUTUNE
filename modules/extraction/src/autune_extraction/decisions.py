@@ -413,6 +413,19 @@ def _owner(region: Sequence[ClassifiedUtterance], substance: ClassifiedUtterance
     return named.group(1) if named else None
 
 
+_BRACKET = re.compile(r" \((?:담당 [^()]+, 기한 [^()]+|담당 [^()]+|기한 [^()]+)\)$")
+
+
+def core_of(statement: str) -> str:
+    """A statement without the bracket ``_build`` ends it with -- "(담당 민경,
+    기한 2026-10-13)": what was settled, apart from who has it and by when.
+
+    Read back off the stored sentence because the core is not stored apart.
+    A sentence that only happens to end in brackets of another kind keeps
+    them."""
+    return _BRACKET.sub("", statement)
+
+
 def _build(
     members: Sequence[ClassifiedUtterance],
     region: Sequence[ClassifiedUtterance] = (),

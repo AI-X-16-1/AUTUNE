@@ -151,3 +151,23 @@ export function shortTitle(sentence: string, max: number = TITLE_MAX): ShownTitl
   if (kept === "") kept = hardCut(text, room).replace(DANGLING, "");
   return { shown: kept + ELLIPSIS, cut: true };
 }
+
+/**
+ * The top line of a row that may have a title of its own (the user,
+ * 2026-10-09): the summary the server wrote for the sentence -- twenty
+ * characters or fewer, ended by a noun -- or, when it has none, the sentence
+ * cut as above. Most rows have none: a sentence a person typed or edited,
+ * one whose summary was refused, every row from before.
+ *
+ * A summary stands for a sentence that says more, so `cut` is true for it and
+ * the row still leads to the whole sentence. It is never cut again here; one
+ * longer than `TITLE_MAX` is not a title the server keeps, and is not shown.
+ */
+export function rowTitle(
+  title: string | null | undefined,
+  sentence: string,
+): ShownTitle {
+  const written = title?.trim();
+  if (!written || count(written) > TITLE_MAX) return shortTitle(sentence);
+  return { shown: written, cut: written !== sentence.trim() };
+}

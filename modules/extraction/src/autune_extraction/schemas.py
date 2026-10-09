@@ -202,6 +202,10 @@ class ActionItemRead(BaseModel):
     only a meeting. The board across every meeting shows the items team by
     team with it (the user, 2026-10-06); the names are ``GET /teams/mine``."""
     description: str
+    title: str | None = None
+    """``description`` in twenty characters or fewer, for a card's top line
+    (``ExtActionItem.title``). ``None`` when the item has none; the screen
+    then cuts the description itself."""
     description_resolved: bool = False
     """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
     the source utterance verbatim (#175, #366). S18 shows this so a reviewer
@@ -856,6 +860,11 @@ class ReviewDecision(BaseModel):
     id: str
     statement: str
     """What will be sent: the person's rewording when there is one, else the model's."""
+
+    title: str | None = None
+    """``statement`` in twenty characters or fewer, for the row's top line
+    (``ExtDecision.title``). ``None`` when there is none and whenever a person
+    reworded the decision: the title was of the model's sentence."""
 
     model_statement: str
     """What the model proposed, kept beside the rewording so the screen can show both."""
