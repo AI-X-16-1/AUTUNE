@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from autune_agent.main.ask import MEETING_TOOLS, TEAM_TOOLS
 from autune_agent.results import ToolResult
 from autune_agent.subagents.followup import DateChoice, Picked, date_choices, picked_days
 
@@ -58,3 +59,8 @@ def test_picked_days_reads_cs_row_and_skips_what_is_not_a_day() -> None:
 def test_a_failed_or_empty_read_is_no_days() -> None:
     assert picked_days(ToolResult.failure("boom", "읽지 못했습니다.")) == []
     assert picked_days(ToolResult(ok=True, summary="", items=[])) == []
+
+
+def test_the_picked_days_and_their_names_are_not_offered_to_the_chat_model() -> None:
+    # A picked day carries who picked it; the chat model must not get that name.
+    assert "gap.next_meeting_days" not in MEETING_TOOLS + TEAM_TOOLS
