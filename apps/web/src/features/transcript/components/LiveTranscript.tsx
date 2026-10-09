@@ -57,6 +57,7 @@ export function LiveTranscript({
   onPause,
   onResume,
   onStop,
+  stopping = false,
   classified = false,
   microphone,
   onResearch,
@@ -70,6 +71,8 @@ export function LiveTranscript({
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
+  /** 녹음 종료 was pressed and the session is finishing (LiveRail). */
+  stopping?: boolean;
   /** Whether module B has reported on this meeting.
    *
    * Not derived from the rows: a meeting B analysed and found nothing in looks
@@ -132,6 +135,7 @@ export function LiveTranscript({
             onPause={onPause}
             onResume={onResume}
             onStop={onStop}
+            stopping={stopping}
           />
           {research}
         </div>

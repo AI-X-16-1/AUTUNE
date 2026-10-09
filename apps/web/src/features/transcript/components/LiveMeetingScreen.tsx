@@ -18,6 +18,7 @@ import type { RecordingState } from "../types";
 import { LiveResearchPanel } from "./LiveResearchPanel";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
+import { Spinner } from "./Spinner";
 import { UploadFailed } from "./UploadFailed";
 
 /** The phases in which closing the tab loses audio that is not yet uploaded. */
@@ -82,6 +83,7 @@ export function LiveMeetingScreen({
   const title = useMeetingTitle(meetingId);
   const live = useLiveSession(meetingId, microphone.stream);
   const liveResearch = useLiveResearch(meetingId, live.rows, live.phase === "recording");
+  const [stopping, setStopping] = useState(false);
   const [consented, setConsented] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
@@ -169,13 +171,14 @@ export function LiveMeetingScreen({
   };
 
   const onStop = async () => {
-    await live.stop();
+    setStopping(true);
+    try {
+      await live.stop();
+    } finally {
+      setStopping(false);
+    }
     microphone.stop();
   };
-
-  if (live.phase === "done") {
-    return null;
-  }
 
   const recording: RecordingState | null =
     live.phase === "recording" || live.phase === "connecting"
@@ -281,11 +284,22 @@ export function LiveMeetingScreen({
     );
   }
 
-  if (live.phase === "uploading" || live.phase === "upload_failed") {
+  // "done" waits for the router to load the meeting page; an empty screen
+  // there read as the app having stopped.
+  if (live.phase === "uploading" || live.phase === "upload_failed" || live.phase === "done") {
     return frame(
       <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
-        <p style={{ fontSize: "var(--text-body)" }}>
-          {live.phase === "uploading" ? "녹음을 올리는 중입니다…" : "업로드에 실패했습니다."}
+        <p
+          role="status"
+          className="flex items-center"
+          style={{ gap: "var(--space-8)", fontSize: "var(--text-body)" }}
+        >
+          {live.phase === "upload_failed" ? null : <Spinner />}
+          {live.phase === "uploading"
+            ? "녹음을 올리는 중입니다…"
+            : live.phase === "done"
+              ? "회의 페이지로 이동하는 중입니다…"
+              : "업로드에 실패했습니다."}
         </p>
         {live.phase === "upload_failed" && (
           <UploadFailed
@@ -331,6 +345,7 @@ export function LiveMeetingScreen({
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}
+        stopping={stopping}
         onResearch={(index) => void liveResearch.research(index)}
         research={<LiveResearchPanel docs={liveResearch.docs} />}
       />
