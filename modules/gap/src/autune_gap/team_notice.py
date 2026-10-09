@@ -25,7 +25,12 @@ Three buttons post here, each once per press, and one approval:
   presses twice has asked twice, as for "담당자 지정해 질문".
 
 The channel is the team's own (``integrations``, ``config["channel"]``), the
-one B and D already notify. A member is mentioned only by the Slack account
+one B and D already notify. Once E has posted the meeting's report there
+(``GapReportThread``), the question cards and "담당자 지정해 질문" reply in
+its thread instead of standing alone on the channel (plan 3 on #824). A
+reply in a thread carries text only (``SlackClient.reply_in_thread``), so
+there the card is the same lines as one message. A thread on a channel the
+team has since left is not used. A member is mentioned only by the Slack account
 they linked themselves (``slack_member_id``); a member who has not linked one
 is named in plain text instead. Nothing here says whether anybody linked
 anything -- the screen is not told which way it went.
@@ -65,7 +70,7 @@ from autune_core.settings import get_settings as get_core_settings
 from autune_integrations import IntegrationError, SlackClient
 from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from .models import GapGap
+from .models import GapGap, GapReportThread
 
 log = get_logger(__name__)
 
@@ -246,6 +251,17 @@ def build_followup_dm(
     return text, blocks
 
 
+def _as_text(blocks: list[dict[str, Any]]) -> str:
+    """A card's blocks as the lines of one message, for a thread reply."""
+    lines = []
+    for block in blocks:
+        if block["type"] == "section":
+            lines.append(block["text"]["text"])
+        elif block["type"] == "context":
+            lines.extend(element["text"] for element in block["elements"])
+    return "\n".join(lines)
+
+
 def _post(
     session: Session,
     team_id: str,
@@ -253,16 +269,21 @@ def _post(
     blocks: list[dict[str, Any]],
     *,
     ids: dict[str, str],
+    thread: GapReportThread | None = None,
 ) -> SlackOutcome:
-    """Post on the team's channel. ``ids`` name what the message is about, for
-    the log of a refusal: never the text, which is what was refused."""
+    """Post on the team's channel, in ``thread`` when it is on that channel.
+    ``ids`` name what the message is about, for the log of a refusal: never
+    the text, which is what was refused."""
     config = load_integration(session, team_id, "slack")
     channel = config.config.get("channel") if config is not None else None
     if config is None or not channel or not config.secret:
         return "no_slack"
     client = SlackClient(config.require_secret())
     try:
-        client.post_message(str(channel), text, blocks)
+        if thread is not None and thread.channel == str(channel):
+            client.reply_in_thread(str(channel), thread.thread_ts, _as_text(blocks))
+        else:
+            client.post_message(str(channel), text, blocks)
     except PrivacyViolationError:
         log.error("gap_slack_refused", team_id=team_id, **ids)
         return "refused"
@@ -280,7 +301,12 @@ def post_ask(
     """Ask ``member`` the gap's question on the team channel."""
     text, blocks = build_ask(meeting, gap, mention=_mention(session, member), asker=_name(asker))
     outcome = _post(
-        session, meeting.team_id, text, blocks, ids={"meeting_id": meeting.id, "gap_id": gap.id}
+        session,
+        meeting.team_id,
+        text,
+        blocks,
+        ids={"meeting_id": meeting.id, "gap_id": gap.id},
+        thread=session.get(GapReportThread, meeting.id),
     )
     log.info("gap_ask_posted", gap_id=gap.id, outcome=outcome)
     return outcome
@@ -299,11 +325,17 @@ def post_cards(
     if not gaps:
         return "not_tried", 0
     name = _name(presser)
+    thread = session.get(GapReportThread, meeting.id)
     sent = 0
     for gap in gaps[:SENT]:
         text, blocks = build_card(meeting, gap, presser=name)
         outcome = _post(
-            session, meeting.team_id, text, blocks, ids={"meeting_id": meeting.id, "gap_id": gap.id}
+            session,
+            meeting.team_id,
+            text,
+            blocks,
+            ids={"meeting_id": meeting.id, "gap_id": gap.id},
+            thread=thread,
         )
         if outcome != "posted":
             log.info("gap_cards_posted", meeting_id=meeting.id, sent=sent, outcome=outcome)
@@ -312,7 +344,9 @@ def post_cards(
     outcome = "posted"
     if len(gaps) > SENT:
         text, blocks = build_rest(meeting, len(gaps) - SENT)
-        outcome = _post(session, meeting.team_id, text, blocks, ids={"meeting_id": meeting.id})
+        outcome = _post(
+            session, meeting.team_id, text, blocks, ids={"meeting_id": meeting.id}, thread=thread
+        )
     log.info("gap_cards_posted", meeting_id=meeting.id, sent=sent, outcome=outcome)
     return outcome, sent
 

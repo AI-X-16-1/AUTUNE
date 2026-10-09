@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from celery import shared_task
 
-from autune_contracts import TranscriptReady, validate_major_version
+from autune_contracts import MeetingReportPosted, TranscriptReady, validate_major_version
 from autune_core import get_logger, periodic
 from autune_gap import calendar_writes, service
 from autune_gap.enqueue import PUBLISH_REPORT
@@ -39,6 +39,15 @@ def on_transcript_ready(payload: dict) -> None:
     service.build_topic_graph(transcript)
     service.detect_gaps(transcript.meeting_id)
     service.publish_report(transcript.meeting_id)
+
+
+@shared_task(name="autune.gap.on_intelligence_meeting_report_posted", acks_late=True)
+def on_intelligence_meeting_report_posted(payload: dict) -> None:
+    """Consume MeetingReportPosted from module E: where the meeting's report
+    went out on Slack, so S20's question cards reply in its thread (#824)."""
+    posted = MeetingReportPosted.model_validate(payload)
+    validate_major_version(posted)
+    service.record_report_thread(posted)
 
 
 @shared_task(name=PUBLISH_REPORT, acks_late=True)
