@@ -13,8 +13,9 @@ Flow:
                               to the web app
 - ``GET /providers``       -> which providers this server can complete, so the
                               sign-in screen disables the rest
-- ``POST /logout``         -> clear the cookie (the token itself stays valid
-                              until it expires; see environments.md)
+- ``POST /logout``         -> end every session the person has, so no token
+                              issued so far is accepted again, then clear the
+                              cookie (see environments.md)
 - ``GET /me``              -> the current user (used by the web app to bootstrap)
 - ``GET /google/calendar/start``       -> Google's consent for the person's own
                                          calendar, offline; the same callback
@@ -313,9 +314,16 @@ def logout(
     refuse it, and every other token the person holds -- another browser, a
     developer token, a copy that leaked.
 
-    204 whoever asks. A request with no session, an expired one or one
-    already signed out has nothing to end and still gets its cookie cleared:
-    signing out must not be something that can fail."""
+    204 with or without a session. A request with none, an expired one or
+    one already signed out has nothing to end and still gets its cookie
+    cleared: a session that is missing or over is no reason for signing out
+    to fail.
+
+    What can fail is the write. ``end_sessions`` is committed by the route's
+    session as this function returns (``SessionDep``, #1041), and a commit
+    that fails is a 500 with the cookie left in place -- where a 204 once went
+    out over tokens the server still accepted. The person is told, and signs
+    out again."""
     user = signed_in_user_or_none(session, authorization, autune_session)
     if user is not None:
         end_sessions(user)

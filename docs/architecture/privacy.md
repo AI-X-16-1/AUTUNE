@@ -320,8 +320,8 @@ person's, those counts are that person's completion record. So:
   is written in the ADR, under *Not taken yet*. Until 2026-10-06 this line
   read "their utterances and everything derived from them are deleted", and
   nothing did that: there was no way to leave a team.
-- **The last member of a team may delete the team** (decided with the user
-  and the four other owners, 2026-10-09, #1007; before the legal review of
+- **The last member of a team may delete the team** (decided by the five
+  module owners, 2026-10-09, #1007; before the legal review of
   ADR 0007, #92 -- that ADR carries a dated note on it).
   `DELETE /api/audio/teams/{team_id}`, by the one person still on the team,
   with the team's name typed on the screen and sent in the request's body.

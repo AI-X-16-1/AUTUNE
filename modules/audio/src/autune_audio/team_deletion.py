@@ -3,8 +3,8 @@
 ``service.leave_team`` refuses the last member: a team with nobody on it could
 be neither read nor deleted. Until this module that left a team somebody used
 alone with no end but the retention window, and its name, its integrations'
-tokens and its masking rules with no end at all. Decided on #1007 by the user
-and the four other owners (2026-10-09), and written into privacy.md section 4
+tokens and its masking rules with no end at all. Decided on #1007 by the five
+module owners (2026-10-09), and written into privacy.md section 4
 and ADR 0007 before this code: the one person left may delete the team, with
 its name typed.
 
@@ -117,10 +117,10 @@ def delete_team(session: Session, *, team_id: str, member: User, name: str) -> T
     queued in its own session still runs; every hook is safe to repeat.
 
     B's hook also queues the team's project-minutes copies for taking back,
-    in a table that goes with the team -- the user chose to leave those
-    copies in the team's tools (#1007). Between that hook's commit and this
-    transaction's, B's periodic drain could still take one back. Nothing here
-    prevents that and nothing depends on it.
+    in a table that goes with the team -- module B's owner chose to leave
+    those copies in the team's tools (#1007). Between that hook's commit and
+    this transaction's, B's periodic drain could still take one back. Nothing
+    here prevents that and nothing depends on it.
 
     **No recording of the team is left behind.** A job that failed or was
     stopped keeps its recording for a restart, and with its row gone the
