@@ -246,6 +246,24 @@ so it takes nobody's right to delete away, but it is a power this ADR gave to
 nobody. The five owners agreed to it on #1007 without waiting for #92. If that
 review objects, this paragraph and section 4 are where it changes.
 
+**Deletion of one meeting by a member of its team (2026-10-09, #1161; written
+before the legal review, #92).** Any member of a team may now delete one of
+its meetings: the meeting, its transcript and everything modules A to E and
+the agent layer made from it go together, the utterances of everybody who
+spoke in it among them. What goes, what is refused and what stays in the
+team's own tools is in `../architecture/privacy.md` section 4. The retention
+window stays the bound, as decision 1 says; this is a way added beside it,
+taken by somebody who is shown what goes and types the meeting's title.
+
+It goes further than the paragraph above in one respect. There the last
+person holding access deletes the record. Here one of several does, and the
+others -- still on the team, with their own speech in the meeting -- are
+neither asked nor told. It runs towards deletion, so it takes nobody's right
+to delete away, but it ends the others' access to a record this ADR says
+belongs to the meeting. The module owners agreed to it on #1161 -- any
+member, behind a typed confirmation -- without waiting for #92. If that
+review objects, this paragraph and section 4 are where it changes.
+
 **Give a new member the full history by default.** Rejected — see decision 4.
 
 ## Consequences
