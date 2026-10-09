@@ -329,19 +329,3 @@ class AgentLiveResearchSource(Base):
     meeting_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True, index=True
     )
-
-
-class AgentLiveResearchNotice(Base):
-    """One person was sent the Slack notice for a meeting's live documents: at most once each."""
-
-    __tablename__ = "agent_live_research_notices"
-
-    meeting_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    sent_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )

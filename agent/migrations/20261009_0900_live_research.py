@@ -1,4 +1,4 @@
-"""live research: agent_live_research, its sources with a delete trigger, per-person notices
+"""live research: agent_live_research and its sources with a delete trigger
 
 A live document goes with its meeting (FK), with any meeting it quotes (the
 trigger, as for agent_research_sources), and with a person's speech (the
@@ -60,14 +60,6 @@ def upgrade() -> None:
     op.create_index(
         "ix_agent_live_research_sources_meeting_id", "agent_live_research_sources", ["meeting_id"]
     )
-    op.create_table(
-        "agent_live_research_notices",
-        sa.Column("meeting_id", sa.String(64), primary_key=True),
-        sa.Column("user_id", sa.String(64), primary_key=True),
-        sa.Column("sent_at", sa.DateTime(timezone=True), nullable=False, server_default=_NOW),
-        sa.ForeignKeyConstraint(["meeting_id"], ["meetings.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-    )
     op.execute(
         """
         CREATE FUNCTION agent_live_research_drop_document() RETURNS trigger AS $$
@@ -92,6 +84,5 @@ def downgrade() -> None:
         "DROP TRIGGER agent_live_research_sources_drop_document ON agent_live_research_sources"
     )
     op.execute("DROP FUNCTION agent_live_research_drop_document()")
-    op.drop_table("agent_live_research_notices")
     op.drop_table("agent_live_research_sources")
     op.drop_table("agent_live_research")

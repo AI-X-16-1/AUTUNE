@@ -50,10 +50,6 @@ def _wake(event: str, payload: dict[str, Any], *, task_id: str | None = None) ->
 @shared_task(name="autune.agent.on_transcript_ready", acks_late=True, bind=True)
 def on_transcript_ready(self: Any, payload: dict[str, Any]) -> None:
     _wake(TRANSCRIPT_READY, payload, task_id=self.request.id)
-    from .live.notice import tell_participants
-
-    with session_scope() as session:
-        tell_participants(session, _meeting_id(payload))
 
 
 @shared_task(name="autune.agent.on_intelligence_completed", acks_late=True, bind=True)

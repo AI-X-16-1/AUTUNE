@@ -14,7 +14,7 @@ Nobody sees it during the meeting, and nobody is told when it arrives.
 Live research checks the live transcript as it is spoken, looks the question up
 in the team's past meetings and on the web, and puts a short document beside the
 live transcript within about 30 seconds. After the meeting, the documents stay on
-the meeting page, and every participant who has linked Slack is sent a link.
+the meeting page. Telling participants on Slack is deferred (section 7).
 
 ### Decisions taken with the owner (2026-10-09)
 
@@ -25,7 +25,7 @@ the meeting page, and every participant who has linked Slack is sent a link.
 | 3 | Detected question | Researched at once, no confirmation; at most 5 automatic per meeting |
 | 4 | Who sees it during the meeting | The person running the live session, in a panel beside the live transcript |
 | 5 | After the meeting | Kept on the meeting page (회의 중 조사), visible to the team |
-| 6 | Slack | Sent automatically, no approval, to every participant with linked Slack — **a count and a link only**, never the document text (section 7) |
+| 6 | Slack | Deferred to #1046 with Follow-up's participant DM (#1162 review): a DM to meeting participants is a new kind of message, decided with its legal notice and privacy.md line (section 7) |
 | 7 | How it runs | The browser relays the masked live rows to the agent layer (approach 1 of 3) |
 
 Approaches not taken: module A publishing a Celery event per batch of live rows
@@ -177,34 +177,14 @@ pipeline's own events already carry for B and C. No audio, no file path.
   `hooks/useLiveResearch.ts`, and the client calls in
   `features/transcript/api.ts`. The live screen mounts it.
 
-## 7. After the meeting: Slack
+## 7. After the meeting: Slack (deferred)
 
-`transcript.ready` arrives once the recording has been uploaded and the
-participants are known. A new trigger handler in the agent layer (alongside
-`on_event`, not a subagent) does:
-
-1. If the meeting has at least one `done` live document, find the people to
-   tell: the meeting's participants with a `user_id`, and the `requested_by`
-   of its `done` documents — on a fresh upload no speaker is identified yet,
-   so the person who ran the live session is often the only one known. Only
-   current members of the meeting's team; their Slack member ids (#255).
-2. Send each one DM: `회의 중 조사 문서 N건이 준비됐습니다. {web_base_url}/meetings/{id}#live-research`.
-   N is the meeting's `done` documents.
-3. Before each DM, record it in `agent_live_research_notices(meeting_id,
-   user_id, sent_at)` (primary key `(meeting_id, user_id)`, `user_id` FK
-   `users.id` ON DELETE CASCADE) and skip anyone who already has a row. A
-   re-published `transcript.ready` sends nobody twice and reaches only the
-   people identified since. A team without Slack records nothing.
-
-**A count and a link, never the text.** A Slack message cannot be recalled, and
-the document holds meeting words a person may later delete (invariant 11, the
-same reason `main/notify.py` sends a count). This is automatic, with no
-approval: the owner decided it, and it is the first agent-layer message that
-goes out without plan mode. `agent-layer.md` gets a paragraph saying so and
-why — the message carries nothing a person would approve.
-
-A team without Slack, an unlinked participant, or a Slack error is logged by
-type and skipped; only `PrivacyViolationError` raises.
+Not in this change. The first version sent each linked participant one DM
+with a count and a link after the upload; review on #1162 pointed out that a
+DM to meeting participants is a new kind of message, which #1122 already
+deferred for Follow-up to #1046. It ships with that decision, together with
+its legal notice and privacy.md line. The documents stay on the meeting page
+under 회의 중 조사 (`#live-research`) meanwhile.
 
 ## 8. Privacy summary
 
@@ -215,21 +195,20 @@ type and skipped; only `PrivacyViolationError` raises.
 - No speaking time, no counts per person, nothing per speaker at all.
 - Deleted with the meeting, with any quoted meeting, and with a person's speech
   (section 4).
-- Slack: count and link only.
+- Slack: nothing (section 7).
 
 ## 9. Testing
 
 - Unit (SQLite, `FakeRouter`-style fakes for Gemini): detect parses and caps,
   dedupe, 429 (detect) and 409 (research), `assert_masked` refusal, research
-  with each source failing, failed status, document routes' membership check, notice sent once, no text
-  in the DM.
+  with each source failing, failed status, document routes' membership check.
 - Postgres: the source trigger deletes a document when a quoted meeting goes;
   the meeting cascade; the speech-deletion receiver.
 - Web: panel polling, 조사 button posts the row without the speaker, a failed
   card, the meeting-page list.
 - By hand on dev: one scripted live meeting with two planted questions (one
   about a past meeting, one for the web); both documents appear within 30 s and
-  the participants get one DM each after the upload.
+  stay on the meeting page after the upload.
 
 ## 10. Risks
 
@@ -240,11 +219,11 @@ type and skipped; only `PrivacyViolationError` raises.
 - **Latency.** Detect, terms, search, web and write are four model calls; the
   30 s target is a goal, measured in the dev check, not a guarantee.
 - **Deadline.** 10/12. Order of work: storage + routes + task (team meetings
-  only), panel, web source, Slack notice, speech-deletion receiver.
+  only), panel, web source, speech-deletion receiver.
 
 ## 11. Out of scope
 
 - Showing documents live to other viewers of the meeting page (no channel for
   them; decision 4).
-- Sending document text to Slack (section 7).
+- Any Slack message (section 7).
 - Using the uploaded transcript to redo live documents.
