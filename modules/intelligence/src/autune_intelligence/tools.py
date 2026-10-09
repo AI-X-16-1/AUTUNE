@@ -34,9 +34,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting, get_logger, session_scope
+from autune_core import Meeting, TeamMember, get_logger, session_scope
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -524,6 +525,26 @@ def report_channel(session: Session, team_id: str) -> dict[str, Any]:
     )
 
 
+def asker_has_other_teams(session: Session, team_id: str, user_id: str) -> dict[str, Any]:
+    """Use this before pointing the person asking at a change for their other
+    teams: whether they belong to a team besides this one. Do not use it to
+    read anyone's teams.
+
+    Returns one item whose ``other_teams`` is true or false -- never which
+    teams, nor anyone else's. ``user_id`` is the run's asker, filled by the run.
+    """
+    others = session.scalar(
+        sa.select(sa.func.count())
+        .select_from(TeamMember)
+        .where(TeamMember.user_id == user_id, TeamMember.team_id != team_id)
+    )
+    title = "다른 팀에도 속해 있습니다." if others else "이 팀에만 속해 있습니다."
+    return _result(
+        summary=title,
+        items=[{"title": title, "body": "", "score": 1.0, "other_teams": bool(others)}],
+    )
+
+
 def explain_metric(session: Session, team_id: str, question: str) -> dict[str, Any]:
     """Use this to say what one of E's numbers means or how it is computed --
     the quality grade, a gap pattern, alignment, the prediction, completion or
@@ -560,6 +581,7 @@ TOOLS = [
     weekly_report_schedule,
     explain_metric,
     report_channel,
+    asker_has_other_teams,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 

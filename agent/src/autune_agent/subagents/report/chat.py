@@ -41,6 +41,7 @@ from .template import (
     CORRECTION_ACTION,
     DRAFT_ACTION,
     NO_SLACK,
+    OTHER_TEAMS_TOOL,
     POSTED,
     PUBLISH_ACTION,
     RAISED,
@@ -79,7 +80,9 @@ OTHER_TEAMS = (
     "다른 팀에도 같은 시각을 쓰려면 대시보드의 주간 리포트 카드에서 "
     "'내 모든 팀'이나 '팀 골라서'를 고르세요."
 )
-"""After a schedule change: the chat changes this team only, the card any of them."""
+"""After a schedule change: the chat changes this team only, the card any of them.
+Said only to a person in another team too (#1156 review): the card offers
+other teams only then."""
 _WEEKDAYS = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
 
 _BUDGET = {BODY: 1500, "intelligence.weekly_reports": 1200, "intelligence.explain_metric": 400}
@@ -285,6 +288,15 @@ class _Turn:
         body = self.read(BODY)
         return body, body.ok or body.reason != NO_MEETING
 
+    def _in_other_teams(self) -> bool:
+        """The person asking belongs to a team besides this one. Unknown (no
+        tool, a failed read, no asker) counts as no: the line is only a hint."""
+        if OTHER_TEAMS_TOOL not in self.toolbox.describe():
+            return False
+        result = self.read(OTHER_TEAMS_TOOL)
+        item = result.items[0] if result.ok and result.items else None
+        return getattr(item, "other_teams", False) is True
+
     def _no_channel(self) -> bool:
         """E says the team has no Slack channel, so a post would fail at approval."""
         if CHANNEL_TOOL not in self.toolbox.describe():
@@ -408,7 +420,8 @@ class _Turn:
         self.lines.append(line)
         # A chat turn changes one team (#449) and remembers nothing to ask a
         # follow-up with, so the way to the person's other teams is said here.
-        self.lines.append(OTHER_TEAMS)
+        if self._in_other_teams():
+            self.lines.append(OTHER_TEAMS)
         return ToolResult(ok=True, summary=line + " (요청만 했고 아직 실행되지 않았습니다)")
 
     def request_post(self, meeting_id: str | None = None) -> ToolResult:
