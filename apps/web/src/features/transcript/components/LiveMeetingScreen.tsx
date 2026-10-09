@@ -82,9 +82,16 @@ export function LiveMeetingScreen({
   const microphone = useMicrophone();
   const title = useMeetingTitle(meetingId);
   const live = useLiveSession(meetingId, microphone.stream);
-  const liveResearch = useLiveResearch(meetingId, live.rows, live.phase === "recording");
   const [stopping, setStopping] = useState(false);
   const [consented, setConsented] = useState(false);
+  // Live research is covered by the consent attested at the gate: a recording
+  // started with the box unticked is stored, not analysed, so no row is sent
+  // and no line can be looked up (the agent's routes refuse it too, #1162).
+  const liveResearch = useLiveResearch(
+    meetingId,
+    live.rows,
+    live.phase === "recording" && consented,
+  );
   const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
 
@@ -346,8 +353,8 @@ export function LiveMeetingScreen({
         onResume={live.resume}
         onStop={() => void onStop()}
         stopping={stopping}
-        onResearch={(index) => void liveResearch.research(index)}
-        research={<LiveResearchPanel docs={liveResearch.docs} />}
+        onResearch={consented ? (index) => void liveResearch.research(index) : undefined}
+        research={consented ? <LiveResearchPanel docs={liveResearch.docs} /> : undefined}
       />
     </>,
   );

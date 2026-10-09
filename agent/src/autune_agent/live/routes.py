@@ -3,6 +3,10 @@
 The browser relays masked live rows: the live path stores nothing, and module A
 may not import this layer. The text is a team member's own input, like a chat
 message, and is checked again with ``assert_masked`` before it is queued.
+
+**Covered by the consent attested when the recording starts.** A meeting
+recorded with the box unticked is stored, not analysed (``audio.md``), so both
+routes refuse it with 409 ``live_research_needs_consent`` before reading a row.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_agent.models import AgentLiveResearch
+from autune_audio.tools import consent_attested
 from autune_core import CurrentUser, Meeting, SessionDep, TeamMember
 from autune_core.errors import NotFoundError
 from autune_integrations import assert_masked
@@ -70,6 +75,9 @@ def _meeting(session: Session, meeting_id: str, user_id: str) -> Meeting:
     return meeting
 
 
+NEEDS_CONSENT = {"code": "live_research_needs_consent"}
+
+
 def _masked(rows: list[RowIn]) -> list[dict[str, Any]]:
     """Each row, then all of them joined: what the model is sent.
 
@@ -99,6 +107,8 @@ def enqueue_research(document_id: str, context: list[dict[str, Any]], web: bool)
 @router.post("/{meeting_id}/detect", status_code=202)
 def detect(meeting_id: str, body: DetectIn, user: CurrentUser, session: SessionDep) -> Any:
     meeting = _meeting(session, meeting_id, user.id)
+    if not consent_attested(session, meeting.id):
+        return JSONResponse(status_code=409, content=NEEDS_CONSENT)
     rows = _masked(body.rows)
     if remaining(session, meeting.id, "auto") == 0:
         return JSONResponse(status_code=429, content={"code": "live_research_cap"})
@@ -109,6 +119,8 @@ def detect(meeting_id: str, body: DetectIn, user: CurrentUser, session: SessionD
 @router.post("/{meeting_id}/research", status_code=202)
 def research(meeting_id: str, body: ResearchIn, user: CurrentUser, session: SessionDep) -> Any:
     meeting = _meeting(session, meeting_id, user.id)
+    if not consent_attested(session, meeting.id):
+        return JSONResponse(status_code=409, content=NEEDS_CONSENT)
     # Context and row in spoken order, checked as one text (`_masked`).
     *context, row = _masked([*body.context, body.row])
     doc = open_document(

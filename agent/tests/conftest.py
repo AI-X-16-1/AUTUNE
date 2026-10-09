@@ -24,6 +24,7 @@ from autune_agent.models import (
     AgentRun,
     AgentWorkItem,
 )
+from autune_audio.models import AudConsentAttestation
 from autune_core import Base, Meeting, Participant, Team, TeamMember, User, Utterance
 
 TABLES = [
@@ -41,6 +42,7 @@ TABLES = [
     AgentLiveResearch.__table__,
     AgentLiveResearchSource.__table__,
     Participant.__table__,
+    AudConsentAttestation.__table__,
 ]
 
 

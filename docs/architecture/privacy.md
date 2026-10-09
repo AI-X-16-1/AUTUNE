@@ -495,6 +495,17 @@ back: the integration that could reach them is deleted with the team.
   - **It is not the consent to a recording.** That is per meeting, about the
     people in the room, and module A keeps it (`aud_consent_attestations`,
     `participants.consented`). The two never stand in for each other.
+- **Live research is covered by the consent attested when the recording
+  starts** (#1162). During a live meeting nobody is identified yet, so no
+  per-person consent can be read; the one statement there is, the consent box
+  ticked at the gate (`aud_consent_attestations`), is what live research rests
+  on. A meeting recorded with the box unticked is stored, not analysed, and
+  live research does not run for it either: the live screen sends no row and
+  offers no 조사, and the agent's live routes refuse the meeting with 409
+  `live_research_needs_consent` before reading a row. The attestation covers
+  everyone in the recording at once, so a speaker who is later excluded from
+  analysis may already have been looked up live; their speech deletion still
+  takes the live documents it fed (`agent_live` speech hook).
 
 ## 6. Third-party services
 

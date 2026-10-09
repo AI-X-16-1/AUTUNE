@@ -14,6 +14,7 @@ from autune_agent import router as routes
 from autune_agent.live import routes as live_routes
 from autune_agent.live.service import MAX_AUTO, open_document
 from autune_agent.models import AgentLiveResearch
+from autune_audio.models import AudConsentAttestation
 from autune_core import AutuneError, TeamMember, User, current_user, get_session
 
 
@@ -23,6 +24,13 @@ def queued(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, tuple[Any, ...]]]
     monkeypatch.setattr(live_routes, "enqueue_detect", lambda *a: calls.append(("detect", a)))
     monkeypatch.setattr(live_routes, "enqueue_research", lambda *a: calls.append(("research", a)))
     return calls
+
+
+@pytest.fixture(autouse=True)
+def attested(session: Session, team: dict[str, str]) -> None:
+    """The meeting's recording was started with the consent box ticked."""
+    session.add(AudConsentAttestation(meeting_id=team["meeting"], attested_by=team["member"]))
+    session.commit()
 
 
 def _client(session: Session, user_id: str) -> TestClient:
@@ -90,6 +98,43 @@ def test_an_unmasked_row_is_refused_and_nothing_is_queued(
     assert reply.json()["error"]["code"] == "privacy_violation"
     assert "010-1234-5678" not in reply.text
     assert queued == []
+
+
+# Live research is covered by the consent attested when the recording starts;
+# a meeting recorded with the box unticked is stored, not analysed, and its
+# rows go nowhere (#1162 review).
+def _unattest(session: Session, meeting_id: str) -> None:
+    session.query(AudConsentAttestation).filter_by(meeting_id=meeting_id).delete()
+    session.commit()
+
+
+def test_detect_without_consent_is_refused_and_nothing_is_queued(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
+    _unattest(session, team["meeting"])
+
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json=ROWS
+    )
+
+    assert reply.status_code == 409
+    assert reply.json() == {"code": "live_research_needs_consent"}
+    assert queued == []
+
+
+def test_research_without_consent_is_refused_and_no_document_is_opened(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
+    _unattest(session, team["meeting"])
+
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/research", json={"row": ROWS["rows"][0]}
+    )
+
+    assert reply.status_code == 409
+    assert reply.json() == {"code": "live_research_needs_consent"}
+    assert queued == []
+    assert session.query(AgentLiveResearch).count() == 0
 
 
 # A number read with a pause arrives as two rows, and neither row alone looks

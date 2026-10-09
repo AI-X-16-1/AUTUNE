@@ -188,6 +188,9 @@ under 회의 중 조사 (`#live-research`) meanwhile.
 
 ## 8. Privacy summary
 
+- Consent: covered by the attestation at the gate (`aud_consent_attestations`);
+  without one, the screen sends nothing and both routes answer 409
+  `live_research_needs_consent` (#1162 review, privacy.md section 5).
 - Outbound: detect sends masked row text without speaker labels; the web call
   sends only the masked question; the writer sends the question, quotes without
   speaker names, and web snippets. All through `HttpClient` → `check_outbound`.
