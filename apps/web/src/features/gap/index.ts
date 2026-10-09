@@ -19,6 +19,13 @@ export { TeamGapList } from "./components";
 export { EndAlertBand } from "./components";
 
 /**
+ * What an agenda draft has from this module (#1147): the team's open gaps, by
+ * which the new-meeting form's row is on, and an earlier meeting's, which the
+ * pre-meeting brief lists.
+ */
+export { EARLIER_GAPS_AGENDA, OPEN_GAPS_AGENDA } from "./agendaSource";
+
+/**
  * S20 with a fixture meeting behind it, for the temporary `/dev-gap` route.
  * Not part of the product: the route it serves 404s outside development.
  */

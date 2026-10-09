@@ -10,4 +10,6 @@ export { IntegrationSettingsScreen } from "./components/IntegrationSettingsScree
 export { MaterialsScreen } from "./components/MaterialsScreen";
 export { MeetingSummaryScreen } from "./components/MeetingSummaryScreen";
 export { OwnTeamMeetingsNotice } from "./components/OwnTeamMeetingsNotice";
+/** What the new-meeting form's agenda row may draft from (#1147). */
+export { JIRA_AGENDA } from "./agendaSources";
 export { TeamActionsScreen } from "./components/TeamActionsScreen";

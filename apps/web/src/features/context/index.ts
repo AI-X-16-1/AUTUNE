@@ -8,3 +8,5 @@
  */
 export { ContextTab } from "./components/ContextTab";
 export { DecisionLineagePanel } from "./components/DecisionLineagePanel";
+/** What tells the new-meeting form's agenda row that the team has an earlier meeting (#1147). */
+export { DECISIONS_AGENDA } from "./agendaSource";
