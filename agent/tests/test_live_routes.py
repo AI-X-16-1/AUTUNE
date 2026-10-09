@@ -92,6 +92,39 @@ def test_an_unmasked_row_is_refused_and_nothing_is_queued(
     assert queued == []
 
 
+# A number read with a pause arrives as two rows, and neither row alone looks
+# like one (audio-live-transcription.md, "A known limit of masking per row").
+# The model gets the rows joined, so the joined text is what is checked.
+SPLIT = [{"start": 12.0, "text": "연락은 010 1234"}, {"start": 13.0, "text": "5678 로 주세요"}]
+
+
+def test_a_number_split_across_two_rows_is_refused_for_detect(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/detect", json={"rows": SPLIT}
+    )
+
+    assert reply.status_code == 500
+    assert reply.json()["error"]["code"] == "privacy_violation"
+    assert "1234" not in reply.text
+    assert queued == []
+
+
+def test_a_number_split_between_context_and_row_is_refused_for_research(
+    session: Session, team: dict[str, str], queued: list
+) -> None:
+    reply = _client(session, team["member"]).post(
+        f"/api/agent/live/{team['meeting']}/research",
+        json={"row": SPLIT[1], "context": [SPLIT[0]]},
+    )
+
+    assert reply.status_code == 500
+    assert reply.json()["error"]["code"] == "privacy_violation"
+    assert queued == []
+    assert session.query(AgentLiveResearch).count() == 0
+
+
 def test_too_many_rows_are_refused(session: Session, team: dict[str, str], queued: list) -> None:
     rows = {"rows": [{"start": float(i), "text": "말"} for i in range(13)]}
 

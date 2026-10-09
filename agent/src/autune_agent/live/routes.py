@@ -8,23 +8,22 @@ message, and is checked again with ``assert_masked`` before it is queued.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_agent.models import AgentLiveResearch
-from autune_core import CurrentUser, Meeting, TeamMember, get_session
+from autune_core import CurrentUser, Meeting, SessionDep, TeamMember
 from autune_core.errors import NotFoundError
 from autune_integrations import assert_masked
 
 from .service import open_document, remaining
 
 router = APIRouter()
-SessionDep = Annotated[Session, Depends(get_session)]
 
 MAX_ROWS = 12
 MAX_CONTEXT = 4
@@ -72,8 +71,16 @@ def _meeting(session: Session, meeting_id: str, user_id: str) -> Meeting:
 
 
 def _masked(rows: list[RowIn]) -> list[dict[str, Any]]:
+    """Each row, then all of them joined: what the model is sent.
+
+    A number read with a pause arrives as two rows and neither alone matches
+    (audio-live-transcription.md, "A known limit of masking per row"); the
+    model gets the rows together, so the joined text must pass too, before
+    anything is queued.
+    """
     for row in rows:
         assert_masked(row.text, destination="agent_live_research")
+    assert_masked(" ".join(r.text for r in rows), destination="agent_live_research")
     return [{"start": r.start, "text": r.text} for r in rows]
 
 
@@ -102,8 +109,8 @@ def detect(meeting_id: str, body: DetectIn, user: CurrentUser, session: SessionD
 @router.post("/{meeting_id}/research", status_code=202)
 def research(meeting_id: str, body: ResearchIn, user: CurrentUser, session: SessionDep) -> Any:
     meeting = _meeting(session, meeting_id, user.id)
-    row = _masked([body.row])[0]
-    context = _masked(body.context)
+    # Context and row in spoken order, checked as one text (`_masked`).
+    *context, row = _masked([*body.context, body.row])
     doc = open_document(
         session,
         team_id=meeting.team_id,
