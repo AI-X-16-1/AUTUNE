@@ -143,16 +143,18 @@ agreement, and sync the result to Notion and Jira.
    decision, and the assent belongs to the one it follows. A second turn with
    content starts a new decision, so a wrap-up that lists three decisions is
    three rows, and a date said for one is not attached to the next. "Content"
-   is at least twelve characters once the words that only point ("그렇게",
-   "그대로") are taken out (`decisions.says_something`). The cost, accepted: one
-   decision said twice in full sentences is two rows, and a person removes
-   one. Before this every decision turn in a row was one decision, and three
-   decisions read out together became one row with the last one's date.
+   is at least twelve characters (`decisions.MIN_SUBSTANCE`) once the words
+   that only point ("그렇게", "그대로") are taken out
+   (`decisions.says_something`). The cost, accepted: one decision said twice
+   in full sentences is two rows, and a person removes one. Before this every
+   decision turn in a row was one decision, and three decisions read out
+   together became one row with the last one's date.
 
    **A date that is what was decided is not the decision's deadline.** "배포를
    화요일로 바꾸기로" decides a day, and "매주 월요일에 하기로" a day that
    repeats; neither is due by anything. In a decision a date followed by
-   (으)로, or said with 매주, 매달, 격주 or 마다, is left out of the deadline
+   (으)로, or said as a day that repeats (매주, 매달, 매일, 격주 and the
+   like before it, or 마다 after it), is left out of the deadline
    (`slots.parse_due(decided=True)`); "10월 20일에 내기로" and "다음 주
    금요일까지" are read as before, and "금요일까지로" stays a deadline. An
    action item's date is read as it always was.
