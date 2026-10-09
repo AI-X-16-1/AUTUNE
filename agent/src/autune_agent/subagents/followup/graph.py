@@ -286,7 +286,8 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             ok=True,
             summary=(
                 f"후속 회의를 제안했습니다 ({reason}). 추천 날짜는 {when}입니다. "
-                f"{why} 팀장이 승인하면 그날 캘린더에 회의가 잡히고 팀 슬랙에 알립니다."
+                f"{why} 팀장이 승인하면 승인한 사람의 캘린더에 그날 회의가 잡히고 "
+                "팀 슬랙 채널에 알립니다. 팀원을 초대하지는 않습니다."
             ),
             items=rules.cited(state["open_gaps"], verdict),
             evidence=verdict.evidence,
