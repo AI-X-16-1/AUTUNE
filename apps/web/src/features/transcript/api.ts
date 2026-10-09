@@ -201,6 +201,20 @@ export const createMeeting = (body: {
     body: JSON.stringify(body),
   });
 
+/**
+ * Give a meeting a new title, as any member of its team (#1161). The title
+ * goes in the body: it can name a client, and an address is logged. The
+ * answer is the meeting's id and state and does not repeat the title.
+ * Refused: 422 `validation_error` on `title` -- with
+ * `details.reason: "personal_data"` when the title reads as personal data
+ * (`titleRefusal`) -- and 403 or 404 as for any read of the meeting.
+ */
+export const renameMeeting = (meetingId: string, title: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${encodeURIComponent(meetingId)}`,
+    { method: "PATCH", body: JSON.stringify({ title }) },
+  );
+
 /** The meeting's speakers and who each one is or might be (S13, S15). */
 export const getSpeakers = (meetingId: string) =>
   api.audio<SpeakerEntry[]>(`/meetings/${meetingId}/speakers`);

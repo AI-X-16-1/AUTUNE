@@ -24,9 +24,14 @@ from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger
 from autune_core.auth import user_for_token
 from autune_core.deletion import on_user_deleted
 from autune_core.entities import team_order
-from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
+from autune_core.errors import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 
-from . import identification, storage
+from . import identification, meeting_title, storage
 from .config import AudioSettings, get_settings
 from .job_guard import JobStopped
 from .models import (
@@ -454,6 +459,10 @@ def create_meeting(
     team = session.get(Team, team_id)
     if team is None:  # membership just passed, so the team exists; this is a torn read
         raise NotFoundError("team", team_id)
+    # A title is typed by a member: screened before it is stored (#1130,
+    # #1161). After the membership check, so a stranger learns nothing of the
+    # team from a refusal.
+    meeting_title.refuse_personal_data(title, team_id=team_id, user_id=owner.id)
 
     now = datetime.now(tz=UTC)
     meeting = Meeting(
@@ -473,6 +482,55 @@ def create_meeting(
     # The title is the team's own words and can carry a client name; it is not
     # logged. The id is enough to follow the meeting through the pipeline.
     log.info("audio_meeting_created", meeting_id=meeting.id, team_id=team_id, owner_id=owner.id)
+    return meeting
+
+
+class EmptyTitleError(ValidationError):
+    """Nothing but space was sent as a title."""
+
+    def __init__(self) -> None:
+        super().__init__("a title is at least one character", field=meeting_title.FIELD)
+
+
+def rename_meeting(session: Session, *, meeting_id: str, member: User, title: str) -> Meeting:
+    """Give ``meeting_id`` a new title, for any member of its team (#1161).
+
+    **Only the title, and only this row.** Decided on #1161 by A's owner: a
+    ``PATCH`` of the title in this module, any member of the team, screened at
+    save. Every module reads a title from ``meetings`` when it sends
+    something, so what is sent from now on carries the new one. What has
+    already gone out -- a Slack message, a Notion page, a calendar entry --
+    keeps the title it was sent with (2-3): nothing here reaches outside, and
+    no event is published.
+
+    **Screened like a title typed at creation** (``meeting_title``): a title
+    that reads as personal data is refused with the categories and never the
+    value, and the meeting keeps the title it had. The title a meeting
+    already has, sent back, changes nothing and is not screened again.
+
+    **In any state.** The pipeline never writes ``title``, so a rename while a
+    transcription runs or a live session is open touches nothing they hold;
+    the row is not locked, and the ``UPDATE`` names this one column.
+
+    Space around a title does not count, so a title cannot be made to look
+    empty in a list.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=member.id, team_id=meeting.team_id)
+    title = title.strip()
+    if not title:
+        raise EmptyTitleError
+    if title == meeting.title:
+        return meeting
+    meeting_title.refuse_personal_data(title, meeting_id=meeting.id, user_id=member.id)
+    meeting.title = title
+    session.flush()
+    # Neither title is logged: a title can name a client.
+    log.info(
+        "audio_meeting_renamed", meeting_id=meeting.id, team_id=meeting.team_id, user_id=member.id
+    )
     return meeting
 
 
