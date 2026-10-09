@@ -926,12 +926,43 @@ the feature needs.
     with a 422 that names no value, and nothing changes. The check is
     pattern-based, so a name a person writes, or someone's words a person
     copies in, passes it -- the same standing as a meeting's title (#889)
-    and B's hand-edited items, and reaching only the team's own channel,
-    events whose guests are all on the team, and E. Deleting speech resets
-    an edited question only when it names a topic label that is gone
-    (#587); words copied in by hand stay, as anything a person wrote does.
-    Whether hand-written text should follow another rule is open with
-    mkkim68 for B and C alike (#872 review).
+    and the text a person types in module B (below), and reaching only the
+    team's own channel, events whose guests are all on the team, and E.
+    Deleting speech resets an edited question only when it names a topic
+    label that is gone (#587); words copied in by hand stay, as anything a
+    person wrote does.
+  - **Text a person types, in every module (#1130):** the question the
+    #872 review left open, answered by mkkim68 on #1130 (2026-10-09), with
+    mminjae97 agreeing for D. Two rules:
+    - *It is screened when it is saved, and refused.* Section 2 stops
+      personal data before a write, and text a person typed is stopped at
+      the same moment: every module refuses it the way C refuses a rewritten
+      question above, with the one detector (`find_unmasked` in
+      `autune_integrations`), so B and C refuse with the same function. The
+      refusal carries no value and says what to take out. Nothing the
+      detector reads then enters a module's store or travels on -- a
+      reworded decision used to reach D's `ctx_decision_versions` unscreened
+      -- and the contract needs no field for it. A sentence the detector
+      reads wrongly cannot be saved; that cost is accepted.
+    - *Deleting speech does not reach it.* The code cannot know whose words
+      a hand-written sentence carries, and a rule with no criterion for what
+      to delete is a rule that cannot be kept.
+
+    Module B applies the first on every field a person types into: an
+    action item's description and assignee label, a decision typed or
+    reworded, a meeting's memo, a project's name and aliases, and a
+    material's title (`autune_extraction.typed_text`). Its 422 names the
+    field and the categories the detector read (`phone`, `email`, ...) and
+    never the value; the refused text is in no log line or exception
+    message, and a refused save changes none of the fields sent with it.
+    Text sent back exactly as it is stored is not a write, so a row stored
+    before this rule keeps its date, owner and verdict editable; no stored
+    row is rewritten or deleted for it, and the outbound check at every
+    exit is still what stops such a row from leaving. No agent tool carries
+    text a person typed: the tools send ids, dates and verdicts, and the one
+    that makes an item (Follow-up's) writes B's own fixed sentence. So a
+    proposal approved later brings no typed text to these checks, and its
+    approver meets no refusal from them.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,
