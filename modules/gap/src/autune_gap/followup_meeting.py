@@ -32,7 +32,11 @@ proposal for the meeting can still make it once the calendar is fixed.
 
 **The team channel is told once** the calendar took the event: when it
 starts, how many were invited, and the gaps on its agenda
-(``team_notice.post_followup``). A Slack that fails leaves the event made.
+(``team_notice.post_followup``). **Each guest is sent a Slack DM** too, the
+same news addressed to them (``team_notice.dm_followup``), with the team's
+Slack connection and the account they linked themselves; a guest who linked
+none gets the calendar invitation alone. A Slack that fails leaves the event
+made.
 
 What leaves for Google and Slack is the meeting's title, the gaps' titles and
 questions (stored masked) and the guests' addresses, all through
@@ -94,6 +98,8 @@ class Scheduled:
     invited: int = 0
     gaps: int = 0
     slack: team_notice.SlackOutcome = "not_tried"
+    dms: int = 0
+    """Guests sent a Slack DM."""
 
 
 def window(meeting: Meeting, day: date) -> tuple[datetime, datetime]:
@@ -112,11 +118,12 @@ def window(meeting: Meeting, day: date) -> tuple[datetime, datetime]:
     return starts, starts + length
 
 
-def guests(session: Session, meeting: Meeting, *, organizer: str) -> list[str]:
-    """The addresses to invite: the meeting's participants who resolved to a
-    member still on its team, the organizer aside, each once, in lower case."""
-    rows = session.scalars(
-        select(User.email)
+def guests(session: Session, meeting: Meeting, *, organizer: str) -> dict[str, str]:
+    """Who to invite, by user id: the meeting's participants who resolved to a
+    member still on its team, the organizer aside, each with their address in
+    lower case. A member with no address is left out."""
+    rows = session.execute(
+        select(User.id, User.email)
         .join(Participant, Participant.user_id == User.id)
         .join(
             TeamMember,
@@ -124,7 +131,8 @@ def guests(session: Session, meeting: Meeting, *, organizer: str) -> list[str]:
         )
         .where(Participant.meeting_id == meeting.id, User.id != organizer)
     )
-    return sorted({email.strip().lower() for email in rows if email and email.strip()})
+    found = {user_id: email.strip().lower() for user_id, email in rows if email and email.strip()}
+    return dict(sorted(found.items(), key=lambda pair: pair[1]))
 
 
 def open_gaps(session: Session, meeting_id: str) -> list[GapGap]:
@@ -189,7 +197,7 @@ def schedule(
         "description": "\n".join(calendar_writes.agenda_line(gap) for gap in gaps),
         "start": {"dateTime": starts.isoformat(), "timeZone": "Asia/Seoul"},
         "end": {"dateTime": ends.isoformat(), "timeZone": "Asia/Seoul"},
-        "attendees": [{"email": email} for email in invited],
+        "attendees": [{"email": email} for email in invited.values()],
     }
     outcome: Outcome = "failed"
     try:
@@ -234,11 +242,22 @@ def schedule(
     slack = team_notice.post_followup(
         session, meeting, gaps, approver=approver, starts=starts, invited=len(invited)
     )
+    dms = team_notice.dm_followup(
+        session, meeting, gaps, approver=approver, starts=starts, guests=list(invited)
+    )
     log.info(
         "gap_followup_scheduled",
         meeting_id=meeting.id,
         gaps=len(gaps),
         invited=len(invited),
         slack=slack,
+        dms=dms,
     )
-    return Scheduled("scheduled", starts=starts, invited=len(invited), gaps=len(gaps), slack=slack)
+    return Scheduled(
+        "scheduled",
+        starts=starts,
+        invited=len(invited),
+        gaps=len(gaps),
+        slack=slack,
+        dms=dms,
+    )

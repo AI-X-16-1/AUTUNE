@@ -477,7 +477,8 @@ def schedule_followup_meeting(
 ) -> dict[str, Any]:
     """Put the follow-up meeting a Follow-up proposal asked for on the
     approver's own Google Calendar, invite the meeting's team members who took
-    part, and tell the team's Slack channel (``followup_meeting``).
+    part, tell the team's Slack channel and DM each guest who linked Slack
+    (``followup_meeting``).
 
     ``due_date`` (``YYYY-MM-DD``) is the day on the approved card -- the name
     module B's ``add_followup_item`` gave it, which the card reads. The event
@@ -524,10 +525,11 @@ def schedule_followup_meeting(
         reason, summary = FOLLOWUP_SAID[done.outcome]
         return _result(ok=False, reason=reason, summary=summary, items=[], evidence=[])
     agenda = f", 안건 {done.gaps}건" if done.gaps else ""
+    dms = f" 참석자 {done.dms}명에게 슬랙 DM을 보냈습니다." if done.dms else ""
     return _result(
         summary=(
             f"후속 회의를 {team_notice.when(done.starts)}에 캘린더에 잡고 "
-            f"{done.invited}명을 초대했습니다{agenda}.{SLACK_SAID[done.slack]}"
+            f"{done.invited}명을 초대했습니다{agenda}.{SLACK_SAID[done.slack]}{dms}"
         ),
         items=[],
         evidence=[meeting_id],

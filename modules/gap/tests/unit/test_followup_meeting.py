@@ -23,8 +23,9 @@ from autune_core import Meeting, Participant, TeamMember, User
 from autune_gap import followup_meeting, tools
 from autune_gap.models import GapAgendaEvent, GapFollowupEvent, GapGap
 from autune_integrations import IntegrationError, ReconnectRequiredError
+from autune_integrations.errors import SlackRecipientNotLinkedError
 
-from .test_calendar_writes import TEAMMATE, TeamSlack, calendars, slack
+from .test_calendar_writes import TEAMMATE, FakeSlack, TeamSlack, calendars, slack
 from .test_read_endpoints import (
     FOREIGN_MEETING,
     MEETING,
@@ -55,6 +56,33 @@ class FakeGoogle:
         self.made.append(kwargs["json"])
         self.params.append(kwargs.get("params") or {})
         return {"id": f"evt_{len(self.made)}"}
+
+
+class DmSlack(FakeSlack):
+    """The team's Slack, DMs too: every DM sent, as ``(user id, text, blocks)``.
+    Only the users in ``linked`` linked an account; one in ``failing`` is a
+    send Slack does not take."""
+
+    def __init__(self, linked: set[str], failing: set[str] | None = None) -> None:
+        super().__init__()
+        self.linked = linked
+        self.failing = failing or set()
+        self.dms: list[tuple[str, str, list[dict[str, Any]]]] = []
+
+    def send_dm(self, user_id: str, text: str, blocks: list[dict[str, Any]]) -> str:
+        if user_id not in self.linked:
+            raise SlackRecipientNotLinkedError("not linked")
+        if user_id in self.failing:
+            raise IntegrationError("down")
+        self.dms.append((user_id, text, blocks))
+        return "1.0"
+
+
+def connect(slack: TeamSlack, *, linked: set[str] | None = None, **kwargs: Any) -> DmSlack:
+    """The team's Slack, with ``linked`` (by default nobody) able to get a DM."""
+    client = DmSlack(linked or set(), **kwargs)
+    slack.client = client
+    return client
 
 
 @pytest.fixture
@@ -164,7 +192,7 @@ def test_the_team_channel_is_told_once(
     session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
 ) -> None:
     calendars[MEMBER] = FakeGoogle()
-    slack.connect()
+    connect(slack)
 
     first = schedule(session)
     second = schedule(session)
@@ -208,7 +236,7 @@ def test_a_calendar_that_does_not_take_it_leaves_nothing_and_can_be_tried_again(
 ) -> None:
     if calendar is not None:
         calendars[MEMBER] = calendar
-    slack.connect()
+    connect(slack)
 
     failed = schedule(session)
 
@@ -316,3 +344,57 @@ def test_a_follow_up_already_held_is_not_ahead(session: Session, meeting: Meetin
     session.flush()
 
     assert tools.upcoming_followup(session, TEAM)["items"] == []
+
+
+def test_each_guest_who_linked_slack_is_sent_a_dm(
+    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """The approver organises it and the other team's member is no guest, so
+    only the teammate is sent one -- even though all three linked Slack."""
+    calendars[MEMBER] = FakeGoogle()
+    client = connect(slack, linked={MEMBER, TEAMMATE, OUTSIDER})
+
+    result = schedule(session)
+
+    [(to, text, blocks)] = client.dms
+    assert to == TEAMMATE
+    assert "후속 회의" in text and "14:00" in text and "주간 회의" in text
+    assert "성능 요구사항이 정해지지 않았습니다" in str(blocks)
+    assert "참석자 1명에게 슬랙 DM" in result["summary"]
+    assert len(client.posted) == 1, "the team channel is still told once"
+
+
+def test_a_guest_without_a_linked_slack_gets_the_invitation_alone(
+    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    google = calendars[MEMBER] = FakeGoogle()
+    client = connect(slack)
+
+    result = schedule(session)
+
+    assert result["ok"] is True
+    assert client.dms == []
+    assert "DM" not in result["summary"]
+    assert google.made[0]["attendees"] == [{"email": "teammate@example.com"}]
+
+
+def test_a_dm_slack_does_not_take_leaves_the_meeting_made(
+    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    calendars[MEMBER] = FakeGoogle()
+    connect(slack, linked={TEAMMATE}, failing={TEAMMATE})
+
+    result = schedule(session)
+
+    assert result["ok"] is True
+    assert len(session.scalars(select(GapFollowupEvent)).all()) == 1
+
+
+def test_no_dm_without_team_slack(
+    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    calendars[MEMBER] = FakeGoogle()
+
+    result = schedule(session)
+
+    assert result["ok"] is True and "DM" not in result["summary"]

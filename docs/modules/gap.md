@@ -1248,7 +1248,9 @@ polls them every five seconds while the rail says `analysed: false`.
   unmasked text.
 - Follow-up's proposal, once the team lead approves it, posts once that the
   follow-up meeting is on the approver's calendar: when it starts, how many
-  were invited, and the open gaps on its agenda (`followup_meeting`).
+  were invited, and the open gaps on its agenda (`followup_meeting`), and
+  DMs each guest who linked a Slack account that they are invited
+  (`team_notice.dm_followup`).
 
 ## AI stack
 

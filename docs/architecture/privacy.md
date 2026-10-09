@@ -865,7 +865,13 @@ the feature needs.
     team's connection, and a third when Follow-up's meeting is approved --
     the meeting's title, when the follow-up starts, how many were invited,
     the open gaps' titles and questions and the approver's display name,
-    once per meeting. "담당자 지정해 질문" posts one gap's title and suggested
+    once per meeting. Each guest of that meeting is also sent the same news
+    as a DM, addressed to them, by the Slack account they linked themselves
+    (`user_integrations`, read only to tell them); a guest who linked none
+    gets the calendar invitation alone and is not named anywhere for it. The
+    DM goes to guests only -- members of the meeting's team who took part --
+    never to the approver or anyone outside the team, and nothing about it
+    is stored. "담당자 지정해 질문" posts one gap's title and suggested
     question, mentioning the member the presser picked from the meeting's
     team -- by the Slack account that member linked themselves, or by their
     display name when they linked none -- and the presser's display name.
