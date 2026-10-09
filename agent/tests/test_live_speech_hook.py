@@ -1,4 +1,4 @@
-"""A's deletion runs in the API process, which imports routers only: the hook must ride on the router."""
+"""A's deletion runs in the API process, which imports routers only: the hook rides on one."""
 
 from __future__ import annotations
 
