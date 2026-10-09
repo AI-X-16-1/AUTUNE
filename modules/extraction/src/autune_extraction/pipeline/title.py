@@ -15,8 +15,9 @@ column on B's own rows and only B's screens read it.
 
 **A title is accepted or it is not there.** ``accept`` is rules, no model: one
 line, twenty characters with the spaces, a noun at the end, no number that is
-not in the sentence, no person, no date on an item, and words that are the
-sentence's own. A title that fails any of them is dropped and the row has no
+not in the sentence, no person, no date on an item, no word that only points
+("이거 진행" names nothing; module B's owner, 2026-10-09), and words that are
+the sentence's own. A title that fails any of them is dropped and the row has no
 title -- the screen then shows what it showed before, the sentence cut. So a
 refused title, a failed call and ``title_impl=none`` all look like yesterday.
 Nothing is shortened by rule here: cutting an answer to fit would make a
@@ -47,7 +48,13 @@ from typing import Literal
 from autune_core import get_logger
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
-from .llm import GeminiClient, _answer_text, substitute_names_mapped, unquoted
+from .llm import (
+    GeminiClient,
+    _answer_text,
+    says_a_pointing_word,
+    substitute_names_mapped,
+    unquoted,
+)
 from .resolver import _numbers
 
 log = get_logger(__name__)
@@ -190,6 +197,10 @@ def accept(
         return None, "a bracket or a cut mark"
     if not _ends_in_a_noun(title, request.kind):
         return None, "does not end in a noun"
+    if says_a_pointing_word(title):
+        # Its words are the sentence's own, so nothing below would refuse it:
+        # a sentence that kept "이거" gives a title of "이거".
+        return None, "a pointing word"
     if not _numbers(title) <= _numbers(request.text):
         return None, "a number the sentence does not say"
     if any(name and name in title for name in names):

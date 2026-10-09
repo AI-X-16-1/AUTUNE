@@ -84,8 +84,12 @@ agreement, and sync the result to Notion and Jira.
    commitment and decision, in the request that read the line. A line that
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
-   three said before it) is the description, and the resolver is asked only
-   about a commitment that has none. The classifier does not say what it
+   three said before it; no name mark left over, and none of 이거, 그거, 저거,
+   이것, 그것 -- a word that only points, which the instructions ask to be
+   replaced) is the description, and the resolver is asked only
+   about a commitment that has none. So a summary that kept such a word costs
+   that row one resolver request, and the row shows what the resolver filled
+   in or, when it could not tell, the line as it was said. The classifier does not say what it
    drew on, so that is read off the line: of the three lines with text said
    just before -- the ones the summary was checked against, except that the
    check also stops at the start of its request -- those that hold a word the
@@ -1171,8 +1175,8 @@ calendar, the minutes, the agent's tools and module D are given.
   rules only): one line; twenty characters counting spaces; a noun at the
   end -- no 함, 됨, 예정 or verb ending, and no 결정/확정 tail on a decision;
   no number and no date its sentence does not say; no person; no date at all
-  on an item, which has a due date of its own; words that are the
-  sentence's. A decision's title may carry a date that is in the statement
+  on an item, which has a due date of its own; none of 이거, 그거, 저거, 이것,
+  그것, with or without a particle; words that are the sentence's. A decision's title may carry a date that is in the statement
   in the same words, since the date can be what was decided ("출시일 10월
   20일"). A refused title is dropped, not cut to fit, and the row shows the
   cut sentence.

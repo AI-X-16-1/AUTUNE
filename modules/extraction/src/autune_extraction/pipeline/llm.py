@@ -556,6 +556,30 @@ as said."""
 
 _PLACEHOLDER = re.compile(r"\[사람\d+\]")
 
+_MARK_LEFT = re.compile(r"\[\s*사람[^\]]*\]")
+"""A name mark still in a sentence once every numbered one is put back. The
+instructions explain the mark by its general form, "[사람N]", and the model
+can write that form back as somebody it has no name for: on dev, 2026-10-09,
+two items' sentences began with it. Only a mark with a number stands for a
+name; any other spelling stands for nobody, and no screen can read it as a
+person."""
+
+_POINTING_WORD = re.compile(r"(?<![0-9A-Za-z가-힣])(?:이거|그거|저거|이것|그것)(?!저것|저거)")
+"""A word that points at something and names nothing: 이거, 그거, 저거, 이것,
+그것, with whatever is attached to it ("이거를", "그것은", "이거예요"). At the
+start of a word only, so the "이거나" that ends another word is not this, nor
+is "이것저것", which means several things and points at none. The five are
+the list module B's owner chose (2026-10-09); their contracted forms
+("이건", "그걸", "그게") and "저것" are not in it."""
+
+
+def says_a_pointing_word(text: str) -> bool:
+    """Whether ``text`` holds a word that only points (``_POINTING_WORD``).
+
+    A summary and a title are read on their own -- on a card, in a message,
+    by another module -- where there is nothing for such a word to point at."""
+    return _POINTING_WORD.search(text) is not None
+
 
 def parse_summaries(answer: str) -> dict[int, str]:
     """``{"summaries": {"3": "..."}}`` -> ``{3: "..."}``, each on one line.
@@ -625,6 +649,15 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     (``resolver._grounded``),
     for the same reason: a date or a name the meeting never said is worse on a
     card than a long sentence.
+
+    And nothing that stands for something the sentence does not say (module
+    B's owner, 2026-10-09): no name mark left once the numbered ones are back
+    (``_MARK_LEFT``), and no word that only points (``says_a_pointing_word``)
+    -- the instructions ask for "그거" to be replaced by what it meant, and a
+    summary that kept it says less than the line it is of. Either way the
+    answer is "": a commitment or a decision without a summary is what the
+    resolver is asked about, and it reads further back and further on than
+    this request did, and gives the line as it was said when it cannot tell.
     """
     # Here and not at the top: ``resolver`` imports this module.
     from .resolver import _grounded  # noqa: PLC0415
@@ -635,6 +668,8 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
         return ""
     restored = _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
+    if _MARK_LEFT.search(restored) or says_a_pointing_word(restored):
+        return ""
     return restored if _grounded(restored, window) else ""
 
 

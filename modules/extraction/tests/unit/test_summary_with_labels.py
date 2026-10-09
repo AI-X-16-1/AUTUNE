@@ -181,6 +181,62 @@ def test_a_summary_with_something_the_lines_did_not_say_is_dropped(written: str)
     assert promise.summary == ""
 
 
+@pytest.mark.parametrize(
+    "written",
+    [
+        "[사람N]는 자료를 금요일까지 정리하겠다고 약속함",  # the instructions' own spelling
+        "[사람] 님 자료를 금요일까지 정리",
+        "[사람A]와 [사람1] 님 자료를 금요일까지 정리",  # one mark put back, one left
+    ],
+)
+def test_a_summary_with_a_name_mark_that_stands_for_nobody_is_dropped(written: str) -> None:
+    (promise,), _ = classify(
+        ["김민경 님 자료는 제가 금요일까지 정리할게요"],
+        {"정리할게요": "commitment"},
+        {"정리할게요": written},
+        roster=("김민경",),
+    )
+
+    assert promise.kind is K.COMMITMENT
+    assert promise.summary == ""
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "이거를 금요일까지 정리하겠다고 약속함",
+        "그거 금요일까지 정리",
+        "저거는 금요일까지 정리해서 공유",
+        "이것을 금요일까지 정리",
+        "금요일까지 그것도 정리",
+        "금요일까지 정리할 것은 이거예요",
+    ],
+)
+def test_a_summary_that_kept_a_word_that_only_points_is_dropped(written: str) -> None:
+    (_, promise), _ = classify(
+        ["결제 화면 시안 얘기를 해 보죠", PROMISE],
+        {"공유드릴게요": "commitment"},
+        {"공유드릴게요": written},
+    )
+
+    assert promise.kind is K.COMMITMENT  # the label stands; the resolver is asked for the line
+    assert promise.summary == ""
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "이것저것 정리해서 공유",  # several things, pointing at none
+        "시안이거나 초안을 정리해서 공유",  # the end of another word
+        "그 시안을 정리해서 공유",  # says what
+        "이번 시안을 정리해서 공유",
+        "저희 시안을 정리해서 공유",
+    ],
+)
+def test_a_summary_with_a_word_that_only_looks_like_one_is_kept(written: str) -> None:
+    assert usable_summary(written, {}, "") == written
+
+
 def test_a_number_said_in_the_lines_before_may_be_in_the_summary() -> None:
     (_context, promise), _ = classify(
         ["시안은 3안까지 나왔어요", "그건 제가 금요일까지 정리할게요"],
@@ -385,6 +441,34 @@ def test_an_item_shows_the_line_written_with_its_label_and_the_resolver_is_not_a
     # The one with no line written for it is the resolver's, as before.
     assert Asked.targets == [OTHER_PROMISE]
     assert items["수요일"].description_resolved is False
+
+
+def test_a_line_whose_summary_kept_the_pointing_word_is_the_resolvers(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def cloud() -> LlmClassifier:
+        classifier = LlmClassifier(api_key="k", model="gemini-test", base_url="http://llm.invalid")
+        classifier._client = Provider(  # type: ignore[assignment]
+            {"정리하겠습니다": "commitment", "받겠습니다": "commitment"},
+            {
+                "정리하겠습니다": "이거를 금요일까지 정리하겠다고 약속함",
+                "받겠습니다": "견적을 수요일까지 받기",
+            },
+        )
+        return classifier
+
+    monkeypatch.setattr(tasks, "get_classifier", cloud)
+
+    tasks.on_transcript_ready(meeting(wired, CHAT, SAID_PROMISE, OTHER_PROMISE))
+
+    items = {i.due_text: i for i in wired.query(ExtActionItem)}
+    # The summary that named nothing is not the row's sentence: the resolver
+    # was asked about that line, and here gave it back as it was said.
+    assert Asked.targets == [SAID_PROMISE]
+    assert "약속함" not in items["금요일"].description
+    assert items["금요일"].description_resolved is False
+    # The other line's summary said what, and stays.
+    assert items["수요일"].description == "견적을 수요일까지 받기"
 
 
 def test_a_decision_shows_the_line_written_with_its_label_and_keeps_its_id(
