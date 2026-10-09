@@ -43,9 +43,10 @@ from autune_extraction.slots import KST
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
-TODAY = date.today()
-"""The server's day, which is the day ``tools`` reads on every call. Taken again
-before each test (``_the_day_the_test_runs_on``), and ``KOREA_TODAY`` with it."""
+TODAY = datetime.now(tz=KST).date()
+"""Korea's day, which is the day ``tools`` reads on every call (``tools._today``),
+whatever the server's own is. Taken again before each test
+(``_the_day_the_test_runs_on``), and ``KOREA_TODAY`` with it."""
 KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
 TABLES = [
@@ -88,15 +89,13 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 def _the_day_the_test_runs_on() -> None:
     """A test's today is the day it runs on, not the day this file was imported.
 
-    ``tools`` asks for the day on every call. With both days taken once at
-    import, a run that began before midnight and reached these tests after it
-    built its rows around yesterday: "due today" was already late, "due
-    tomorrow" was due today. On CI that midnight is UTC's, 09:00 in Korea; for
-    ``KOREA_TODAY`` it is Korea's own.
+    ``tools`` asks for the day on every call. With the day taken once at
+    import, a run that began before midnight in Korea and reached these tests
+    after it built its rows around yesterday: "due today" was already late,
+    "due tomorrow" was due today.
     """
     global TODAY, KOREA_TODAY
-    TODAY = date.today()
-    KOREA_TODAY = datetime.now(tz=KST).date()
+    TODAY = KOREA_TODAY = datetime.now(tz=KST).date()
 
 
 @pytest.fixture
@@ -1266,7 +1265,7 @@ def test_a_second_followup_item_is_refused_while_one_is_open(
 
 # --- the day Follow-up recommends becomes the item's due date (#853) -------------------
 
-KOREA_TODAY = datetime.now(tz=KST).date()  # taken again before each test, as TODAY is
+KOREA_TODAY = TODAY  # the one day every tool reads; taken again before each test
 
 
 def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
@@ -1492,6 +1491,71 @@ def test_item_rows_say_whether_they_are_late(session: Session) -> None:
     (row,) = tools.person_action_items(session, TEAM, "user_in")["items"]
 
     assert (row["overdue"], row["needs_reassignment"]) == (True, False)
+
+
+# --- today is Korea's day, whatever the server's is ------------------------------------
+
+
+@pytest.fixture
+def server_a_day_behind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server whose own day is still Korea's yesterday -- a process on UTC,
+    from 00:00 to 09:00 in Korea. ``date.today()`` answers that day there."""
+
+    class _ServersDay(date):
+        @classmethod
+        def today(cls) -> date:
+            return TODAY - timedelta(days=1)
+
+    monkeypatch.setattr(tools, "date", _ServersDay)
+
+
+def _late(answer: dict[str, Any]) -> Any:
+    """What the one row of ``answer`` says: a flag for an item, a count for a person."""
+    (row,) = answer["items"]
+    return row["overdue"]
+
+
+SAYS_IT_IS_LATE = {
+    "meeting_action_items": lambda s: _late(tools.meeting_action_items(s, MEETING)),
+    "open_action_items": lambda s: _late(tools.open_action_items(s, TEAM)),
+    "stalled_action_items": lambda s: (
+        [i["id"] for i in tools.stalled_action_items(s, TEAM)["items"]] == ["act_yesterday"]
+    ),
+    "workload_by_owner": lambda s: _late(tools.workload_by_owner(s, TEAM)) == 1,
+    "open_item_owners": lambda s: _late(tools.open_item_owners(s, TEAM, meeting_id=MEETING)) == 1,
+    "person_action_items": lambda s: _late(tools.person_action_items(s, TEAM, "user_in")),
+    "action_item_status": lambda s: _late(tools.action_item_status(s, TEAM, "act_yesterday")),
+}
+"""Every read that says whether an item is late, asked about one item."""
+
+
+@pytest.mark.parametrize("read", sorted(SAYS_IT_IS_LATE))
+@pytest.mark.usefixtures("server_a_day_behind")
+def test_an_item_due_yesterday_in_korea_is_late_before_the_servers_day_turns(
+    session: Session, read: str
+) -> None:
+    # 08:30 in Korea on a UTC server: the server's day is the item's due date,
+    # and the item was read as due today -- not late -- until 09:00.
+    item(session, "act_yesterday", due=TODAY - timedelta(days=1))
+
+    assert SAYS_IT_IS_LATE[read](session) is True
+
+
+@pytest.mark.usefixtures("server_a_day_behind")
+def test_due_today_is_todays_item_in_korea_before_the_servers_day_turns(
+    session: Session,
+) -> None:
+    # On the server's day the window of "0 days" ended yesterday: today's item
+    # fell outside it, and was "due tomorrow" to whoever asked.
+    item(session, "act_today", due=TODAY)
+    item(session, "act_tomorrow", due=TODAY + timedelta(days=1))
+
+    result = tools.open_action_items(session, TEAM, within_days=0)
+
+    assert [(i["id"], i["overdue"]) for i in result["items"]] == [("act_today", False)]
+    assert result["summary"] == (
+        "진행 중인 액션아이템 2건 중 기한 지남 0건, 0일 안에 기한 1건, 재배정 필요 0건."
+    )
 
 
 # --- stalled_action_items (#856: what a team should be asked to look at again) ---------
@@ -1809,9 +1873,9 @@ def test_the_owners_of_a_projects_open_items_most_items_first(session: Session) 
     teammate(session, "user_kim", "김하늘")
     project(session, "prj_pay")
     project(session, "prj_other")
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = TODAY - timedelta(days=1)
     owned(session, "act_1", "user_in", of="prj_pay", due=yesterday)
-    owned(session, "act_2", "user_in", of="prj_pay", due=date.today() + timedelta(days=3))
+    owned(session, "act_2", "user_in", of="prj_pay", due=TODAY + timedelta(days=3))
     owned(session, "act_3", "user_kim", of="prj_pay", status="in_progress")
     owned(session, "act_4", "user_kim", of="prj_other")  # another project's
     owned(session, "act_5", "user_kim", of="prj_pay", status="done")  # not open
