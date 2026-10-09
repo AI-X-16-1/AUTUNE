@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/shared/ui/Button";
 
@@ -52,7 +52,14 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * row exists until the meeting is processed) — so this screen does not need
  * the meeting's `team_id` and does not poll for it.
  */
-export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
+export function LiveMeetingScreen({
+  meetingId,
+  notice,
+}: {
+  meetingId: string;
+  /** Drawn above the gate's consent row. The page fills it; see its file. */
+  notice?: ReactNode;
+}) {
   const router = useRouter();
   const microphone = useMicrophone();
   const title = useMeetingTitle(meetingId);
@@ -184,6 +191,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           <InputDevice microphone={microphone} />
         </section>
 
+        {notice}
         <label className="mt-6 flex items-start gap-3" style={{ fontSize: "var(--text-body)" }}>
           <input
             type="checkbox"

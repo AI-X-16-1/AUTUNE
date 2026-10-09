@@ -349,6 +349,17 @@ export interface NotificationPauseRead extends NotificationPause {
   calendar?: LeaveCalendarOutcome | null;
 }
 
+/**
+ * Whether this server sends meeting text to a cloud model (#392). One fact
+ * about the deployment and nothing else: no model name, nothing about a key.
+ */
+export interface CloudModelUse {
+  in_use: boolean;
+}
+
+export const getCloudModelUse = () =>
+  api.extraction<CloudModelUse>("/cloud-model");
+
 export const getNotificationPause = () =>
   api.extraction<NotificationPauseRead>("/me/notification-pause");
 

@@ -375,6 +375,17 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class CloudModelUse(BaseModel):
+    """Whether this server sends meeting text to a cloud model -- one fact
+    about the deployment, the same for every caller.
+
+    It exists so a screen can say #392's operating rule where a recording is
+    put in, and only on a server the rule is about. It carries nothing else on
+    purpose: no model name, no implementation name, nothing about the key."""
+
+    in_use: bool
+
+
 class TeamRead(BaseModel):
     """One of the reader's teams, by name -- the heading over that team's items
     on the board across meetings."""

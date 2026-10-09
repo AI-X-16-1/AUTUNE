@@ -52,6 +52,7 @@ from .schemas import (
     BulkActionItems,
     BulkActionResult,
     CarriedOver,
+    CloudModelUse,
     ConfirmationAnswerIn,
     DecisionCreate,
     DecisionDetail,
@@ -533,6 +534,17 @@ def my_projects(session: SessionDep, reader: CurrentUser) -> list[ProjectRead]:
     """Every project of every team the reader is on -- for the board across
     meetings, which filters by project without a meeting to name the team."""
     return [service.project_read(row) for row in projects.reader_projects(session, reader.id)]
+
+
+@router.get("/cloud-model", response_model=CloudModelUse)
+def cloud_model_use(reader: CurrentUser) -> CloudModelUse:
+    """Whether this server sends meeting text to a cloud model (#392).
+
+    A fact about the deployment and not about the caller or a meeting, so it
+    reads no row; it still takes the user, like every route here. The screens
+    that take a recording in ask it to decide whether to show the operating
+    rule -- a notice, which checks nothing."""
+    return CloudModelUse(in_use=get_settings().sends_meeting_text_out)
 
 
 @router.get("/teams/mine", response_model=list[TeamRead])
