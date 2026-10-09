@@ -175,6 +175,21 @@ agreement, and sync the result to Notion and Jira.
    (`slots.parse_due(decided=True)`); "10월 20일에 내기로" and "다음 주
    금요일까지" are read as before, and "금요일까지로" stays a deadline. An
    action item's date is read as it always was.
+
+   Three more dates are left out the same way (module B's owner, 2026-10-09):
+   in one invented run three of six decisions ended with a date that was not
+   a deadline of anything, and the bracket is text that goes on to D's lineage
+   and the Notion title. **A start** -- a date with 부터 or 부로 after it ("QA는
+   10월 13일부터 시작하기로"); a range keeps its end, so "13일부터 17일까지" is
+   due the 17th. **A stretch counted from something other than the meeting**
+   -- "베타 시작 2주 뒤에", "배포 3일 후에", "화요일로부터 일주일 안에": B can
+   only count from the meeting's day, so the date would be another day
+   altogether. "2주 뒤에" and "결과는 2주 뒤에" are counted from the meeting
+   and keep their date. **A weekday said alone**, with no week and no deadline
+   word -- "주간 보고는 월요일 오전에 하기로" is a standing slot; "금요일까지",
+   "금요일 오후까지", "이번 주 금요일" and "다음 주 수요일에" keep theirs. The
+   cost, accepted: a single day said by its weekday alone ("금요일에 배포하기로
+   했습니다") loses its date too, because words cannot tell it from a slot.
 6. **Confirm** — every ambiguous agreement is recorded in `ext_confirmations`
    first, then the speaker gets a Slack DM. Until the DM goes out the row is
    *not asked* and `AmbiguousAgreement.confirmation_sent` is false. Every five
