@@ -72,6 +72,18 @@ def korean_day(now: datetime) -> date:
     return now.astimezone(KST).date()
 
 
+_WEEKDAYS = "월화수목금토일"
+
+
+def written_day(day: date, *, year: int) -> str:
+    """``10월 13일 (화)``: a day as the 요약 tab's minutes write one, where the
+    notice after a meeting and the work report said ``2026-10-13`` (the user,
+    2026-10-09). The year is written only when it is not ``year`` -- the one
+    the message is read in."""
+    written = f"{day.month}월 {day.day}일 ({_WEEKDAYS[day.weekday()]})"
+    return written if day.year == year else f"{day.year}년 {written}"
+
+
 def sending_hours(now: datetime) -> bool:
     """Whether ``now`` is a time of day a reminder may be sent, in Korea."""
     return SEND_FROM <= now.astimezone(KST).time() < SEND_UNTIL

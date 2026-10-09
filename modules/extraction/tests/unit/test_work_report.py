@@ -115,10 +115,29 @@ def test_the_text_is_a_line_to_the_person_then_the_draft_headed_by_its_team() ->
         "• 하던 일 · 기획 &lt;회의&gt;",
         "• 오늘까지인 일 (오늘 기한)",
         "늦은 일",
-        "• 늦은 일 (기한 2026-10-01 지남)",
+        "• 늦은 일 (기한 10월 1일 (목) 지남)",
         "그 밖의 열린 액션 아이템 3개",
         BOARD,
     ]
+
+
+def test_a_late_items_year_is_said_only_when_it_is_not_the_reports() -> None:
+    """The user, 2026-10-09: the date as the 요약 tab's minutes write one."""
+    text = build_text(
+        WorkReport(
+            day=date(2027, 1, 4),
+            team_name="플랫폼팀",
+            late=[
+                DigestLine("지난해 일", date(2026, 12, 30), None),
+                DigestLine("올해 일", date(2027, 1, 1), None),
+            ],
+        ),
+        board_url=BOARD,
+    )
+
+    assert "• 지난해 일 (기한 2026년 12월 30일 (수) 지남)" in text
+    assert "• 올해 일 (기한 1월 1일 (금) 지남)" in text
+    assert "2026-12-30" not in text and "2027-01-01" not in text
 
 
 def test_a_part_with_nothing_in_it_is_left_out_and_a_team_name_is_escaped() -> None:

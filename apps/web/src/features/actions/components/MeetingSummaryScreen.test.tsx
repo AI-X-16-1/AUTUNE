@@ -105,6 +105,23 @@ describe("MeetingSummaryScreen", () => {
     ]);
   });
 
+  it("writes a decision's deadline as the action lines write theirs", async () => {
+    getSummary.mockResolvedValue({
+      ...MEETING,
+      meeting_started_at: "2026-10-08T03:00:00Z",
+      decisions: [
+        { id: "dec_3", statement: "배포는 미룹니다 (기한 2026-10-13)", status: "confirmed", summary: null },
+      ],
+    });
+
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+
+    const decisions = within(await document_()).getByRole("region", { name: "결정 사항" });
+    expect([...decisions.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      "배포는 미룹니다 (기한 10월 13일 (화))",
+    ]);
+  });
+
   it("shows nothing the copy would not carry: no line of what was said, no candidate", async () => {
     getSummary.mockResolvedValue(MEETING);
 

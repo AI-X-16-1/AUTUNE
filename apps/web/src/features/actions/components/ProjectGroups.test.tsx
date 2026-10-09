@@ -81,6 +81,24 @@ describe("ProjectGroups", () => {
     expect(unsorted.textContent).toContain("회의실 예약");
   });
 
+  it("writes a decision's deadline as the page writes a day, and names its control the same way", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 9, 12));
+    const summary = {
+      ...SUMMARY,
+      decisions: [{ ...SUMMARY.decisions[0], statement: "배포는 미룹니다 (기한 2026-10-13)" }],
+    } as MeetingSummary;
+
+    render(<ProjectGroups meetingId="mtg_1" summary={summary} onChange={() => {}} />);
+    vi.useRealTimers();
+
+    expect(screen.getByLabelText("App").textContent).toContain(
+      "배포는 미룹니다 (기한 10월 13일 (화))",
+    );
+    expect(screen.getByLabelText("배포는 미룹니다 (기한 10월 13일 (화)) 프로젝트")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("2026-10-13");
+  });
+
   it("moves a decision to another project", async () => {
     const onChange = vi.fn<(next: MeetingSummary) => void>();
     render(

@@ -1,4 +1,5 @@
-import { isOverdue } from "./dates";
+import { WEEKDAYS, isOverdue, writtenDay } from "./dates";
+import { shownStatement } from "./statement";
 import { COLUMN_LABELS, UNCONFIRMED_DECISION, isCandidate } from "./types";
 import type { ActionItemRead, MeetingSummary } from "./types";
 
@@ -73,7 +74,8 @@ export function minutesOf(summary: MeetingSummary, title?: string | null): Minut
       : null,
     decisions: summary.decisions.map((decision) => ({
       id: decision.id,
-      statement: decision.statement,
+      // Its deadline as the action lines below write theirs.
+      statement: shownStatement(decision.statement, began ? began.getFullYear() : null),
       unconfirmed: decision.status === "pending",
     })),
     actions: items.map((item) => action(item, began)),
@@ -166,16 +168,9 @@ function dayOf(at: Date): string {
  */
 function dueOf(due: string | null | undefined, began: Date | null): string | null {
   if (!due) return null;
-  const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due);
   // Not a day as the server writes one: shown as it came, not guessed at.
-  if (!parts) return due;
-  const [year, month, day] = [Number(parts[1]), Number(parts[2]), Number(parts[3])];
-  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
-  const written = `${month}월 ${day}일 (${weekday})`;
-  return began && began.getFullYear() === year ? written : `${year}년 ${written}`;
+  return writtenDay(due, began ? began.getFullYear() : null) ?? due;
 }
-
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 /** The title of the meeting: its own, or the one its rows carry. */
 export function titleOf(summary: MeetingSummary): string | null {

@@ -147,7 +147,7 @@ def _lines(lines: Sequence[reminders.DigestLine], *, day: date) -> list[str]:
     for line in lines[:MAX_LINES]:
         when = ""
         if line.due_date is not None and line.due_date < day:
-            when = f" (기한 {line.due_date.isoformat()} 지남)"
+            when = f" (기한 {reminders.written_day(line.due_date, year=day.year)} 지남)"
         elif line.due_date == day:
             when = " (오늘 기한)"
         where = f" · {reminders.slack_escape(line.meeting_title)}" if line.meeting_title else ""
