@@ -4823,13 +4823,18 @@ def _review_decision_row(
     without either one re-running the other's queries (#296).
     """
     source_ids = live_decision_source_ids(decision)
+    statement = _confirmed_statement(decision, review)
+    confirmed = review is not None and review.status == "confirmed"
     return ReviewDecision(
         id=decision.id,
-        statement=_confirmed_statement(decision, review),
+        statement=statement,
         model_statement=decision.statement,
         confidence=decision.confidence,
         origin=decision.origin,  # type: ignore[arg-type]
         needs_recheck=bool(decision.needs_recheck),
+        # The question ``outbound_for_meeting`` asks of the same sentence, and
+        # the one the clients' ``check_outbound`` asks of it on the way out.
+        held_back=confirmed and bool(find_unmasked(statement)),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
         source_utterance_ids=source_ids,
@@ -5356,20 +5361,28 @@ def review_decision(
 
 
 def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
-    """Exactly what may leave for Notion, Jira or Slack: nothing unconfirmed (#246).
+    """What of a meeting may leave Autune, and what is held back: nothing
+    unconfirmed (#246), and nothing in which personal data is found.
 
-    A decision goes only when a person confirmed it, in their wording if they gave
-    one. An action item goes only once it is past ``needs_confirmation`` -- the
-    status S17 moves it out of when somebody accepts it. The sync (#30) is to read
-    this and nothing else, so the gate is one function rather than a rule every
-    sender has to remember.
+    A decision is in it only when a person confirmed it, in their wording if
+    they gave one. An action item only once it is past ``needs_confirmation``
+    -- the status S17 moves it out of when somebody accepts it.
+
+    **Who reads it.** The route (``GET /reviews/{meeting_id}/outbound``) and the
+    agent's ``meeting_decisions`` tool. The copies to Notion, Jira, Slack and a
+    calendar do not: each reads the row it sends, and what stops a text there
+    is the client's ``check_outbound`` on the request itself. This was written
+    as the one gate every sender would read (#30) and the senders were never
+    moved onto it; it is a read of what would go, not what lets it go.
 
     **It screens as well as selects.** A rewording and an edited description are
     typed by a person and never went through module A's masker, so each text is
-    run through ``find_unmasked`` here. One that carries personal data is held back
-    in ``blocked``, by id and category, rather than failing the whole meeting: the
-    other confirmed items can still go, and the screen asks for that one to be
-    reworded. (Suggested in review of #247.)
+    run through ``find_unmasked`` here -- the check ``check_outbound`` runs on
+    every string of a request. One that carries personal data is held back in
+    ``blocked``, by id and category, rather than failing the whole meeting.
+    The decisions screen says so on that decision's row from the same check
+    (``ReviewDecision.held_back``), and asks for it to be reworded. (Suggested
+    in review of #247.)
 
     **Queries only the two lists this needs**, rather than going through
     ``review_for_meeting`` for its ``decisions`` and discarding the rest of

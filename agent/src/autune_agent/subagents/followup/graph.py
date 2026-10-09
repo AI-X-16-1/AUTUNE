@@ -4,11 +4,14 @@ Three nodes, no checkpointer (agent/CLAUDE.md rule 6), and no model call in
 the decision or the date; a model writes only the sentence saying why. It reads
 through its ``Toolbox`` only and calls no write: the follow-up meeting leaves as
 one L2 ``ProposedAction`` for plan mode, where an approver with scope
-``followup`` -- the team lead -- accepts or refuses it.
+``followup`` -- the team lead -- accepts or refuses it. Approved, C's
+``schedule_followup_meeting`` puts the meeting on the approver's own calendar
+on the card's day and tells the team's Slack channel; nobody is invited
+(#756).
 
 **Ids only in the proposal.** Plan mode queues an L2 proposal only when its
-arguments are ids, dates, booleans and short enums (#556), so the item's
-wording is B's to write and the lead sees the gap titles through the
+arguments are ids, dates, booleans and short enums (#556), so the event's
+wording is C's to write and the lead sees the gap titles through the
 approvals-page preview (#562), never through the arguments.
 
 M is the run's meeting when its scope has one -- the trigger's, or the screen a
@@ -23,8 +26,7 @@ card can mark a date resting on drafts "초안 기준". A sentence says why the
 date is that date (``explain``): a model writes it from what the rule used,
 once, here, and never chooses or moves the date. From B it reads due dates
 and whether each is confirmed, never who owns an item (spec section 6). The
-lead sees the date on the card and moves it on the board; the item's due date
-is what B puts on a calendar (#441).
+lead sees the date on the card; it is the day the event is made on.
 """
 
 from __future__ import annotations
@@ -46,12 +48,19 @@ RECURRING = "gap.recurring_open_gaps"
 QUESTIONS = "extraction.unresolved_questions"
 RECENT = "audio.recent_meetings"
 OPEN_ITEM = "extraction.open_followup_item"
-"""Whether the team has a Follow-up item still open (#561). A failed read
-proposes nothing -- an unknown is not "none open"."""
-WRITE = "extraction.add_followup_item"
-"""B's L2 write for the item (#561). It takes the meeting and writes the fixed
-wording itself, so the proposal carries ids only. Not ``add_action_item``: that
-is L1 since #576 and would run without the lead's approval."""
+"""Whether the team has a Follow-up item still open on B's board (#561) -- what
+an approval made before the write was C's. A failed read proposes nothing --
+an unknown is not "none open"."""
+UPCOMING = "gap.upcoming_followup"
+"""Whether the team has a follow-up meeting ahead that an approval put on a
+calendar. Read beside ``OPEN_ITEM`` and failing the same way."""
+WRITE = "gap.schedule_followup_meeting"
+"""C's L2 write: the follow-up meeting on the approver's own calendar, nobody
+invited, and a notice on the team's Slack channel. It takes the meeting, the
+day and the day's basis -- the arguments B's ``add_followup_item`` took, which
+the card reads -- and writes the event's wording itself, so the proposal
+carries ids only. The approver is filled in at approval, never by the
+proposal."""
 
 DUE_DATES = "extraction.meeting_due_dates"
 """M's open dated action items as due dates and confirmation flags, on one row
@@ -69,7 +78,7 @@ HOLIDAYS_AHEAD = timedelta(days=45)
 """How far from today the holidays are read: past the 14-day horizon and the
 longest run of days off (설 or 추석 with a weekend and a substitute day)."""
 
-TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, DUE_DATES, HOLIDAYS)
+TOOLS = (OPEN_GAPS, RECURRING, QUESTIONS, RECENT, OPEN_ITEM, UPCOMING, DUE_DATES, HOLIDAYS)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
 """Meeting statuses after the pipeline's analysis, as Research reads them."""
 KST = ZoneInfo("Asia/Seoul")
@@ -241,6 +250,14 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             )
         if open_item.items:
             return _done("이미 열린 후속 회의 항목이 있어 새로 제안하지 않았습니다.")
+        upcoming = toolbox.call(UPCOMING)
+        if not upcoming.ok:
+            return _stop(
+                upcoming.reason or "follow-up meetings unreadable",
+                "잡힌 후속 회의를 확인하지 못해 제안하지 않았습니다.",
+            )
+        if upcoming.items:
+            return _done("이미 잡힌 후속 회의가 있어 새로 제안하지 않았습니다.")
         return {"verdict": verdict}
 
     def propose(state: FollowupState) -> dict[str, Any]:
@@ -269,7 +286,8 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             ok=True,
             summary=(
                 f"후속 회의를 제안했습니다 ({reason}). 추천 날짜는 {when}입니다. "
-                f"{why} 팀장이 승인하면 보드에 항목이 생깁니다."
+                f"{why} 팀장이 승인하면 승인한 사람의 캘린더에 그날 회의가 잡히고 "
+                "팀 슬랙 채널에 알립니다. 팀원을 초대하지는 않습니다."
             ),
             items=rules.cited(state["open_gaps"], verdict),
             evidence=verdict.evidence,
@@ -279,7 +297,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
             title="후속 회의 제안",
             tool=WRITE,
             # ``basis`` is a short enum, so plan mode queues it, and the card
-            # reads it off the row; B's write must declare it (#963).
+            # reads it off the row; the write must declare it (#963).
             arguments={**state["at"], "due_date": suggested.isoformat(), "basis": basis},
             level="L2",
             rationale=f"{reason}. 추천 날짜 {when}. {why}",

@@ -286,12 +286,17 @@ class ExtractionSettings(BaseSettings):
     """``AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392``: the second switch a cloud
     implementation needs (#392, proposed by module A's owner in review of #405).
 
-    "Demo meetings only" and "a paid key for real ones" are both rules the
-    code cannot check: nothing marks a meeting as a dummy, and nothing says
-    which tier a key is. What the code can do is make sending speech to a
-    provider something a deployment says twice. With ``classifier_impl`` set
-    to ``llm`` or ``llm_checked``, or ``resolver_impl`` or ``summary_impl``
-    set to ``llm``, and this not true, these settings refuse to load.
+    Which meetings go through and which tier the key is are both rules the
+    code cannot check: nothing marks a meeting as a dummy or says who was in
+    the room, and nothing says which tier a key is. The rules, as #392 has
+    them: on a free-tier key dummy meetings only; on the team's dev site,
+    with its paid key, the team's own meetings only and none with a
+    participant from outside the team; a real service is not decided.
+
+    What the code can do is make sending speech to a provider something a
+    deployment says twice. With ``classifier_impl`` set to ``llm`` or
+    ``llm_checked``, or ``resolver_impl`` or ``summary_impl`` set to ``llm``,
+    and this not true, these settings refuse to load.
 
     **It turns nothing on.** Set alone, it changes nothing.
 
@@ -437,7 +442,10 @@ class ExtractionSettings(BaseSettings):
                 raise ValueError(
                     f"AUTUNE_EXTRACTION_{name}={value} sends meeting text to a cloud "
                     "model. Set AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true to confirm "
-                    "this deployment may: demo meetings only until #392 is decided."
+                    "this deployment may. Which meetings is a rule the code cannot "
+                    "check (#392): on a free-tier key, dummy meetings only; on a paid "
+                    "key, your own team's meetings only, none with a participant from "
+                    "outside the team; a real service is not decided."
                 )
         return self
 

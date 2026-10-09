@@ -596,7 +596,7 @@ def refresh_project_minutes(meeting_id: str) -> bool:
             log.warning(
                 "extraction_project_minutes_refresh_owed",
                 meeting_id=meeting_id,
-                behind=sum(1 for s in sent if s.outcome in ("failed", "not_connected")),
+                behind=sum(1 for s in sent if s.outcome in project_send.BEHIND),
             )
             return False
     except Exception as exc:  # noqa: BLE001 -- the change itself is committed
