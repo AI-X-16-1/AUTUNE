@@ -156,6 +156,31 @@ describe("MaterialsScreen, registering", () => {
     expect((screen.getByLabelText("자료 제목") as HTMLInputElement).value).toBe("자료");
   });
 
+  it("says which kind of value to take out of a title refused as personal data (#1130)", async () => {
+    session.mockResolvedValue(me());
+    list.mockResolvedValue([]);
+    register.mockRejectedValue(
+      new ApiError(422, "validation_error", "this text looks like it holds personal data", {
+        field: "title",
+        reason: "personal_data",
+        categories: ["phone"],
+      }),
+    );
+    render(<MaterialsScreen />);
+    await screen.findByText(/아직 등록한 자료가 없습니다/);
+
+    type("자료 제목", "문의 010-1234-5678");
+    type("Drive 링크", FILE_ID);
+    submit();
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "전화번호로 보이는 값이 있어 저장하지 않았습니다. 그 값을 지우고 다시 저장해 주세요.",
+    );
+    expect((screen.getByLabelText("자료 제목") as HTMLInputElement).value).toBe(
+      "문의 010-1234-5678",
+    );
+  });
+
   it("cannot be sent without a title", async () => {
     session.mockResolvedValue(me());
     list.mockResolvedValue([]);

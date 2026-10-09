@@ -355,12 +355,20 @@ class SlackBehindTheCheck(FakeSlack):
 
 
 def _held_minutes(session: Session) -> tuple[list[project_send.Sent], FakeSlack, list[dict]]:
-    """Autune's confirmed decision reworded to carry a phone number, then sent."""
+    """Autune's confirmed decision, its rewording carrying a phone number, sent.
+
+    No save writes such a rewording any more -- typed text is screened when it
+    is stored (#1130) -- so the number is put on the row as one stored before
+    that rule holds it. The outbound check is what is left to stop it."""
     service.review_decision(
         session,
         session.get(ExtDecision, "dec_ok"),  # type: ignore[arg-type]
-        DecisionReviewUpdate(statement="배포 문의는 010-1234-5678 로 한다"),
+        DecisionReviewUpdate(statement="배포 문의는 담당자에게 한다"),
     )
+    review = session.get(ExtDecisionReview, "dec_ok")
+    assert review is not None
+    review.statement = "배포 문의는 010-1234-5678 로 한다"
+    session.flush()
     slack = SlackBehindTheCheck()
     tools = project_send.Clients(slack=(slack, "C_TEAM"))
     with capture_logs() as logs:

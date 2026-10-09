@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui";
 import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import type { ActionItemDraft } from "../api";
 import { useAssignable } from "../hooks/useAssignable";
+import { typedTextRefusal } from "../refusal";
 
 /**
  * Manual add, S17 (#64).
@@ -126,7 +127,10 @@ function AddForm({
       // The typed text stays. Clearing it on a failed request would send the
       // user back to the transcript to reconstruct what they had just written,
       // which is the cost this whole feature exists to remove.
-      setError(cause instanceof Error ? cause.message : "추가하지 못했습니다.");
+      setError(
+        typedTextRefusal(cause) ??
+          (cause instanceof Error ? cause.message : "추가하지 못했습니다."),
+      );
     } finally {
       setPending(false);
     }

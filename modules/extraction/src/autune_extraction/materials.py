@@ -37,6 +37,7 @@ from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from .models import DRIVE_KINDS, ExtMaterial
 from .schemas import MaterialRead
+from .typed_text import refuse_personal_data
 
 log = get_logger(__name__)
 
@@ -141,6 +142,8 @@ def register(session: Session, team_id: str, *, title: str, link: str) -> ExtMat
         raise ValidationError("a material needs a title", field="title")
     if len(clean) > MAX_TITLE_CHARS:
         raise ValidationError(f"a title has at most {MAX_TITLE_CHARS} characters", field="title")
+    # A title is typed by a member: screened before it is stored (#1130).
+    refuse_personal_data(clean, field="title", team_id=team_id)
     file = parse_drive_link(link)
     if file is None:
         # The message names the rule and not the value: what was pasted may be
