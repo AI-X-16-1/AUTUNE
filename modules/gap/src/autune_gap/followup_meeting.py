@@ -8,12 +8,14 @@ Calendar and tells the team's Slack channel -- what "다음 회의 잡기" (#824
 does for an event somebody already had, for an event nobody has made yet.
 
 **The approver's own calendar, with their own grant** (#435's rule): approving
-the proposal is their act, and the meeting is one they now organise. The
-event's guests are the meeting's participants who resolved to a member still
-on its team, the approver aside -- Google invites them (``sendUpdates=all``).
-Nobody outside the team is ever invited, so the agenda in the description
-reaches the team only, the rule ``calendar_writes.outside_team`` keeps for
-"다음 회의 잡기".
+the proposal is their act, and the meeting is one they now organise.
+**Nobody is invited** and nobody else is sent anything: the event has no
+guests and Google is told to send no notice (``sendUpdates=none``). Inviting
+the meeting's members sends their addresses to Google and mails them from
+the approver's account; DMing them is a new kind of message. Both wait for
+the team's decision after 10/12 (#756, #1046), and the legal notice comes
+first (mkkim68 and kjfcvx12 on #1106). The approver invites people from
+their own calendar if they want to.
 
 **The event.** Its title is ``후속 회의 · <meeting title>``. It starts on the
 approved day at the clock time the meeting started, in Korea, and lasts as
@@ -31,16 +33,24 @@ no second notice. A request Google refuses takes the row back, so a later
 proposal for the meeting can still make it once the calendar is fixed.
 
 **The team channel is told once** the calendar took the event: when it
-starts, how many were invited, and the gaps on its agenda
-(``team_notice.post_followup``). **Each guest is sent a Slack DM** too, the
-same news addressed to them (``team_notice.dm_followup``), with the team's
-Slack connection and the account they linked themselves; a guest who linked
-none gets the calendar invitation alone. A Slack that fails leaves the event
-made.
+starts and the gaps on its agenda (``team_notice.post_followup``). A Slack
+that fails leaves the event made.
 
-What leaves for Google and Slack is the meeting's title, the gaps' titles and
-questions (stored masked) and the guests' addresses, all through
-``autune_integrations``' outbound check. Logs hold ids, counts and outcomes.
+What leaves for Google and Slack is the meeting's title and the gaps' titles
+and questions (stored masked), all through ``autune_integrations``' outbound
+check. **A refusal by that check is not a Google failure**: every value is one
+Autune stored, so a refusal is a finding about the store. It is logged as an
+error with the meeting's id (``gap_followup_refused``), the outcome is
+``refused``, and nothing is made -- as ``team_notice._post`` tells a refused
+notice apart. Other logs hold ids, counts and outcomes.
+
+**Known gap: the event is made before the row is committed.** The row and the
+event's id are written with the caller's session, which the agent layer
+commits after this returns. Should that commit fail after Google made the
+event, the event stays on the approver's calendar with no row, and a later
+approval for the meeting would make a second one. Accepted for now: it needs
+the database to fail between two statements, the event is on the approver's
+own calendar only, and nobody is invited, so nobody else is mailed twice.
 """
 
 from __future__ import annotations
@@ -55,7 +65,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import GapSeverity
-from autune_core import Meeting, Participant, TeamMember, User, get_logger
+from autune_core import Meeting, User, get_logger
 from autune_core.errors import PrivacyViolationError
 from autune_integrations import IntegrationError, ReconnectRequiredError
 
@@ -85,21 +95,20 @@ Outcome = Literal[
     "past_day",
     "not_connected",
     "reconnect_required",
+    "refused",
     "failed",
 ]
 """``already_scheduled``: the meeting has its follow-up event; nothing was
-made. ``past_day``: the approved day is before today in Korea."""
+made. ``past_day``: the approved day is before today in Korea. ``refused``:
+the outbound check found personal data in what would have gone to Google."""
 
 
 @dataclass(frozen=True)
 class Scheduled:
     outcome: Outcome
     starts: datetime | None = None
-    invited: int = 0
     gaps: int = 0
     slack: team_notice.SlackOutcome = "not_tried"
-    dms: int = 0
-    """Guests sent a Slack DM."""
 
 
 def window(meeting: Meeting, day: date) -> tuple[datetime, datetime]:
@@ -116,23 +125,6 @@ def window(meeting: Meeting, day: date) -> tuple[datetime, datetime]:
         steps = round(timedelta(seconds=meeting.duration_seconds) / STEP)
         length = min(max(STEP * steps, SHORTEST), LONGEST)
     return starts, starts + length
-
-
-def guests(session: Session, meeting: Meeting, *, organizer: str) -> dict[str, str]:
-    """Who to invite, by user id: the meeting's participants who resolved to a
-    member still on its team, the organizer aside, each with their address in
-    lower case. A member with no address is left out."""
-    rows = session.execute(
-        select(User.id, User.email)
-        .join(Participant, Participant.user_id == User.id)
-        .join(
-            TeamMember,
-            (TeamMember.user_id == User.id) & (TeamMember.team_id == meeting.team_id),
-        )
-        .where(Participant.meeting_id == meeting.id, User.id != organizer)
-    )
-    found = {user_id: email.strip().lower() for user_id, email in rows if email and email.strip()}
-    return dict(sorted(found.items(), key=lambda pair: pair[1]))
 
 
 def open_gaps(session: Session, meeting_id: str) -> list[GapGap]:
@@ -190,14 +182,12 @@ def schedule(
         return Scheduled("already_scheduled")
 
     gaps = open_gaps(session, meeting.id)
-    invited = guests(session, meeting, organizer=approver.id)
     starts, ends = window(meeting, day)
     body = {
         "summary": TITLE.format(title=meeting.title),
         "description": "\n".join(calendar_writes.agenda_line(gap) for gap in gaps),
         "start": {"dateTime": starts.isoformat(), "timeZone": "Asia/Seoul"},
         "end": {"dateTime": ends.isoformat(), "timeZone": "Asia/Seoul"},
-        "attendees": [{"email": email} for email in invited.values()],
     }
     outcome: Outcome = "failed"
     try:
@@ -209,7 +199,7 @@ def schedule(
                 made = client.request(
                     "POST",
                     f"/calendars/{calendar_id}/events",
-                    params={"sendUpdates": "all", "fields": CREATE_FIELDS},
+                    params={"sendUpdates": "none", "fields": CREATE_FIELDS},
                     json=body,
                 )
                 event_id = str(made.get("id") or "")
@@ -218,7 +208,10 @@ def schedule(
                     outcome = "scheduled"
     except ReconnectRequiredError:
         outcome = "reconnect_required"
-    except (IntegrationError, PrivacyViolationError) as exc:
+    except PrivacyViolationError:
+        log.error("gap_followup_refused", meeting_id=meeting.id)
+        outcome = "refused"
+    except IntegrationError as exc:
         log.warning("gap_followup_failed", meeting_id=meeting.id, error=type(exc).__name__)
         outcome = "failed"
     if outcome != "scheduled" or row.calendar_id is None or row.event_id is None:
@@ -239,25 +232,6 @@ def schedule(
         if gap.carried_at is None:
             gap.carried_at = now
     session.flush()
-    slack = team_notice.post_followup(
-        session, meeting, gaps, approver=approver, starts=starts, invited=len(invited)
-    )
-    dms = team_notice.dm_followup(
-        session, meeting, gaps, approver=approver, starts=starts, guests=list(invited)
-    )
-    log.info(
-        "gap_followup_scheduled",
-        meeting_id=meeting.id,
-        gaps=len(gaps),
-        invited=len(invited),
-        slack=slack,
-        dms=dms,
-    )
-    return Scheduled(
-        "scheduled",
-        starts=starts,
-        invited=len(invited),
-        gaps=len(gaps),
-        slack=slack,
-        dms=dms,
-    )
+    slack = team_notice.post_followup(session, meeting, gaps, approver=approver, starts=starts)
+    log.info("gap_followup_scheduled", meeting_id=meeting.id, gaps=len(gaps), slack=slack)
+    return Scheduled("scheduled", starts=starts, gaps=len(gaps), slack=slack)

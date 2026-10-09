@@ -498,9 +498,9 @@ class GapFollowupEvent(Base):
 
     ``user_id`` is the approver, whose calendar holds the event: the event can
     only be reached with their grant. ``event_day`` is the day it starts, in
-    Korea. Nothing else of the event is kept: not its title, time or guests.
+    Korea. Nothing else of the event is kept: not its title or time.
     Goes with the meeting and with the approver. The event itself stays on
-    the calendar -- it is a meeting people were invited to, and cancelling it
+    the approver's calendar -- a meeting they organised, and cancelling it
     is theirs to do -- while its gap lines, recorded in ``GapAgendaEvent``,
     come out as every other line does.
     """

@@ -1,6 +1,7 @@
 """Follow-up's proposal, approved: C puts the follow-up meeting on the
-approver's own calendar, invites the meeting's team members who took part and
-tells the team's Slack channel (``tools.schedule_followup_meeting``).
+approver's own calendar and tells the team's Slack channel
+(``tools.schedule_followup_meeting``). Nobody is invited and nobody is DMed
+until the team decides it after 10/12 (#756, #1046).
 
 SQLite, the harness ``test_read_endpoints`` uses. Google is a fake standing in
 for ``CalendarClient``, and Slack the team channel ``test_calendar_writes``
@@ -18,8 +19,10 @@ from typing import Any
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from autune_core import Meeting, Participant, TeamMember, User
+from autune_core.errors import PrivacyViolationError
 from autune_gap import followup_meeting, tools
 from autune_gap.models import GapAgendaEvent, GapFollowupEvent, GapGap
 from autune_integrations import IntegrationError, ReconnectRequiredError
@@ -136,20 +139,26 @@ def test_approval_puts_the_meeting_on_the_approvers_calendar(
     assert event["description"].endswith("(gap_high)")
     assert "gap_low" not in event["description"]
     assert "gap_gone" not in event["description"]
-    assert google.params == [{"sendUpdates": "all", "fields": "id"}]
-    assert "1명을 초대" in result["summary"]
+    assert google.params == [{"sendUpdates": "none", "fields": "id"}]
+    assert "승인한 사람의 캘린더" in result["summary"]
+    assert "초대" not in result["summary"]
 
 
-def test_only_team_members_who_took_part_are_invited(
-    session: Session, meeting: Meeting, calendars: dict[str, Any]
+def test_nobody_is_invited_and_no_address_leaves(
+    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
 ) -> None:
-    """The approver organises it; somebody of another team who was in the
-    meeting, and a speaker nobody identified, are not invited."""
+    """The meeting had a teammate and somebody of another team in it, both with
+    Slack linked: neither is invited, mailed or DMed, and no address reaches
+    Google -- that waits for the team's decision (#756, #1046)."""
     google = calendars[MEMBER] = FakeGoogle()
+    client = connect(slack, linked={MEMBER, TEAMMATE, OUTSIDER})
 
     schedule(session)
 
-    assert google.made[0]["attendees"] == [{"email": "teammate@example.com"}]
+    [event] = google.made
+    assert "attendees" not in event
+    assert "@" not in str(event)
+    assert client.dms == []
 
 
 def test_the_event_and_its_lines_are_recorded(
@@ -199,7 +208,7 @@ def test_the_team_channel_is_told_once(
 
     card = slack.card()
     assert "후속 회의" in card and "주간 회의" in card
-    assert "14:00" in card and "초대 1명" in card
+    assert "14:00" in card and "초대" not in card
     assert "성능 요구사항이 정해지지 않았습니다" in card
     assert "슬랙 채널에 알렸습니다" in first["summary"]
     assert second["ok"] is False
@@ -248,6 +257,25 @@ def test_a_calendar_that_does_not_take_it_leaves_nothing_and_can_be_tried_again(
     google = calendars[MEMBER] = FakeGoogle()
     assert schedule(session)["ok"] is True
     assert len(google.made) == 1
+
+
+def test_a_refusal_by_the_outbound_check_is_told_apart_and_makes_nothing(
+    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """Every value sent is one Autune stored, so a refusal is a finding about
+    the store: an error with the meeting's id, not Google's warning."""
+    calendars[MEMBER] = FakeGoogle(fail_with=PrivacyViolationError("unmasked"))
+    client = connect(slack)
+
+    with capture_logs() as logs:
+        result = schedule(session)
+
+    assert (result["ok"], result["reason"]) == (False, "the outbound check refused the event")
+    [refused] = [entry for entry in logs if entry["event"] == "gap_followup_refused"]
+    assert (refused["log_level"], refused["meeting_id"]) == ("error", MEETING)
+    assert not any(entry["event"] == "gap_followup_failed" for entry in logs)
+    assert session.scalars(select(GapFollowupEvent)).all() == []
+    assert client.posted == []
 
 
 def test_a_day_already_past_makes_nothing(
@@ -344,57 +372,3 @@ def test_a_follow_up_already_held_is_not_ahead(session: Session, meeting: Meetin
     session.flush()
 
     assert tools.upcoming_followup(session, TEAM)["items"] == []
-
-
-def test_each_guest_who_linked_slack_is_sent_a_dm(
-    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
-) -> None:
-    """The approver organises it and the other team's member is no guest, so
-    only the teammate is sent one -- even though all three linked Slack."""
-    calendars[MEMBER] = FakeGoogle()
-    client = connect(slack, linked={MEMBER, TEAMMATE, OUTSIDER})
-
-    result = schedule(session)
-
-    [(to, text, blocks)] = client.dms
-    assert to == TEAMMATE
-    assert "후속 회의" in text and "14:00" in text and "주간 회의" in text
-    assert "성능 요구사항이 정해지지 않았습니다" in str(blocks)
-    assert "참석자 1명에게 슬랙 DM" in result["summary"]
-    assert len(client.posted) == 1, "the team channel is still told once"
-
-
-def test_a_guest_without_a_linked_slack_gets_the_invitation_alone(
-    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
-) -> None:
-    google = calendars[MEMBER] = FakeGoogle()
-    client = connect(slack)
-
-    result = schedule(session)
-
-    assert result["ok"] is True
-    assert client.dms == []
-    assert "DM" not in result["summary"]
-    assert google.made[0]["attendees"] == [{"email": "teammate@example.com"}]
-
-
-def test_a_dm_slack_does_not_take_leaves_the_meeting_made(
-    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
-) -> None:
-    calendars[MEMBER] = FakeGoogle()
-    connect(slack, linked={TEAMMATE}, failing={TEAMMATE})
-
-    result = schedule(session)
-
-    assert result["ok"] is True
-    assert len(session.scalars(select(GapFollowupEvent)).all()) == 1
-
-
-def test_no_dm_without_team_slack(
-    session: Session, meeting: Meeting, calendars: dict[str, Any], slack: TeamSlack
-) -> None:
-    calendars[MEMBER] = FakeGoogle()
-
-    result = schedule(session)
-
-    assert result["ok"] is True and "DM" not in result["summary"]
