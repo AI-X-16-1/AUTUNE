@@ -702,6 +702,53 @@ and a turn of about 360 characters was quoted as about 38 where its sentence
 is about 65. A transcript without sentence ends and a real meeting were not
 measured.
 
+**Two things in one sentence.** A turn is cut by rule at sentence ends, and
+"로그는 제가 14일까지 정리하고, 문구는 16일까지 고칠게요" is inside one: two
+objects, each with its own date, in a line that used to be one row with one
+date. With `classifier_impl=llm` the request that labels a line may answer it
+as pieces instead (`"8-1"`, `"8-2"`, 2026-10-09), each with a label and the
+words of the line that say it. As with a part, the answer only chooses where
+the cut falls. Every piece is looked for in the line as it was said
+(`llm.cut_in_two`) and is the line's own characters, in spoken order whatever
+order the answer gives; from there on a piece is read as a line of its own
+(`decisions.in_pieces`), so it is a row of its own, its date is read from its
+own words, and it cites the utterance with the offsets of the piece. Words of
+the line that are in no piece belong to no row.
+
+An answer that cannot cut the line cuts nothing: one piece, words that are not
+in the line, pieces that overlap. The line then keeps the strongest of the
+labels answered for it and is one row, as it was before. One object with two
+verbs -- "시안은 제가 고쳐서 공유할게요" -- is one thing to do and is not cut.
+That is what the instructions ask and the model's call; no rule checks it, and
+a line that is not cut is read as before. A piece's summary is checked against
+the piece and the lines before the line, not against the rest of the line: the
+line is cut because each thing has its own date, and checked against the whole
+line one piece's summary could carry the other's. A piece's number is its
+place in the line. A decision's id is still derived from the utterance, and
+the number goes into it only when two decisions were settled in the same
+utterance, as for a long turn. The `local` and `fake` classifiers cut nothing.
+
+The instructions are 1,304 characters with this (1,039 before), which leaves
+2,496 of a window for lines: counted on the four labelled dummy meetings, one
+of them takes four requests where it took three. Looked at once, on three
+invented meetings of about a dozen lines each (three requests): ten planted
+lines, five naming one object and five naming two, came back as planted, and
+every piece was in its line.
+
+Measured once on the labelled meetings (2026-10-09, `gemini-3.8-flash`, 88
+requests): the instructions as they were and with this, three rounds each on
+the four dummy meetings -- 975 lines, 73 commitments. Commitment F1 over the
+three rounds was 0.954 before and 0.952 with it (207 found and 12 missed by
+both, 8 wrong against 9), and either one moves between 0.94 and 0.97 from one
+round to the next. One meeting was lower with it in two rounds of three (0.889
+and 0.857, against 0.941 to 1.0 before); three rounds cannot tell that from
+the meeting's own spread. One line of the 975 was cut, in all three rounds and
+at the same places, into two decisions. No commitment was cut. So the run says
+the longer instructions cost the labels nothing on these meetings, and says
+nothing of a commitment cut out of a line. A request carried about 10% more
+prompt tokens and 22% more thinking tokens. Not shown: whether a cut is right
+-- the labels have no mark for two things in one line.
+
 The offsets are counted on one text and are dropped when it changes. A
 transcript correction (#586) clears an item's, since the item is kept and the
 line it cites was rewritten; a decision's are written again on every run, and
