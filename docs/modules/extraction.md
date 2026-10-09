@@ -1196,10 +1196,30 @@ calendar, the minutes, the agent's tools and module D are given.
   under the viewer's own sign-in, so registering a file shows its title to the
   team and the file to nobody Google would not show it to. A row names no
   person -- not who registered it, not who opened it. The title is typed by a
-  member and stored as typed, so it can hold a name; it and the file id stay
-  out of logs and error messages, and neither goes to any outside service.
+  member and screened as all typed text is (below), so it can hold a name
+  and not a number the detector reads; it and the file id stay out of logs
+  and error messages, and neither goes to any outside service.
   The rows are not an analysis result and have no retention window: a member
   deletes one at any time, and they go with the team.
+- Text a person types is screened when it is saved and refused if it
+  reads as personal data (`typed_text.refuse_personal_data`; decided on
+  #1130, `privacy.md` section 6). Ten checks behind eight routes: an action
+  item's description and assignee label (`POST` and `PATCH /action-items`),
+  a decision's statement typed or reworded (`POST` and `PATCH /decisions`),
+  a meeting's memo (`PUT /summary/{meeting_id}/note`), a project's name and
+  aliases (`POST` and `PUT /projects`) and a material's title
+  (`POST /materials`). The check is the integration clients' own
+  (`find_unmasked`), in the service function and before anything is set, so
+  a refused save changes no field sent with it, records no verdict and
+  queues no send. The answer is a 422 whose details carry the field,
+  `reason: "personal_data"` and the categories read -- never the value,
+  which is in no log line either -- and the screen says which kind of value
+  to take out and keeps what was typed. It reads patterns, so a name
+  passes; and a number that is not personal data can be refused -- an
+  order number shaped like an account number is. Text sent back exactly as
+  it is stored is not a write: a row from before this rule keeps its other
+  fields editable, nothing stored is rewritten, and what stops such a row
+  from leaving is still the clients' `check_outbound` at every exit.
 - Only what an issue needs goes to Notion or Jira: the action description,
   assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the
