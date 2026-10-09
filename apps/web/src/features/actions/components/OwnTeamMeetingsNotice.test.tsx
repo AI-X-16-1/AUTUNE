@@ -20,7 +20,7 @@ describe("OwnTeamMeetingsNotice", () => {
     render(<OwnTeamMeetingsNotice entrance="upload" />);
 
     expect((await screen.findByRole("note")).textContent).toBe(
-      "우리 팀 자신의 회의만 올려 주세요.",
+      "우리 팀 자신의 회의만 올려 주세요. 팀 밖 사람이 참석한 회의는 올리지 마세요.",
     );
   });
 
@@ -29,7 +29,7 @@ describe("OwnTeamMeetingsNotice", () => {
     render(<OwnTeamMeetingsNotice entrance="live" />);
 
     expect((await screen.findByRole("note")).textContent).toBe(
-      "우리 팀 자신의 회의만 녹음해 주세요.",
+      "우리 팀 자신의 회의만 녹음해 주세요. 팀 밖 사람이 참석하면 녹음하지 마세요.",
     );
   });
 

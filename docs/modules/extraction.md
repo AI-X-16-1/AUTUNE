@@ -385,10 +385,11 @@ team's dev site its own meetings only, none with a participant from outside
 the team (#392, 2026-10-05), and on a real service none until #392 decides
 that -- `../engineering/environments.md`, "The classifier's one external
 option is opt-in". A server that sets any such implementation says the rule to
-the person putting a meeting in: one line above the consent row of the upload
-form ("우리 팀 자신의 회의만 올려 주세요.") and of the live gate ("우리 팀
-자신의 회의만 녹음해 주세요."), drawn only where `GET /cloud-model` answers
-true. It is a notice and gates nothing.
+the person putting a meeting in, both halves of it: two sentences above the
+consent row of the upload form ("우리 팀 자신의 회의만 올려 주세요. 팀 밖
+사람이 참석한 회의는 올리지 마세요.") and of the live gate ("우리 팀 자신의
+회의만 녹음해 주세요. 팀 밖 사람이 참석하면 녹음하지 마세요."), drawn only
+where `GET /cloud-model` answers true. It is a notice and gates nothing.
 
 **The tab is the meeting's minutes as one document, and "회의록 복사" copies
 that page** (the owner, 2026-10-09; `features/actions/minutes.ts`). One page
