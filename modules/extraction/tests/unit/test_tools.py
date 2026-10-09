@@ -1059,6 +1059,51 @@ def test_a_write_that_names_the_items_meeting_runs_and_a_wrong_meeting_is_refuse
     assert acting["items"] == ["act_1", "act_1"]
 
 
+@pytest.mark.parametrize(
+    ("ended_by", "reason"), [("finished", "already done"), ("closed", "already closed")]
+)
+def test_an_item_ended_while_its_proposal_waited_is_neither_handed_on_nor_re_dated(
+    session: Session, acting: dict[str, list[str]], ended_by: str, reason: str
+) -> None:
+    """Workload's and Tracker's proposals wait for an approval, and the item's
+    holder can finish or close it meanwhile. Handed on then, it was counted
+    as work the new holder finished."""
+    member(session, "user_free", "최여유")
+    item(session, "act_1", due=TODAY - timedelta(days=1))
+    if ended_by == "finished":
+        assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    else:
+        assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+    synced, edits = list(acting["items"]), session.query(ExtEditEvent).count()
+
+    handed_on = tools.reassign_action_item(TEAM, "act_1", "user_free", meeting_id=MEETING)
+    re_dated = tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20", meeting_id=MEETING)
+
+    assert [(r["ok"], r["reason"]) for r in (handed_on, re_dated)] == [(False, reason)] * 2
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert (row.assignee_id, row.due_date) == ("user_in", TODAY - timedelta(days=1))
+    assert acting["items"] == synced and session.query(ExtEditEvent).count() == edits
+    finished = {r["id"]: r["done"] for r in tools.workload_by_owner(session, TEAM)["items"]}
+    assert finished["user_free"] == 0, "nobody is credited with work they did not do"
+
+
+def test_an_item_reopened_after_it_was_finished_can_be_handed_on_and_re_dated(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    member(session, "user_free", "최여유")
+    item(session, "act_1", due=TODAY)
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_1", "in_progress")["ok"] is True
+
+    assert tools.reassign_action_item(TEAM, "act_1", "user_free")["ok"] is True
+    assert tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20")["ok"] is True
+
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert (row.assignee_id, row.due_date) == ("user_free", date(2026, 10, 20))
+
+
 def test_a_status_outside_the_board_is_refused(
     session: Session, acting: dict[str, list[str]]
 ) -> None:

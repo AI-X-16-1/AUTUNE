@@ -1116,18 +1116,31 @@ def _change_item(
     payload: ActionItemUpdate,
     *,
     meeting_id: str | None = None,
+    unfinished_only: bool = False,
 ) -> dict[str, Any] | str:
     """Apply ``payload`` to one of the team's items; the new status, or a refusal.
 
     ``meeting_id``, when the caller names one, is the item's meeting: an item
     of another meeting reads as missing, the same as one of another team.
+
+    ``unfinished_only`` refuses an item that is done or closed. A proposal
+    waits for its approval, and the item can be finished meanwhile: moved to
+    another person then, it would be counted as work that person finished
+    (``workload_by_owner``), and a finished item has no date left to move.
+    The row is held to the commit, as ``close_action_item`` holds it, so an
+    approval and a person finishing the item at the same moment do not both
+    go through.
     """
     with session_scope() as session:
-        row = session.get(ExtActionItem, action_item_id)
+        row = session.get(ExtActionItem, action_item_id, with_for_update=unfinished_only)
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
         if meeting_id is not None and row.meeting_id != meeting_id:
             return _not_found("action item", action_item_id)
+        if unfinished_only and row.status == ActionStatus.DONE.value:
+            if service.closed_unfinished(session, [row.id]):
+                return _refused("already closed", "이미 닫힌 액션아이템입니다.")
+            return _refused("already done", "이미 완료된 액션아이템입니다.")
         assignee = payload.assignee_id
         if assignee is not None and not _on_team(session, team_id, assignee):
             # The same rule ``service.require_assignable`` keeps for every
@@ -1172,13 +1185,15 @@ def reassign_action_item(
     assignee must be on the team. ``meeting_id`` is optional: the item's own
     meeting, named so that the proposal is filed under that meeting and not
     the one whose processing woke the run (#959). An item that is not that
-    meeting's is refused.
+    meeting's is refused. Refused for an item already done or closed: finished
+    while the proposal waited, it stays the work of the person who finished it.
     """
     result = _change_item(
         team_id,
         action_item_id,
         ActionItemUpdate(assignee_id=assignee_id),
         meeting_id=meeting_id,
+        unfinished_only=True,
     )
     return result if isinstance(result, dict) else _acted("담당자를 바꿨습니다.", action_item_id)
 
@@ -1195,14 +1210,19 @@ def set_action_item_due_date(
     L2 -- runs only after a person approves. ``due_date`` is ``YYYY-MM-DD``.
     ``meeting_id`` is optional: the item's own meeting, named so that the
     proposal is filed under that meeting and not the one whose processing woke
-    the run (#959). An item that is not that meeting's is refused.
+    the run (#959). An item that is not that meeting's is refused. Refused for
+    an item already done or closed: it has no date left to move.
     """
     try:
         due = _as_date(due_date)
     except ValueError:
         return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
     result = _change_item(
-        team_id, action_item_id, ActionItemUpdate(due_date=due), meeting_id=meeting_id
+        team_id,
+        action_item_id,
+        ActionItemUpdate(due_date=due),
+        meeting_id=meeting_id,
+        unfinished_only=True,
     )
     return result if isinstance(result, dict) else _acted("기한을 바꿨습니다.", action_item_id)
 
