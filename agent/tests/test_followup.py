@@ -1,7 +1,8 @@
 """Follow-up: read, decide and propose (spec sections 3, 4 and 8).
 
 The mocks return what C's ``open_gaps`` and ``recurring_open_gaps`` (#546) and
-B's ``unresolved_questions`` and ``open_followup_item`` (#561) return.
+B's ``unresolved_questions`` and ``open_followup_item`` (#561), and C's
+``upcoming_followup``, return.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from autune_agent.subagents.followup.graph import (
     QUESTIONS,
     RECENT,
     RECURRING,
+    UPCOMING,
     WRITE,
 )
 from autune_contracts import INTELLIGENCE_COMPLETED
@@ -94,6 +96,8 @@ def tools_for(
     recent_ok: bool = True,
     gaps_ok: bool = True,
     with_open_item: bool = True,
+    upcoming: list[dict[str, Any]] | None = None,
+    with_upcoming: bool = True,
     due: list[dict[str, Any]] | None = None,
     due_ok: bool = True,
     with_due: bool = True,
@@ -129,6 +133,10 @@ def tools_for(
         log.append((OPEN_ITEM, {}))
         return _result(open_items or [])
 
+    def upcoming_followup(session: Any, team_id: str) -> dict[str, Any]:
+        log.append((UPCOMING, {}))
+        return _result(upcoming or [])
+
     def meeting_due_dates(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
         log.append((DUE_DATES, {"meeting_id": meeting_id}))
         rows = [{"title": "기한", "due_dates": due}] if due is not None else []
@@ -149,6 +157,10 @@ def tools_for(
     if with_open_item:
         tools[OPEN_ITEM] = Tool(
             name=OPEN_ITEM, description="Use this in tests.", fn=open_followup_item
+        )
+    if with_upcoming:
+        tools[UPCOMING] = Tool(
+            name=UPCOMING, description="Use this in tests.", fn=upcoming_followup
         )
     if with_holidays:
         tools[HOLIDAYS] = Tool(name=HOLIDAYS, description="Use this in tests.", fn=public_holidays)
@@ -190,6 +202,7 @@ def test_it_is_collected_woken_by_intelligence_completed_and_reads_only_its_list
         QUESTIONS,
         RECENT,
         OPEN_ITEM,
+        UPCOMING,
         DUE_DATES,
         HOLIDAYS,
     }
@@ -216,16 +229,28 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     assert proposal.evidence == ["gap_now"]
     assert "다시 열린 항목 1개" in outcome.result.summary
     assert "10월 8일(목)" in outcome.result.summary
-    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, HOLIDAYS, DUE_DATES, RECENT]
+    assert names(calls) == [
+        OPEN_GAPS,
+        RECURRING,
+        QUESTIONS,
+        OPEN_ITEM,
+        UPCOMING,
+        HOLIDAYS,
+        DUE_DATES,
+        RECENT,
+    ]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
-def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_a_date_and_a_basis() -> None:
+def test_the_write_is_one_c_declares_l2_and_takes_the_meeting_a_date_and_a_basis() -> None:
     """A proposal cannot demote a write, but an L1 one would run with no lead at all.
-    And an argument the write does not take fails the approval (``bind_scope``)."""
-    write = collect_actions(["extraction"])[WRITE]
+    And an argument the write does not take fails the approval (``bind_scope``).
+    ``user_id`` is the approver's, filled in at approval (``run_action``)."""
+    write = collect_actions(["gap"])[WRITE]
     assert write.level == "L2"
-    assert write.parameters == {"team_id", "meeting_id", "due_date", "basis"}
+    # C's write takes the run's session first, as the executor allows.
+    taken = write.parameters - {"session"}
+    assert taken == {"team_id", "meeting_id", "due_date", "basis", "user_id"}
 
 
 def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:
@@ -305,6 +330,28 @@ def test_an_open_follow_up_item_stops_another_proposal(session, team) -> None:
     assert "이미 열린" in outcome.result.summary
 
 
+def test_a_follow_up_meeting_ahead_stops_another_proposal(session, team) -> None:
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        upcoming=[{"title": "후속 회의", "meeting_id": "mtg_before", "day": "2026-10-08"}],
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is True
+    assert outcome.proposed == []
+    assert "이미 잡힌" in outcome.result.summary
+
+
+def test_an_unknown_follow_up_meeting_proposes_nothing(session, team) -> None:
+    tools = tools_for(recurring=[carried("gap_1")], with_upcoming=False)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+
+
 def test_an_unknown_open_item_proposes_nothing(session, team) -> None:
     # Until B ships the read (#561) the call fails; not knowing is not "none open".
     tools = tools_for(recurring=[carried("gap_1")], with_open_item=False)
@@ -349,7 +396,16 @@ def test_a_chat_run_takes_the_latest_analysed_meeting(session, team) -> None:
     assert arguments_ok(proposal.arguments)
     # The first open_gaps is refused by the scope (no meeting) before it reaches C.
     # The meeting list it read to pick M also gives the date: no second read.
-    assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, HOLIDAYS, DUE_DATES]
+    assert names(calls) == [
+        RECENT,
+        OPEN_GAPS,
+        RECURRING,
+        QUESTIONS,
+        OPEN_ITEM,
+        UPCOMING,
+        HOLIDAYS,
+        DUE_DATES,
+    ]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 

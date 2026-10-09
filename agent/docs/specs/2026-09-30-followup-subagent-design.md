@@ -19,14 +19,33 @@ pipeline's last event wakes Follow-up, it finds a template item the team has
 now left open in two meetings running, and a follow-up proposal waits for the
 lead. Once approved, it becomes an action item on the board.
 
+### Since 2026-10-09: approval puts the meeting on the calendar
+
+The write the proposal names is now C's `gap.schedule_followup_meeting`, not
+B's `extraction.add_followup_item`. Approved, it runs as the approver and puts
+the follow-up meeting on the approver's own Google Calendar on the card's day,
+at the meeting's clock time in Korea, invites the meeting's participants who
+resolved to a member still on its team, writes the open gaps into the event's
+description, and posts once on the team's Slack channel. No board item is
+made: the meeting exists, so there is nothing left to do to make it. Its
+arguments are the ones B's write took (`meeting_id`, `due_date`, `basis`), so
+the card reads them unchanged; the approver (`user_id`) is filled in at
+approval, never by the proposal. Follow-up still reads B's
+`open_followup_item` for items an earlier approval made, and now also C's
+`upcoming_followup`: a team with a follow-up meeting ahead gets no second
+proposal. A calendar not connected, or one Google refuses, makes nothing and
+the approval reads as failed. What C sends and keeps is in privacy.md
+("Google Calendar, Follow-up's approved meeting"). The sections below
+describe the board item as it was until then, where they speak of it.
+
 ### Proposed, for the owner to confirm
 
 | Question | Proposal |
 | --- | --- |
 | When it runs | On `autune.intelligence.completed`, and on a chat request. No periodic run (section 2). |
 | What "a follow-up looks needed" means | Rules, no model call (section 4). A template item left open in this meeting **and** in the team's previous analysed meeting, or two or more high-severity open gaps in this meeting together with an unresolved question. |
-| What the lead approves | One L2 action per run: B adds a "follow-up meeting" item to this meeting, marked as Follow-up's (section 5). Its arguments are ids and an enum only, as plan mode requires (#556). |
-| How the calendar event happens | Not by Follow-up. Four steps: the lead approves; someone gives the item an assignee and a due date on the board; someone confirms it; B's sync (#441, `sync_after_confirmation`) puts it on the assignee's own calendar. Nothing reaches a calendar before the item is confirmed. |
+| What the lead approves | One L2 action per run: C puts the follow-up meeting on the approver's calendar and tells the team channel (since 2026-10-09, above; until then B added a "follow-up meeting" item, section 5). Its arguments are ids, a date and an enum only, as plan mode requires (#556). |
+| How the calendar event happens | By the approval itself, since 2026-10-09: C makes the event on the approver's own calendar with the meeting's team members who took part invited. Nothing reaches a calendar before the lead approves. |
 | What it reads about people | Nothing. Open gaps and their topic labels, open questions, and open items. It does not read `silent_share` in this version (section 6). |
 
 ### Out of scope
