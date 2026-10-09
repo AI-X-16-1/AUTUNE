@@ -230,6 +230,8 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     unread = int(getattr(classifier, "unread_windows", 0) or 0)
     # "네 알겠습니다." called ambiguous is nothing to verify or to ask about.
     classified = service.drop_bare_acknowledgements(classified)
+    # "출시는 10월 20일입니다" left unlabelled is a decision: a rule, no model.
+    classified = service.stated_dates_are_decisions(classified, day=day)
     nli = get_nli()
     # Step 4 sends text out too, when it is the ``llm`` one.
     give_roster(nli, roster)
