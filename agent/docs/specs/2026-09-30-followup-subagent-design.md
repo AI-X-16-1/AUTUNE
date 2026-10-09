@@ -355,9 +355,10 @@ text, as settled on #509.
   A run asked for in chat makes a second request. The main agent's compose
   step (`main/gemini.py::compose`) sends the run's `summary` and items to
   the model, so the filled reason sentence -- with the item title in it,
-  when there is one -- and the cited gaps' titles reach the model there,
-  through `check_outbound` (`agent-layer.md` section 3.1, "Where a title can
-  reach a model"). A run started by an event composes nothing and makes the
+  when there is one -- and the cited gaps' titles and, where C wrote one,
+  their suggested questions (`gap.open_gaps` gives each as `body`) reach
+  the model there, through `check_outbound` (`agent-layer.md` section 3.1,
+  "Where a title can reach a model"). A run started by an event composes nothing and makes the
   wording call alone. The only write is still B's, and it runs after the lead
   approves. The item it stores holds B's fixed wording, not gap titles, so no
   topic label is copied into B.
