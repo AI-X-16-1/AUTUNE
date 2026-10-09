@@ -58,7 +58,7 @@ from .auth import (
 from .auth_service import upsert_user_from_google
 from .consents import Consent, consents_of, record_consents
 from .crypto import ensure_configured
-from .db import get_session
+from .db import SessionDep
 from .entities import Meeting, Team, TeamMember, User, team_order
 from .errors import (
     AutuneError,
@@ -218,7 +218,7 @@ def google_callback(
     store: Annotated[StateStore, Depends(get_state_store)],
     google: Annotated[GoogleOAuthClient, Depends(get_google_client)],
     integration: IntegrationGoogle,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
     autune_oauth_state: Annotated[str | None, Cookie()] = None,
@@ -302,7 +302,7 @@ def providers() -> dict[str, bool]:
 
 @router.post("/logout", status_code=204)
 def logout(
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     authorization: Annotated[str | None, Header()] = None,
     autune_session: Annotated[str | None, Cookie()] = None,
 ) -> Response:
@@ -326,7 +326,7 @@ def logout(
 
 
 @router.get("/me")
-def me(user: CurrentUser, session: Annotated[Session, Depends(get_session)]) -> dict[str, object]:
+def me(user: CurrentUser, session: SessionDep) -> dict[str, object]:
     """Who is signed in, and the teams they belong to -- what S28 settings
     (#496) chooses a team's integrations from, with no meeting to name it.
 
@@ -380,9 +380,7 @@ def _consents_answer(consents: list[Consent]) -> dict[str, object]:
 
 
 @router.get("/consents")
-def my_consents(
-    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> dict[str, object]:
+def my_consents(user: CurrentUser, session: SessionDep) -> dict[str, object]:
     """The documents and versions the signed-in person agreed to -- theirs
     only. The consent page compares this with what it requires; the server
     does not know which version is current (``autune_core.consents``)."""
@@ -393,7 +391,7 @@ def my_consents(
 def agree(
     body: _ConsentsIn,
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
 ) -> dict[str, object]:
     """Record that the signed-in person agreed to each document and version
     named. Agreeing again changes nothing: the first time is the one kept.
@@ -757,9 +755,7 @@ def _personal_disconnect(
 
 
 @router.get("/google/calendar")
-def google_calendar_status(
-    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> dict[str, bool]:
+def google_calendar_status(user: CurrentUser, session: SessionDep) -> dict[str, bool]:
     """Whether the signed-in person has connected their own calendar."""
     return _personal_status(CALENDAR, session, user)
 
@@ -767,7 +763,7 @@ def google_calendar_status(
 @router.post("/google/calendar/disconnect")
 def google_calendar_disconnect(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     google: IntegrationGoogle,
 ) -> dict[str, bool]:
     """Revoke the calendar grant at Google, then forget it here."""
@@ -775,9 +771,7 @@ def google_calendar_disconnect(
 
 
 @router.get("/google/gmail")
-def google_gmail_status(
-    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> dict[str, bool]:
+def google_gmail_status(user: CurrentUser, session: SessionDep) -> dict[str, bool]:
     """Whether the signed-in person has let Autune send mail as them."""
     return _personal_status(GMAIL_SEND, session, user)
 
@@ -785,7 +779,7 @@ def google_gmail_status(
 @router.post("/google/gmail/disconnect")
 def google_gmail_disconnect(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     google: IntegrationGoogle,
 ) -> dict[str, bool]:
     """Revoke the Gmail send grant at Google, then forget it here."""
@@ -843,7 +837,7 @@ def _jira_callback_path(request: Request) -> str:
 def jira_start(
     request: Request,
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     store: Annotated[StateStore, Depends(get_state_store)],
     atlassian: Annotated[AtlassianOAuthClient, Depends(get_atlassian_client)],
     meeting_id: Annotated[str | None, Query()] = None,
@@ -888,7 +882,7 @@ def jira_callback(
     state: Annotated[str, Query()],
     store: Annotated[StateStore, Depends(get_state_store)],
     atlassian: Annotated[AtlassianOAuthClient, Depends(get_atlassian_client)],
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
     autune_oauth_state: Annotated[str | None, Cookie()] = None,
@@ -969,7 +963,7 @@ def _finish_jira_connect(
 @router.get("/jira")
 def jira_status(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
@@ -1005,7 +999,7 @@ def _projects_for(team_id: str) -> list:
 @router.post("/jira/project")
 def jira_choose_project(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     project_key: Annotated[str, Query()],
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
@@ -1030,7 +1024,7 @@ def jira_choose_project(
 @router.post("/jira/disconnect")
 def jira_disconnect(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, bool]:
@@ -1058,7 +1052,7 @@ def _notion_callback_path(request: Request) -> str:
 def notion_start(
     request: Request,
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     store: Annotated[StateStore, Depends(get_state_store)],
     notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
     meeting_id: Annotated[str | None, Query()] = None,
@@ -1101,7 +1095,7 @@ def notion_callback(
     state: Annotated[str, Query()],
     store: Annotated[StateStore, Depends(get_state_store)],
     notion: Annotated[NotionOAuthClient, Depends(get_notion_oauth_client)],
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
     autune_oauth_state: Annotated[str | None, Cookie()] = None,
@@ -1175,7 +1169,7 @@ def _finish_notion_connect(
 @router.get("/notion")
 def notion_status(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
@@ -1191,7 +1185,7 @@ def notion_status(
 @router.post("/notion/disconnect")
 def notion_disconnect(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, bool]:
@@ -1219,7 +1213,7 @@ def _slack_callback_path(request: Request) -> str:
 def slack_start(
     request: Request,
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     store: Annotated[StateStore, Depends(get_state_store)],
     slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
     meeting_id: Annotated[str | None, Query()] = None,
@@ -1263,7 +1257,7 @@ def slack_callback(
     state: Annotated[str, Query()],
     store: Annotated[StateStore, Depends(get_state_store)],
     slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
     autune_oauth_state: Annotated[str | None, Cookie()] = None,
@@ -1425,7 +1419,7 @@ def _workspace_used_elsewhere(session: Session, workspace_id: str, team_id: str)
 @router.get("/slack")
 def slack_status(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
 ) -> dict[str, object]:
@@ -1445,7 +1439,7 @@ def slack_status(
 @router.post("/slack/disconnect")
 def slack_disconnect(
     user: CurrentUser,
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
     slack: Annotated[SlackOAuthClient, Depends(get_slack_oauth_client)],
     meeting_id: Annotated[str | None, Query()] = None,
     team_id: Annotated[str | None, Query()] = None,
@@ -1639,7 +1633,7 @@ through with real Slack, #478)."""
 def slack_identity_confirm(
     request: Request,
     token: Annotated[str, Query()],
-    session: Annotated[Session, Depends(get_session)],
+    session: SessionDep,
 ) -> RedirectResponse | HTMLResponse:
     """The link the bot DMed. Confirms the pending Slack account only for the
     Autune person whose connect is pending -- their session, their digest, in
@@ -1706,9 +1700,7 @@ def _slack_workspaces_of(session: Session, user_id: str) -> dict[str, str]:
 
 
 @router.get("/slack/me")
-def slack_identity_status(
-    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> dict[str, object]:
+def slack_identity_status(user: CurrentUser, session: SessionDep) -> dict[str, object]:
     """Whether the signed-in person linked their Slack account, and in which
     workspace -- theirs only, so a person can see a link that is not theirs."""
     linked = load_user_integration(session, user.id, "slack")
@@ -1730,9 +1722,7 @@ def slack_identity_status(
 
 
 @router.post("/slack/me/disconnect")
-def slack_identity_disconnect(
-    user: CurrentUser, session: Annotated[Session, Depends(get_session)]
-) -> dict[str, bool]:
+def slack_identity_disconnect(user: CurrentUser, session: SessionDep) -> dict[str, bool]:
     """Forget the person's Slack id. No token was kept, so nothing to revoke."""
     disconnect_user_integration(session, user.id, "slack")
     return {"linked": False}
