@@ -204,3 +204,21 @@ def test_detect_and_research_makes_one_document_per_new_question(
     assert len(made) == 2
     statuses = session.scalars(select(AgentLiveResearch.status)).all()
     assert statuses == ["done", "done"]
+
+
+def test_a_detector_failure_makes_nothing(session: Session, team: dict[str, str]) -> None:
+    class Off(FakeModel):
+        def detect(self, rows, known):  # type: ignore[no-untyped-def]
+            raise RuntimeError("no key")
+
+    made = detect_and_research(
+        session,
+        team_id=team["team"],
+        meeting_id=team["meeting"],
+        user_id=None,
+        rows=[Row(1.0, "말")],
+        model=Off(),
+        tools={},
+    )
+
+    assert made == []

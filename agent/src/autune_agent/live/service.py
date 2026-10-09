@@ -182,7 +182,13 @@ def detect_and_research(
 ) -> list[str]:
     if remaining(session, meeting_id, "auto") == 0:
         return []
-    found = model.detect(rows, known_questions(session, meeting_id))
+    try:
+        found = model.detect(rows, known_questions(session, meeting_id))
+    except PrivacyViolationError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a lost window, the next one comes in 45 s
+        log.warning("live_detect_failed meeting=%s error=%s", meeting_id, type(exc).__name__)
+        return []
     made: list[str] = []
     for item in found:
         doc = open_document(
