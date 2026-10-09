@@ -141,7 +141,7 @@ from .schemas import (
     SyncFailureRead,
     TeamRead,
 )
-from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
+from .slots import KST, Assignee, assignee_of, meeting_day, names_chosen_date, parse_due
 
 log = get_logger(__name__)
 
@@ -3159,6 +3159,102 @@ def drop_bare_acknowledgements(
         else utterance
         for utterance in classified
     ]
+
+
+# --- a date announced for a milestone is a decision ------------------------------
+
+
+_MILESTONE = re.compile(r"출시|마감|오픈|배포|확정|론칭|런칭|릴리스|릴리즈|데드라인|납기|기한")
+"""What a settled date is the date *of*: a launch, a deadline, a thing fixed.
+Module B's owner's words were "출시 일자나 확정 날짜, 마감 같은 마지막 날짜"
+(2026-10-09); the first five are the ones the owner was shown, the rest are other
+words for the same things and are this module's reading."""
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
+
+_ASKS = re.compile(r"\?\s*$|(?:까요|나요|인가요|건가요|던가요)[.!~…\s]*$")
+"""A sentence that asks for the date does not announce it."""
+
+_NOT_SETTLED = re.compile(r"아직|미정")
+"""Nor does one that says the date is open: "확정된 건 아직 없고 다음 주에
+다시 얘기하죠" names a milestone word and a date and settles neither."""
+
+STATED_DATE_CONFIDENCE = 0.9
+"""A rule gives a label, not a probability: the constant the cloud
+classifier's labels carry (``pipeline.llm.LLM_CONFIDENCE``), which says
+"unscored"."""
+
+
+def _settled_date_sentence(text: str, day: date | None) -> str | None:
+    """The sentence of ``text`` that names a milestone and a date for it, or
+    ``None``. Both in one sentence: "출시 준비는 끝났습니다. 금요일에 뵙겠습니다."
+    has the two words and announces nothing.
+
+    The date is read the way a promise's deadline is (``slots.parse_due``), so
+    what is said of the past is no date here either: "원래 마감은 10월
+    30일이었죠" recalls a date and "지난 배포는 화요일에 했습니다" reports one.
+    The exception is a date something was set *to*
+    (``slots.names_chosen_date``): in "계약 갱신일은 11월 15일로 확정됐습니다"
+    the past verb is the settling, and that is the line this rule is for."""
+    for sentence in _SENTENCE_BREAK.split(text.strip()):
+        if not _MILESTONE.search(sentence):
+            continue
+        if _ASKS.search(sentence) or _NOT_SETTLED.search(sentence):
+            continue
+        if parse_due(sentence, day) is not None or names_chosen_date(sentence):
+            return sentence
+    return None
+
+
+def stated_dates_are_decisions(
+    classified: Sequence[ClassifiedUtterance], *, day: date | None
+) -> list[ClassifiedUtterance]:
+    """A line the classifier left unlabelled that announces the date of a
+    milestone -- "3분기 리포트 제출 마감은 10월 30일까지입니다" -- is a
+    ``decision``.
+
+    A fixed rule after the classifier, no model (module B's owner, 2026-10-09: launch
+    dates, settled dates and deadlines are to come out as decisions). The
+    classifier's prompt defines a decision as "회의가 무엇을 하기로 정함" and
+    names no date; a date stated plainly, with no "하기로", sits between that
+    and "설명", and the cloud classifier called six of seven such lines a
+    decision and one nothing in the one run that looked (three invented
+    meetings, the same day). The prompt is not changed: every sentence added
+    to it has cost measured precision (``pipeline.llm.INSTRUCTIONS``).
+
+    **Only a line with no kind is touched.** A promise with a date in it --
+    "금요일까지 하겠습니다" -- is a commitment and stays one, so no item's due
+    date comes out a second time as a decision; a question, a concern and an
+    ambiguous agreement keep their kinds too. A line of a speaker who did not
+    consent has no text here and is never read. A long turn the classifier
+    read in pieces is left as the classifier read it.
+
+    The cost is the line that says a date and settles nothing: "출시가
+    금요일인데 걱정이네요" becomes a decision for a person to reject on the
+    review screen, where every model decision already waits.
+
+    ``part`` is set to the sentence when the line says more than it, so the
+    source quotes the announcement and not the turn.
+    """
+    out: list[ClassifiedUtterance] = []
+    for utterance in classified:
+        sentence = (
+            _settled_date_sentence(utterance.text, day)
+            if utterance.kind is None and utterance.text and not utterance.pieces
+            else None
+        )
+        if sentence is None:
+            out.append(utterance)
+            continue
+        out.append(
+            replace(
+                utterance,
+                kind=UtteranceKind.DECISION,
+                confidence=STATED_DATE_CONFIDENCE,
+                part="" if sentence == utterance.text.strip() else sentence,
+            )
+        )
+    return out
 
 
 # --- step 4: NLI verification --------------------------------------------------
