@@ -563,6 +563,30 @@ exactly what a surveillance feature looks like. Read
     itself are replaced where quoted; the rest stays. A copy already posted to
     Slack is outside Autune and is not recalled.
   - The weekly report holds counts and pattern names only and needs nothing.
+- **A deleted meeting is taken out of the other meetings' rows (#1161).**
+  Every table E keeps per meeting goes with the meeting's row by cascade.
+  `@on_meeting_deleted("intelligence")` (registered in `service.py`) runs
+  `forget.forget_meeting` before the row goes -- at an expiry, with a team, or
+  by a member's own deletion -- for what the cascade does not reach:
+  - D's copy in another meeting: a decision change that followed one of the
+    deleted meeting has its `previous_statement` emptied in
+    `intel_completion.context_payload`. `previous_meeting_id`, `change_type`,
+    `nli_label` and `confidence` stay, as in D's own rows. D does not
+    republish the other meeting, so nothing else takes the copy out.
+  - A report's text is not searched for the meeting (lsh2217 on #1161,
+    2026-10-10): a meeting's name a person wrote into a report or a
+    correction stays. The Report template's line that names another meeting
+    by its title ("🔗 이어지는 회의") is written by nothing yet, because D
+    passes no `meeting_title`; when D does, that line is dealt with here, and
+    not by the title's characters -- two meetings can share a title and a
+    title can be changed.
+  - Not touched: the topic link to the meeting in another meeting's copy of
+    D's result (its id and date, none of its words), the meeting's id in a
+    weekly report's `source_meeting_ids`, and the numbers a weekly report
+    counted it in.
+  - The meeting's own rows are left whole until the cascade takes them, and a
+    hook that fails stops the deletion. A copy already posted to Slack is
+    outside Autune and is not recalled.
 
 ## Open questions
 
