@@ -565,10 +565,44 @@ the feature needs.
   on the dev site, the team's own meetings only.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
+  - **What names a row in each copy (module B, 2026-10-09):** an action
+    item or a decision that a model wrote has a short title of twenty
+    characters or fewer, made of its sentence's own words and stored masked
+    beside it (`ext_action_items.title`, `ext_decisions.title`). A sentence
+    a person typed or edited has none, and a decision a person reworded
+    leads with their wording. Where a row has one, it stands at the top of
+    the row's copy in place of the sentence:
+    - *Jira, Notion, the calendar* -- the issue's summary, the page's title
+      and the event's title -- with the whole sentence in that copy's body:
+      the issue's description, the page's 내용 property, the event's
+      description above its fixed line. These three also say the kind of
+      row before the title, "[할 일] " or "[결정] ": fixed text the code
+      adds, no part of the stored title.
+    - *A line of a Slack message* (the due-date reminder, Monday's DM, the
+      morning DM, the work-report draft, the notice after a meeting) *and of
+      a project's minutes* -- which have no body, so the line is the title
+      and the sentence is not in that copy. No kind mark: the line stands
+      under words that say the kind.
+    A row with no short title is its sentence in every copy, as before,
+    behind the mark where the copy is marked. So "the item's description"
+    in the entries below reads, for a row with a short title, as that title
+    and -- where the copy has a body -- the description beneath it. Nothing
+    new leaves: the title holds only words of the sentence the same copy
+    already carried, and passes the same outbound check. A Notion database
+    with no 내용 property -- one made before the property existed, until it
+    is added, or one whose team named its own properties without it -- has
+    no place for the sentence, so its pages keep the sentence in the title.
+    Adding the property is one request per database, once: the database's
+    id and the property's name, nothing of a meeting; of the answer only
+    whether the property is there is kept (`ext_notion_targets`).
+    The copy on the 요약 tab's "회의록 복사" is the reader's own paste, and
+    leads each line the same way; the tab shows the sentence under it.
   - **Notion:** a page in a team's workspace belongs to that team once written.
     Deleting the item in Autune retitles its page to "삭제된 할 일"
     and then moves it to Notion's trash, where the team can restore it for
-    30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
+    30 days without the item's sentence in the title (#768) or in the
+    page's 내용 property, which the same edit empties -- for an item's page
+    and for a decision's below. Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
     the page is retitled first and trashed second, so what the trash holds
     for those 30 days is not the statement (#669). One exception: when the
@@ -585,7 +619,10 @@ the feature needs.
   - **Jira (#82):** an issue lives in the team's site. Deleting the item in
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
-    description, due date and assignee's Jira account only.
+    description, due date and assignee's Jira account only. Its summary is
+    what D's pre-meeting brief reads back from Jira (`AgendaIssue.title`),
+    so the brief shows an item as the summary names it: the kind mark and
+    the short title, where the item has one.
     One read brings content back the other way: a team's screen can list
     the open issues of the project it connected (key, title, status,
     assignee's display name, due date), read from Jira when a member asks
@@ -814,7 +851,9 @@ the feature needs.
     (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each of those events is only the item's
-    description and date, with no attendees and nothing from the transcript.
+    description and date -- for an item with a short title, that title in
+    the event's title and the description in its body -- with no attendees
+    and nothing from the transcript.
     B writes two other kinds of event on a person's own calendar, each only
     by that person's own act and each removed by the same user hook: a
     project's minutes they chose to send (#788, `ext_minutes_events`) and

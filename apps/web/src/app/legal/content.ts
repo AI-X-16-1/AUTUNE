@@ -100,6 +100,12 @@
  *   the person finished. No new message, recipient or record: a close alone
  *   sends nothing, and what is kept of it is an edit event about the item,
  *   with no person on it, like every other.
+ * - a row's short title (B, 2026-10-09; `top_line.py`): the Notion, Jira and
+ *   Google Calendar rows say a copy carries it beside the content it is made
+ *   of. No new message, recipient or record: the title holds only words of
+ *   the sentence the same copy already carried, and the kind mark before it
+ *   ("[할 일] ", "[결정] ") is fixed text. The Slack row is unchanged: a line
+ *   there names an item, by its title or by its sentence.
  * - the notice after a meeting (B, 2026-10-07; `meeting_notice.py`) is named
  *   in the same places -- what is kept of it, for how long, the out-of-office
  *   read, the copies that stay in Slack and the Slack row -- as "회의 직후
@@ -490,21 +496,21 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Notion Labs, Inc. (Notion)",
-            "확정된 할 일 및 결정 사항(내용, 담당자, 기한, 상태, 회의 제목). 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한)",
+            "확정된 할 일 및 결정 사항(내용 및 그 내용을 줄인 제목, 담당자, 기한, 상태, 회의 제목). 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한)",
             "팀의 업무 기록 작성",
             "팀이 Notion을 연결하고 이용자가 항목을 확정한 때. 프로젝트별 회의록은 팀 구성원이 보내기를 선택한 때",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Atlassian Pty Ltd (Jira)",
-            "확정된 할 일(내용, 기한, 담당자의 Jira 계정) 및 담당자의 Jira 계정을 찾기 위한 담당자의 전자우편 주소. 확정된 결정 사항의 문장. 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한)",
+            "확정된 할 일(내용 및 그 내용을 줄인 제목, 기한, 담당자의 Jira 계정) 및 담당자의 Jira 계정을 찾기 위한 담당자의 전자우편 주소. 확정된 결정 사항의 문장 및 그 문장을 줄인 제목. 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한)",
             "팀의 업무 항목 등록",
             "팀이 Jira를 연결하고 이용자가 항목을 확정한 때. 프로젝트별 회의록은 팀 구성원이 보내기를 선택한 때",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Google LLC (Google Calendar)",
-            "할 일의 내용 및 기한. 참석자와 전사 내용은 포함하지 않습니다. 이용자가 본인의 캘린더에도 추가하기를 선택한 경우에 한하여 본인이 정한 알림 중지 기간(시작일 및 종료일). 팀장이 후속 회의 제안을 승인한 경우 승인한 이용자 본인의 캘린더에 만드는 후속 회의 일정(회의 제목, 일시, 열린 논의 누락의 제목과 추천 질문. 다른 사람을 초대하지 않으며 다른 사람의 메일 주소를 보내지 않습니다)",
+            "할 일의 내용, 그 내용을 줄인 제목 및 기한. 참석자와 전사 내용은 포함하지 않습니다. 이용자가 본인의 캘린더에도 추가하기를 선택한 경우에 한하여 본인이 정한 알림 중지 기간(시작일 및 종료일). 팀장이 후속 회의 제안을 승인한 경우 승인한 이용자 본인의 캘린더에 만드는 후속 회의 일정(회의 제목, 일시, 열린 논의 누락의 제목과 추천 질문. 다른 사람을 초대하지 않으며 다른 사람의 메일 주소를 보내지 않습니다)",
             "담당자 본인의 일정 등록. 이용자가 선택한 경우 본인의 휴가 일정(비공개 종일 일정) 등록. 팀장이 승인한 경우 승인한 이용자 본인의 후속 회의 일정 등록",
             "담당자가 본인의 캘린더를 연결한 때부터. 알림 중지 기간은 이용자가 본인의 캘린더에도 추가하기를 선택하고 저장한 때에 한하며, 선택하지 않은 기간은 Google에 전송하지 않습니다.",
             "해당 서비스의 약관 및 이용자의 설정에 따름. 캘린더에 추가한 휴가 일정은 이용자가 선택을 해제하거나 기간을 해제하면 삭제하며, 종료일이 지난 일정은 이용자 본인의 캘린더에 남습니다.",

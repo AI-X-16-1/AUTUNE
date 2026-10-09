@@ -1239,6 +1239,22 @@ calendar, the minutes, the agent's tools and module D are given.
   no real meeting has been through it. Three of the 27 were accepted and
   weak: a decision about who presents became "발표 진행", since a title
   names nobody.
+- **The title leads the copies that leave** (the user, 2026-10-09;
+  `top_line.py`). Jira's summary, the Notion page's title and the calendar
+  event's title are the kind of row ("[할 일] " or "[결정] ", added by the
+  code and outside the twenty characters) and the title, with the sentence
+  in that copy's body: the issue's description, the page's 내용 property,
+  the event's description above its fixed line. A line of a Slack message
+  (due-date reminder, Monday's and the morning DM, the work-report draft,
+  the notice after a meeting) and of a project's minutes is the title alone,
+  unmarked -- `top_line.MARKED` is the one switch a copy. A row with no
+  title goes out as its sentence, and so does a decision a person reworded.
+  A Notion database with no 내용 property keeps the sentence in the page's
+  title (`notion_setup.property_names` says which map is in force). The
+  요약 tab shows the title with the sentence under it; "회의록 복사" has the
+  title. A copy already out changes at the row's next sync; nothing goes
+  back over the old ones. The confirmation DM and the agent's tools carry
+  the sentence as before.
 
 ## Privacy notes
 
