@@ -64,7 +64,10 @@ export function useCarriedAgenda(
   }, [earlier, sources]);
 
   if (sources === undefined || earlier === null) return [];
+  // The render in which the brief changes comes before the effect above empties
+  // what was held, so what was held is read only under the meeting it is about.
+  const answers = read.earlier === earlier ? read.answers : {};
   return sources
-    .map((source, index) => ({ label: source.label, lines: read.answers[index] ?? [] }))
+    .map((source, index) => ({ label: source.label, lines: answers[index] ?? [] }))
     .filter((group) => group.lines.length > 0);
 }
