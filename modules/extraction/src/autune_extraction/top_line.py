@@ -6,9 +6,15 @@ it has one ("Slack·회의록까지 전부") and says which kind it is ("밖으�
 something to do.
 
 **The title** is ``ExtActionItem.title`` / ``ExtDecision.title``: twenty
-characters or fewer, written by ``pipeline.title`` from the stored sentence
-and made of that sentence's own words, so it carries nothing the sentence
-does not. Most rows have none -- a sentence a person typed or edited, a
+characters or fewer, a model's answer about the stored sentence that
+``pipeline.title.accept`` let through. It is close to the sentence and is
+not a cut of it: one of its words may be the model's own ("미루기로" said,
+"연기" written), and each other word has only to begin as some part of the
+sentence does. What ``accept`` does refuse is a number or a date the
+sentence does not say, a name taken out of the request, a bracket. So a
+copy that leads with a title can carry a word its sentence does not have;
+no masker reads the answer, and the outbound check below does.
+Most rows have none -- a sentence a person typed or edited, a
 decision a person reworded, one whose title was refused, every row from
 before -- and such a row leads with its sentence, as every copy did until
 now. Where the copy has a body (a Jira description, a Notion property, a
