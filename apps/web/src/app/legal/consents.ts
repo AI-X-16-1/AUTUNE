@@ -23,6 +23,11 @@
  * a person who agreed to it agreed to a text without those sentences. The
  * version moves so that they are asked again, whichever was deployed first.
  *
+ * `2026-10-12.3`, the privacy policy alone: the lines about S20's messages on
+ * a team's Slack channel and the gaps "다음 회의 잡기" writes into a person's
+ * own calendar event (#824) came in after `2026-10-12.2`. The terms did not
+ * change, so theirs stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -42,7 +47,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.2" },
-  { document: "privacy", version: "2026-10-12.2" },
+  { document: "privacy", version: "2026-10-12.3" },
 ];
 
 /** The required consents this person has not given, in the page's order. */
