@@ -21,6 +21,11 @@ FOLLOWUP_GAPS_CLOSED = "근거가 된 갭이 모두 닫혔습니다"
 REPORT_ON_DASHBOARD = "리포트 초안 — 회의 대시보드에서 보기"
 REPORT_ALREADY_POSTED = "이미 게시된 리포트입니다"
 
+# Follow-up's proposal: C's calendar event since #1107, B's board item before
+# it. Both take the same arguments, and rows queued under the old name stay
+# until they are approved or retired (#1105).
+FOLLOWUP_TOOLS = frozenset({"gap.schedule_followup_meeting", "extraction.add_followup_item"})
+
 
 def preview(
     session: Session, row: AgentPendingAction, *, tools: Mapping[str, Tool]
@@ -55,7 +60,7 @@ def preview(
             if is_member:
                 to = who.display_name
         return {"title": "액션아이템 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
-    if row.tool == "extraction.add_followup_item":
+    if row.tool in FOLLOWUP_TOOLS:
         gaps = _followup_gaps(session, row, tools)
         when = _suggested_date(row.arguments.get("due_date"))
         body = f"추천 날짜: {when}\n{gaps}" if when and gaps != GONE else gaps
