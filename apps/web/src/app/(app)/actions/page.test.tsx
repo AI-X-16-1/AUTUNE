@@ -34,7 +34,7 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("the 액션 아이템 route and the sidebar's team", () => {
+describe("the 할 일 route and the sidebar's team", () => {
   it("opens on every team, whichever team was chosen on another screen", () => {
     window.localStorage.setItem("autune.team", "team_a");
 

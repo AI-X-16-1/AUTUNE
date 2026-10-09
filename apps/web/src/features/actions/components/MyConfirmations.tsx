@@ -14,7 +14,7 @@ const ANSWERS: { answer: ConfirmationAnswer; label: string }[] = [
 ];
 
 const SAID: Record<ConfirmationAnswer, string> = {
-  commitment: "약속이라고 답하셨습니다. 요약이 액션 아이템 초안이 됩니다.",
+  commitment: "약속이라고 답하셨습니다. 요약이 할 일 초안이 됩니다.",
   decision: "결정이라고 답하셨습니다.",
   not_commitment: "약속이 아니라고 답하셨습니다.",
 };

@@ -92,7 +92,7 @@ def test_a_reassignment_shows_the_item_and_the_new_assignee(
         tools={"extraction.action_item_status": status},
     )
 
-    assert shown["title"] == "액션아이템 재배정"
+    assert shown["title"] == "할 일 재배정"
     assert "API 문서" in shown["body"] and new.display_name in shown["body"]
 
 
@@ -255,7 +255,7 @@ def test_an_assignee_outside_the_team_is_not_named(session: Session, team: dict[
         tools={"extraction.action_item_status": status},
     )
 
-    assert shown["title"] == "액션아이템 재배정"
+    assert shown["title"] == "할 일 재배정"
     assert "알 수 없는 사람" in shown["body"]
 
 

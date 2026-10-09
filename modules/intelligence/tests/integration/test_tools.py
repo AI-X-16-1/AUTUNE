@@ -136,7 +136,7 @@ def test_meeting_quality_ranks_the_weakest_component_first(
     assert "C" in result["summary"]
     titles = [i["title"] for i in result["items"]]
     # Measured components weakest first; the unmeasured one last, never scored as zero.
-    assert titles == ["액션아이템 확정률", "고위험 갭", "결정 밀도", "참여 균형"]
+    assert titles == ["할 일 확정률", "고위험 갭", "결정 밀도", "참여 균형"]
     assert result["items"][-1]["body"] == "측정 안 됨"
     assert result["items"][1]["body"] == "1건"
     assert result["confidence"] == 1.0

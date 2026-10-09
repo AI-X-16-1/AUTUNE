@@ -123,7 +123,7 @@ def test_two_closes_at_once_leave_one_close(
     assert results["first"]["ok"] is True
     assert (results["second"]["ok"], results["second"]["summary"]) == (
         False,
-        "이미 닫힌 액션아이템입니다.",
+        "이미 닫힌 할 일입니다.",
     )
 
 

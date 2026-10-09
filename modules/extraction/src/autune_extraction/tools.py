@@ -226,7 +226,7 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     ranked = _most_urgent_first(confirmed, today)
     reassign = sum(i.needs_reassignment for i in confirmed)
-    summary = f"확정된 액션아이템 {len(confirmed)}건, 확인 필요 {len(waiting)}건."
+    summary = f"확정된 할 일 {len(confirmed)}건, 확인 필요 {len(waiting)}건."
     if reassign:
         summary += f" 담당자가 팀에 없어 재배정이 필요한 항목 {reassign}건."
     return _result(
@@ -314,7 +314,7 @@ def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
     # Counted and nothing more: which drafts, and their dates, stay in B.
     dated_open = len(dated) + sum(i.due_date is not None for i in waiting)
     summary = (
-        f"확정된 열린 액션아이템 {len(opened)}건 중 기한 있음 {len(dated)}건, "
+        f"확정된 열린 할 일 {len(opened)}건 중 기한 있음 {len(dated)}건, "
         f"기한 없음 {len(opened) - len(dated)}건. 확인 필요 {len(waiting)}건."
     )
     items = (
@@ -381,7 +381,7 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     reassign = sum(i.needs_reassignment for i in due)
     return _result(
         summary=(
-            f"진행 중인 액션아이템 {len(open_items)}건 중 기한 지남 {overdue}건, "
+            f"진행 중인 할 일 {len(open_items)}건 중 기한 지남 {overdue}건, "
             f"{window}일 안에 기한 {soon}건, 재배정 필요 {reassign}건."
         ),
         items=[_item_finding(i, today) for i in ranked],
@@ -489,7 +489,7 @@ def stalled_action_items(
     ]
     items += [
         {
-            "title": "액션아이템 확인 필요",
+            "title": "할 일 확인 필요",
             "body": f"{days}일째 확인 필요",
             "score": 0.5,
             "id": item_id,
@@ -502,7 +502,7 @@ def stalled_action_items(
     carried = sum("carried" in ways for _, ways in confirmed)
     return _result(
         summary=(
-            f"멈춰 있는 액션아이템: 기한 지남 {overdue}건, "
+            f"멈춰 있는 할 일: 기한 지남 {overdue}건, "
             f"회의 {service.STALE_AFTER}번 이상 이월 {carried}건, "
             f"{window}일 넘게 확인 필요 {len(waiting)}건."
         ),
@@ -615,7 +615,7 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
     ordered = head + [p for p in (*overloaded[3:], *free[2:], *rest) if p not in head]
     return _result(
         summary=(
-            f"최근 {days}일 회의의 확정 액션아이템 기준, 팀원 {len(people)}명 중 "
+            f"최근 {days}일 회의의 확정 할 일 기준, 팀원 {len(people)}명 중 "
             f"몰림 {len(overloaded)}명, 진행 중 0건 {len(free)}명, "
             f"담당 없는 진행 중 항목 {unowned.open}건."
         ),
@@ -724,7 +724,7 @@ def open_item_owners(
         rows.append(_owner_finding(None, "담당 없음", held[None], today))
     return _result(
         summary=(
-            f"진행 중인 확정 액션아이템의 담당자 {len(people)}명, "
+            f"진행 중인 확정 할 일의 담당자 {len(people)}명, "
             f"담당 없는 항목 {len(held.get(None, []))}건."
         ),
         items=rows,
@@ -814,8 +814,7 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
         {"title": "결정 확인 필요", "body": "", "score": 1.0, "id": d.id} for d in pending_decisions
     ]
     items += [
-        {"title": "액션아이템 확인 필요", "body": "", "score": 0.8, "id": i.id}
-        for i in waiting_items
+        {"title": "할 일 확인 필요", "body": "", "score": 0.8, "id": i.id} for i in waiting_items
     ]
     items += [
         {"title": "약한 동의, 답 없음", "body": "", "score": 0.5, "id": a.utterance_id}
@@ -823,7 +822,7 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     return _result(
         summary=(
-            f"결정 확인 필요 {len(pending_decisions)}건, 액션아이템 확인 필요 "
+            f"결정 확인 필요 {len(pending_decisions)}건, 할 일 확인 필요 "
             f"{len(waiting_items)}건, 답 없는 약한 동의 {len(unanswered)}건."
         ),
         items=items,
@@ -901,7 +900,7 @@ def person_action_items(session: Session, team_id: str, user_id: str) -> dict[st
     ranked = _most_urgent_first(mine, today)
     overdue = sum(_overdue(i, today) for i in mine)
     return _result(
-        summary=f"{member}님의 진행 중 액션아이템 {len(mine)}건, 기한 지남 {overdue}건.",
+        summary=f"{member}님의 진행 중 할 일 {len(mine)}건, 기한 지남 {overdue}건.",
         items=[_item_finding(i, today) for i in ranked],
         evidence=[u for i in ranked[:MAX_ITEMS] for u in i.source_utterance_ids],
     )
@@ -921,7 +920,7 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
         return _not_found("action item", action_item_id)
     if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
         return _result(
-            summary="확인이 필요한 액션아이템입니다. 확정 전이라 내용은 보여주지 않습니다.",
+            summary="확인이 필요한 할 일입니다. 확정 전이라 내용은 보여주지 않습니다.",
             items=[{"title": "확인 필요", "body": "", "score": 0.8, "id": row.id}],
             evidence=[],
         )
@@ -933,7 +932,7 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
     finding = _item_finding(read, _today())
     synced = [r.system for r in read.sync_refs if r.url]
     finding["body"] += f" · {'·'.join(synced)} 연동됨" if synced else " · 외부 연동 없음"
-    return _result(summary="액션아이템 1건.", items=[finding], evidence=read.source_utterance_ids)
+    return _result(summary="할 일 1건.", items=[finding], evidence=read.source_utterance_ids)
 
 
 FOLLOWUP_DESCRIPTION = "후속 회의 잡기"
@@ -1174,8 +1173,8 @@ def _change_item(
             return _not_found("action item", action_item_id)
         if unfinished_only and row.status == ActionStatus.DONE.value:
             if service.closed_unfinished(session, [row.id]):
-                return _refused("already closed", "이미 닫힌 액션아이템입니다.")
-            return _refused("already done", "이미 완료된 액션아이템입니다.")
+                return _refused("already closed", "이미 닫힌 할 일입니다.")
+            return _refused("already done", "이미 완료된 할 일입니다.")
         assignee = payload.assignee_id
         if assignee is not None and not _on_team(session, team_id, assignee):
             # The same rule ``service.require_assignable`` keeps for every
@@ -1203,11 +1202,9 @@ def confirm_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
         if row.status != ActionStatus.NEEDS_CONFIRMATION.value:
-            return _refused("already confirmed", "이미 확정된 액션아이템입니다.")
+            return _refused("already confirmed", "이미 확정된 할 일입니다.")
     result = _change_item(team_id, action_item_id, ActionItemUpdate(status=ActionStatus.TODO))
-    return (
-        result if isinstance(result, dict) else _acted("액션아이템을 확정했습니다.", action_item_id)
-    )
+    return result if isinstance(result, dict) else _acted("할 일을 확정했습니다.", action_item_id)
 
 
 def reassign_action_item(
@@ -1292,14 +1289,14 @@ def close_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
         if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
-            return _refused("not confirmed", "확정되지 않은 액션아이템은 닫을 수 없습니다.")
+            return _refused("not confirmed", "확정되지 않은 할 일은 닫을 수 없습니다.")
         if row.status == ActionStatus.DONE.value and service.closed_unfinished(session, [row.id]):
-            return _refused("already closed", "이미 닫힌 액션아이템입니다.")
+            return _refused("already closed", "이미 닫힌 할 일입니다.")
         if not service.close_without_finishing(session, row):
-            return _refused("already done", "이미 완료된 액션아이템입니다.")
+            return _refused("already done", "이미 완료된 할 일입니다.")
     # Its copies outside follow as they follow any change of status.
     tasks.sync_after_confirmation(action_item_id)
-    return _acted("액션아이템을 끝내지 않고 닫았습니다.", action_item_id)
+    return _acted("할 일을 끝내지 않고 닫았습니다.", action_item_id)
 
 
 def add_action_item(
@@ -1352,7 +1349,7 @@ def add_action_item(
             due_date=due,
         )
         new_id = row.id
-    return _acted("액션아이템 초안을 만들었습니다 (확인 필요).", new_id)
+    return _acted("할 일 초안을 만들었습니다 (확인 필요).", new_id)
 
 
 def add_followup_item(

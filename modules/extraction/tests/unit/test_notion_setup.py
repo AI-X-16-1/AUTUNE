@@ -59,7 +59,7 @@ def test_a_new_connection_gets_an_autune_page_with_three_databases_in_it() -> No
     assert home["parent"] == {"page_id": PAGE}
     assert home["properties"]["title"]["title"][0]["text"]["content"] == "Autune"
     assert [b["title"][0]["text"]["content"] for b in databases] == [
-        "액션 아이템",
+        "할 일",
         "결정",
         "회의록",
     ]

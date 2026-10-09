@@ -48,13 +48,18 @@ type Team = { id: string; name: string };
 const A: Team = { id: "team_a", name: "A팀" };
 const B: Team = { id: "team_b", name: "B팀" };
 
-function mount(team: Team, pathname = "/dashboard") {
+function mount(
+  team: Team,
+  pathname = "/dashboard",
+  onChooseTeam?: (teamId: string) => void,
+) {
   const view = render(
     <Assistant
       teamId={team.id}
       teamName={team.name}
       userName="민경"
       pathname={pathname}
+      onChooseTeam={onChooseTeam}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: /Autune 비서 열기/ }));
@@ -66,6 +71,7 @@ function mount(team: Team, pathname = "/dashboard") {
           teamName={next.name}
           userName="민경"
           pathname={pathname}
+          onChooseTeam={onChooseTeam}
         />,
       ),
   };
@@ -166,6 +172,32 @@ describe("Assistant rows that open something", () => {
     expect(href("결제 회의 리포트")).toBe("/dashboard#report-mtg_r1");
     expect(href("결제 회의")).toBe("/meetings/mtg_m1");
     expect(screen.queryByRole("link", { name: "회의 없는 줄" })).toBeNull();
+  });
+
+  it("a report row chooses its answer's team, so the dashboard shows that team", async () => {
+    vi.spyOn(api, "sendChat").mockResolvedValue(reply({ items: ROWS }));
+    const choose = vi.fn();
+
+    const { switchTo } = mount(A, "/dashboard", choose);
+    await ask("리포트 보여줘");
+    switchTo(B); // the sidebar moved on; the answer is still A's
+    fireEvent.click(screen.getByRole("link", { name: "결제 회의" }));
+    expect(choose).not.toHaveBeenCalled(); // a meeting row opens the meeting, any team
+    fireEvent.click(screen.getByRole("link", { name: "결제 회의 리포트" }));
+
+    expect(choose).toHaveBeenCalledWith("team_a");
+  });
+
+  it("a report row from a meeting page chooses no team", async () => {
+    vi.spyOn(api, "getMeetingLabel").mockResolvedValue({ title: "주간 회의" });
+    vi.spyOn(api, "sendChat").mockResolvedValue(reply({ items: ROWS }));
+    const choose = vi.fn();
+
+    mount(A, "/meetings/mtg_abc123", choose);
+    await ask("이 회의 리포트");
+    fireEvent.click(screen.getByRole("link", { name: "결제 회의 리포트" }));
+
+    expect(choose).not.toHaveBeenCalled();
   });
 
   it("on the dashboard a report row only moves the hash", async () => {

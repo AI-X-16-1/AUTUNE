@@ -61,7 +61,7 @@ describe("minutesText", () => {
         "1. 배포는 다음 주 화요일에 한다",
         "2. 검색 개편은 2주 미룬다 (자동 추출)",
         "",
-        "액션",
+        "할 일",
         // No date line on this page, so the due date says its own year.
         // The state after a dot like every other part, not in brackets: a due
         // date already ends in them.
@@ -191,7 +191,7 @@ describe("minutesText", () => {
     const empty = { ...SUMMARY, decisions: [], action_items: [], note: null };
 
     expect(minutesText(empty)).toBe(
-      ["회의록", "", "결정 사항", "없음", "", "액션", "없음"].join("\n"),
+      ["회의록", "", "결정 사항", "없음", "", "할 일", "없음"].join("\n"),
     );
     expect(titleOf(empty)).toBeNull();
   });

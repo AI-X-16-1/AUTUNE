@@ -77,7 +77,7 @@ TAG = ("autune", "1")
 ITEM_KEY = "autune_item"
 """The private property naming which item an event is for."""
 
-EVENT_DESCRIPTION = "Autune에서 확정된 액션 아이템의 마감일입니다."
+EVENT_DESCRIPTION = "Autune에서 확정된 할 일의 마감일입니다."
 
 
 class CalendarEvents(Protocol):

@@ -51,7 +51,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         if not stalled.ok:
             failed = ToolResult.failure(
                 stalled.reason or "stalled items unreadable",
-                "멈춰 있는 액션아이템을 읽지 못했습니다.",
+                "멈춰 있는 할 일을 읽지 못했습니다.",
             )
             return {"outcome": SubagentResult(result=failed)}
         return {"stalled": stalled}

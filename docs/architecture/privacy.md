@@ -541,7 +541,7 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    Deleting the item in Autune retitles its page to "삭제된 할 일"
     and then moves it to Notion's trash, where the team can restore it for
     30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
@@ -594,7 +594,7 @@ the feature needs.
     other analyses three times in a row (#887), in which case the message
     says that and not that nothing was extracted. Either way it carries
     the meeting's title, the number of attempts and a link to the meeting's
-    액션 tab; no utterance, no name that B adds, and not the error -- only
+    할 일 tab; no utterance, no name that B adds, and not the error -- only
     the error's class is kept, in B's own table and log. The title is a
     value a person typed and is sent as it is stored, so it can hold a
     name: "no name" is true of what B puts in the message and not of the
@@ -747,7 +747,7 @@ the feature needs.
     meeting on, on the meeting's team now. It carries the meeting's title --
     a value a person typed, sent as stored, as the reminders carry it -- **how
     many** drafts wait for that person's confirmation, and a link to the
-    meeting's 액션 tab. It carries nothing of a draft: not its text, not its
+    meeting's 할 일 tab. It carries nothing of a draft: not its text, not its
     date. A draft is a model's guess until a person confirms it, and
     unconfirmed content does not reach an outbound surface (#246; the agent
     layer's rule 3). An item of theirs that a person has already confirmed is
