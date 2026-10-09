@@ -27,8 +27,8 @@ are marked sent on (``carried_at``), as "다음 회의 잡기" marks them.
 
 **Once per meeting.** ``GapFollowupEvent`` is written before Google is asked,
 under a unique ``meeting_id``, so a second approval makes no second event and
-no second notice. A request Google refuses takes the row back, so the
-proposal can be approved again once the calendar is fixed.
+no second notice. A request Google refuses takes the row back, so a later
+proposal for the meeting can still make it once the calendar is fixed.
 
 **The team channel is told once** the calendar took the event: when it
 starts, how many were invited, and the gaps on its agenda

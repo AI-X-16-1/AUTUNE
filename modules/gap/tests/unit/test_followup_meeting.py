@@ -87,7 +87,7 @@ def schedule(session: Session, day: date = DAY, **kwargs: Any) -> dict[str, Any]
         session,
         team_id=kwargs.get("team_id", TEAM),
         meeting_id=kwargs.get("meeting_id", MEETING),
-        day=day.isoformat(),
+        due_date=day.isoformat(),
         user_id=kwargs.get("user_id", MEMBER),
     )
 
@@ -273,3 +273,17 @@ def test_the_event_lasts_as_long_as_the_meeting_in_half_hours(
 
     assert starts == datetime.combine(DAY, time(10, 0), KST)
     assert ends - starts == timedelta(minutes=length)
+
+
+def test_the_cards_basis_is_accepted_and_changes_nothing(
+    session: Session, meeting: Meeting, calendars: dict[str, Any]
+) -> None:
+    """Follow-up's proposal carries ``basis`` for the card, as B's write took it."""
+    google = calendars[MEMBER] = FakeGoogle()
+
+    result = tools.schedule_followup_meeting(
+        session, TEAM, MEETING, DAY.isoformat(), MEMBER, basis="cadence"
+    )
+
+    assert result["ok"] is True
+    assert "cadence" not in str(google.made)

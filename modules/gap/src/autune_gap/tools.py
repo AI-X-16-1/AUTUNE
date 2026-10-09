@@ -430,28 +430,36 @@ SLACK_SAID = {
 
 
 def schedule_followup_meeting(
-    session: Session, team_id: str, meeting_id: str, day: str, user_id: str
+    session: Session,
+    team_id: str,
+    meeting_id: str,
+    due_date: str,
+    user_id: str,
+    basis: str | None = None,
 ) -> dict[str, Any]:
     """Put the follow-up meeting a Follow-up proposal asked for on the
     approver's own Google Calendar, invite the meeting's team members who took
     part, and tell the team's Slack channel (``followup_meeting``).
 
-    ``day`` (``YYYY-MM-DD``) is the day on the approved card. The event starts
-    then at the meeting's clock time in Korea. Its description lists the
-    meeting's open gaps, and the channel's notice says when and what.
+    ``due_date`` (``YYYY-MM-DD``) is the day on the approved card -- the name
+    module B's ``add_followup_item`` gave it, which the card reads. The event
+    starts then at the meeting's clock time in Korea. Its description lists
+    the meeting's open gaps, and the channel's notice says when and what.
+    ``basis`` is what Follow-up took the day from, for the card; it is
+    accepted and nothing else, as B's write accepts it.
 
     L2 -- runs only after a person (the team lead, for Follow-up) approves,
     and ``user_id`` is that approver: the agent layer fills it, never a model.
     One event per meeting: a second approval makes nothing and says so. A day
-    already past, a calendar not connected or one Google refuses makes nothing
-    either, and the proposal can be approved again once that is fixed.
+    already past, a calendar not connected or one Google refuses makes
+    nothing either, so a later proposal for the meeting can still make it.
     """
     try:
-        wanted = date.fromisoformat(day)
+        wanted = date.fromisoformat(due_date)
     except ValueError:
         return _result(
             ok=False,
-            reason=f"not a date: {day!r}",
+            reason=f"not a date: {due_date!r}",
             summary="날짜 형식이 아닙니다 (YYYY-MM-DD).",
             items=[],
             evidence=[],
