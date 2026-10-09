@@ -495,6 +495,17 @@ back: the integration that could reach them is deleted with the team.
   - **It is not the consent to a recording.** That is per meeting, about the
     people in the room, and module A keeps it (`aud_consent_attestations`,
     `participants.consented`). The two never stand in for each other.
+- **Live research is covered by the consent attested when the recording
+  starts** (#1162). During a live meeting nobody is identified yet, so no
+  per-person consent can be read; the one statement there is, the consent box
+  ticked at the gate (`aud_consent_attestations`), is what live research rests
+  on. A meeting recorded with the box unticked is stored, not analysed, and
+  live research does not run for it either: the live screen sends no row and
+  offers no 조사, and the agent's live routes refuse the meeting with 409
+  `live_research_needs_consent` before reading a row. The attestation covers
+  everyone in the recording at once, so a speaker who is later excluded from
+  analysis may already have been looked up live; their speech deletion still
+  takes the live documents it fed (`agent_live` speech hook).
 
 ## 6. Third-party services
 
@@ -538,6 +549,20 @@ the feature needs.
   through such a deployment.
   This is module B's alone: the agent's, C's and D's cloud switches are their
   owners' and have no second switch today.
+- **Live research (agent layer, #1162) sends while a meeting runs**, and only
+  for a meeting recorded with consent attested (section 5). To Gemini: windows
+  of at most twelve masked live rows with no speaker label, the questions
+  already looked up, the question, quotes of earlier meetings from consenting
+  speakers with the meeting's date and title, and the web answer. To Google
+  Search grounding: the question only. For a line a person pressed 조사 on,
+  that question is the model's rewrite of the line, with no person and no
+  personal detail; the line as said is never the search query. Every call
+  replaces the meeting's roster names with `[사람N]` as B does (the team and
+  the meeting's participants; a name not on the roster leaves as spoken), and
+  the rows are checked one by one and joined before they are queued, so a
+  number read in two rows is refused. Queued work expires after 120 seconds.
+  Its only switch is the agent's key, and #392's rule holds for it as for B:
+  on the dev site, the team's own meetings only.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.

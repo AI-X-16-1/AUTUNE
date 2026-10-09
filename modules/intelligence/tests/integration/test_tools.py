@@ -66,9 +66,33 @@ def test_the_tool_list_is_exactly_these_reads() -> None:
         "weekly_report_schedule",
         "explain_metric",
         "report_channel",  # the Report subagent's check before it proposes a post
+        "asker_has_other_teams",  # whether a schedule change points to the other teams
     ]
     for fn in tools.TOOLS:
         assert fn.__doc__ and fn.__doc__.strip().startswith("Use this")
+
+
+# --- asker_has_other_teams ------------------------------------------------------
+
+
+def test_asker_has_other_teams_says_whether_never_which(db_session: Session, team: str) -> None:
+    from autune_core import Team, TeamMember, User
+
+    person = User(email="p@example.com", display_name="p")
+    other = Team(name="Other Team")
+    db_session.add_all([person, other])
+    db_session.flush()
+    db_session.add(TeamMember(team_id=team, user_id=person.id))
+    db_session.flush()
+
+    alone = tools.asker_has_other_teams(db_session, team, person.id)
+    db_session.add(TeamMember(team_id=other.id, user_id=person.id))
+    db_session.flush()
+    two = tools.asker_has_other_teams(db_session, team, person.id)
+
+    assert alone["items"][0]["other_teams"] is False
+    assert two["items"][0]["other_teams"] is True
+    assert other.id not in str(two) and "Other Team" not in str(two)
 
 
 # --- report_channel -------------------------------------------------------------

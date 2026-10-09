@@ -59,7 +59,10 @@ AWAITING_TOOL = "intelligence.meeting_report_awaiting_approval"
 CHANNEL_TOOL = "intelligence.report_channel"
 """E's read of whether the team has a Slack channel to post to. Without one a
 post is refused at approval, so it is not proposed (#1000 review)."""
-TOOLS = (*READS, AWAITING_TOOL, CHANNEL_TOOL)
+OTHER_TEAMS_TOOL = "intelligence.asker_has_other_teams"
+"""E's read of whether the asker is in another team too, for the chat's hint
+after a schedule change (#1156). Listed here so the subagent may call it."""
+TOOLS = (*READS, AWAITING_TOOL, CHANNEL_TOOL, OTHER_TEAMS_TOOL)
 OPTIONAL = (GAPS_TOOL, LINKS_TOOL)
 """Context around B's confirmed items. A failure here drops a section, never the report."""
 

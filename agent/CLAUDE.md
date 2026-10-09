@@ -9,6 +9,7 @@ Placement: ADR 0010 (`Accepted`; #260 closed 2026-09-29).
 | --- | --- |
 | `src/autune_agent/main/`, `results.py`, `testing.py`, `models.py`, `router.py`, `config.py`, `migrations/` | 김민경 |
 | `src/autune_agent/subagents/research/` | 김민경 |
+| `src/autune_agent/live/` | 김민경 |
 | `src/autune_agent/subagents/briefing/` | 문민재 |
 | `src/autune_agent/subagents/followup/` | 박재경 |
 | `src/autune_agent/subagents/workload/` | 강민구 |
