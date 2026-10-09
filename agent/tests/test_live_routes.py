@@ -86,7 +86,9 @@ def test_an_unmasked_row_is_refused_and_nothing_is_queued(
         f"/api/agent/live/{team['meeting']}/detect", json=rows
     )
 
-    assert reply.status_code >= 400
+    assert reply.status_code == 500
+    assert reply.json()["error"]["code"] == "privacy_violation"
+    assert "010-1234-5678" not in reply.text
     assert queued == []
 
 

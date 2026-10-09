@@ -156,8 +156,9 @@ All routes need a signed-in current member of the meeting's team.
 | `POST /research` | `{row: {start, text}, context: [...]}` | `202 {id}`, `409` (question already researched, or the meeting has 20 manual documents) |
 | `GET /documents` | — | `[{id, origin, status, question, body, web_sources, meeting_sources, created_at}]`, newest first |
 
-`assert_masked` runs on every incoming text before it is queued; a hit answers
-`422 privacy` and nothing is queued. The Celery payload carries the row id of
+`assert_masked` runs on every incoming text before it is queued; a hit raises
+`PrivacyViolationError`, which the app answers as every privacy hit is —
+`500` with code `privacy_violation`, the text left out — and nothing is queued. The Celery payload carries the row id of
 the `running` document and the window text — masked meeting text, which the
 pipeline's own events already carry for B and C. No audio, no file path.
 
