@@ -144,12 +144,16 @@ item quotes readable around it.
 
 ### Uploaded documents are masked before storage, and the original is not kept (#817)
 
-**Status, 2026-10-09: the rule is written first.** No upload route, table
-or task named below is on `main` yet. Each lands in its own change -- storage,
-then search, then the screen, then the approvers' alert -- built to this text,
-off by default, and none of them merges before this rule is approved. Until
-then a team's materials are Drive links only (#1016), of which nothing is
-read. The change that adds the storage removes this paragraph.
+**Status, 2026-10-09: the rule is written first.** On `main` today
+`ext_materials` exists for Drive links only (#1016: team, title, the file's
+id and kind, the time), and nothing of a file is read. What this subsection
+adds is not there yet: the columns that mark an uploaded row and give it a
+window, `ext_material_chunks`, `ext_material_alarms`, the upload route and
+the expiry task. They arrive in the changes listed on #817 -- the document
+masker in `packages/integrations`, module B's storage, the approvers' alert
+in the agent layer, search -- each built to this text and off by default,
+and none of them merges before this rule is approved. The storage change
+removes this paragraph.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.
@@ -194,8 +198,10 @@ computed from masked text only, by KURE-v1 on our own inference server (as
 module D's embeddings are), and stored in PostgreSQL with pgvector (ADR
 0004) -- no text goes to an outside embedding service.
 
-**Masked is not anonymous.** The masker is the detector transcripts use
-(`autune_integrations.privacy.find_pii`, recall-first; #817 10(a)). It hides
+**Masked is not anonymous.** What decides which characters are hidden is
+the detector transcripts use (`autune_integrations.privacy.find_pii`,
+recall-first; #817 10(a)); the function that applies it to a whole document
+is an addition to `packages/integrations`, a change of its own. It hides
 patterned values -- a phone number, an e-mail address, a resident
 registration number, a card or account number. It does not hide a name
 written in a sentence, or content that identifies somebody by what it
@@ -207,9 +213,11 @@ who was stopped. The title is typed by a member and can hold a name; it is
 kept out of logs and error messages and is screened before it leaves Autune.
 
 **Who reads it.** Members of the team: masked excerpts on the 자료 screen.
-Every excerpt is screened again on the way out. Live transcript text is not
-searched against materials; that boundary is a separate decision (#817
-point 6).
+Every excerpt is screened again on the way out. **No model is given a
+material's text under this rule.** A tool that hands excerpts to the
+chatbot's model is a later change to this section, approved on its own.
+Live transcript text is not searched against materials; that boundary is a
+separate decision (#817 point 6).
 
 **A file marked confidential is refused, and the team's approvers are
 told.** Before masking, the file's name, the head of the document, its page
