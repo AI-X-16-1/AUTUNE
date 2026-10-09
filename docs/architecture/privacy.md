@@ -843,9 +843,29 @@ the feature needs.
       are queued to come out the same way. All best effort, as section 4
       says: a refused grant, an unreachable Google or a description the
       outbound check refuses leaves the line on the calendar, logged.
+  - **Google Calendar, Follow-up's approved meeting (module C):** when the
+    team lead approves Follow-up's proposal, C's `schedule_followup_meeting`
+    runs as that approver and makes one event on the approver's own calendar,
+    with their own grant: approving is their act, and the meeting is one they
+    now organise. The event is titled `후속 회의 · <meeting title>`, starts on
+    the approved day at the meeting's clock time in Korea and lasts about as
+    long as it did. Its description is one line per open gap, in the form
+    above, each recorded in `gap_agenda_events` and taken out by the same
+    hooks. The guests are the meeting's participants who resolved to a member
+    still on its team, the approver aside, and Google invites them
+    (`sendUpdates=all`): nobody outside the team is invited, so the agenda
+    reaches the team only. `gap_followup_events` keeps one row per meeting --
+    the approver, the event and the day it starts, nothing else of it -- so a
+    second approval makes no second event. The row goes with the meeting and
+    the account. The event itself is left on the calendar when the meeting or
+    the account goes: it is a meeting people were invited to, and cancelling
+    it is theirs to do; its gap lines come out as every other line does.
   - **Slack, S20's team notices (module C, #824):** two messages to the
     channel of the team that held the meeting, each once per press, with the
-    team's connection. "담당자 지정해 질문" posts one gap's title and suggested
+    team's connection, and a third when Follow-up's meeting is approved --
+    the meeting's title, when the follow-up starts, how many were invited,
+    the open gaps' titles and questions and the approver's display name,
+    once per meeting. "담당자 지정해 질문" posts one gap's title and suggested
     question, mentioning the member the presser picked from the meeting's
     team -- by the Slack account that member linked themselves, or by their
     display name when they linked none -- and the presser's display name.

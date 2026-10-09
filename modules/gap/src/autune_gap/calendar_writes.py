@@ -388,6 +388,29 @@ def written_lines(
     }
 
 
+def record_lines(
+    session: Session,
+    gaps: Sequence[GapGap],
+    *,
+    user_id: str,
+    calendar_id: str,
+    event_id: str,
+    event_day: date | None,
+) -> None:
+    """Record lines written onto an event some other way than ``write_agenda``
+    -- the follow-up meeting's, written when it was made
+    (``followup_meeting``) -- so they come out as every other line does."""
+    _record(
+        session,
+        gaps,
+        user_id=user_id,
+        calendar_id=calendar_id,
+        event_id=event_id,
+        kept=True,
+        event_day=event_day,
+    )
+
+
 def _insert(session: Session, model: Any) -> Any:
     dialect = session.get_bind().dialect.name
     return (postgresql.insert if dialect == "postgresql" else sqlite.insert)(model)

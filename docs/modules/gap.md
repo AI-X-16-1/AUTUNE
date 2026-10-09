@@ -885,6 +885,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_meeting_template` | Which template one meeting is compared against, when somebody chose one |
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again, and the day that event starts. Read by the cleanup, and by `gap.next_meeting_days` for each picked day and the display name of who picked it |
+| PostgreSQL `gap_followup_events` | The follow-up meeting an approver had C put on their own calendar when they approved Follow-up's proposal (`tools.schedule_followup_meeting`): one row per meeting, written before Google is asked so a second approval makes no second event, with the approver, the event and the day it starts. Nothing else of the event |
 | PostgreSQL `gap_agenda_cleanup` | Lines still to take off their owners' calendars, drained by the worker: those of a deleted or expired meeting, and those of an owner who left the meeting's team (#937). Keyed by the owner, not the meeting |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
@@ -1245,6 +1246,9 @@ polls them every five seconds while the rail says `analysed: false`.
   event starts (`10월 15일(목) 14:00`, in the event's own time zone). Only the
   event's date and time are read for it, never its title, which is Google's
   unmasked text.
+- Follow-up's proposal, once the team lead approves it, posts once that the
+  follow-up meeting is on the approver's calendar: when it starts, how many
+  were invited, and the open gaps on its agenda (`followup_meeting`).
 
 ## AI stack
 
