@@ -175,6 +175,16 @@ export function LiveResearchList({ meetingId }: { meetingId: string }) {
     };
   }, [meetingId]);
 
+  // The Slack notice links to `#live-research`, but this section mounts only
+  // after the fetch, so the browser found nothing to scroll to on load.
+  const hasDocs = docs !== null && docs.length > 0;
+  useEffect(() => {
+    if (hasDocs && window.location.hash === "#live-research")
+      document
+        .getElementById("live-research")
+        ?.scrollIntoView({ block: "start" });
+  }, [hasDocs]);
+
   if (docs === null || docs.length === 0)
     return <span data-testid="live-research-empty" hidden />;
   return <LiveResearchPanel docs={docs} />;

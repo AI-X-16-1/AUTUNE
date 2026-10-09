@@ -5,7 +5,13 @@ import * as api from "../api";
 import type { LiveResearchDocument } from "../types";
 import { LiveResearchList, LiveResearchPanel } from "./LiveResearchPanel";
 
-afterEach(cleanup);
+const scrollIntoView = Element.prototype.scrollIntoView;
+
+afterEach(() => {
+  cleanup();
+  Element.prototype.scrollIntoView = scrollIntoView;
+  window.location.hash = "";
+});
 
 const DONE: LiveResearchDocument = {
   id: "alr_1",
@@ -66,5 +72,31 @@ describe("LiveResearchList", () => {
     list.mockResolvedValueOnce([DONE]);
     render(<LiveResearchList meetingId="mtg_1" />);
     expect(await screen.findByText("가격 정책")).toBeTruthy();
+  });
+
+  it("scrolls to itself when the Slack link named it", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    window.location.hash = "#live-research";
+    vi.spyOn(api, "listLiveResearch").mockResolvedValueOnce([DONE]);
+
+    render(<LiveResearchList meetingId="mtg_1" />);
+
+    await screen.findByText("가격 정책");
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(
+      document.getElementById("live-research"),
+    );
+  });
+
+  it("does not scroll without the link", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    vi.spyOn(api, "listLiveResearch").mockResolvedValueOnce([DONE]);
+
+    render(<LiveResearchList meetingId="mtg_1" />);
+
+    await screen.findByText("가격 정책");
+    expect(scroll).not.toHaveBeenCalled();
   });
 });
