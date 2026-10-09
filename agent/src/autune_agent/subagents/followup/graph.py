@@ -6,8 +6,8 @@ through its ``Toolbox`` only and calls no write: the follow-up meeting leaves as
 one L2 ``ProposedAction`` for plan mode, where an approver with scope
 ``followup`` -- the team lead -- accepts or refuses it. Approved, C's
 ``schedule_followup_meeting`` puts the meeting on the approver's own calendar
-on the card's day, invites the meeting's team members who took part and tells
-the team's Slack channel.
+on the card's day and tells the team's Slack channel; nobody is invited
+(#756).
 
 **Ids only in the proposal.** Plan mode queues an L2 proposal only when its
 arguments are ids, dates, booleans and short enums (#556), so the event's
@@ -55,12 +55,12 @@ UPCOMING = "gap.upcoming_followup"
 """Whether the team has a follow-up meeting ahead that an approval put on a
 calendar. Read beside ``OPEN_ITEM`` and failing the same way."""
 WRITE = "gap.schedule_followup_meeting"
-"""C's L2 write: the follow-up meeting on the approver's own calendar, the
-meeting's team members who took part invited, and a notice on the team's Slack
-channel. It takes the meeting, the day and the day's basis -- the arguments B's
-``add_followup_item`` took, which the card reads -- and writes the event's
-wording itself, so the proposal carries ids only. The approver is filled in at
-approval, never by the proposal."""
+"""C's L2 write: the follow-up meeting on the approver's own calendar, nobody
+invited, and a notice on the team's Slack channel. It takes the meeting, the
+day and the day's basis -- the arguments B's ``add_followup_item`` took, which
+the card reads -- and writes the event's wording itself, so the proposal
+carries ids only. The approver is filled in at approval, never by the
+proposal."""
 
 DUE_DATES = "extraction.meeting_due_dates"
 """M's open dated action items as due dates and confirmation flags, on one row

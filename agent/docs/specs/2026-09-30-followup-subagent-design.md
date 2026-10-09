@@ -24,9 +24,10 @@ lead. Once approved, it becomes an action item on the board.
 The write the proposal names is now C's `gap.schedule_followup_meeting`, not
 B's `extraction.add_followup_item`. Approved, it runs as the approver and puts
 the follow-up meeting on the approver's own Google Calendar on the card's day,
-at the meeting's clock time in Korea, invites the meeting's participants who
-resolved to a member still on its team, writes the open gaps into the event's
-description, and posts once on the team's Slack channel. No board item is
+at the meeting's clock time in Korea, writes the open gaps into the event's
+description, and posts once on the team's Slack channel. Nobody is invited and
+nobody is DMed: both wait for the team's decision after 10/12 (#756, #1046;
+#1122). No board item is
 made: the meeting exists, so there is nothing left to do to make it. Its
 arguments are the ones B's write took (`meeting_id`, `due_date`, `basis`), so
 the card reads them unchanged; the approver (`user_id`) is filled in at
@@ -45,7 +46,7 @@ describe the board item as it was until then, where they speak of it.
 | When it runs | On `autune.intelligence.completed`, and on a chat request. No periodic run (section 2). |
 | What "a follow-up looks needed" means | Rules, no model call (section 4). A template item left open in this meeting **and** in the team's previous analysed meeting, or two or more high-severity open gaps in this meeting together with an unresolved question. |
 | What the lead approves | One L2 action per run: C puts the follow-up meeting on the approver's calendar and tells the team channel (since 2026-10-09, above; until then B added a "follow-up meeting" item, section 5). Its arguments are ids, a date and an enum only, as plan mode requires (#556). |
-| How the calendar event happens | By the approval itself, since 2026-10-09: C makes the event on the approver's own calendar with the meeting's team members who took part invited. Nothing reaches a calendar before the lead approves. |
+| How the calendar event happens | By the approval itself, since 2026-10-09: C makes the event on the approver's own calendar, nobody invited (#756). Nothing reaches a calendar before the lead approves. |
 | What it reads about people | Nothing. Open gaps and their topic labels, open questions, and open items. It does not read `silent_share` in this version (section 6). |
 
 ### Out of scope

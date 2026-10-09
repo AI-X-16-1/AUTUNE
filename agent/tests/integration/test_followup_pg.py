@@ -7,7 +7,7 @@ template item open again; ``autune.intelligence.completed`` wakes Follow-up
 through ``on_event``; its proposal waits in ``agent_pending_actions`` with ids
 only; the team lead approves it through the approvals routes; and C's
 ``schedule_followup_meeting`` puts the meeting on the lead's own calendar, with
-the member who took part invited. Google is the one fake: what is under test is
+nobody invited (#756). Google is the one fake: what is under test is
 that approval reaches it as the lead, once.
 
 C's detection opens its own ``session_scope`` and commits, so the seed is
@@ -290,12 +290,11 @@ def test_the_pipeline_event_to_an_approved_meeting(
 
     assert reply.status_code == 200, reply.text
     assert (reply.json()["status"], reply.json()["result_ok"]) == ("approved", True)
-    # On the lead's calendar, on the card's day, the member who took part invited.
+    # On the lead's calendar, on the card's day. The member took part, and is
+    # still not invited: that waits for the team's decision (#756).
     (event,) = google.made
     assert event["start"]["dateTime"].startswith(row.arguments["due_date"])
-    member_row = session.get(User, team["member"])
-    assert member_row is not None
-    assert event["attendees"] == [{"email": member_row.email}]
+    assert "attendees" not in event
     (made,) = followup_events(session, second)
     assert (made.user_id, made.event_day.isoformat()) == (team["lead"], row.arguments["due_date"])
     lines = session.scalars(select(GapAgendaEvent).where(GapAgendaEvent.meeting_id == second))
