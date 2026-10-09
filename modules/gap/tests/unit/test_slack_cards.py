@@ -100,7 +100,7 @@ def test_past_the_cap_one_line_counts_the_rest_and_links_the_report(
     assert response.json()["high"] == team_notice.SENT + 2
     posted = cards(slack)
     assert len(posted) == team_notice.SENT + 1
-    assert "다른 high 갭 2건" in posted[-1]
+    assert "위험도가 높은 다른 갭 2건" in posted[-1]
     assert f"/meetings/{MEETING}/gap|" in posted[-1]
 
 

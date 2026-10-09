@@ -138,6 +138,7 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
     scheduleNext,
     ask,
     sendToSlack,
+    cardsSent,
     saveQuestion,
     choose,
   } = useGapActions(reloadAll);
@@ -166,12 +167,21 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         {/* The one primary on the screen: the meeting's open high gaps go
             to the team's Slack channel as question cards, a few at most and
             a link for the rest (#824, plan 3). The server picks the gaps; the
-            button only waits for a report that has one. What happened is
-            said in the notice under the bar. */}
+            button only waits for a report that has one -- the report leaves
+            dismissed gaps out, so a high one here is one the server sends.
+            Once the cards went out it is not offered again on this visit:
+            one press puts up to four messages on the channel. What happened
+            is said in the notice under the bar. */}
         <Button
           tone="primary"
-          disabled={!gaps.some((gap) => gap.severity === "high") || pending === "slack"}
-          title="이 회의의 high 갭을 질문 카드로 팀 Slack 채널에 올립니다"
+          disabled={
+            !gaps.some((gap) => gap.severity === "high") || pending === "slack" || cardsSent
+          }
+          title={
+            cardsSent
+              ? "질문 카드를 이미 팀 Slack 채널에 올렸습니다"
+              : "이 회의의 위험도 높은 갭을 질문 카드로 팀 Slack 채널에 올립니다"
+          }
           onClick={() => void sendToSlack(meetingId)}
         >
           질문 카드 Slack 전송

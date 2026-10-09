@@ -157,7 +157,7 @@ def report_url(meeting_id: str) -> str:
 def build_rest(meeting: Meeting, count: int) -> tuple[str, list[dict[str, Any]]]:
     """The one line after the cards: how many more there are, and where."""
     text = (
-        f"'{_escape(meeting.title)}' 회의의 다른 high 갭 {count}건은 "
+        f"'{_escape(meeting.title)}' 회의에서 위험도가 높은 다른 갭 {count}건은 "
         "Autune 갭 리포트에서 볼 수 있습니다."
     )
     return text, [_context(f"{text} <{report_url(meeting.id)}|갭 리포트 열기>")]
