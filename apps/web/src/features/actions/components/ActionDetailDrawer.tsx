@@ -13,6 +13,7 @@ import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
 import { shownDue } from "../dates";
+import { typedTextRefusal } from "../refusal";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -91,8 +92,12 @@ export function ActionDetailDrawer({
     try {
       await onAssigneeChange?.(assigneeFields(value));
       setTyped(null);
-    } catch {
-      setFailure("담당자를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } catch (cause) {
+      // A typed label is screened like any typed text (#1130); what was typed
+      // stays in the field.
+      setFailure(
+        typedTextRefusal(cause) ?? "담당자를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      );
     } finally {
       setAssigning(false);
     }
@@ -126,7 +131,7 @@ export function ActionDetailDrawer({
     <div
       role="dialog"
       aria-modal
-      aria-label="액션 아이템 상세"
+      aria-label="할 일 상세"
       className="fixed inset-0 z-40 flex items-center justify-center"
       style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-page)" }}
       onClick={onClose}

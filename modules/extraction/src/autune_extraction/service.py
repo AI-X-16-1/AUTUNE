@@ -152,6 +152,7 @@ from .slots import (
     parse_due,
     past_form_at,
 )
+from .typed_text import refuse_personal_data
 
 log = get_logger(__name__)
 
@@ -312,7 +313,7 @@ _ANSWER_OF = {kind.value: answer for answer, kind in WEB_ANSWERS.items()}
 
 
 def answer_url(meeting_id: str) -> str:
-    """Where a speaker answers their own open questions: the meeting's 액션 tab."""
+    """Where a speaker answers their own open questions: the meeting's 할 일 tab."""
     return f"{get_core_settings().web_base_url.rstrip('/')}/meetings/{meeting_id}/actions"
 
 
@@ -959,6 +960,11 @@ def create_action_item(
         raise ValueError(f"not an origin create_action_item makes: {origin!r}")
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
+    # What a person typed is screened before it is stored (#1130).
+    refuse_personal_data(payload.description, field="description", meeting_id=payload.meeting_id)
+    refuse_personal_data(
+        payload.assignee_label, field="assignee_label", meeting_id=payload.meeting_id
+    )
     if payload.assignee_id is not None:
         require_assignable(session, payload.meeting_id, payload.assignee_id)
     wanted = set(payload.source_utterance_ids)
@@ -2017,6 +2023,23 @@ def update_action_item(
     if not changes:
         return item
 
+    # Before anything is set: a refused edit changes nothing (#1130). A field
+    # sent back as it is stored is not being written, so an item saved before
+    # the rule can still have its date or its owner changed.
+    if "description" in changes:
+        refuse_personal_data(
+            payload.description,
+            field="description",
+            stored=item.description,
+            action_item_id=item.id,
+        )
+    if "assignee_label" in changes:
+        refuse_personal_data(
+            payload.assignee_label,
+            field="assignee_label",
+            stored=item.assignee_label,
+            action_item_id=item.id,
+        )
     if "assignee_id" in changes and payload.assignee_id is not None:
         require_assignable(session, item.meeting_id, payload.assignee_id)
 
@@ -5561,6 +5584,9 @@ def set_meeting_note(session: Session, meeting_id: str, body: str) -> ExtMeeting
     """
     text = body.strip()
     note = session.get(ExtMeetingNote, meeting_id)
+    refuse_personal_data(
+        text, field="body", stored=None if note is None else note.body, meeting_id=meeting_id
+    )
     if not text:
         if note is not None:
             session.delete(note)
@@ -5654,6 +5680,15 @@ def review_decision(
     changes = payload.model_dump(exclude_unset=True)
     if changes:
         review = session.get(ExtDecisionReview, decision.id)
+        wording = changes.get("statement")
+        if review is None or wording != review.statement:
+            # Screened before the review row is touched, so a refused
+            # rewording leaves the verdict sent with it unrecorded too
+            # (#1130). The model's own wording sent back clears a rewording
+            # and writes nothing.
+            refuse_personal_data(
+                wording, field="statement", stored=decision.statement, decision_id=decision.id
+            )
         if review is None:
             review = ExtDecisionReview(
                 decision_id=decision.id, meeting_id=decision.meeting_id, status="pending"
@@ -5755,6 +5790,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
     """
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
+    refuse_personal_data(payload.statement, field="statement", meeting_id=payload.meeting_id)
     source_ids = list(dict.fromkeys(payload.source_utterance_ids))
     if source_ids:
         found = set(
@@ -5842,7 +5878,7 @@ none. Raised in review of #294.
 """
 
 
-ITEM_DELETED_TEXT = "삭제된 액션아이템"
+ITEM_DELETED_TEXT = "삭제된 할 일"
 """What a deleted item's page is retitled to before it goes to Notion's trash
 (#768), as a decision's is (``DECISION_PUT_BACK_TEXT``, #669): the trash keeps
 a page restorable for 30 days, and with this title the item's sentence is not

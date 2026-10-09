@@ -62,8 +62,8 @@ SEND_UNTIL = time(20, 0)
 """Korea time. Reminders go out from nine in the morning until eight at night."""
 
 _OPENING = {
-    DUE_SOON: "내일까지인 액션 아이템이 있습니다.",
-    OVERDUE: "기한이 지난 액션 아이템이 있습니다.",
+    DUE_SOON: "내일까지인 할 일이 있습니다.",
+    OVERDUE: "기한이 지난 할 일이 있습니다.",
 }
 
 
@@ -194,7 +194,7 @@ def build_weekly_digest(lines: Sequence[DigestLine], *, today: date, board_url: 
         return (0 if line.due_date < today else 1, line.due_date)
 
     ordered = sorted(lines, key=order)
-    out = [f"이번 주 열린 액션 아이템 {len(ordered)}개입니다."]
+    out = [f"이번 주 열린 할 일 {len(ordered)}개입니다."]
     for line in ordered[:DIGEST_MAX_LINES]:
         when = ""
         if line.due_date is not None:
@@ -335,6 +335,6 @@ def build_daily_digest(digest: DailyDigest, *, board_url: str, today: date) -> s
     todo += _daily_lines("진행 중", digest.in_progress)
     out += todo or ["• 오늘 기한이거나 진행 중인 항목이 없습니다."]
     if digest.others:
-        out.append(f"그 밖의 열린 액션 아이템 {digest.others}개")
+        out.append(f"그 밖의 열린 할 일 {digest.others}개")
     out.append(board_url)
     return "\n".join(out)

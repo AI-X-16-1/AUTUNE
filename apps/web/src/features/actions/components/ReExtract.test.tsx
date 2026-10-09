@@ -6,7 +6,7 @@ import { ApiError } from "@/shared/api/client";
 import { MISS_LIMIT, POLL_MS, ReExtract } from "./ReExtract";
 import type { ExtractionState } from "../api";
 
-// The 액션 tab says when a meeting's extraction failed, and runs it again on
+// The 할 일 tab says when a meeting's extraction failed, and runs it again on
 // request (the user, 2026-10-06). The request is accepted at once and run by
 // the worker, so the screen looks again until the run has left a trace.
 
@@ -58,7 +58,7 @@ const settle = async (ms = 0) => {
     await vi.advanceTimersByTimeAsync(ms);
   });
 };
-const button = () => screen.getByRole("button", { name: "액션·결정 다시 추출" }) as HTMLButtonElement;
+const button = () => screen.getByRole("button", { name: "할 일·결정 다시 추출" }) as HTMLButtonElement;
 
 async function open(state: ExtractionState) {
   get.mockResolvedValueOnce(state);
@@ -84,7 +84,7 @@ describe("ReExtract", () => {
 
     expect(button().disabled).toBe(false);
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByText(/액션 목록을 그대로 두고/)).toBeTruthy();
+    expect(screen.getByText(/할 일 목록을 그대로 두고/)).toBeTruthy();
   });
 
   it("says the server is still trying while tries are left", async () => {
@@ -109,7 +109,7 @@ describe("ReExtract", () => {
     await open({ ...RETRYING, extracted_at: "2026-10-06T01:00:00Z", not_published: true });
 
     const line = screen.getByRole("status").textContent;
-    expect(line).toContain("아래 액션 아이템과 결정은 추출되었습니다");
+    expect(line).toContain("아래 할 일과 결정은 추출되었습니다");
     expect(line).toContain("전달하지 못해 자동으로 다시 시도하고 있습니다(1번 실패)");
     expect(line).not.toContain("추출하지 못해");
   });

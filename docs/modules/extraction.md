@@ -227,7 +227,7 @@ agreement, and sync the result to Notion and Jira.
    without Slack, or a speaker who has not linked, is looked at again on the
    next run until the window closes.
    **Where the speaker answers** (decided with the user, 2026-10-01; #585). The
-   DM quotes their line and links to the meeting's 액션 tab, which lists the
+   DM quotes their line and links to the meeting's 할 일 tab, which lists the
    reader's own open questions (`GET /confirmations?meeting_id=`) with the
    three answers (`POST /confirmations/{utterance_id}`: commitment, decision,
    not a commitment). With `AUTUNE_SLACK_BUTTONS` on — a deployment Slack can
@@ -292,7 +292,7 @@ agreement, and sync the result to Notion and Jira.
    A retire that fails is tried again at the decision's next change, and for
    a decision that is gone only when the Notion backfill runs — on
    connecting Notion or by hand, not on a timer (#669).
-   A deleted action item's page is retitled "삭제된 액션아이템" the same way
+   A deleted action item's page is retitled "삭제된 할 일" the same way
    before it goes to the trash (#768), at deletion and when
    `drain_external_cleanup` retries it.
    A confirmed item with a due date also goes on its **assignee's own Google
@@ -463,7 +463,7 @@ them. The page, top to bottom:
   so the label goes wherever the paragraph is pasted.
 - 결정 사항, numbered, in the order the route gives them. One nobody has
   confirmed is listed and marked "(자동 추출)".
-- 액션, numbered: the item's sentence, then who, the due date and where it
+- 할 일, numbered: the item's sentence, then who, the due date and where it
   stands, each set off by a dot -- "… — 김민경 · 10월 13일 (화) · 진행 중". The
   state is not in brackets: the date already ends in them. A due date is
   written as the date line writes a day; its year is written only when it is
@@ -478,10 +478,10 @@ Left off the page, on the tab and in the copy alike: **candidates** -- the
 model was not sure they were items, and minutes that listed one would state a
 guess as an outcome -- and **every quotation**. The line of what was said
 (`summary`) is no longer shown here; an item's source lines are read one item
-at a time on the 액션 tab, and a page meant to be pasted into a chat or a wiki
+at a time on the 할 일 tab, and a page meant to be pasted into a chat or a wiki
 is where a transcript should not follow. Under the page the tab says how many
 candidates, open questions and unanswered ambiguous agreements it left out,
-and links to the 액션 tab. The per-project tool (#787) stays below that,
+and links to the 할 일 tab. The per-project tool (#787) stays below that,
 unchanged; its rows still call an action item "할 일" (#1036).
 
 Only the page's own lines are formatted. A date inside a stored sentence --
@@ -539,7 +539,7 @@ withdrawal (S10/S11), the second half of #518.
 three attempts in all, the event's being the first. A run that goes through
 ends the count. After the third failure the sweep stops and the team's Slack
 channel gets one message -- the meeting's title, the count and a link to its
-액션 tab -- when the team has a channel connected; the 액션 tab says it either
+할 일 tab -- when the team has a channel connected; the 할 일 tab says it either
 way, and offers "다시 추출" there, on any meeting. A run whose rows were
 committed and whose `EXTRACTION_COMPLETED` could not be published is counted
 too, as its own kind (`ResultNotPublishedError`, #887): the sweep publishes
@@ -570,7 +570,7 @@ the run goes through with what they held: the rows are stored and published as
 any run's, the unread windows' lines carry no label, and in the place of
 ending the count the run adds one to it with the reason `PartlyUnread`. That
 count is what makes the sweep run the meeting again, three runs in all, and
-`ExtractionState.partly_unread` is what the 액션 tab reads to say, over the
+`ExtractionState.partly_unread` is what the 할 일 tab reads to say, over the
 rows, that part of the meeting was not read and items may be missing. The
 reason stays until a run reads every window, also through a rerun that fails
 outright, and the line with it once the tries are spent. The team's channel is
@@ -583,7 +583,7 @@ stored is the latest run's. A rerun that reads a different part can therefore
 drop an unconfirmed row an earlier run had; the line over the board is up for
 as long as that can be the case.
 
-**A meeting with no rows.** An empty 액션 tab says which of four things is
+**A meeting with no rows.** An empty 할 일 tab says which of four things is
 true, from `GET /meetings/{id}/extraction` (`ExtractionState`, B's own schema):
 
 | State | When | The tab says |
@@ -758,7 +758,7 @@ other module's tables.
 | GET | `/results/{meeting_id}` | The meeting's `ExtractionResult`, built from what is stored |
 | GET | `/action-items` | Filter by `meeting_id`, `assignee_id`, `status`, `due_before` (strict). Source utterance ids, never their text. Each item says its meeting's team (`team_id`) |
 | GET | `/cloud-model` | `{"in_use": bool}`: whether this server sends meeting text to a cloud model -- any of the classifier, resolver, summary, short-title or NLI switches set to a cloud implementation, the same list the start-up refusal walks. One fact about the deployment, the same for every signed-in caller, and nothing else: no implementation or model name, nothing about the key. The upload form and the live gate ask it to decide whether to show #392's operating rule above their consent row (`OwnTeamMeetingsNotice`, mounted by the two pages); a notice, which checks nothing |
-| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 액션아이템) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
+| GET | `/teams/mine` | The reader's own teams by name. The board across meetings (the sidebar's 할 일) lays the same items out at once, team by team or project by project (보기), and heads each team's board with these. A project (`GET /projects`, `GET /projects/mine`) says its `team_id`: a name is unique within a team and not across them, so where that board lists several teams' projects without their items -- the project filter and the progress strip -- each says its team's name beside its own, as the 프로젝트별 groups do, and says nothing when the projects are all of one team |
 | GET | `/action-items/{id}` | One item, the text of its source utterances in spoken order (each with `excerpt`, the part of it the item was made from, when one is recorded), up to three lines said just before them as `context`, and the lines its summary says it used as `related` (consenting speakers only) |
 | PATCH | `/action-items/{id}` | Edit or close an item |
 | POST | `/action-items/{id}/close` | Close a confirmed, open item that will not be finished (#856, #1077) -- what "끝내지 않고 닫기" in the detail window calls. Not a `PATCH` of the status: the item ends `done` either way, and the `closed` event is what tells a close from finished work. Answers with the item as `PATCH /action-items/{id}` does (`ActionItemRead`). Refused 409: an item still waiting for confirmation, one already finished, one already closed. An item the reader may not see is the 404 an unknown one gets. Copies outside follow as after any change of status |
@@ -797,7 +797,7 @@ whole list -- `tasks.py` declares the rest, most of them beat tasks named
   project's minutes for one meeting, when a person sends them (#787,
   `project_send.py`); sending again rewrites that message in place. And one
   notice when a meeting's extraction is out of tries: its title, the count and
-  a link to its 액션 tab. No item is posted on its own and nothing is
+  a link to its 할 일 tab. No item is posted on its own and nothing is
   threaded: an item reaches the channel only as a line of its project's
   minutes (its sentence, assignee and due date), and not while it waits for
   confirmation
@@ -858,7 +858,7 @@ whole list -- `tasks.py` declares the rest, most of them beat tasks named
   put work of that meeting on them (`meeting_notice.py`,
   `autune.extraction.periodic.send_meeting_notices`, every five minutes): the
   meeting's title, **how many** drafts wait for their confirmation, and a link
-  to that meeting's 액션 tab. No draft's text or date -- unconfirmed content
+  to that meeting's 할 일 tab. No draft's text or date -- unconfirmed content
   does not leave (#246) -- while an item already confirmed is named with its
   date. Once a person and meeting (`ext_meeting_notices`); only somebody on
   the meeting's team now; 09:00-17:00 Korea time on a working day, and what
@@ -1203,7 +1203,7 @@ calendar, the minutes, the agent's tools and module D are given.
   deletes one at any time, and they go with the team.
 - Text a person types is screened when it is saved and refused if it
   reads as personal data (`typed_text.refuse_personal_data`; decided on
-  #1130, `privacy.md` section 6). Nine fields behind seven routes: an action
+  #1130, `privacy.md` section 6). Ten checks behind eight routes: an action
   item's description and assignee label (`POST` and `PATCH /action-items`),
   a decision's statement typed or reworded (`POST` and `PATCH /decisions`),
   a meeting's memo (`PUT /summary/{meeting_id}/note`), a project's name and

@@ -75,7 +75,7 @@ export function CarriedOverActions({ meetingId }: { meetingId: string }) {
       >
         <StatusDot variant="attention" />
         <span className="flex-1 text-[var(--color-ink-body)]">
-          지난 회의에서 넘어온 미완료 액션 {result.open}건
+          지난 회의에서 넘어온 미완료 할 일 {result.open}건
           {result.overdue > 0 ? (
             <span className="text-[var(--color-signal-critical)]">
               {" "}
@@ -111,7 +111,7 @@ function Popup({
     <div
       role="dialog"
       aria-modal
-      aria-label="지난 회의 미완료 액션"
+      aria-label="지난 회의 미완료 할 일"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(22,25,31,.35)" }}
       onClick={onClose}
@@ -133,7 +133,7 @@ function Popup({
             fontWeight: "var(--text-title-weight)",
           }}
         >
-          지난 회의에서 넘어온 미완료 액션 {result.open}건
+          지난 회의에서 넘어온 미완료 할 일 {result.open}건
         </h2>
         <p
           className="mt-1 text-[var(--color-ink-muted)]"
@@ -155,7 +155,7 @@ function Popup({
             className="mt-2 text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)" }}
           >
-            외 {rest}건은 각 회의의 액션 보드에서 확인할 수 있습니다.
+            외 {rest}건은 각 회의의 할 일 보드에서 확인할 수 있습니다.
           </p>
         ) : null}
 

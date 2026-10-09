@@ -12,6 +12,7 @@ import {
   listTeams,
   uploadRecording,
 } from "../api";
+import { nextInstantAt, rememberPlannedEnd } from "../plannedEnd";
 import { ACCEPTED_EXTENSIONS, acceptsRecording } from "../recordingFile";
 import { teamToOpen } from "../selectedTeam";
 import type { TeamSummary } from "../types";
@@ -86,8 +87,10 @@ function asInstant(date: string, time: string): string | undefined {
  * 녹음 시작" ignores them — a live meeting starts when it is opened.
  *
  * Field order follows S06: title, date and start, team, audio source, then
- * the Phase 2 rows drawn disabled. S06's attendee chips and its optional end
- * time are omitted: neither has a field in the create payload.
+ * S06's two option rows. S06's attendee chips are omitted: they have no field
+ * in the create payload. Its optional end time has none either, and is asked
+ * only where it can be kept without one — in the first option row, on the
+ * live path (`LaterOptions`, `plannedEnd`).
  *
  * `?meeting=` uploads to an existing meeting — the retry S12 offers when a
  * run failed, and S10's "파일 업로드로 대신" for a meeting opened to record
@@ -123,6 +126,9 @@ export function NewMeetingScreen({
   );
   const [file, setFile] = useState<File | null>(null);
   const [consented, setConsented] = useState(false);
+  // S06's first option row: the end-of-meeting alert, live path only.
+  const [endAlert, setEndAlert] = useState(false);
+  const [endTime, setEndTime] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<
     "idle" | "creating" | "consenting" | "uploading" | "scheduling" | "opening"
@@ -177,6 +183,13 @@ export function NewMeetingScreen({
   async function goLive() {
     if (!canGoLive) return;
     setError(null);
+    // Checked before the meeting is made: a ticked row with no time would
+    // otherwise open a meeting whose alert silently never comes.
+    const endsAt = endAlert ? nextInstantAt(endTime) : null;
+    if (endAlert && endsAt === null) {
+      setError("종료 5분 전 알림을 받으려면 종료 예정 시각을 입력해 주세요.");
+      return;
+    }
     try {
       setStep("opening");
       const { meeting_id } = await createMeeting({
@@ -184,6 +197,8 @@ export function NewMeetingScreen({
         team_id: teamId,
         started_at: new Date().toISOString(),
       });
+      // Kept in this tab only; S13 reads it (`plannedEnd`).
+      if (endsAt !== null) rememberPlannedEnd(meeting_id, endsAt);
       router.push(`/meetings/${meeting_id}/live`);
     } catch (e: unknown) {
       setStep("idle");
@@ -420,7 +435,7 @@ export function NewMeetingScreen({
                   className="block text-[var(--color-ink-muted)]"
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
-                  동의가 기록되지 않은 회의는 전사만 저장되고 액션 · 갭 분석에서
+                  동의가 기록되지 않은 회의는 전사만 저장되고 할 일 · 갭 분석에서
                   제외됩니다.
                 </span>
               </span>
@@ -428,7 +443,15 @@ export function NewMeetingScreen({
           </>
         )}
 
-        {existingMeetingId ? null : <LaterOptions />}
+        {existingMeetingId ? null : (
+          <LaterOptions
+            endAlert={
+              source === "live"
+                ? { on: endAlert, time: endTime, setOn: setEndAlert, setTime: setEndTime }
+                : null
+            }
+          />
+        )}
 
         {error ? (
           <p
@@ -607,20 +630,88 @@ function SourceChoice({
 }
 
 /**
- * S06's Phase 2 rows, drawn disabled rather than hidden so the roadmap shows.
+ * S06's two option rows.
+ *
+ * **The end-of-meeting alert is offered on the live path, and is smaller than
+ * S14 draws it** (#1147). Five minutes before the end the person types here,
+ * S13 shows a band of the gaps the team's earlier meetings left open (module
+ * C's, through the page). It does not find what *this* meeting has left
+ * undecided — nothing reads a meeting's words while it is being recorded — and
+ * the row says so rather than borrowing S06's "미결정 사항". The end time is
+ * kept in this tab (`plannedEnd`), so the row is live-only: an upload has no
+ * meeting to interrupt, and a meeting saved for later is recorded from a tab
+ * that was never told. Under the file source it is drawn disabled, with the
+ * reason; "저장만" under the live source keeps nothing, and the field says so.
+ *
+ * The agenda row is still Phase 2, drawn disabled rather than hidden so the
+ * roadmap shows.
  *
  * S06 also draws Notion and Jira rows here as per-meeting overrides. Those
  * are left out, not drawn disabled: the integrations exist at team level, and
  * a per-meeting override row would read as a setting this form saves when it
  * does not.
  */
-function LaterOptions() {
+function LaterOptions({ endAlert }: { endAlert: EndAlertChoice | null }) {
   const rows = [
-    { title: "종료 5분 전 미결정 사항 알림", detail: "종료 시간 기준 · Phase 2" },
+    ...(endAlert === null
+      ? [{ title: END_ALERT_TITLE, detail: "실시간 녹음을 지금 시작할 때만 켤 수 있습니다" }]
+      : []),
     { title: "자료 연결 후 어젠다 자동 생성", detail: "PRD · 이전 회의록 · Phase 2" },
   ];
   return (
     <div className="flex flex-col border-t border-[var(--color-hairline)]">
+      {endAlert === null ? null : (
+        <div
+          className="flex flex-col gap-2 border-b border-[var(--color-hairline)]"
+          style={{ paddingBlock: "var(--space-12)" }}
+        >
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={endAlert.on}
+              onChange={(event) => endAlert.setOn(event.target.checked)}
+            />
+            <span>
+              <span
+                className="block text-[var(--color-ink-strong)]"
+                style={{
+                  fontSize: "var(--text-rowLabel)",
+                  fontWeight: "var(--text-rowLabel-weight)",
+                }}
+              >
+                {END_ALERT_TITLE}
+              </span>
+              <span
+                className="block text-[var(--color-ink-muted)]"
+                style={{ fontSize: "var(--text-meta)" }}
+              >
+                {END_ALERT_DETAIL}
+              </span>
+            </span>
+          </label>
+          {endAlert.on ? (
+            <div
+              className="flex flex-col gap-2 text-[var(--color-ink-muted)]"
+              style={{ fontSize: "var(--text-meta)", paddingInlineStart: "var(--space-24)" }}
+            >
+              <label className="flex items-center gap-3 whitespace-nowrap">
+                종료 예정 시각
+                <input
+                  type="time"
+                  value={endAlert.time}
+                  onChange={(event) => endAlert.setTime(event.target.value)}
+                  className={INPUT}
+                  style={{ ...INPUT_STYLE, width: "auto" }}
+                />
+              </label>
+              <p>
+                지금 이 탭에서 녹음을 시작할 때만 알려 드립니다. “저장만”으로 연 회의에는
+                적용되지 않습니다.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      )}
       {rows.map((row) => (
         <label
           key={row.title}
@@ -650,6 +741,23 @@ function LaterOptions() {
     </div>
   );
 }
+
+/** What the first option row holds while the live source is chosen. */
+type EndAlertChoice = {
+  on: boolean;
+  time: string;
+  setOn: (on: boolean) => void;
+  setTime: (time: string) => void;
+};
+
+/**
+ * The row's words. Not S06's "미결정 사항": the band lists gaps earlier
+ * meetings left open, and the label is a question on #1147 (B4/A4) — these two
+ * strings and the band's sentence in `features/gap` change together.
+ */
+const END_ALERT_TITLE = "종료 5분 전 미해결 갭 알림";
+const END_ALERT_DETAIL =
+  "이전 회의에서 닫지 못한 갭을 알려 드립니다 · 이 회의에서 결정되지 않은 것을 찾지는 않습니다";
 
 const STEP_LABEL = {
   idle: "업로드하고 분석 시작",

@@ -10,6 +10,7 @@ import type { NotExtracted } from "./ReExtract";
 import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
+import { typedTextRefusal } from "../refusal";
 import { shownStatement } from "../statement";
 import { rowTitle } from "../title";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
@@ -176,8 +177,10 @@ function DecisionRow({
     try {
       await action();
       return true;
-    } catch {
-      setFailure(failed);
+    } catch (cause) {
+      // A rewording refused as personal data says so; the editor stays open
+      // with what was typed (#1130).
+      setFailure(typedTextRefusal(cause) ?? failed);
       return false;
     } finally {
       setPending(false);
@@ -449,7 +452,10 @@ function AddDecision({ onAdd }: { onAdd: (statement: string) => Promise<unknown>
       setOpen(false);
     } catch (cause) {
       // The typed text stays, as in the action-item form.
-      setError(cause instanceof Error ? cause.message : "추가하지 못했습니다.");
+      setError(
+        typedTextRefusal(cause) ??
+          (cause instanceof Error ? cause.message : "추가하지 못했습니다."),
+      );
     } finally {
       setPending(false);
     }

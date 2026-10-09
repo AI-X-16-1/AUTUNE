@@ -1611,7 +1611,7 @@ class ExtExtractionAttempt(Base):
     is not (``told_at``). ``reason`` is the class of the last error and nothing
     from it -- an exception over a meeting's rows can carry what was said.
 
-    ``requested`` is the 액션 tab's "다시 추출", waiting for the worker: the
+    ``requested`` is the 할 일 tab's "다시 추출", waiting for the worker: the
     API process has no broker to queue on, so the request is a row and
     ``tasks.run_requested_extractions`` takes it. ``requested_at`` stays after
     that, for the cooldown.

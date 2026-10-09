@@ -8,7 +8,7 @@ import { onTeamChosen } from "@/features/transcript";
 import { useSessionUser } from "../../_components/SessionGate";
 
 /**
- * S17 across every meeting the caller's teams hold — the sidebar's "액션아이템".
+ * S17 across every meeting the caller's teams hold — the sidebar's "할 일".
  *
  * Assembly only: the board is module B's. The route hands it the signed-in
  * person's id for the "내 담당" tab, because the session is the shell's and a

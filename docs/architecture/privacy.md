@@ -541,7 +541,7 @@ the feature needs.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    Deleting the item in Autune retitles its page to "삭제된 할 일"
     and then moves it to Notion's trash, where the team can restore it for
     30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
@@ -594,7 +594,7 @@ the feature needs.
     other analyses three times in a row (#887), in which case the message
     says that and not that nothing was extracted. Either way it carries
     the meeting's title, the number of attempts and a link to the meeting's
-    액션 tab; no utterance, no name that B adds, and not the error -- only
+    할 일 tab; no utterance, no name that B adds, and not the error -- only
     the error's class is kept, in B's own table and log. The title is a
     value a person typed and is sent as it is stored, so it can hold a
     name: "no name" is true of what B puts in the message and not of the
@@ -747,7 +747,7 @@ the feature needs.
     meeting on, on the meeting's team now. It carries the meeting's title --
     a value a person typed, sent as stored, as the reminders carry it -- **how
     many** drafts wait for that person's confirmation, and a link to the
-    meeting's 액션 tab. It carries nothing of a draft: not its text, not its
+    meeting's 할 일 tab. It carries nothing of a draft: not its text, not its
     date. A draft is a model's guess until a person confirms it, and
     unconfirmed content does not reach an outbound surface (#246; the agent
     layer's rule 3). An item of theirs that a person has already confirmed is
@@ -948,6 +948,14 @@ the feature needs.
       a hand-written sentence carries, and a rule with no criterion for what
       to delete is a rule that cannot be kept.
 
+    The first rule is every module's, and three keep it today. C refuses a
+    rewritten question (above). B refuses every field below. E refuses the
+    two texts a person types into a meeting report, an edited body and a
+    correction (`edit_meeting_report`, `correct_meeting_report`): both go
+    through `assert_masked` before anything is stored and answer with the
+    categories and never the text. A's meeting title is not screened yet;
+    A's owner (mkkim68) has said it follows with #1161, which is still open.
+
     Module B applies the first on every field a person types into: an
     action item's description and assignee label, a decision typed or
     reworded, a meeting's memo, a project's name and aliases, and a
@@ -963,6 +971,61 @@ the feature needs.
     that makes an item (Follow-up's) writes B's own fixed sentence. So a
     proposal approved later brings no typed text to these checks, and its
     approver meets no refusal from them.
+  - **Slack, the Meeting Context Engine's messages (`autune_context`):**
+    three kinds to the channel of the team that held the meeting, and one
+    DM (`notify.py`; `docs/modules/context.md`, "Slack surface").
+    - The topic-link notice, once a meeting's topics are linked: a topic
+      label and the day of the earlier meeting that discussed it. Only
+      links the engine asserted by itself; at most
+      `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` (default 3), and one line that
+      counts the rest.
+    - The decision-drift warning, when a decision changed in a meeting a
+      key stakeholder of it was absent from: the thread's label, the new
+      statement, whether it was changed or reversed, and that meeting's
+      day. It names none of the absent and does not count them -- in a
+      small team "one was absent" is a name (#339); the statement itself
+      can name the person it assigns, as below. Each absent stakeholder
+      hears it by a DM of their own, the same statement and that they were
+      not there, sent through `assert_personal_delivery` to that person
+      only.
+    - The pre-meeting brief, `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` (default
+      10) before a scheduled meeting: its title and start; the title and day
+      of the past meeting it follows, with at most five of its topic labels
+      and five decision statements; and at most six of the team's open Jira
+      issues as B last published them (key, title, status, link). When the
+      past meeting is only the team's latest -- nothing ties it to this
+      one -- its title and day are named and none of its topics or
+      decisions is posted.
+
+    Topic labels are masked text stored by this module. A decision
+    statement is the sentence B hands this module (`decisions_for_meeting`),
+    whether or not anyone has reviewed it yet -- only a decision a person
+    rejected is left out, and the contract's `Decision` carries no status
+    this module could filter on (#246, question 2). So a drift warning, a
+    DM or a brief can quote a statement a model drew that nobody has
+    looked at, unlike B's own draft DM above. Unless a person reworded it,
+    the statement is the turn that settled it as said and masked, with its
+    owner and deadline (B's `original_statement`), so it can name the
+    person it assigns; a person's rewording, or a decision a person typed,
+    is sent as typed, never through module A's masker, and screened only
+    by the outbound check before Slack. Issue titles are B's item
+    descriptions as stored. Meeting titles are values a person typed and
+    are sent as stored, as B's are. Apart from those statements no
+    utterance is sent, and no participation figure. Every value is escaped
+    so it cannot become a mention or a link, and clipped so the largest
+    brief stays under the outbound size limit. The one link is built on
+    purpose: a Jira issue's key links to its address (`<url|key>`,
+    `_agenda_line`), and only when the address holds no `|` or space and
+    fits its length cap; otherwise the key is sent as plain text. A
+    message the outbound check refuses is not sent and is not tried
+    again: each send runs after its claim commits
+    (`ctx_meeting_status.notified_at`, `late_drift_notified_at`, the
+    `ctx_briefs` row), and only a transient Slack failure releases the
+    claim. Those claims are times and ids; the
+    module keeps no message and no message id. A team with no channel
+    connected gets no message, and its brief is still read in the app. So a
+    message already posted stays in the channel or the DM -- when speech
+    it quoted is deleted, and when its meeting expires or is deleted.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,

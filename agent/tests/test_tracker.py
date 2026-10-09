@@ -51,7 +51,7 @@ def confirmed(
 def waiting(item_id: str, days: int = 4) -> dict[str, Any]:
     """An item nobody has confirmed, as B gives it: no text, no holder, no date."""
     return {
-        "title": "액션아이템 확인 필요",
+        "title": "할 일 확인 필요",
         "body": f"{days}일째 확인 필요",
         "score": 0.5,
         "id": item_id,
@@ -65,7 +65,7 @@ def stalled(*rows: dict[str, Any], ok: bool = True, truncated: bool = False) -> 
     return {
         "ok": ok,
         "reason": None if ok else "no team",
-        "summary": "멈춰 있는 액션아이템",
+        "summary": "멈춰 있는 할 일",
         "items": list(rows),
         "evidence": [],
         "truncated": truncated,

@@ -16,7 +16,7 @@ from autune_intelligence.models import (
 )
 
 KST = timezone(timedelta(hours=9))
-BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
+BODY = "✅ 확정된 할 일\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
 
 
 def _report(db_session: Session, team: str, title: str, held: datetime, draft: str) -> str:

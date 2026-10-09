@@ -11,6 +11,7 @@ import { ProjectGroups } from "./ProjectGroups";
 import { getSummary, putSummaryNote } from "../api";
 import { WRITTEN_BY_MODEL, actionMeta, minutesOf } from "../minutes";
 import { ALL_PROJECTS, type ProjectChoice } from "../projectFilter";
+import { typedTextRefusal } from "../refusal";
 import { MAX_NOTE_CHARS, UNCONFIRMED_DECISION } from "../types";
 import type { MeetingSummary } from "../types";
 
@@ -40,7 +41,7 @@ const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as cons
  *
  * Under the document, and not part of it: what the page leaves out (candidate
  * items, questions left open, agreements still waiting for their speaker) with
- * the way to the 액션 tab, and -- for a team that lists projects -- the tool
+ * the way to the 할 일 tab, and -- for a team that lists projects -- the tool
  * that sorts rows into them (`ProjectGroups`, 2026-10-04).
  */
 export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
@@ -120,7 +121,7 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             ) : null}
             <p className="mt-2">
               <Meta>
-                모델이 회의 발화로 쓴 요약입니다. 아래 결정·액션과 다를 수
+                모델이 회의 발화로 쓴 요약입니다. 아래 결정·할 일과 다를 수
                 있습니다.
               </Meta>
             </p>
@@ -145,8 +146,8 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
           )}
         </section>
 
-        <section aria-label="액션">
-          <Heading>액션</Heading>
+        <section aria-label="할 일">
+          <Heading>할 일</Heading>
           {page.actions.length === 0 ? (
             <Note>없음</Note>
           ) : (
@@ -191,7 +192,7 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
           <Meta>회의가 길어 AI 요약을 만들지 못했습니다.</Meta>
         ) : null}
         <Link href={actionsTab} className="text-[var(--color-accent-default)]">
-          근거 발화와 수정은 액션 탭에서 →
+          근거 발화와 수정은 할 일 탭에서 →
         </Link>
       </section>
 
@@ -217,18 +218,20 @@ function MemoEditor({
 }) {
   const [draft, setDraft] = useState(summary.note ?? "");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(false);
+  // What the failed save says; null while there is nothing to say.
+  const [error, setError] = useState<string | null>(null);
   const changed = draft.trim() !== (summary.note ?? "");
 
   const save = async () => {
     setSaving(true);
-    setError(false);
+    setError(null);
     try {
       const answer = await putSummaryNote(meetingId, draft);
       setDraft(answer.note ?? "");
       onSaved(answer);
-    } catch {
-      setError(true);
+    } catch (cause) {
+      // A memo is typed text and is screened before it is stored (#1130).
+      setError(typedTextRefusal(cause) ?? "저장하지 못했습니다. 다시 시도해 주세요.");
     } finally {
       setSaving(false);
     }
@@ -259,7 +262,7 @@ function MemoEditor({
       >
         <span className="flex-1 text-[var(--color-ink-muted)]">
           {error
-            ? "저장하지 못했습니다. 다시 시도해 주세요."
+            ? error
             : changed
               ? "저장해야 회의록 복사에 들어갑니다."
               : summary.note_updated_at

@@ -189,7 +189,7 @@ def test_a_different_page_gets_its_own_databases(monkeypatch: pytest.MonkeyPatch
 
     result, created, saved = _connect(monkeypatch, stored, OTHER_PAGE)
 
-    assert created == ["액션 아이템", "결정", "회의록"]
+    assert created == ["할 일", "결정", "회의록"]
     assert result["action_db_id"] == "db_new_1"
     assert result["databases"] == "created"
     assert saved["config"]["parent_page_id"] == OTHER_PAGE

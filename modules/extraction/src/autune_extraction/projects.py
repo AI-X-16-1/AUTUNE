@@ -46,6 +46,7 @@ from .models import (
     ExtProject,
 )
 from .pipeline.llm import substitute_names
+from .typed_text import refuse_personal_data
 
 log = get_logger(__name__)
 
@@ -246,8 +247,17 @@ def save_project(
         if found is None or found.team_id != team_id:
             raise NotFoundError("project", project_id)
         row = found
+    # A name and an alias are typed by a member: screened before they are
+    # stored, and only the ones being written (#1130). ``row.name`` is None on
+    # a project that does not exist yet.
+    cleaned = _clean_aliases(aliases, clean)
+    kept = set((row.aliases or "").split("\n"))
+    refuse_personal_data(clean, field="name", stored=row.name, team_id=team_id)
+    for alias in cleaned.split("\n"):
+        if alias not in kept:
+            refuse_personal_data(alias, field="aliases", team_id=team_id)
     row.name = clean
-    row.aliases = _clean_aliases(aliases, clean)
+    row.aliases = cleaned
     row.jira_project_key = key
     session.add(row)
     # Two members adding the same name at once: the unique constraint answers

@@ -207,7 +207,7 @@ def test_the_assignee_is_told_the_day_before_by_direct_message(
     (message,) = slack.sent
     assert message.is_dm and message.channel == KIM
     assert message.text == (
-        "내일까지인 액션 아이템이 있습니다.\n"
+        "내일까지인 할 일이 있습니다.\n"
         "• 스펙 초안 공유\n"
         "기한: 10월 3일 토 · 회의: 주간 회의\n"
         "http://localhost:3000/meetings/mtg_1/actions"
@@ -223,7 +223,7 @@ def test_the_assignee_is_told_after_the_date_passed(session: Session, slack: Fak
     (message,) = slack.sent
     assert message.channel == KIM
     assert message.text.startswith(
-        "기한이 지난 액션 아이템이 있습니다.\n• 스펙 초안 공유\n기한: 10월 1일 목"
+        "기한이 지난 할 일이 있습니다.\n• 스펙 초안 공유\n기한: 10월 1일 목"
     )
 
 
@@ -262,8 +262,8 @@ def test_the_day_before_and_the_day_after_are_two_reminders(
     tasks.remind_due_items()
 
     assert [m.text.splitlines()[0] for m in slack.sent] == [
-        "내일까지인 액션 아이템이 있습니다.",
-        "기한이 지난 액션 아이템이 있습니다.",
+        "내일까지인 할 일이 있습니다.",
+        "기한이 지난 할 일이 있습니다.",
     ]
 
 

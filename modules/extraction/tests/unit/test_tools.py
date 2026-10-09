@@ -279,7 +279,7 @@ def test_due_dates_are_the_confirmed_unfinished_items_dates_and_titles_and_nobod
     }
     assert result["evidence"] == ["act_late", "act_a", "act_b", "act_c"]
     assert result["summary"] == (
-        "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 필요 0건."
+        "확정된 열린 할 일 5건 중 기한 있음 4건, 기한 없음 1건. 확인 필요 0건."
     )
     said = str(result)
     assert "act_undated" not in said and "act_done" not in said, "only the dated open ones"
@@ -293,9 +293,10 @@ def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
 ) -> None:
     """#1038, the first condition. A person's own item is confirmed as written
     and its text never passed module A's masker, so the title is screened: the
-    entry stays, with its date, and the text does not come out. Written and
-    reworded through the board's own writes, which is where such text comes
-    from."""
+    entry stays, with its date, and the text does not come out. The board's
+    own writes refuse such text now (#1130), so the rows here hold it as rows
+    stored before that rule do; the rewording that takes it out is the board's
+    write."""
     plain = service.create_action_item(
         session,
         ActionItemCreate(
@@ -306,10 +307,11 @@ def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
         session,
         ActionItemCreate(
             meeting_id=MEETING,
-            description="거래처 010-1234-5678 로 견적 요청",
+            description="거래처에 견적 요청하기",
             due_date=TODAY + timedelta(days=3),
         ),
     )
+    phone.description = "거래처 010-1234-5678 로 견적 요청"
     session.flush()
 
     result = tools.meeting_due_dates(session, MEETING)
@@ -328,10 +330,8 @@ def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
     assert (row["dated_open"], row["dated_confirmed"]) == (2, 2)
     assert result["evidence"] == [plain.id, phone.id]
 
-    # An edit can put personal data in, and a rewording can take it out.
-    service.update_action_item(
-        session, plain, ActionItemUpdate(description="담당 kim@example.com 에게 전달")
-    )
+    # Another old row, and a rewording that takes the number out of the first.
+    plain.description = "담당 kim@example.com 에게 전달"
     service.update_action_item(session, phone, ActionItemUpdate(description="거래처에 견적 요청"))
     session.flush()
 
@@ -404,7 +404,7 @@ def test_only_drafts_have_dates_means_a_row_of_counts_no_date_and_no_evidence(
     ]
     assert result["evidence"] == []
     assert result["summary"] == (
-        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 필요 2건."
+        "확정된 열린 할 일 1건 중 기한 있음 0건, 기한 없음 1건. 확인 필요 2건."
     )
     said = str(result)
     assert not any(day.isoformat() in said for day in draft_days), "a count, never a date"
@@ -495,7 +495,7 @@ def test_more_than_five_are_ranked_cut_and_marked_truncated(session: Session) ->
     result = tools.meeting_action_items(session, MEETING)
     assert len(result["items"]) == 5
     assert result["truncated"] is True
-    assert "확정된 액션아이템 8건" in result["summary"]
+    assert "확정된 할 일 8건" in result["summary"]
 
 
 def test_evidence_is_utterance_ids_only(session: Session) -> None:
@@ -655,12 +655,12 @@ def test_review_state_counts_what_waits_and_quotes_none_of_it(session: Session) 
     result = tools.review_state(session, MEETING)
 
     assert "결정 확인 필요 1건" in result["summary"]
-    assert "액션아이템 확인 필요 1건" in result["summary"]
+    assert "할 일 확인 필요 1건" in result["summary"]
     assert {i["id"] for i in result["items"]} == {"dec_1", "act_draft"}
     # The words the board and the decision list use for a row nobody confirmed.
     assert {i["id"]: i["title"] for i in result["items"]} == {
         "dec_1": "결정 확인 필요",
-        "act_draft": "액션아이템 확인 필요",
+        "act_draft": "할 일 확인 필요",
     }
     assert all(i["body"] == "" for i in result["items"])
     assert result["evidence"] == ["utt_d"]
@@ -914,7 +914,7 @@ def test_one_persons_open_confirmed_items_in_this_team(session: Session) -> None
     result = tools.person_action_items(session, TEAM, "user_in")
 
     assert [i["id"] for i in result["items"]] == ["act_mine"]
-    assert result["summary"] == "박지영님의 진행 중 액션아이템 1건, 기한 지남 1건."
+    assert result["summary"] == "박지영님의 진행 중 할 일 1건, 기한 지남 1건."
 
 
 def test_someone_off_the_team_is_refused(session: Session) -> None:
@@ -952,7 +952,7 @@ def test_an_unconfirmed_item_is_reported_without_its_text(session: Session) -> N
 
     assert "act_draft 할 일" not in str(result)
     assert result["items"][0]["title"] == "확인 필요"
-    assert result["summary"].startswith("확인이 필요한 액션아이템입니다.")
+    assert result["summary"].startswith("확인이 필요한 할 일입니다.")
 
 
 def test_another_teams_item_is_the_same_as_an_unknown_one(session: Session) -> None:
@@ -1249,8 +1249,8 @@ def test_closing_twice_says_it_is_closed_and_closing_a_finished_item_says_it_is_
     again = tools.close_action_item(TEAM, "act_closed")
     finished = tools.close_action_item(TEAM, "act_finished")
 
-    assert (again["ok"], again["summary"]) == (False, "이미 닫힌 액션아이템입니다.")
-    assert (finished["ok"], finished["summary"]) == (False, "이미 완료된 액션아이템입니다.")
+    assert (again["ok"], again["summary"]) == (False, "이미 닫힌 할 일입니다.")
+    assert (finished["ok"], finished["summary"]) == (False, "이미 완료된 할 일입니다.")
     assert [e.kind for e in session.query(ExtEditEvent)] == ["closed"]
     assert acting["items"] == ["act_closed"]
 
@@ -1628,7 +1628,7 @@ def test_due_today_is_todays_item_in_korea_before_the_servers_day_turns(
 
     assert [(i["id"], i["overdue"]) for i in result["items"]] == [("act_today", False)]
     assert result["summary"] == (
-        "진행 중인 액션아이템 2건 중 기한 지남 0건, 0일 안에 기한 1건, 재배정 필요 0건."
+        "진행 중인 할 일 2건 중 기한 지남 0건, 0일 안에 기한 1건, 재배정 필요 0건."
     )
 
 
@@ -1770,7 +1770,7 @@ def test_an_item_nobody_confirmed_is_given_by_id_and_never_quoted(session: Sessi
 
     assert result["items"] == [
         {
-            "title": "액션아이템 확인 필요",
+            "title": "할 일 확인 필요",
             "body": "4일째 확인 필요",
             "score": 0.5,
             "id": "act_waiting",
@@ -2009,7 +2009,7 @@ def test_the_owners_of_a_projects_open_items_most_items_first(session: Session) 
     answer = tools.open_item_owners(session, TEAM, project_id="prj_pay")
 
     assert answer["ok"] is True
-    assert answer["summary"] == "진행 중인 확정 액션아이템의 담당자 2명, 담당 없는 항목 0건."
+    assert answer["summary"] == "진행 중인 확정 할 일의 담당자 2명, 담당 없는 항목 0건."
     assert [(row["id"], row["title"], row["open"], row["overdue"]) for row in answer["items"]] == [
         ("user_in", "박지영", 2, 1),
         ("user_kim", "김하늘", 1, 0),
@@ -2027,7 +2027,7 @@ def test_what_a_meeting_left_open_and_nobody_is_guessed_for_an_item_without_an_o
 
     answer = tools.open_item_owners(session, TEAM, meeting_id=MEETING)
 
-    assert answer["summary"] == "진행 중인 확정 액션아이템의 담당자 1명, 담당 없는 항목 2건."
+    assert answer["summary"] == "진행 중인 확정 할 일의 담당자 1명, 담당 없는 항목 2건."
     assert [(row["id"], row["title"], row["open"]) for row in answer["items"]] == [
         ("user_in", "박지영", 1),
         ("unowned", "담당 없음", 2),

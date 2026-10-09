@@ -49,7 +49,7 @@ describe("Assistant header", () => {
 
     open("/actions");
 
-    expect(screen.getByText("A팀 · 액션아이템 보고 있음")).toBeTruthy();
+    expect(screen.getByText("A팀 · 할 일 보고 있음")).toBeTruthy();
     expect(label).not.toHaveBeenCalled();
   });
 });

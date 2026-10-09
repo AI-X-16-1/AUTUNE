@@ -7,9 +7,12 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
+import { useEndingSoon } from "../hooks/useEndingSoon";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
+import { useMeetingTeam } from "../hooks/useMeetingTeam";
 import { useMeetingTitle } from "../hooks/useMeetingTitle";
 import { useMicrophone, type Microphone } from "../hooks/useMicrophone";
+import { forgetPlannedEnd } from "../plannedEnd";
 import type { RecordingState } from "../types";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
@@ -51,14 +54,26 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * prompt during a recording — see its own docstring for why (no `Participant`
  * row exists until the meeting is processed) — so this screen does not need
  * the meeting's `team_id` and does not poll for it.
+ *
+ * **Five minutes before the planned end** (S14's small cut, #1147) the screen
+ * draws what the page put in `endingSoon`, above the transcript. This screen
+ * owns only the *when*: the end this tab was told on the new-meeting screen
+ * (`plannedEnd`) and one timer to five minutes before it (`useEndingSoon`),
+ * counted only while the recording is under way. What is drawn is another
+ * module's, so the page supplies it and is handed the meeting's team — read
+ * once, at that moment, and never for a meeting with no planned end. With no
+ * planned end, or nothing in the slot, the screen is as it was.
  */
 export function LiveMeetingScreen({
   meetingId,
   notice,
+  endingSoon,
 }: {
   meetingId: string;
   /** Drawn above the gate's consent row. The page fills it; see its file. */
   notice?: ReactNode;
+  /** Drawn above the transcript from five minutes before the planned end. */
+  endingSoon?: (teamId: string) => ReactNode;
 }) {
   const router = useRouter();
   const microphone = useMicrophone();
@@ -116,8 +131,19 @@ export function LiveMeetingScreen({
 
   // Navigation is a side effect, not something to run during render.
   useEffect(() => {
-    if (live.phase === "done") router.push(`/meetings/${meetingId}`);
+    if (live.phase !== "done") return;
+    // The recording is in; the end this tab was told has nothing left to time.
+    forgetPlannedEnd(meetingId);
+    router.push(`/meetings/${meetingId}`);
   }, [live.phase, meetingId, router]);
+
+  // S14's small cut. Timed only while the recording is under way, and the
+  // team is read only once the moment has come and there is a slot to fill.
+  const ending = useEndingSoon(
+    meetingId,
+    endingSoon !== undefined && (livePhase === "recording" || livePhase === "paused"),
+  );
+  const endingTeamId = useMeetingTeam(meetingId, ending);
 
   const onConsent = async (checked: boolean) => {
     setConsented(false);
@@ -201,7 +227,7 @@ export function LiveMeetingScreen({
           <span>
             이 회의 참석자 전원이 녹음과 분석에 동의했습니다.
             <span className="block text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
-              체크하지 않으면 녹음은 되지만 액션 아이템과 갭은 분석되지 않습니다.
+              체크하지 않으면 녹음은 되지만 할 일과 갭은 분석되지 않습니다.
             </span>
           </span>
         </label>
@@ -292,6 +318,7 @@ export function LiveMeetingScreen({
           라이브 전사가 끊겼습니다. 녹음은 계속되고, 정지하면 전체 녹음이 올라갑니다.
         </p>
       )}
+      {ending && endingTeamId !== null ? endingSoon?.(endingTeamId) : null}
       <LiveTranscript
         state={state}
         rows={live.rows}

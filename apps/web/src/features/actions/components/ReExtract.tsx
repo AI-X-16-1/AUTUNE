@@ -172,12 +172,12 @@ export function ReExtract({
         // part is unread, also after a rerun that left one again.
         state.will_retry ? (
           <p role="status" style={muted}>
-            이 회의의 일부 구간을 읽지 못했습니다. 아래 액션 아이템과 결정은 읽은 구간에서 추출한
+            이 회의의 일부 구간을 읽지 못했습니다. 아래 할 일과 결정은 읽은 구간에서 추출한
             것이며, 빠진 항목이 있을 수 있습니다. 자동으로 다시 시도하고 있습니다.
           </p>
         ) : (
           <p role="alert" style={critical}>
-            이 회의의 일부 구간을 읽지 못했습니다. 아래 액션 아이템과 결정은 읽은 구간에서 추출한
+            이 회의의 일부 구간을 읽지 못했습니다. 아래 할 일과 결정은 읽은 구간에서 추출한
             것이며, 빠진 항목이 있을 수 있습니다. 자동으로는 더 시도하지 않습니다. 아래 버튼으로
             다시 시도할 수 있습니다.
           </p>
@@ -188,40 +188,40 @@ export function ReExtract({
           // analyses, so "could not extract" would be false (PARK, #868).
           state.will_retry ? (
             <p role="status" style={muted}>
-              아래 액션 아이템과 결정은 추출되었습니다. 이 결과를 회의 연결과 리포트 분석에
+              아래 할 일과 결정은 추출되었습니다. 이 결과를 회의 연결과 리포트 분석에
               전달하지 못해 자동으로 다시 시도하고 있습니다({state.failures}번 실패).
             </p>
           ) : (
             <p role="alert" style={critical}>
-              아래 액션 아이템과 결정은 추출되었지만, 이 결과를 회의 연결과 리포트 분석에 전달하지
+              아래 할 일과 결정은 추출되었지만, 이 결과를 회의 연결과 리포트 분석에 전달하지
               못했습니다({state.failures}번 시도). 자동으로는 더 시도하지 않습니다. 아래 버튼으로
               다시 시도할 수 있습니다.
             </p>
           )
         ) : state.will_retry ? (
           <p role="status" style={muted}>
-            이 회의의 액션 아이템과 결정을 추출하지 못해 자동으로 다시 시도하고 있습니다
+            이 회의의 할 일과 결정을 추출하지 못해 자동으로 다시 시도하고 있습니다
             ({state.failures}번 실패). 잠시 뒤 새로 고쳐 주세요.
           </p>
         ) : (
           <p role="alert" style={critical}>
-            이 회의의 액션 아이템과 결정을 추출하지 못했습니다({state.failures}번 시도). 자동으로는
+            이 회의의 할 일과 결정을 추출하지 못했습니다({state.failures}번 시도). 자동으로는
             더 시도하지 않습니다. 아래 버튼으로 다시 시도할 수 있습니다.
           </p>
         )
       ) : waiting ? null : state.in_progress ? (
         <p role="status" style={muted}>
-          이 회의의 액션 아이템과 결정을 추출하고 있습니다. 보통 1~2분 걸리며, 끝나면 이 화면에
+          이 회의의 할 일과 결정을 추출하고 있습니다. 보통 1~2분 걸리며, 끝나면 이 화면에
           나타납니다.
         </p>
       ) : state.overdue ? (
         <p role="status" style={muted}>
-          전사는 끝났지만 이 회의의 액션 아이템과 결정은 아직 추출되지 않았습니다. 아래 버튼으로
+          전사는 끝났지만 이 회의의 할 일과 결정은 아직 추출되지 않았습니다. 아래 버튼으로
           추출할 수 있습니다.
         </p>
       ) : state.read_nothing ? (
         <p role="status" style={muted}>
-          녹음 동의가 기록되지 않아 이 회의의 발화를 읽지 않았습니다. 그래서 추출된 액션 아이템과
+          녹음 동의가 기록되지 않아 이 회의의 발화를 읽지 않았습니다. 그래서 추출된 할 일과
           결정이 없습니다. 동의가 기록되면 10분 안에 자동으로 다시 추출합니다.
         </p>
       ) : null}
@@ -233,12 +233,12 @@ export function ReExtract({
           disabled={waiting}
           onClick={() => void ask()}
         >
-          액션·결정 다시 추출
+          할 일·결정 다시 추출
         </Button>
         <span style={muted}>
           {waiting
             ? "다시 추출을 요청했습니다. 보통 1~2분 안에 반영됩니다."
-            : "항목을 고친 적이 있는 회의는 액션 목록을 그대로 두고, 분류와 결정만 새로 만듭니다."}
+            : "항목을 고친 적이 있는 회의는 할 일 목록을 그대로 두고, 분류와 결정만 새로 만듭니다."}
         </span>
       </div>
       {outcome === "done" ? (

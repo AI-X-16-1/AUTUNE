@@ -4,7 +4,7 @@ A team connects Notion by sharing one page with the integration. Under it this
 module makes a page of Autune's own, titled "Autune", and everything Autune
 writes lives in databases inside that page -- so the team finds it all in one
 place and the page they shared keeps only that one child (decided with the
-user, 2026-10-01). Three databases: "액션 아이템", "결정" and "회의록", each
+user, 2026-10-01). Three databases: "할 일", "결정" and "회의록", each
 with exactly the property names
 the sync uses -- ``service.NOTION_PROPERTIES``,
 ``service.DECISION_NOTION_PROPERTIES`` and ``MINUTES_NOTION_PROPERTIES`` below
@@ -71,14 +71,14 @@ _ACTION_STATUS_OPTIONS = list(NOTION_STATUS_LABELS.values())
 
 HOME_TITLE = "Autune"
 HOME_INTRO = (
-    "Autune이 회의에서 확정한 액션 아이템과 결정을 이 페이지 아래 데이터베이스에 "
+    "Autune이 회의에서 확정한 할 일과 결정을 이 페이지 아래 데이터베이스에 "
     "정리합니다. 데이터베이스와 속성 이름을 바꾸면 동기화가 멈추니 그대로 두세요."
 )
 """The page every database goes in, and the one line on it. Fixed text: no
 meeting content leaves here."""
 
 DATABASES: tuple[tuple[str, str, Mapping[str, str], bool], ...] = (
-    ("action_db_id", "액션 아이템", NOTION_PROPERTIES, True),
+    ("action_db_id", "할 일", NOTION_PROPERTIES, True),
     ("decision_db_id", "결정", DECISION_NOTION_PROPERTIES, False),
     ("minutes_db_id", "회의록", MINUTES_NOTION_PROPERTIES, False),
 )
