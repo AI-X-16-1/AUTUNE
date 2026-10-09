@@ -406,16 +406,28 @@ function lastTeamAsked(turns: Turn[]): string | null {
 }
 
 /**
- * The team a question opens, when it is not the team of the last question
- * about a team: a line with its name goes above it. A question on a meeting
- * page, or the first team question, opens nothing. Computed from the turns,
- * so switching teams back and forth without asking draws no line.
+ * The team a question opens: a line with its name goes above it when it is
+ * not the team of the last question about a team. Once the conversation has
+ * asked about a second team, the first team's first question gets its line
+ * too, so every group of answers is named (#1114 review). A conversation about
+ * one team draws none, and neither does a question on a meeting page.
+ * Computed from the turns, so switching teams back and forth without asking
+ * draws no line.
  */
 function newTeam(turns: Turn[], index: number): string | null {
   const turn = turns[index];
   if (turn?.role !== "user" || turn.team === null) return null;
   const before = lastTeamAsked(turns.slice(0, index));
-  return before !== null && before !== turn.team.id ? turn.team.name : null;
+  if (before === null) return teamsAsked(turns) > 1 ? turn.team.name : null;
+  return before !== turn.team.id ? turn.team.name : null;
+}
+
+/** How many teams this conversation has asked about. */
+function teamsAsked(turns: Turn[]): number {
+  const ids = new Set<string>();
+  for (const turn of turns)
+    if (turn.role === "user" && turn.team !== null) ids.add(turn.team.id);
+  return ids.size;
 }
 
 function TeamLine({ name }: { name: string }) {
