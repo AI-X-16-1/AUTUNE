@@ -38,7 +38,7 @@ internally (L0) and must not post them anywhere without a person's review.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -191,6 +191,18 @@ def _urgency(item: ActionItemRead, today: date) -> float:
     return max(0.2, 0.8 - 0.05 * days)
 
 
+def _most_urgent_first(items: Iterable[ActionItemRead], today: date) -> list[ActionItemRead]:
+    """``items`` by ``_urgency``, and among equals the earlier date first.
+
+    Every late item has the one score, so by the score alone the late ones
+    came out in the order they were written down: of eight late items the five
+    shown -- and what a subagent then proposed about -- could be the ones a
+    day late while one a week late was left out. The earlier date is the
+    longer late. Items with no date stay in the order the service gave.
+    """
+    return sorted(items, key=lambda i: (-_urgency(i, today), i.due_date or date.max))
+
+
 def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     """Use this right after a meeting is processed, or when asked what a meeting
     decided people should do. Do not use it for work across several meetings --
@@ -212,7 +224,7 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
         for i in service.list_action_items(session, meeting_id=meeting_id)
         if i.status == ActionStatus.NEEDS_CONFIRMATION.value
     ]
-    ranked = sorted(confirmed, key=lambda i: _urgency(i, today), reverse=True)
+    ranked = _most_urgent_first(confirmed, today)
     reassign = sum(i.needs_reassignment for i in confirmed)
     summary = f"확정된 액션아이템 {len(confirmed)}건, 확인 필요 {len(waiting)}건."
     if reassign:
@@ -363,7 +375,7 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
         for i in open_items
         if i.needs_reassignment or (i.due_date is not None and i.due_date <= horizon)
     ]
-    ranked = sorted(due, key=lambda i: _urgency(i, today), reverse=True)
+    ranked = _most_urgent_first(due, today)
     overdue = sum(_overdue(i, today) for i in due)
     soon = sum(1 for i in due if i.due_date is not None and today <= i.due_date <= horizon)
     reassign = sum(i.needs_reassignment for i in due)
@@ -392,7 +404,11 @@ def stalled_action_items(
 
     Returns the team's items that are stalled in one of three ways, most
     pressing first (at most five), each saying which in ``stalled``, with a
-    count of each in ``summary``:
+    count of each in ``summary``. The late come first, the longest late of
+    them first; then the carried, the longest carried first; then the
+    unconfirmed. Each confirmed row says in ``overdue_in_all`` how many
+    confirmed items are late in all, so a caller shown five can say how many
+    it was not shown -- a count, and no id or title beyond the five:
 
     - ``overdue`` -- confirmed, unfinished, and past its due date;
     - ``carried`` -- confirmed, unfinished, and carried through
@@ -437,9 +453,16 @@ def stalled_action_items(
         ]
         if ways:
             confirmed.append((i, ways))
-    # Both ways before one; late before carried; then the longer carried.
-    confirmed.sort(key=lambda pair: (len(pair[1]), "overdue" in pair[1], pair[0].carried_meetings))
-    confirmed.reverse()
+    # Late before carried only. Among the late the longest late, and the
+    # longer carried of two as late as each other; then the longer carried.
+    confirmed.sort(
+        key=lambda pair: (
+            "overdue" not in pair[1],
+            (pair[0].due_date or date.max) if "overdue" in pair[1] else date.max,
+            -pair[0].carried_meetings,
+        )
+    )
+    overdue = sum("overdue" in ways for _, ways in confirmed)
 
     now = datetime.now(tz=UTC)
     waiting: list[tuple[int, str, str]] = []
@@ -460,6 +483,7 @@ def stalled_action_items(
             "score": 0.9 if "overdue" in ways else 0.7,
             "stalled": ways,
             "carried_meetings": i.carried_meetings,
+            "overdue_in_all": overdue,
         }
         for i, ways in confirmed
     ]
@@ -475,7 +499,6 @@ def stalled_action_items(
         }
         for days, item_id, meeting_id in waiting
     ]
-    overdue = sum("overdue" in ways for _, ways in confirmed)
     carried = sum("carried" in ways for _, ways in confirmed)
     return _result(
         summary=(
@@ -875,7 +898,7 @@ def person_action_items(session: Session, team_id: str, user_id: str) -> dict[st
         for i in service.list_action_items(session, assignee_id=user_id, status=status)
         if i.meeting_id in meeting_ids
     ]
-    ranked = sorted(mine, key=lambda i: _urgency(i, today), reverse=True)
+    ranked = _most_urgent_first(mine, today)
     overdue = sum(_overdue(i, today) for i in mine)
     return _result(
         summary=f"{member}님의 진행 중 액션아이템 {len(mine)}건, 기한 지남 {overdue}건.",

@@ -31,7 +31,9 @@ def _a_wednesday(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(graph, "_today", lambda: WEDNESDAY)
 
 
-def confirmed(item_id: str, *ways: str, flagged: bool = False) -> dict[str, Any]:
+def confirmed(
+    item_id: str, *ways: str, flagged: bool = False, late_in_all: Any = None
+) -> dict[str, Any]:
     return {
         "title": f"{item_id} 할 일",
         "body": "박지영 · 2026-10-01 · 기한 지남 · todo",
@@ -42,6 +44,7 @@ def confirmed(item_id: str, *ways: str, flagged: bool = False) -> dict[str, Any]
         "needs_reassignment": flagged,
         "stalled": list(ways),
         "carried_meetings": 3 if "carried" in ways else 0,
+        **({} if late_in_all is None else {"overdue_in_all": late_in_all}),
     }
 
 
@@ -158,6 +161,40 @@ def test_at_most_five_proposals_and_the_cut_is_said() -> None:
 
     assert len(outcome.proposed) == plan.MAX_PROPOSALS == 5
     assert outcome.result.truncated is True, "five is not read as all"
+
+
+def test_with_more_late_than_five_the_answer_says_how_many_more() -> None:
+    """Eight late and five rows: the cards are the five the tool gave, the
+    longest late, and the answer says three more are -- a number, no title."""
+    rows = [confirmed(f"act_{n}", "overdue", late_in_all=8) for n in range(5)]
+
+    outcome = invoke(stalled(*rows, truncated=True))
+
+    assert len(outcome.proposed) == 5
+    assert "기한 옮기기 제안 5건(가장 오래 지난 순서, 3건 더 남음)." in outcome.result.summary
+    assert [p.arguments["action_item_id"] for p in outcome.proposed] == [
+        f"act_{n}" for n in range(5)
+    ], "in the tool's order"
+
+
+def test_a_late_item_left_to_its_flag_is_not_one_of_those_remaining() -> None:
+    """Shown and not proposed about -- its holder left -- is not "more left"."""
+    rows = [confirmed(f"act_{n}", "overdue", late_in_all=6) for n in range(4)]
+    rows.append(confirmed("act_orphan", "overdue", flagged=True, late_in_all=6))
+
+    outcome = invoke(stalled(*rows, truncated=True))
+
+    assert "기한 옮기기 제안 4건(가장 오래 지난 순서, 1건 더 남음)." in outcome.result.summary
+
+
+@pytest.mark.parametrize("late_in_all", [None, 2, True, "8"])
+def test_with_every_late_item_proposed_about_nothing_is_said_to_remain(late_in_all: Any) -> None:
+    rows = [confirmed(f"act_{n}", "overdue", late_in_all=late_in_all) for n in range(2)]
+
+    outcome = invoke(stalled(*rows))
+
+    assert "기한 옮기기 제안 2건. 관리자가" in outcome.result.summary
+    assert "남음" not in outcome.result.summary
 
 
 def test_the_rule_itself_stops_at_five_whatever_it_is_handed() -> None:
