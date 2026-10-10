@@ -12,7 +12,9 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from autune_audio.masking import mask
 from autune_audio.persistence import persist_transcript, transcript_payload
+from autune_audio.recognition import get_recogniser
 from autune_audio.speakers import Utterance as SpokenUtterance
 from autune_contracts.enums import TranscriptSource
 from autune_contracts.transcript import TranscriptReady
@@ -130,6 +132,27 @@ class TestRunningItTwice:
 
 
 class TestWhatItRefusesToWrite:
+    def test_what_mask_returned_is_stored(self, db_session: Session, meeting: str) -> None:
+        """#1210: a phone number's last four ran on into a date and read as an
+        account, so the guard refused a row mask() had already masked -- after
+        the recording was deleted, with nothing left to transcribe again."""
+        text = mask(
+            "연락처는 010-1234-5678 2024-06-18 이후로 바뀝니다", recogniser=get_recogniser()
+        ).text
+
+        persist_transcript(
+            db_session,
+            meeting_id=meeting,
+            utterances=(spoken("SPEAKER_00", 0.0, 3.0, text),),
+            duration_seconds=3.0,
+            audio_deleted=True,
+        )
+
+        stored = db_session.scalars(
+            sa.select(Utterance.text).where(Utterance.meeting_id == meeting)
+        )
+        assert list(stored) == [text]
+
     def test_unmasked_text_is_refused(self, db_session: Session, meeting: str) -> None:
         """The same check `packages/integrations` runs on the way out.
 
