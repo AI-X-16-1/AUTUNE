@@ -19,7 +19,7 @@ behalf of a team, so a non-member gets 403 rather than someone else's work.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -146,6 +146,10 @@ class PendingRead(BaseModel):
     needs_check: bool
     """Approved, but the action's outcome was never recorded: something raised
     after the claim. It is never re-run; a person checks what happened."""
+    meeting_title: str | None = None
+    meeting_started_at: datetime | None = None
+    """Which meeting the card is about, read from module A's row when the list
+    is read (#854); nothing is stored. ``None`` for a card about no meeting."""
 
 
 PREVIEW_FAILED = "미리보기를 만들지 못했습니다"
@@ -177,6 +181,14 @@ def _read(session: Session, row: AgentPendingAction) -> PendingRead:
     fields: dict[str, Any] = {c: getattr(row, c) for c in PENDING_COLUMNS}
     fields.update(shown)
     fields["needs_check"] = row.status == "approved" and row.result_ok is None
+    meeting = session.get(Meeting, row.meeting_id) if row.meeting_id else None
+    if meeting is not None and meeting.team_id == row.team_id:
+        fields["meeting_title"] = meeting.title
+        started = meeting.started_at
+        # A naive time would read as the browser's local time.
+        if started is not None and started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        fields["meeting_started_at"] = started
     return PendingRead(**fields)
 
 

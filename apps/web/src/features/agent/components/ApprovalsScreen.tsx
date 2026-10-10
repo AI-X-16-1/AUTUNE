@@ -7,6 +7,7 @@ import { ApiError } from "@/shared/api/client";
 import { Button } from "@/shared/ui/Button";
 
 import { approvePending, listPending, rejectPending } from "../api";
+import { meetingLabel } from "../meetingLabel";
 import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
 
@@ -221,7 +222,7 @@ export function ApprovalsScreen() {
                       href={`/meetings/${item.meeting_id}`}
                       className="text-[var(--color-accent-default)]"
                     >
-                      회의 보기
+                      {meetingLabel(item)}
                     </Link>
                   </>
                 ) : null}
