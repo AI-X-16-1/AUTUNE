@@ -228,6 +228,21 @@ def test_what_the_line_break_reading_finds_is_added_to_the_other_two() -> None:
     assert masked.text == "담당자\n" + MASK_CHAR * 13 + "\n끝"
 
 
+@pytest.mark.parametrize(
+    "written",
+    ["900101*\n1234567", "900101-*\n1234567", "900101*\r\n1234567", "010*2345-\n6789"],
+)
+def test_a_value_with_a_star_at_the_end_of_a_line_is_hidden(written: str) -> None:
+    """The star reading stops at the line break and the line-break reading at
+    the star. Read with both as spaces, the value is found."""
+    text = f"주민 {written} 입니다"
+
+    masked = mask_document(text)
+
+    assert masked.text == f"주민 {_digits_hidden(written)} 입니다"
+    assert find_unmasked(masked.text) == []
+
+
 def test_line_breaks_that_are_no_part_of_a_value_are_left_as_written() -> None:
     text = "3분기 로드맵\r\n\r\n- 검색 응답 시간 120ms\n- 2026-10-08 회의\n- 버전 1.2.3\n\n끝"
 

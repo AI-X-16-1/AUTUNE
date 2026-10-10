@@ -37,10 +37,13 @@ breaks; text taken out of a PDF or a ``.docx`` breaks where the page or the
 cell did. The detector joins the parts of most values across spaces and not
 across a line break, so ``900101-`` at the end of one line and ``1234567`` at
 the start of the next were stored whole (@mkkim68 on #1199). So a document is
-read a third time, with every line break (CR, LF) taken for a space. Being a
-document's masker, this hides too much before too little. Known limit: an
-e-mail address broken across lines is not put back together -- a space is no
-part of an address -- so at most the half that still reads as one is hidden.
+read a third time, with every line break (CR, LF) taken for a space. A star
+can sit at a line's end as well (``900101*`` and then ``1234567``), where
+each of those two readings sees half a value, so a text that has both is read
+once more with both taken for spaces. Being a document's masker, this hides
+too much before too little. Known limit: an e-mail address broken across
+lines is not put back together -- a space is no part of an address -- so at
+most the half that still reads as one is hidden.
 
 The unmasked string is a parameter and a local here and nothing else: it is
 not returned, logged, cached or put in an exception.
@@ -84,9 +87,9 @@ def _merged(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
 
 def _spans(text: str) -> list[tuple[int, int, str]]:
     """What the detector reads in ``text`` as it stands, what it reads with
-    every ``*`` taken for a space, and what it reads with every line break
-    taken for a space. Each other text is the same length, so its spans are
-    positions in ``text`` too."""
+    every ``*`` taken for a space, what it reads with every line break taken
+    for a space, and what it reads with both. Each other text is the same
+    length, so its spans are positions in ``text`` too."""
     spans = find_pii(text)
     if MASK_CHAR in text:
         spans = spans + find_pii(text.replace(MASK_CHAR, " "))
@@ -95,6 +98,8 @@ def _spans(text: str) -> list[tuple[int, int, str]]:
     unbroken = text.replace("\r", " ").replace("\n", " ")
     if unbroken != text:
         spans = spans + find_pii(unbroken)
+        if MASK_CHAR in unbroken:
+            spans = spans + find_pii(unbroken.replace(MASK_CHAR, " "))
     return spans
 
 
