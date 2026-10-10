@@ -56,3 +56,36 @@ export function writtenDay(iso: string, year: number | null): string | null {
 export function shownDue(iso: string): string {
   return writtenDay(iso, new Date().getFullYear()) ?? iso;
 }
+
+/**
+ * Today in Korea as `YYYY-MM-DD`, for the due date's quick picks: "내일" is
+ * the team's tomorrow whatever clock the browser keeps. `en-CA` is the
+ * locale that writes a date in that order.
+ */
+export function seoulToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(now);
+}
+
+/** `iso` moved by `days` on the calendar. No clock is involved. */
+export function addDays(iso: string, days: number): string {
+  const moved = new Date(`${iso}T00:00:00Z`);
+  moved.setUTCDate(moved.getUTCDate() + days);
+  return moved.toISOString().slice(0, 10);
+}
+
+/**
+ * The due date's quick picks (#1183): tomorrow, this week's Friday, next
+ * week's Monday, counted in Korea with the week starting on Monday. On a
+ * Saturday or Sunday this week's Friday has gone, and that pick is left out
+ * rather than quietly meaning next week's.
+ */
+export function quickDues(now: Date = new Date()): { label: string; date: string }[] {
+  const today = seoulToday(now);
+  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
+  const picks = [{ label: "내일", date: addDays(today, 1) }];
+  if (weekday >= 1 && weekday <= 5) {
+    picks.push({ label: "이번 주 금", date: addDays(today, 5 - weekday) });
+  }
+  picks.push({ label: "다음 주 월", date: addDays(today, (8 - weekday) % 7 || 7) });
+  return picks;
+}

@@ -228,6 +228,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           onAssigneeChange={async (change) => {
             await edit(selected.id, change);
           }}
+          onDueChange={async (dueDate) => {
+            await edit(selected.id, { due_date: dueDate });
+          }}
           onDelete={async () => {
             await remove(selected.id);
             setSelectedId(undefined);

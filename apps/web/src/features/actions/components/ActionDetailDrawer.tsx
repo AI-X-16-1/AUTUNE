@@ -12,7 +12,7 @@ import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
-import { shownDue } from "../dates";
+import { quickDues, shownDue } from "../dates";
 import { shownLabel } from "../speaker";
 import { typedTextRefusal } from "../refusal";
 import { rowTitle } from "../title";
@@ -44,6 +44,12 @@ import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
  * stands under it (the user, 2026-10-09): the window used to open on the
  * sentence alone, under another heading than the card pressed. A sentence
  * short enough to be its own top line is shown once.
+ *
+ * **An item waiting in "확인 필요" offers 확정 and 거부 under its heading**
+ * (#1183): deciding it is what this window is opened for most, and it sat
+ * behind the status select. 확정 is the select's move to 할 일 -- the same
+ * PATCH and the same notice afterwards; 거부 is the delete, through the same
+ * confirmation, since an item the model got wrong is removed, not kept.
  */
 export function ActionDetailDrawer({
   item,
@@ -51,6 +57,7 @@ export function ActionDetailDrawer({
   onStatusChange,
   onCloseUnfinished,
   onAssigneeChange,
+  onDueChange,
   onDelete,
 }: {
   item: ActionItemRead;
@@ -63,6 +70,8 @@ export function ActionDetailDrawer({
     assignee_id: string | null;
     assignee_label: string | null;
   }) => void | Promise<void>;
+  /** Set the due date, `YYYY-MM-DD`, or clear it. Read-only text without it. */
+  onDueChange?: (dueDate: string | null) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
   const heading = rowTitle(item.title, item.description);
@@ -87,13 +96,56 @@ export function ActionDetailDrawer({
   // picked, like the status; a typed name is saved with its own button, since
   // saving on every keystroke would write half a name.
   const members = useAssignable(item.meeting_id);
+  // A diarization label (`SPEAKER_01`) says who spoke, not who it is (#1183).
+  // With the team's list to pick from, the picker opens on 미지정 rather than
+  // on "직접 입력" holding the label, and the speaker is named above it.
+  const speaker =
+    !item.assignee_id && shownLabel(item.assignee_label) !== (item.assignee_label ?? undefined)
+      ? shownLabel(item.assignee_label)
+      : undefined;
+  const unnamedSpeaker = speaker !== undefined && (members?.length ?? 0) > 0;
   const stored: AssigneeValue = item.assignee_id
     ? { kind: "member", userId: item.assignee_id }
-    : item.assignee_label
+    : item.assignee_label && !unnamedSpeaker
       ? { kind: "typed", label: item.assignee_label }
       : { kind: "none" };
   const [typed, setTyped] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
+  // The due date being typed, saved with its own button like a typed name: a
+  // date field reports every keystroke of the year as a date of its own. A
+  // quick pick is a whole day and is saved at once.
+  const [due, setDue] = useState<string | null>(null);
+  const [dating, setDating] = useState(false);
+
+  const saveDue = async (value: string | null) => {
+    setFailure(null);
+    setDating(true);
+    try {
+      await onDueChange?.(value);
+      setDue(null);
+    } catch {
+      setFailure("기한을 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setDating(false);
+    }
+  };
+
+  // One path for the select and the 확정 button, so both say the same
+  // things afterwards.
+  const changeStatus = async (next: ActionStatus) => {
+    const confirmed = confirms(item, next);
+    setFailure(null);
+    setNotice(null);
+    setChanging(true);
+    try {
+      await onStatusChange?.(next);
+      if (confirmed) setNotice(CONFIRMED_NOTICE);
+    } catch {
+      setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setChanging(false);
+    }
+  };
 
   const saveAssignee = async (value: AssigneeValue) => {
     setFailure(null);
@@ -198,17 +250,19 @@ export function ActionDetailDrawer({
                   ? "후보"
                   : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
               </span>
-              {/* A share a person can read; the raw score stays on hover. */}
-              <span
-                className="text-[var(--color-ink-muted)]"
-                style={{ fontSize: "var(--text-metaSmall)" }}
-                title={`AI 신뢰도 ${item.confidence.toFixed(2)}`}
-              >
-                · AI 신뢰도{" "}
-                <span style={{ fontFamily: "var(--font-mono)" }}>
-                  {Math.round(item.confidence * 100)}%
+              {/* A sentence, not a score (#1183): nobody knew how to read
+                  0.82. "확실하지 않음" only where the server put the item
+                  among the candidates -- the threshold is its, not ours.
+                  The score stays on hover. */}
+              {confidenceNote(item) !== null ? (
+                <span
+                  className="text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                  title={`AI 신뢰도 ${Math.round(item.confidence * 100)}%`}
+                >
+                  · {confidenceNote(item)}
                 </span>
-              </span>
+              ) : null}
               {item.description_resolved ? (
                 <span
                   className="text-[var(--color-ink-muted)]"
@@ -219,6 +273,31 @@ export function ActionDetailDrawer({
                 </span>
               ) : null}
             </div>
+            {item.status === "needs_confirmation" &&
+            (onStatusChange !== undefined || onDelete !== undefined) ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {onStatusChange !== undefined ? (
+                  <Button
+                    tone="primary"
+                    size="compact"
+                    loading={changing}
+                    onClick={() => void changeStatus("todo")}
+                  >
+                    확정
+                  </Button>
+                ) : null}
+                {onDelete !== undefined ? (
+                  <Button
+                    tone="secondary"
+                    size="compact"
+                    disabled={changing}
+                    onClick={() => setConfirming(true)}
+                  >
+                    거부
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-3">
             {/* Destructive actions are red text, then a modal. Red never fills
@@ -254,6 +333,9 @@ export function ActionDetailDrawer({
               <div className="grid gap-2">
                 {item.needs_reassignment ? (
                   <span>재배정 필요 · 담당자가 이 팀에 없습니다</span>
+                ) : null}
+                {unnamedSpeaker && typed === null ? (
+                  <span>{`${speaker}(이름 미지정) · 팀원 중에서 골라 주세요`}</span>
                 ) : null}
                 <AssigneeInput
                   id={`assignee-${item.id}`}
@@ -291,7 +373,57 @@ export function ActionDetailDrawer({
             )}
           </Field>
           <Field label="기한">
-            {item.due_date ? shownDue(item.due_date) : "없음"}
+            {onDueChange === undefined ? (
+              item.due_date ? (
+                shownDue(item.due_date)
+              ) : (
+                "없음"
+              )
+            ) : (
+              // A field like 담당 and 상태 beside it, so it reads as one that
+              // can be changed (#1183); cleared, the item has no due date.
+              <div className="grid gap-2">
+                <input
+                  type="date"
+                  aria-label="기한"
+                  value={due ?? item.due_date ?? ""}
+                  disabled={dating}
+                  onChange={(event) => setDue(event.target.value)}
+                  className="w-full border bg-transparent"
+                  style={{
+                    height: "var(--control-h-default)",
+                    paddingInline: "var(--control-px-text)",
+                    borderRadius: "var(--radius)",
+                    border: "1px solid var(--color-hairline)",
+                    fontSize: "var(--text-body)",
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  {quickDues().map((pick) => (
+                    <Button
+                      key={pick.label}
+                      tone="text"
+                      size="compact"
+                      disabled={dating}
+                      title={shownDue(pick.date)}
+                      onClick={() => void saveDue(pick.date)}
+                    >
+                      {pick.label}
+                    </Button>
+                  ))}
+                  {due !== null && due !== (item.due_date ?? "") ? (
+                    <Button
+                      tone="secondary"
+                      size="compact"
+                      loading={dating}
+                      onClick={() => void saveDue(due || null)}
+                    >
+                      기한 저장
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            )}
           </Field>
           {item.due_text ? (
             <Field label="기한 파싱 원문">
@@ -304,23 +436,7 @@ export function ActionDetailDrawer({
               value={item.status ?? "needs_confirmation"}
               disabled={changing}
               aria-busy={changing || undefined}
-              onChange={async (event) => {
-                const next = event.target.value as ActionStatus;
-                const confirmed = confirms(item, next);
-                setFailure(null);
-                setNotice(null);
-                setChanging(true);
-                try {
-                  await onStatusChange?.(next);
-                  if (confirmed) setNotice(CONFIRMED_NOTICE);
-                } catch {
-                  setFailure(
-                    "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
-                  );
-                } finally {
-                  setChanging(false);
-                }
-              }}
+              onChange={(event) => void changeStatus(event.target.value as ActionStatus)}
               className="w-full border bg-transparent"
               style={{
                 height: "var(--control-h-default)",
@@ -587,6 +703,17 @@ function quotationNote(
   if (quotation.loading) return "근거 발화를 불러오는 중입니다.";
   if (quotation.error) return "근거 발화를 불러오지 못했습니다.";
   return "근거 발화가 삭제되어 더 이상 볼 수 없습니다.";
+}
+
+/**
+ * Where the item came from and how sure the model was, as a person reads it
+ * (#1183). Only a model's item has a confidence worth saying; one a person
+ * added, a chat draft or a follow-up says what it is elsewhere. The status
+ * beside it already says "확인 필요", so this does not repeat it.
+ */
+function confidenceNote(item: ActionItemRead): string | null {
+  if (item.origin !== "model") return null;
+  return isCandidate(item) ? "자동 추출 · 확실하지 않음" : "자동 추출";
 }
 
 /** Field names as a person reads them. Only names are kept, never values (#109). */

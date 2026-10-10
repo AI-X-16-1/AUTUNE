@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shownDue, writtenDay } from "./dates";
+import { addDays, quickDues, seoulToday, shownDue, writtenDay } from "./dates";
 
 describe("writtenDay", () => {
   it("writes a day as month, day and weekday", () => {
@@ -31,5 +31,41 @@ describe("shownDue", () => {
     expect(shownDue(`${year}-03-02`)).not.toContain("년");
     expect(shownDue(`${year + 1}-03-02`)).toContain(`${year + 1}년 3월 2일`);
     expect(shownDue("다음 주")).toBe("다음 주");
+  });
+});
+
+describe("quickDues", () => {
+  it("counts from today in Korea, not from the browser's clock", () => {
+    // Monday 16:00 UTC is already Tuesday 01:00 in Seoul.
+    const now = new Date("2026-10-12T16:00:00Z");
+    expect(seoulToday(now)).toBe("2026-10-13");
+    expect(quickDues(now)).toEqual([
+      { label: "내일", date: "2026-10-14" },
+      { label: "이번 주 금", date: "2026-10-16" },
+      { label: "다음 주 월", date: "2026-10-19" },
+    ]);
+  });
+
+  it("is today for this week's Friday on a Friday, across a month's end", () => {
+    expect(quickDues(new Date("2026-10-30T03:00:00Z"))).toEqual([
+      { label: "내일", date: "2026-10-31" },
+      { label: "이번 주 금", date: "2026-10-30" },
+      { label: "다음 주 월", date: "2026-11-02" },
+    ]);
+  });
+
+  it("leaves this week's Friday out at the weekend", () => {
+    expect(quickDues(new Date("2026-10-10T03:00:00Z"))).toEqual([
+      { label: "내일", date: "2026-10-11" },
+      { label: "다음 주 월", date: "2026-10-12" },
+    ]);
+    expect(quickDues(new Date("2026-10-11T03:00:00Z")).map((pick) => pick.date)).toEqual([
+      "2026-10-12",
+      "2026-10-12",
+    ]);
+  });
+
+  it("moves a day across a year's end", () => {
+    expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
   });
 });
