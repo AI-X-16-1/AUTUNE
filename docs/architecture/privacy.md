@@ -147,10 +147,11 @@ item quotes readable around it.
 **Status, 2026-10-09: the rule is written first.** On `main` today
 `ext_materials` exists for Drive links only (#1016: team, title, the file's
 id and kind, the time), and nothing of a file is read. What this subsection
-adds is not there yet: the columns that mark an uploaded row and give it a
-window, `ext_material_chunks`, `ext_material_alarms`, the upload route and
-the expiry task. They arrive in the changes listed on #817 -- the document
-masker in `packages/integrations`, module B's storage, the approvers' alert
+adds is not there yet: the column that marks an uploaded row,
+`ext_material_chunks`, `ext_material_alarms`, the upload route, the delete
+of an uploaded material and the task that deletes old alarm rows. They
+arrive in the changes listed on #817 -- the document masker in
+`packages/integrations`, module B's storage, the approvers' alert
 in the agent layer, search -- each built to this text and off by default,
 and none of them merges before this rule is approved. The legal notice
 (`apps/web/src/app/legal/content.ts`) speaks of voice only today -- what is
@@ -217,7 +218,7 @@ patterned values -- a phone number, an e-mail address, a resident
 registration number, a card or account number. It does not hide a name
 written in a sentence, or content that identifies somebody by what it
 describes (ADR 0007, accepted cost). That is why this text has a deletion
-path and a retention rule (section 4) and is read by the team alone.
+path any member can run (section 4) and is read by the team alone.
 
 **No row names a person.** Not who uploaded a file, not who deleted one, not
 who was stopped. The title is typed by a member and can hold a name; it is
@@ -254,7 +255,7 @@ link is for approvers only and shows the time and the kind of marking. An
 approver's acknowledgement deletes the row, and who acknowledged is not
 recorded. In a small team the time of an attempt can point at one person,
 which is why the row is short-lived: unacknowledged, it is deleted 30 days
-after it was written, by the task that deletes materials past their window.
+after it was written, by an hourly task of module B's.
 
 The check reads words, not meaning, and only in those places: a marking
 that exists only in the body, or only as a picture, is not seen.
@@ -360,6 +361,8 @@ person's, those counts are that person's completion record. So:
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
+  A team's uploaded materials are not analysis results and are kept until the
+  team deletes them (#817, below).
 - A scheduled sweep deletes expired results: `autune.audio.periodic.expire_meetings`,
   hourly (#206). Module A deletes every meeting past `meetings.expires_at` and
   everything cascades from it. The window starts when the meeting is held —
@@ -509,15 +512,47 @@ person's, those counts are that person's completion record. So:
   `teams`), the last member's deletion of it included (#1007). A person's
   own deletion (`DELETE /api/audio/me`, `/me/speech`) reaches no material:
   no row names a person, and a document is not speech.
-- **A material's masked text has the team's retention window, counted from
-  the upload.** The upload sets `ext_materials.expires_at` to now plus the
-  team's `retention_days` (90 by default), as a meeting's is set when it is
-  held. Module B's own hourly task
-  (`autune.extraction.periodic.expire_materials`) deletes every material
-  past it -- row, masked text and vectors -- and every alarm row older than
-  30 days. Autune kept no original, so a team that still needs the document
-  uploads the file again. A link-only row (#1016) holds a title and a Drive
-  file id, no text, and keeps having no window.
+- **An uploaded material is kept until the team deletes it** (decided by
+  module B's owner on #817, 2026-10-10, for the other four owners'
+  approval). It has no window: the upload sets no expiry, the team's
+  `retention_days` does not apply to it, and no task deletes it by age. This
+  is an exception to the 90-day default, made for one reason: **a material
+  is not an analysis result.** The window is for what Autune derives from a
+  meeting -- a transcript and what is drawn from it -- and it is counted from
+  when the meeting was held. A material is a reference document the team
+  chose to put on its 자료 screen: no meeting produced it, and it stays
+  because the team still wants it there. Expiring it would delete a document
+  the team never asked to lose and Autune cannot give back, since no
+  original is kept. The exception covers the material only; nothing Autune
+  derives from a meeting loses its window because a material was involved.
+  A link-only row (#1016) holds a title and a Drive file id, no text, and
+  has no window either, as before.
+  - **How a team deletes one.** Any member of the team, at any time, from
+    the team's 자료 screen; nobody's approval is asked and there is no trash.
+    One transaction deletes the `ext_materials` row and every
+    `ext_material_chunks` row under it: the masked text and the vector of
+    each piece. Those rows are the whole of what Autune keeps of a material.
+    Search reads the vectors where they are stored, and no other index,
+    cache, queue message or copy of a material's text or vectors is kept
+    anywhere; a change that adds one deletes it in the same delete, or does
+    not merge. After the delete nothing of the material is left in Autune
+    and search cannot find it. The original was never kept (section 2).
+    What a member already read on their own screen is outside Autune's
+    reach. An alarm row (section 2) is not part of a material -- a refused
+    file is not stored -- and keeps its own 30 days.
+  - **Deleting the team deletes its materials.** `ext_materials` cascades
+    from `teams`, so the last member's deletion of the team (#1007) takes
+    every material with it, masked text and vectors included. Autune has no
+    workspace or organisation above a team (`data-model.md`: a team is "an
+    organization or squad"), so deleting the team is deleting the workspace,
+    and there is no level at which a material outlives its team.
+  - **Only masked text is kept** (section 2). The original file is never
+    written anywhere, so keeping a material longer keeps no more of it.
+  - **Open (#817): a team nobody is on.** A last member who deletes their own
+    account (`DELETE /api/audio/me`) instead of the team leaves the team
+    with no member, and nothing deletes such a team today. Its materials
+    would then have nobody who can delete them and no window to end them.
+    Upload stays off until that case has an answer.
 - Somebody whose data sits in a document's unmasked prose, and who is not on
   the team, has no route of their own in Autune: the route is a team
   member's delete. The same is true of a third party named in a meeting.
@@ -529,8 +564,8 @@ person's, those counts are that person's completion record. So:
   time, and a team's materials (`ext_materials` and what cascades from it) --
   while any per-meeting rows under it cascade from `meetings` (#619 review). A
   material holds a document's masked text, so unlike the other two it also has
-  the team's retention window, counted from the upload, and a delete any member
-  can run.
+  a delete any member can run. It has no window: it is kept until a member
+  deletes it or the team is deleted.
 - Each module registers a deletion hook in `autune_core`'s deletion registry.
   Rows reachable by `ON DELETE CASCADE` from `meetings` are covered
   automatically — embeddings and topic graphs included, since both are
@@ -1234,6 +1269,8 @@ Reject a pull request that does any of the following:
 - [ ] Writes an uploaded file's bytes anywhere that outlives the request, or
       stores document text before masking
 - [ ] Records who uploaded, deleted or was stopped uploading a material
+- [ ] Keeps any of a material's text or vectors where a member's delete of
+      that material does not reach
 
 ## 8. When a rule blocks you
 

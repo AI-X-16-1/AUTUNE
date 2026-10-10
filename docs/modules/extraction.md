@@ -1252,6 +1252,17 @@ on `main` yet -- no reader, no `material_marking.py`, no upload route. The
 code follows in its own change, off by default, and this paragraph goes with
 it.
 
+### How long it is kept
+
+**Until the team deletes it** (`privacy.md` section 4; module B's owner on
+#817, 2026-10-10). An uploaded material is a reference document the team keeps,
+not an analysis result of a meeting, so the team's retention window does not
+apply and no task deletes it by age. Any member deletes one from the 자료
+screen, at any time; the `ext_materials` row and its `ext_material_chunks`
+rows -- masked text and vectors -- go in one transaction, and nothing else holds
+a copy of either. Deleting the team deletes every material it has. Only masked
+text is ever kept; the original file is not.
+
 ### What is read, per format
 
 Ten megabytes a file. **A file whose text cannot be read is refused** --
