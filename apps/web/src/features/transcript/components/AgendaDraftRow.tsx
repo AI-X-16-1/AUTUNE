@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { StatusDot } from "@/shared/ui";
+
 /**
  * Something a team already has that an agenda can be drafted from: its name,
  * and its lines for one team. Each is another module's and is supplied by the
@@ -35,8 +37,11 @@ export const AGENDA_ROW_TITLE = "어젠다 초안 자동 생성";
  * **The row reports; it does not choose.** The draft is drawn in the
  * pre-meeting brief (module D's `BriefPanel`, #1147 B3), which exists for a
  * meeting saved for later, from ten minutes before its start. A meeting has no
- * field that could carry a tick there and none is invented, so the box cannot
- * be changed by hand: it shows whether a draft will have anything in it.
+ * field that could carry a tick there and none is invented, so the row is a
+ * status line and holds no control (#1147: "체크박스가 아니라 상태를 알리는
+ * 줄"): a dot, filled when a draft will have something in it, and the same
+ * said in words for a reader who is not shown the dot. A disabled checkbox
+ * was read out as one — "checkbox, checked, disabled" (review of #1193).
  *
  * A source that cannot be read counts as having nothing. The row is an offer,
  * not a step of opening a meeting, so its failure is never the form's error.
@@ -96,11 +101,14 @@ export function AgendaDraftRow({
   }
 
   return (
-    <label
-      className="flex cursor-default items-center gap-3 border-b border-[var(--color-hairline)]"
+    <div
+      className="flex items-center gap-3 border-b border-[var(--color-hairline)]"
       style={{ paddingBlock: "var(--space-12)" }}
     >
-      <input type="checkbox" disabled readOnly checked={available} />
+      {/* As wide as the checkbox of the rows beside it, so the names line up. */}
+      <span className="inline-flex shrink-0 justify-center" style={{ width: 13 }}>
+        <StatusDot variant={available ? "confirmed" : "idle"} hollow={!available} />
+      </span>
       <span>
         <span
           className={`block ${available ? "text-[var(--color-ink-strong)]" : "text-[var(--color-ink-muted)]"}`}
@@ -111,6 +119,8 @@ export function AgendaDraftRow({
         >
           {AGENDA_ROW_TITLE}
         </span>
+        {/* The dot is hidden from a screen reader; this is what it says. */}
+        <span className="sr-only">{available ? "켜짐" : "꺼짐"}</span>
         <span
           className="block text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-meta)" }}
@@ -118,6 +128,6 @@ export function AgendaDraftRow({
           {detail}
         </span>
       </span>
-    </label>
+    </div>
   );
 }
