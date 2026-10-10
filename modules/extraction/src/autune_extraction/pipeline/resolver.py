@@ -31,7 +31,13 @@ from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 from .base import Embedder, Resolution, ResolutionRequest
 from .classifier import RETRY_BACKOFF_SEC
-from .llm import GeminiClient, _answer_text, substitute_names_mapped, unquoted
+from .llm import (
+    GeminiClient,
+    _answer_text,
+    restore_names_mapped,
+    substitute_names_mapped,
+    unquoted,
+)
 
 if TYPE_CHECKING:
     pass
@@ -588,11 +594,9 @@ def _restored(answer: str, surface: dict[str, str]) -> str | None:
     "[사람1]" left in it would be nonsense -- and the reverse of the classifier,
     whose labels carry no name to restore. ``None`` when the model wrote a
     placeholder that was never sent: it invented a person.
+    B's one restore (``llm.restore_names_mapped``, also ``tools.restore_names``).
     """
-    for marked in _PLACEHOLDER.findall(answer):
-        if marked not in surface:
-            return None
-    return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], answer)
+    return restore_names_mapped(answer, surface)
 
 
 def _ends_the_same(answer: str, target: str) -> bool:

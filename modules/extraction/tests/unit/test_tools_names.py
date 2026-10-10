@@ -1,16 +1,18 @@
-"""B's name hiding as a public read in ``tools`` (#1226).
+"""B's name hiding and restoring as public reads in ``tools`` (#1226).
 
-``hide_names`` and ``names_not_sent`` are what the agent layer's live research
-is meant to call instead of its copy (``autune_agent.live.names``). The cases
-mirror that copy's tests (``agent/tests/test_live_names.py``) so the two are
-shown to answer alike, and a few check that this is B's own matching, not a
-third one. SQLite in memory for the roster, as ``test_roster_names`` does.
+``hide_names``, ``restore_names`` and ``names_not_sent`` are what the agent
+layer's live research is meant to call instead of its copy
+(``autune_agent.live.names``). The cases mirror that copy's tests
+(``agent/tests/test_live_names.py``) so the two are shown to answer alike --
+except a ``[사람N]`` the mapping does not hold, which the copy leaves in and B
+discards (module B's owner, 2026-10-10). A few check that this is B's own
+matching and restoring, not a third one. SQLite in memory for the roster, as
+``test_roster_names`` does.
 """
 
 from __future__ import annotations
 
 import inspect
-import re
 from collections.abc import Iterator
 
 import pytest
@@ -19,16 +21,10 @@ from sqlalchemy.orm import Session
 
 from autune_core import Base, Meeting, Participant, TeamMember, User
 from autune_extraction import service, tools
-from autune_extraction.pipeline.llm import substitute_names_mapped
+from autune_extraction.pipeline import resolver
+from autune_extraction.pipeline.llm import substitute_names_mapped, usable_summary
 
 ROSTER = ["김민경", "박 재경"]
-
-_MARK = re.compile(r"\[사람\d+\]")
-
-
-def _put_back(text: str, surface: dict[str, str]) -> str:
-    """What a caller does with the map: each placeholder back as its form."""
-    return _MARK.sub(lambda m: surface.get(m.group(0), m.group(0)), text)
 
 
 # --- the cases the agent copy's tests cover ---------------------------------------
@@ -52,14 +48,17 @@ def test_a_question_goes_out_with_placeholders_and_comes_back_with_names() -> No
 
     assert "민경" not in sent
     assert "[사람1]" in sent
-    assert _put_back("[사람1]님이 정한 배포일은?", surface) == "민경님이 정한 배포일은?"
+    assert tools.restore_names("[사람1]님이 정한 배포일은?", surface) == "민경님이 정한 배포일은?"
 
 
 def test_a_search_query_goes_out_with_placeholders() -> None:
     (sent,), surface = tools.hide_names(["김민경 발표 자료"], ROSTER)
 
     assert sent == "[사람1] 발표 자료"
-    assert _put_back("[사람1]에 대한 결과는 없습니다", surface) == "김민경에 대한 결과는 없습니다"
+    assert (
+        tools.restore_names("[사람1]에 대한 결과는 없습니다", surface)
+        == "김민경에 대한 결과는 없습니다"
+    )
 
 
 def test_people_are_numbered_by_first_appearance_across_every_text() -> None:
@@ -68,7 +67,48 @@ def test_people_are_numbered_by_first_appearance_across_every_text() -> None:
 
     assert all("재경" not in s and "민경" not in s for s in sent)
     assert sent[1] == "[사람2]님이 말한 가격 얼마였죠?"
-    assert _put_back("[사람2]님이 말한 가격은?", surface) == "재경님이 말한 가격은?"
+    assert tools.restore_names("[사람2]님이 말한 가격은?", surface) == "재경님이 말한 가격은?"
+
+
+def test_a_json_answer_comes_back_with_names() -> None:
+    (sent,), surface = tools.hide_names(["민경님이 배포일 정했죠?"], ROSTER)
+    answer = '{"questions": [{"q": "[사람1]님이 정한 배포일은?", "web": false}]}'
+
+    assert "민경" not in sent
+    assert tools.restore_names(answer, surface) == (
+        '{"questions": [{"q": "민경님이 정한 배포일은?", "web": false}]}'
+    )
+
+
+def test_a_marker_the_mapping_does_not_hold_discards_the_answer() -> None:
+    # The agent copy answers "[사람2]님이 정했습니다" here; B answers nothing.
+    (_,), surface = tools.hide_names(["민경님이 정했죠?"], ROSTER)
+
+    assert tools.restore_names("[사람2]님이 정했습니다", surface) is None
+    assert tools.restore_names("[사람1]님과 [사람2]님이 정했습니다", surface) is None
+    assert tools.restore_names("[사람1]님이 정했습니다", {}) is None
+
+
+def test_text_without_a_marker_is_unchanged() -> None:
+    assert tools.restore_names("배포일은 금요일입니다", {}) == "배포일은 금요일입니다"
+    assert tools.restore_names("배포일은 금요일입니다", {"[사람1]": "민경"}) == (
+        "배포일은 금요일입니다"
+    )
+
+
+def test_only_the_numbered_form_is_a_marker() -> None:
+    assert tools.restore_names("[사람N]과 [ 사람1 ]", {}) == "[사람N]과 [ 사람1 ]"
+
+
+def test_hiding_then_restoring_gives_back_what_was_sent() -> None:
+    texts = ["민경님 말로는 김민경이 정했대요", "재경님도 박재경도 몰라요"]
+
+    sent, surface = tools.hide_names(texts, ROSTER)
+
+    assert [tools.restore_names(s, surface) for s in sent] == [
+        "민경님 말로는 민경이 정했대요",
+        "재경님도 재경도 몰라요",
+    ]
 
 
 @pytest.fixture
@@ -117,6 +157,27 @@ def test_the_roster_is_b_s_own(session: Session) -> None:
     assert tools.names_not_sent(session, "mtg_missing") == []
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "[사람1]님이 금요일까지 보고서를 보냅니다",
+        "[사람1]님과 [사람2]님이 금요일까지 보고서를 보냅니다",
+        "[사람3]님이 금요일까지 보고서를 보냅니다",
+        "[사람1]님이 [사람9]에게 보고서를 보냅니다",
+        "금요일까지 보고서를 보냅니다",
+    ],
+)
+def test_b_s_own_paths_restore_as_the_public_function_does(answer: str) -> None:
+    (_,), surface = tools.hide_names(["민경님이 재경님께 금요일까지 보고서를 보냅니다"], ROSTER)
+    public = tools.restore_names(answer, surface)
+
+    assert resolver._restored(answer, surface) == public  # noqa: SLF001
+    # The summary has checks of its own after restoring; with the restored
+    # sentence as its window, restoring is the only one that can say no.
+    window = public or ""
+    assert usable_summary(answer, surface, window) == (public or "")
+
+
 def test_texts_may_be_any_sequence_and_are_not_changed() -> None:
     texts = ("김민경 님",)
 
@@ -126,9 +187,11 @@ def test_texts_may_be_any_sequence_and_are_not_changed() -> None:
     assert texts == ("김민경 님",)
 
 
-def test_neither_is_offered_to_a_model() -> None:
+def test_none_is_offered_to_a_model() -> None:
     offered = {fn.__name__ for fn in [*tools.TOOLS, *tools.ACTIONS]}
 
     assert "hide_names" not in offered
+    assert "restore_names" not in offered
     assert "names_not_sent" not in offered
     assert list(inspect.signature(tools.hide_names).parameters) == ["texts", "roster"]
+    assert list(inspect.signature(tools.restore_names).parameters) == ["text", "mapping"]

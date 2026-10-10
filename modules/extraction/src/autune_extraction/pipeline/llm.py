@@ -346,6 +346,18 @@ def substitute_names_mapped(
     return [pattern.sub(placeholder, text) for text in texts], surface
 
 
+def restore_names_mapped(text: str, surface: dict[str, str]) -> str | None:
+    """``text`` with each ``[사람N]`` put back as the form it stood for in
+    ``surface`` -- or ``None`` when ``text`` holds a ``[사람N]`` that ``surface``
+    does not: the model wrote a person it was never sent, and there is no name
+    to give them. The one place B puts names back; the resolver and the
+    classifier's summary both answer through it (#1226).
+    """
+    if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
+        return None
+    return _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
+
+
 _LINE_OVERHEAD = 12
 """A line's number, its ``[대상]`` or ``[문맥]`` marker and the newline."""
 
@@ -741,13 +753,13 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     text = unquoted(written)
     if not text or len(text) > SUMMARY_MAX_CHARS:
         return ""
-    if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
+    restored = restore_names_mapped(text, surface)
+    if restored is None:
         return ""
     # On what the model wrote, before any name is put back: the marker is the
     # request's, and a name is not the model's writing (review of #1207).
     if _LINE_MARKER_LEFT.search(text):
         return ""
-    restored = _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
     if _MARK_LEFT.search(restored):
         return ""
     if says_a_pointing_word(restored):

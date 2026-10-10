@@ -53,7 +53,7 @@ from autune_integrations.privacy import find_unmasked
 from . import days_off, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
-from .pipeline.llm import substitute_names_mapped
+from .pipeline.llm import restore_names_mapped, substitute_names_mapped
 from .pipeline.registry import get_resolver
 from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, DecisionReviewUpdate
 from .slots import KST
@@ -1117,11 +1117,39 @@ def hide_names(texts: Sequence[str], roster: Sequence[str]) -> tuple[list[str], 
 
     The agent layer is meant to call this instead of its copy in
     ``autune_agent.live.names`` (#1226), so that a change to how B finds a
-    name reaches live research in the same commit. Putting names back stays
-    with the caller: what to do with a ``[사람N]`` the map does not hold is the
-    caller's rule, not B's.
+    name reaches live research in the same commit. Putting names back into
+    what the model answers is ``restore_names``.
     """
     return substitute_names_mapped(list(texts), roster)
+
+
+def restore_names(text: str, mapping: dict[str, str]) -> str | None:
+    """``text`` with each ``[사람N]`` put back as the name it stood for, or
+    ``None`` when the answer is to be discarded.
+
+    Not a tool the model calls -- it is in neither ``TOOLS`` nor ``ACTIONS``.
+    ``mapping`` is the second value ``hide_names`` returned for what was sent.
+    It is B's own restore (``pipeline.llm.restore_names_mapped``), the one the
+    reference resolver and the classifier's one-line summary go through, so a
+    caller outside B keeps exactly B's rule (#1226). What it guarantees:
+
+    - Every ``[사람N]`` the mapping holds becomes the form first written for
+      that person in what was sent ("민경", "김민경", "박재경"), and nothing
+      around it changes.
+    - **An answer with a ``[사람N]`` the mapping does not hold is ``None``,
+      never text.** The model wrote a person it was never sent -- one it made
+      up, or a number from another request -- and there is no name to give
+      them; a marker left in, or a guess, would put nonsense or the wrong
+      person in front of the team. Discard the answer.
+    - Text with no marker comes back unchanged, whatever the mapping; an empty
+      mapping restores nothing and refuses any marker.
+    - Only the numbered form is a marker. "[사람N]" spelled any other way is
+      left as written; what to do with it is the caller's check, as B's own
+      callers do theirs.
+
+    Read only, no I/O.
+    """
+    return restore_names_mapped(text, mapping)
 
 
 TOOLS = [
