@@ -206,8 +206,10 @@ class TestOverlaps:
 
     def test_a_second_detector_agreeing_does_not_double_mask(self) -> None:
         class Duplicate:
+            # Reads the text, as a real recogniser does: mask() runs it again
+            # on its own output (#1210), where the number is no longer there.
             def find(self, text: str) -> list[tuple[int, int, str]]:
-                return [(0, 13, "phone")]
+                return [(0, 13, "phone")] if text == "010-1234-5678" else []
 
         result = mask("010-1234-5678", recogniser=Duplicate())
         assert result.text == "010-****-5678"
@@ -225,8 +227,8 @@ class TestTheSecondDetector:
     def test_a_span_the_patterns_cannot_describe_is_still_masked(self) -> None:
         class NameFinder:
             def find(self, text: str) -> list[tuple[int, int, str]]:
-                start = text.index("김민경")
-                return [(start, start + 3, "name")]
+                start = text.find("김민경")
+                return [] if start < 0 else [(start, start + 3, "name")]
 
         result = mask("담당자는 김민경 님입니다", recogniser=NameFinder())
         assert result.text == "담당자는 김** 님입니다"
@@ -525,3 +527,55 @@ def test_a_card_read_across_lines_keeps_its_last_four() -> None:
 def test_a_phone_number_split_across_lines_keeps_its_last_four() -> None:
     """#688: found across lines, laid out like the card -- the breaks stay."""
     assert mask("02\n123\n4567").text == "**\n***\n4567"
+
+
+# #1210: what mask() leaves standing -- a phone number's last four -- can run on
+# into the next figure and read as a new value: `010-****-5678 2024-06-18` is an
+# account to the patterns. The store's guard re-runs mask() and refused such a
+# row after the recording was gone, and the outbound guard refuses it too. mask()
+# hides until nothing more is found, so what it returns is what every guard
+# accepts.
+REMNANT_RUNS_ON = [
+    "010-1234-5678 2024-06-18",
+    "연락처는 010-1234-5678 2024-06-18 이후로 바뀝니다",
+    "카드 1234-5678-9012-3456 2024-06-18 결제",
+    "010-1234-5678 110-123-456789",
+]
+
+
+@pytest.mark.parametrize("line", REMNANT_RUNS_ON)
+def test_what_mask_returns_is_found_clean_by_mask_and_the_outbound_guard(line: str) -> None:
+    once = mask(line)
+
+    assert mask(once.text).spans == 0
+    assert find_unmasked(once.text) == []
+
+
+def test_the_phone_number_still_reads_as_one_when_its_tail_ran_on() -> None:
+    assert mask("010-1234-5678 2024-06-18").text.startswith("010-****-")
+
+
+NUMBER_SHAPES = [
+    "010-1234-5678",
+    "02-123-4567",
+    "900101-1234567",
+    "1234-5678-9012-3456",
+    "110-123-456789",
+    "2024-06-18",
+    "2024.06.18",
+    "6월 18일",
+    "3시 30분",
+    "100 200 300",
+]
+JOINERS = [" ", ", ", " / ", "\n", "-"]
+
+
+def test_no_two_figures_side_by_side_leave_anything_for_a_second_pass() -> None:
+    """The measured case on #1210 was one shape in 30,000 generated lines. Every
+    pair of everyday and personal figures, joined every common way, instead."""
+    for first in NUMBER_SHAPES:
+        for second in NUMBER_SHAPES:
+            for joiner in JOINERS:
+                once = mask(f"말씀드리면 {first}{joiner}{second} 입니다")
+                assert mask(once.text).spans == 0, (first, joiner, second)
+                assert find_unmasked(once.text) == [], (first, joiner, second)
