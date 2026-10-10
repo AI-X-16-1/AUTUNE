@@ -82,7 +82,7 @@ INSTRUCTIONS = (
     "concern: 앞 말에 대한 반대·문제 제기. "
     "ambiguous: '검토해 볼게요'처럼 구체적 약속 없는 약한 동의, 다른 팀이 할 일 전달. "
     "그 외(설명·잡담·맞장구·투표·예상 수치)는 적지 마세요.\n"
-    "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람N]은 가린 사람 이름입니다. "
+    "[문맥] 줄은 판단하지 말고 참고만 하세요. [사람1], [사람2] 같은 표시는 가린 사람 이름입니다. "
     'JSON 한 줄로만 답하세요: {"labels": {"줄번호": "종류", ...}, '
     '"summaries": {"줄번호": "요약", ...}, "parts": {"줄번호": "옮긴 부분", ...}}. '
     '해당 없으면 {"labels": {}}. '
@@ -90,9 +90,14 @@ INSTRUCTIONS = (
     "적으세요"
     "(약속: 무엇을 언제까지 하는지, 결정: 무엇을 하기로 했는지). "
     "'그거' 같은 말은 문맥이 가리키는 것으로 바꾸되, 줄과 문맥에 없는 날짜·숫자·이름은 "
-    "쓰지 말고 [사람N]은 그대로 두세요. parts에는 같은 줄마다, 그 약속·결정을 말한 "
+    "쓰지 마세요. 줄에 있는 [사람1] 같은 표시는 그대로 옮기고 새로 만들지 마세요. "
+    "말한 사람 자신은 주어로 쓰지 말고('제가', '화자는' 없이) 할 일부터 적으세요. "
+    "parts에는 같은 줄마다, 그 약속·결정을 말한 "
     "부분만 줄에서 글자 그대로 옮겨 적으세요(고치거나 줄이지 말고, 줄 전체가 그 "
-    "내용이면 줄 전체)."
+    "내용이면 줄 전체). "
+    "한 줄에 대상이 서로 다른 약속·결정이 둘 이상이면(대상마다 기한·담당이 따로) "
+    "줄번호에 -1, -2를 붙여 labels·summaries·parts에 하나씩 적으세요. "
+    "대상 하나에 동사만 둘이면 나누지 마세요."
     "\n예시(다른 회의):\n"
     "1 [문맥] 이 설문 결과는 누가 정리해 주실래요?\n"
     "2 [대상] 제가 할게요, 목요일까지요. → commitment\n"
@@ -102,6 +107,9 @@ INSTRUCTIONS = (
     "5 [대상] 저는 영업 입장에서 2안을 밀고 싶어요. → 적지 않음(의견·투표)\n"
     "6 [문맥] 어떤 인력이 필요하세요?\n"
     "7 [대상] 프런트엔드 한 명이요. → 적지 않음(질문에 대한 답)\n"
+    "8 [대상] 로그는 제가 화요일까지 정리하고, 문구는 목요일까지 고칠게요. "
+    '→ "8-1" commitment, "8-2" commitment(대상이 둘)\n'
+    "9 [대상] 시안은 제가 금요일까지 고쳐서 공유할게요. → commitment 하나(대상 하나에 동사 둘)\n"
 )
 """Kept short on purpose: ``check_outbound`` counts these characters against the
 same 4,000 as the utterances.
@@ -546,6 +554,51 @@ def parse(answer: str) -> dict[int, UtteranceKind]:
     return out
 
 
+_PIECE_KEY = re.compile(r"(\d+)-(\d+)")
+
+
+def parse_split(answer: str) -> dict[int, list[tuple[UtteranceKind, str, str]]]:
+    """The lines answered as several things: ``{"labels": {"8-1": "commitment",
+    "8-2": "decision"}, "summaries": {"8-1": "...", ...}, "parts": {"8-1":
+    "...", ...}}`` -> ``{8: [(COMMITMENT, summary, part), (DECISION, ...)]}``,
+    in the order of the numbers after the dash.
+
+    Read as ``parse`` reads a whole line's answer: an unknown kind or a key of
+    another shape is dropped rather than guessed at. A summary or a part that
+    is missing is "". Whether the parts are in the line, and so whether the
+    line is cut at all, is the caller's to check (``cut_in_two``)."""
+    match = re.search(r"\{.*\}", answer, re.S)
+    if not match:
+        return {}
+    try:
+        read = json.loads(match.group(0))
+        labels = read.get("labels", {})
+        written = {key: read.get(key, {}) for key in ("summaries", "parts")}
+    except (json.JSONDecodeError, AttributeError):
+        return {}
+    if not isinstance(labels, dict):
+        return {}
+    found: dict[int, dict[int, UtteranceKind]] = {}
+    for key, value in labels.items():
+        at = _PIECE_KEY.fullmatch(str(key).strip())
+        kind = _KINDS.get(str(value).strip())
+        if at is not None and kind is not None:
+            found.setdefault(int(at.group(1)), {})[int(at.group(2))] = kind
+
+    def text_of(name: str, line: int, piece: int) -> str:
+        texts = written[name]
+        value = texts.get(f"{line}-{piece}") if isinstance(texts, dict) else None
+        return " ".join(value.split()) if isinstance(value, str) else ""
+
+    return {
+        line: [
+            (kind, text_of("summaries", line, piece), text_of("parts", line, piece))
+            for piece, kind in sorted(kinds.items())
+        ]
+        for line, kinds in found.items()
+    }
+
+
 SUMMARISED = (UtteranceKind.COMMITMENT, UtteranceKind.DECISION)
 """The kinds the request asks a one-line summary of: what an action item and
 a decision are made from."""
@@ -555,6 +608,52 @@ SUMMARY_MAX_CHARS = 120
 as said."""
 
 _PLACEHOLDER = re.compile(r"\[사람\d+\]")
+
+_MARK_LEFT = re.compile(r"\[\s*사람[^\]]*\]")
+"""A name mark still in a sentence once every numbered one is put back. The
+instructions used to explain the mark by its general form, "[사람N]", and the
+model wrote that form back as somebody it had no name for: on dev, 2026-10-09,
+two items' sentences began with it. They show numbered ones now, and this
+stays, because a model can still make a mark up. Only a mark with a number
+stands for a name; any other spelling stands for nobody, and no screen can
+read it as a person."""
+
+_LINE_MARKER_LEFT = re.compile(r"\[\s*(?:대상|문맥)\s*\]")
+"""The request's own line marker, written into a summary. "[대상]" and "[문맥]"
+say which lines of the request to judge; they are no part of what anybody
+said. Measured on the four invented meetings, 2026-10-09, three rounds an arm:
+today's instructions wrote none in 367 summaries, the ones that show the name
+mark by number wrote "[대상]" in 4 of 361 and in 5 of 364 -- always that word,
+always in place of whatever the line was about. A summary with one says less
+than its line, and is the resolver's like the others below."""
+
+_POINTING_WORD = re.compile(
+    r"(?<![0-9A-Za-z가-힣])(?:"
+    r"(?:이거|그거|저거|이것|그것|저것)(?!저것|저거)"
+    r"|[이그저][건걸게](?:요|로|도|만)?(?![0-9A-Za-z가-힣])"
+    r")"
+)
+"""A word that points at something and names nothing (module B's owner,
+2026-10-09).
+
+이거, 그거, 저거, 이것, 그것, 저것, with whatever is attached ("이거를",
+"그것은", "이거예요"): at the start of a word only, so the "이거나" that ends
+another word is not this, nor is "이것저것", which means several things and
+points at none.
+
+And the same words run together with their particle -- 이건, 그건, 저건, 이걸,
+그걸, 저걸, 이게, 그게, 저게 -- as a whole word, with at most "요", "로", "도"
+or "만" after it ("그걸로"). Whole, because these are also how a name starts:
+"이건희" is a person, and a summary gets its names back before it is read
+here."""
+
+
+def says_a_pointing_word(text: str) -> bool:
+    """Whether ``text`` holds a word that only points (``_POINTING_WORD``).
+
+    A summary and a title are read on their own -- on a card, in a message,
+    by another module -- where there is nothing for such a word to point at."""
+    return _POINTING_WORD.search(text) is not None
 
 
 def parse_summaries(answer: str) -> dict[int, str]:
@@ -625,6 +724,16 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
     (``resolver._grounded``),
     for the same reason: a date or a name the meeting never said is worse on a
     card than a long sentence.
+
+    And nothing that stands for something the sentence does not say (module
+    B's owner, 2026-10-09): no name mark left once the numbered ones are back
+    (``_MARK_LEFT``), no line marker of the request (``_LINE_MARKER_LEFT``),
+    and no word that only points (``says_a_pointing_word``) -- the
+    instructions ask for "그거" to be replaced by what it meant, and a
+    summary that kept it says less than the line it is of. Each time the
+    answer is "": a commitment or a decision without a summary is what the
+    resolver is asked about, and it reads further back and further on than
+    this request did, and gives the line as it was said when it cannot tell.
     """
     # Here and not at the top: ``resolver`` imports this module.
     from .resolver import _grounded  # noqa: PLC0415
@@ -634,7 +743,15 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
         return ""
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
         return ""
+    # On what the model wrote, before any name is put back: the marker is the
+    # request's, and a name is not the model's writing (review of #1207).
+    if _LINE_MARKER_LEFT.search(text):
+        return ""
     restored = _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
+    if _MARK_LEFT.search(restored):
+        return ""
+    if says_a_pointing_word(restored):
+        return ""
     return restored if _grounded(restored, window) else ""
 
 
@@ -655,24 +772,64 @@ def usable_part(written: str, line: str, names: re.Pattern[str] | None) -> str:
     the one place a model's choice of words could become one, so it only ever
     chooses where to cut.
     """
+    found = _where(written, line, names)
+    if found is None:
+        return ""
+    return "" if found.group(0).strip() == line.strip() else found.group(0)
+
+
+def _where(written: str, line: str, names: re.Pattern[str] | None) -> re.Match[str] | None:
+    """Where ``written`` stands in ``line``, as ``usable_part`` looks for it."""
     text = written.strip().strip("\"'“”‘’").strip()
     if not text:
-        return ""
+        return None
     pattern: list[str] = []
     for token in re.split(r"(\[사람\d+\])", text):
         if _PLACEHOLDER.fullmatch(token):
             if names is None:
                 # No name was replaced, so no placeholder was sent.
-                return ""
+                return None
             pattern.append(f"(?:{names.pattern})")
         else:
             pattern.extend(re.escape(char) for char in token if not char.isspace())
     if not pattern:
-        return ""
-    found = re.search(r"\s*".join(pattern), line)
-    if found is None:
-        return ""
-    return "" if found.group(0).strip() == line.strip() else found.group(0)
+        return None
+    return re.search(r"\s*".join(pattern), line)
+
+
+def cut_in_two(
+    answered: Sequence[tuple[UtteranceKind, str, str]], line: str, names: re.Pattern[str] | None
+) -> list[tuple[str, UtteranceKind, str]]:
+    """A line the model answered as several things (``parse_split``), as the
+    pieces it is read in from here on: ``(words, kind, summary)`` in spoken
+    order -- or ``[]`` when the answer cannot be used to cut the line.
+
+    Each piece is **cut from ``line``** where the model's ``part`` stands in it,
+    as a quotation is (``usable_part``): the model chooses where to cut and
+    never the words. The answer is used only when it names at least two
+    pieces, every part is found in the line, and no two overlap; anything less
+    and the line stays one line (the caller gives it the strongest of the
+    kinds, so a label is never lost to a bad cut). Words of the line outside
+    every part belong to no piece.
+
+    Not the same thing as a long turn's pieces (``sentences``), which are cut
+    by rule at sentence ends and cover the turn: these are cut where a model
+    said, inside a sentence, because "…는 화요일까지 정리하고, …는 목요일까지
+    고치겠습니다" is two things to do and one sentence (module B's owner,
+    2026-10-09: two rows when the objects are two; one when one object has two
+    verbs)."""
+    if len(answered) < 2:
+        return []
+    cuts: list[tuple[int, int, UtteranceKind, str]] = []
+    for kind, summary, part in answered:
+        found = _where(part, line, names)
+        if found is None:
+            return []
+        cuts.append((found.start(), found.end(), kind, summary))
+    cuts.sort(key=lambda cut: cut[0])
+    if any(later[0] < earlier[1] for earlier, later in zip(cuts, cuts[1:], strict=False)):
+        return []
+    return [(line[start:end], kind, summary) for start, end, kind, summary in cuts]
 
 
 def _prediction(
@@ -893,6 +1050,8 @@ class LlmClassifier(GeminiClient):
         labels: list[UtteranceKind | None] = [None] * len(lines)
         summaries = [""] * len(lines)
         chosen = [""] * len(lines)
+        # A line the model answered as several things, cut where it said.
+        split: dict[int, list[tuple[str, UtteranceKind, str]]] = {}
         asked, unread, cause = 0, 0, ""
         for index, (context, start, end) in enumerate(windows(lines, budget)):
             text, targets = render(lines, context, start, end)
@@ -929,6 +1088,36 @@ class LlmClassifier(GeminiClient):
                 at = targets.get(line)
                 if at is not None and labels[at] in SUMMARISED:
                     chosen[at] = usable_part(written, said[at], names)
+            # A line answered as "8-1", "8-2" is two things said in one line.
+            # It is cut only where the parts stand in it; an answer that cannot
+            # cut it still labels it, as one line.
+            #
+            # A piece's summary is checked against the piece and the lines
+            # before the line -- not the rest of the line. The line is cut
+            # because each thing in it has its own date and owner, and against
+            # the whole line one piece's summary could carry the other's date,
+            # which is what the check is there to stop (PARK, review of #880).
+            # A name the two pieces share and only the first says is lost the
+            # same way: that summary is dropped for the piece as it was said.
+            for line, answered in parse_split(answer).items():
+                at = targets.get(line)
+                if at is None:
+                    continue
+                before = " ".join(said[max(context, at - CONTEXT_LINES) : at])
+                cut = cut_in_two(answered, said[at], names)
+                labels[at] = strongest([labels[at], *(kind for kind, _, _ in answered)])
+                if cut:
+                    split[at] = [
+                        (
+                            words,
+                            kind,
+                            usable_summary(summary, surface, f"{before} {words}")
+                            if kind in SUMMARISED
+                            else "",
+                        )
+                        for words, kind, summary in cut
+                    ]
+                    summaries[at], chosen[at] = "", ""
         if unread == asked:
             # Nothing was read at all: there is no result to keep, and "found
             # nothing" would be false. The run is counted and tried again.
@@ -937,23 +1126,34 @@ class LlmClassifier(GeminiClient):
         parts: list[list[int]] = [[] for _ in texts]
         for line, owner in enumerate(owners):
             parts[owner].append(line)
-        predictions = [
-            _prediction(
-                strongest([labels[line] for line in own]),
-                tuple((said[line], labels[line]) for line in own) if len(own) > 1 else (),
-                summary=summaries[own[0]] if len(own) == 1 else "",
-                piece_summaries=tuple(summaries[line] for line in own) if len(own) > 1 else (),
-                part=chosen[own[0]] if len(own) == 1 else "",
-                piece_parts=tuple(chosen[line] for line in own) if len(own) > 1 else (),
+        predictions = []
+        for own in parts:
+            # What the utterance is read in: its lines, a line the model cut
+            # being the pieces it was cut into. ``(words, kind, summary, part)``.
+            read: list[tuple[str, UtteranceKind | None, str, str]] = []
+            for line in own:
+                if line in split:
+                    read.extend((words, kind, summary, "") for words, kind, summary in split[line])
+                else:
+                    read.append((said[line], labels[line], summaries[line], chosen[line]))
+            several = len(read) > 1
+            predictions.append(
+                _prediction(
+                    strongest([kind for _, kind, _, _ in read]),
+                    tuple((words, kind) for words, kind, _, _ in read) if several else (),
+                    summary="" if several else read[0][2],
+                    piece_summaries=tuple(summary for _, _, summary, _ in read) if several else (),
+                    part="" if several else read[0][3],
+                    piece_parts=tuple(part for _, _, _, part in read) if several else (),
+                )
             )
-            for own in parts
-        ]
         # Counts only: the lines are utterances.
         log.info(
             "extraction_llm_classified",
             utterances=len(texts),
             labelled=sum(p.kind is not None for p in predictions),
             in_pieces=sum(len(own) > 1 for own in parts),
+            split=len(split),
             summarised=sum(bool(written) for written in summaries),
             narrowed=sum(bool(words) for words in chosen),
             windows=asked,

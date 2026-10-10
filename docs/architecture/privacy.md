@@ -495,6 +495,17 @@ back: the integration that could reach them is deleted with the team.
   - **It is not the consent to a recording.** That is per meeting, about the
     people in the room, and module A keeps it (`aud_consent_attestations`,
     `participants.consented`). The two never stand in for each other.
+- **Live research is covered by the consent attested when the recording
+  starts** (#1162). During a live meeting nobody is identified yet, so no
+  per-person consent can be read; the one statement there is, the consent box
+  ticked at the gate (`aud_consent_attestations`), is what live research rests
+  on. A meeting recorded with the box unticked is stored, not analysed, and
+  live research does not run for it either: the live screen sends no row and
+  offers no 조사, and the agent's live routes refuse the meeting with 409
+  `live_research_needs_consent` before reading a row. The attestation covers
+  everyone in the recording at once, so a speaker who is later excluded from
+  analysis may already have been looked up live; their speech deletion still
+  takes the live documents it fed (`agent_live` speech hook).
 
 ## 6. Third-party services
 
@@ -538,6 +549,20 @@ the feature needs.
   through such a deployment.
   This is module B's alone: the agent's, C's and D's cloud switches are their
   owners' and have no second switch today.
+- **Live research (agent layer, #1162) sends while a meeting runs**, and only
+  for a meeting recorded with consent attested (section 5). To Gemini: windows
+  of at most twelve masked live rows with no speaker label, the questions
+  already looked up, the question, quotes of earlier meetings from consenting
+  speakers with the meeting's date and title, and the web answer. To Google
+  Search grounding: the question only. For a line a person pressed 조사 on,
+  that question is the model's rewrite of the line, with no person and no
+  personal detail; the line as said is never the search query. Every call
+  replaces the meeting's roster names with `[사람N]` as B does (the team and
+  the meeting's participants; a name not on the roster leaves as spoken), and
+  the rows are checked one by one and joined before they are queued, so a
+  number read in two rows is refused. Queued work expires after 120 seconds.
+  Its only switch is the agent's key, and #392's rule holds for it as for B:
+  on the dev site, the team's own meetings only.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
@@ -926,12 +951,51 @@ the feature needs.
     with a 422 that names no value, and nothing changes. The check is
     pattern-based, so a name a person writes, or someone's words a person
     copies in, passes it -- the same standing as a meeting's title (#889)
-    and B's hand-edited items, and reaching only the team's own channel,
-    events whose guests are all on the team, and E. Deleting speech resets
-    an edited question only when it names a topic label that is gone
-    (#587); words copied in by hand stay, as anything a person wrote does.
-    Whether hand-written text should follow another rule is open with
-    mkkim68 for B and C alike (#872 review).
+    and the text a person types in module B (below), and reaching only the
+    team's own channel, events whose guests are all on the team, and E.
+    Deleting speech resets an edited question only when it names a topic
+    label that is gone (#587); words copied in by hand stay, as anything a
+    person wrote does.
+  - **Text a person types, in every module (#1130):** the question the
+    #872 review left open, answered by mkkim68 on #1130 (2026-10-09), with
+    mminjae97 agreeing for D. Two rules:
+    - *It is screened when it is saved, and refused.* Section 2 stops
+      personal data before a write, and text a person typed is stopped at
+      the same moment: every module refuses it the way C refuses a rewritten
+      question above, with the one detector (`find_unmasked` in
+      `autune_integrations`), so B and C refuse with the same function. The
+      refusal carries no value and says what to take out. Nothing the
+      detector reads then enters a module's store or travels on -- a
+      reworded decision used to reach D's `ctx_decision_versions` unscreened
+      -- and the contract needs no field for it. A sentence the detector
+      reads wrongly cannot be saved; that cost is accepted.
+    - *Deleting speech does not reach it.* The code cannot know whose words
+      a hand-written sentence carries, and a rule with no criterion for what
+      to delete is a rule that cannot be kept.
+
+    The first rule is every module's, and three keep it today. C refuses a
+    rewritten question (above). B refuses every field below. E refuses the
+    two texts a person types into a meeting report, an edited body and a
+    correction (`edit_meeting_report`, `correct_meeting_report`): both go
+    through `assert_masked` before anything is stored and answer with the
+    categories and never the text. A's meeting title is not screened yet;
+    A's owner (mkkim68) has said it follows with #1161, which is still open.
+
+    Module B applies the first on every field a person types into: an
+    action item's description and assignee label, a decision typed or
+    reworded, a meeting's memo, a project's name and aliases, and a
+    material's title (`autune_extraction.typed_text`). Its 422 names the
+    field and the categories the detector read (`phone`, `email`, ...) and
+    never the value; the refused text is in no log line or exception
+    message, and a refused save changes none of the fields sent with it.
+    Text sent back exactly as it is stored is not a write, so a row stored
+    before this rule keeps its date, owner and verdict editable; no stored
+    row is rewritten or deleted for it, and the outbound check at every
+    exit is still what stops such a row from leaving. No agent tool carries
+    text a person typed: the tools send ids, dates and verdicts, and the one
+    that makes an item (Follow-up's) writes B's own fixed sentence. So a
+    proposal approved later brings no typed text to these checks, and its
+    approver meets no refusal from them.
   - **Slack, the Meeting Context Engine's messages (`autune_context`):**
     three kinds to the channel of the team that held the meeting, and one
     DM (`notify.py`; `docs/modules/context.md`, "Slack surface").

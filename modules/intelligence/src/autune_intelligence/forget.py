@@ -1,4 +1,7 @@
-"""A person deleted their own speech: E lets go of the words it copied (#587, #614).
+"""What E lets go of when a person deletes their own speech (#587, #614), and
+when a meeting is deleted (#1161).
+
+**A person's own speech.**
 
 E keeps text drawn from utterances in three places: its copies of B's, C's and
 D's results (``intel_completion``), the meeting reports quoting them
@@ -35,6 +38,26 @@ runs:
 
 Safe to repeat: the second time the texts are already replaced. Ids and counts
 only leave this module.
+
+**A meeting.** Every table E keeps per meeting goes with the meeting's row by
+cascade. What does not is what *another* meeting's rows hold of it
+(``forget_meeting``):
+
+- **D's copy in a later meeting.** A decision change that followed one of the
+  deleted meeting quotes it as ``previous_statement``. That is emptied, as D
+  empties its own (``sweep_dangling_previous_statements`` there): that the
+  decision changed, how, and after which meeting stay. D does not republish
+  the later meeting, so nothing else would take the copy out of E.
+
+A report's text is not searched for the meeting (lsh2217 on #1161,
+2026-10-10). A meeting's name a person wrote into a report or a correction
+stays. The Report template has a line that names another meeting by its title,
+and nothing writes it yet: D passes no ``meeting_title``. When D does, that
+line is this function's to deal with, and by something other than the title's
+characters -- two meetings can share a title, and a title can be changed.
+
+The weekly report holds counts and pattern names only. A copy already posted
+to Slack is outside Autune and is not recalled.
 """
 
 from __future__ import annotations
@@ -336,3 +359,58 @@ def _replace_quotes(text: str, needles: list[str]) -> str:
             continue
         text = text.replace(needle, SPEECH_DELETED_TEXT)
     return text
+
+
+# --- a meeting is deleted (#1161) -----------------------------------------------
+
+
+@dataclass(frozen=True)
+class MeetingForgotten:
+    """What E changed in other meetings' rows, by count."""
+
+    statements_cleared: int = 0
+
+
+def forget_meeting(session: Session, meeting_id: str) -> MeetingForgotten:
+    """Take a meeting out of the rows of E that outlive it (module docstring).
+
+    Called before the meeting's row goes, and does not read it. The meeting's
+    own rows are left whole: they go with it, and stay as they were if the
+    deletion does not happen. Safe to repeat, before the row has gone or
+    after: the second time the copies are already empty.
+    """
+    statements = _forget_previous_statements(session, meeting_id)
+    session.flush()
+    return MeetingForgotten(statements_cleared=statements)
+
+
+def _forget_previous_statements(session: Session, meeting_id: str) -> int:
+    """Empty ``previous_statement`` where another meeting's copy of D's lineage
+    quotes this one. ``previous_meeting_id``, ``change_type``, ``nli_label`` and
+    ``confidence`` stay, as they do in D's own rows."""
+    quoting = {"decision_lineage": [{"previous_meeting_id": meeting_id}]}
+    cleared = 0
+    for completion in session.scalars(
+        sa.select(IntelCompletion)
+        .where(
+            IntelCompletion.meeting_id != meeting_id,
+            IntelCompletion.context_payload.contains(quoting),
+        )
+        .with_for_update()
+    ):
+        payload = completion.context_payload or {}
+        lineage = []
+        touched = False
+        for change in payload.get("decision_lineage", []):
+            change = dict(change)
+            if (
+                change.get("previous_meeting_id") == meeting_id
+                and change.get("previous_statement") is not None
+            ):
+                change["previous_statement"] = None
+                cleared += 1
+                touched = True
+            lineage.append(change)
+        if touched:
+            completion.context_payload = {**payload, "decision_lineage": lineage}
+    return cleared

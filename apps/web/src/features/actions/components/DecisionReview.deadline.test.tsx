@@ -71,7 +71,9 @@ describe("a decision's deadline on its row", () => {
     expect(line.getAttribute("title")).toBe(SHOWN);
     fireEvent.click(line);
 
-    expect(within(list).getByRole("button", { expanded: true }).textContent).toBe(SHOWN);
+    // The line pressed stays the short one; the whole statement is under it.
+    expect(within(list).getByRole("button", { expanded: true }).textContent).not.toBe(SHOWN);
+    expect(within(list).getByText(SHOWN).tagName).toBe("P");
     expect(list.textContent).not.toContain("2026-10-13");
   });
 

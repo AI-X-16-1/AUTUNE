@@ -84,8 +84,13 @@ agreement, and sync the result to Notion and Jira.
    commitment and decision, in the request that read the line. A line that
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
-   three said before it) is the description, and the resolver is asked only
-   about a commitment that has none. The classifier does not say what it
+   three said before it; no name mark left over, and none of 이거, 그거, 저거,
+   이것, 그것, 저것 or their run-together forms (이건, 그걸, 그게, ...) -- a word
+   that only points, which the instructions ask to be
+   replaced) is the description, and the resolver is asked only
+   about a commitment that has none. So a summary that kept such a word costs
+   that row one resolver request, and the row shows what the resolver filled
+   in or, when it could not tell, the line as it was said. The classifier does not say what it
    drew on, so that is read off the line: of the three lines with text said
    just before -- the ones the summary was checked against, except that the
    check also stops at the start of its request -- those that hold a word the
@@ -697,6 +702,53 @@ and a turn of about 360 characters was quoted as about 38 where its sentence
 is about 65. A transcript without sentence ends and a real meeting were not
 measured.
 
+**Two things in one sentence.** A turn is cut by rule at sentence ends, and
+"로그는 제가 14일까지 정리하고, 문구는 16일까지 고칠게요" is inside one: two
+objects, each with its own date, in a line that used to be one row with one
+date. With `classifier_impl=llm` the request that labels a line may answer it
+as pieces instead (`"8-1"`, `"8-2"`, 2026-10-09), each with a label and the
+words of the line that say it. As with a part, the answer only chooses where
+the cut falls. Every piece is looked for in the line as it was said
+(`llm.cut_in_two`) and is the line's own characters, in spoken order whatever
+order the answer gives; from there on a piece is read as a line of its own
+(`decisions.in_pieces`), so it is a row of its own, its date is read from its
+own words, and it cites the utterance with the offsets of the piece. Words of
+the line that are in no piece belong to no row.
+
+An answer that cannot cut the line cuts nothing: one piece, words that are not
+in the line, pieces that overlap. The line then keeps the strongest of the
+labels answered for it and is one row, as it was before. One object with two
+verbs -- "시안은 제가 고쳐서 공유할게요" -- is one thing to do and is not cut.
+That is what the instructions ask and the model's call; no rule checks it, and
+a line that is not cut is read as before. A piece's summary is checked against
+the piece and the lines before the line, not against the rest of the line: the
+line is cut because each thing has its own date, and checked against the whole
+line one piece's summary could carry the other's. A piece's number is its
+place in the line. A decision's id is still derived from the utterance, and
+the number goes into it only when two decisions were settled in the same
+utterance, as for a long turn. The `local` and `fake` classifiers cut nothing.
+
+The instructions are 1,304 characters with this (1,039 before), which leaves
+2,496 of a window for lines: counted on the four labelled dummy meetings, one
+of them takes four requests where it took three. Looked at once, on three
+invented meetings of about a dozen lines each (three requests): ten planted
+lines, five naming one object and five naming two, came back as planted, and
+every piece was in its line.
+
+Measured once on the labelled meetings (2026-10-09, `gemini-3.8-flash`, 88
+requests): the instructions as they were and with this, three rounds each on
+the four dummy meetings -- 975 lines, 73 commitments. Commitment F1 over the
+three rounds was 0.954 before and 0.952 with it (207 found and 12 missed by
+both, 8 wrong against 9), and either one moves between 0.94 and 0.97 from one
+round to the next. One meeting was lower with it in two rounds of three (0.889
+and 0.857, against 0.941 to 1.0 before); three rounds cannot tell that from
+the meeting's own spread. One line of the 975 was cut, in all three rounds and
+at the same places, into two decisions. No commitment was cut. So the run says
+the longer instructions cost the labels nothing on these meetings, and says
+nothing of a commitment cut out of a line. A request carried about 10% more
+prompt tokens and 22% more thinking tokens. Not shown: whether a cut is right
+-- the labels have no mark for two things in one line.
+
 The offsets are counted on one text and are dropped when it changes. A
 transcript correction (#586) clears an item's, since the item is kept and the
 line it cites was rewritten; a decision's are written again on every run, and
@@ -1171,8 +1223,9 @@ calendar, the minutes, the agent's tools and module D are given.
   rules only): one line; twenty characters counting spaces; a noun at the
   end -- no 함, 됨, 예정 or verb ending, and no 결정/확정 tail on a decision;
   no number and no date its sentence does not say; no person; no date at all
-  on an item, which has a due date of its own; words that are the
-  sentence's. A decision's title may carry a date that is in the statement
+  on an item, which has a due date of its own; no word that only points
+  (이거, 그거, 저거, 이것, 그것, 저것, with or without a particle, and 이건, 그걸,
+  그게 and the like); words that are the sentence's. A decision's title may carry a date that is in the statement
   in the same words, since the date can be what was decided ("출시일 10월
   20일"). A refused title is dropped, not cut to fit, and the row shows the
   cut sentence.
@@ -1196,10 +1249,30 @@ calendar, the minutes, the agent's tools and module D are given.
   under the viewer's own sign-in, so registering a file shows its title to the
   team and the file to nobody Google would not show it to. A row names no
   person -- not who registered it, not who opened it. The title is typed by a
-  member and stored as typed, so it can hold a name; it and the file id stay
-  out of logs and error messages, and neither goes to any outside service.
+  member and screened as all typed text is (below), so it can hold a name
+  and not a number the detector reads; it and the file id stay out of logs
+  and error messages, and neither goes to any outside service.
   The rows are not an analysis result and have no retention window: a member
   deletes one at any time, and they go with the team.
+- Text a person types is screened when it is saved and refused if it
+  reads as personal data (`typed_text.refuse_personal_data`; decided on
+  #1130, `privacy.md` section 6). Ten checks behind eight routes: an action
+  item's description and assignee label (`POST` and `PATCH /action-items`),
+  a decision's statement typed or reworded (`POST` and `PATCH /decisions`),
+  a meeting's memo (`PUT /summary/{meeting_id}/note`), a project's name and
+  aliases (`POST` and `PUT /projects`) and a material's title
+  (`POST /materials`). The check is the integration clients' own
+  (`find_unmasked`), in the service function and before anything is set, so
+  a refused save changes no field sent with it, records no verdict and
+  queues no send. The answer is a 422 whose details carry the field,
+  `reason: "personal_data"` and the categories read -- never the value,
+  which is in no log line either -- and the screen says which kind of value
+  to take out and keeps what was typed. It reads patterns, so a name
+  passes; and a number that is not personal data can be refused -- an
+  order number shaped like an account number is. Text sent back exactly as
+  it is stored is not a write: a row from before this rule keeps its other
+  fields editable, nothing stored is rewritten, and what stops such a row
+  from leaving is still the clients' `check_outbound` at every exit.
 - Only what an issue needs goes to Notion or Jira: the action description,
   assignee, and due date. Never the full transcript.
 - The LLM used for reference resolution receives masked text only, and the

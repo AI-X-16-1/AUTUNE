@@ -125,6 +125,19 @@ and keeps their module's `tools.py`.
 | **Tracker** ("할 일 챙김", #856) | 강민구 | Finds confirmed action items that are past their due date and proposes moving the date a week on — to the manager only (`any`; no approval scope of its own). Closing an item carried through three or more meetings is accepted on #856 and not built yet: it waits for B to mark a close apart from finished work | `@periodic`, weekly; `autune.intelligence.completed`; a chat request | B (`stalled_action_items`) | a proposal on the manager's approval screen; the due date changes only after approval — L2 |
 | **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them. A chat request is answered about all of E through a Gemini tool loop (`chat.py`); the template path (no LLM) is unchanged | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade. The chat path also reads E's own tools and `explain_metric` | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
 
+**Live research is not in that table, and it skips approval** (#1162). It is
+the main agent's (`autune_agent.live`, 김민경), not a subagent: while a meeting
+runs, it looks up a question raised in the live rows, or a line a person pressed
+조사 on, and shows a short note beside the live transcript and on the meeting
+page. A note is written and shown to the team with no approver, unlike
+Research's documents, which wait for an approver with scope `research`. The
+reason is the moment: an answer that waits for approval arrives after the
+meeting it was for. What bounds it instead is narrower than an approval: at
+most five automatic notes a meeting, a meeting recorded with consent attested
+only (`privacy.md` section 5), nothing sent to anyone (no Slack message; a DM
+to participants waits for #1046), and every note deleted with its meeting, with
+any meeting it quotes, and with the speech it was made from.
+
 Three things in that table are decisions, not descriptions:
 
 - **A proposal to a lead is the approval request itself.** Follow-up and

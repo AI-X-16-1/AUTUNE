@@ -99,12 +99,38 @@ class Masked:
         return f"Masked(spans={self.spans}, categories={sorted(self.counts)})"
 
 
+MAX_PASSES = 4
+"""Each pass that finds something stars at least one digit, so a line runs out
+of passes long before this; it only bounds a recogniser that keeps reporting
+what is already stars."""
+
+
 def mask(text: str, *, recogniser: EntityRecogniser | None = None) -> Masked:
     """Replace personal data in ``text``, keeping its shape.
 
     The caller holds the only reference to the unmasked string and must let it
     go: ``masked = mask(utterance).text`` and nothing else.
+
+    **What comes back is a fixed point** (#1210). The digits a pass keeps -- a
+    phone number's last four -- can run on into the next figure and read as a
+    new value: ``010-****-5678 2024-06-18`` is an account to the patterns. The
+    store's guard re-runs this function and the outbound guard re-reads the
+    patterns, so such a line was refused after its recording was gone. So the
+    result is masked again until nothing more is found: recall over precision,
+    as everywhere in this file, rather than a guard that reads less.
     """
+    total: Counter[str] = Counter()
+    for _ in range(MAX_PASSES):
+        masked = _mask_once(text, recogniser=recogniser)
+        if not masked.spans or masked.text == text:
+            break
+        total += masked.counts
+        text = masked.text
+    return Masked(text=text, counts=total)
+
+
+def _mask_once(text: str, *, recogniser: EntityRecogniser | None = None) -> Masked:
+    """One pass of ``mask``: every span found in ``text`` hidden once."""
     spans: list[tuple[int, int, str]] = find_pii(text)
     if recogniser is not None:
         spans.extend(recogniser.find(text))

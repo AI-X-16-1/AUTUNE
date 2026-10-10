@@ -1,4 +1,4 @@
-import { MaskedText, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { timecode } from "../format";
 import type { LiveRow } from "../types";
@@ -23,7 +23,16 @@ import { KindTag } from "./KindTag";
  * still the right name for the voice, only not yet a person.
  */
 
-export function TranscriptRow({ row, name }: { row: LiveRow; name?: string | null }) {
+export function TranscriptRow({
+  row,
+  name,
+  onResearch,
+}: {
+  row: LiveRow;
+  name?: string | null;
+  /** Live screen only: ask the agent to look this line up. */
+  onResearch?: () => void;
+}) {
   const { utterance, kind } = row;
   // `name` is who the label was confirmed as, when the caller knows. The live
   // screen never does -- no one is named during a recording -- and passes none.
@@ -77,6 +86,33 @@ export function TranscriptRow({ row, name }: { row: LiveRow; name?: string | nul
               </span>
             ) : null}
           </span>
+          {onResearch ? (
+            // Accent text, not muted ink: everything clickable is the accent
+            // (Button), and a muted 조사 read as a label nobody tried.
+            <Button
+              tone="text"
+              size="compact"
+              type="button"
+              onClick={onResearch}
+              aria-label={`${timecode(utterance.start)} 줄 조사`}
+              className="ml-auto gap-1"
+            >
+              <svg
+                aria-hidden
+                width="14"
+                height="14"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+              >
+                <circle cx="7" cy="7" r="4.5" />
+                <path d="M10.5 10.5 14 14" />
+              </svg>
+              조사
+            </Button>
+          ) : null}
         </div>
 
         {/* `data-utterance-id` lets S30 turn a text selection into offsets in this utterance. */}

@@ -52,6 +52,33 @@ afterEach(() => {
 });
 
 describe("minutesText", () => {
+  it("does not call an item closed without being finished 완료 (#856)", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      action_items: [
+        item({ id: "a9", description: "외주 견적 받기", status: "done", closed_unfinished: true }),
+        item({ id: "a10", description: "회고 자료 정리", status: "done" }),
+      ],
+    });
+
+    expect(text).toContain("1. 외주 견적 받기 — 담당 미지정 · 기한 없음 · 끝내지 않고 닫힘");
+    expect(text).toContain("2. 회고 자료 정리 — 담당 미지정 · 기한 없음 · 완료");
+  });
+
+  it("keeps an item or a decision typed over several lines on its numbered line", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      decisions: [{ id: "dec_9", statement: "가격은 12,000원\n  수량은 30개", status: "confirmed" }],
+      action_items: [item({ id: "a11", description: "가격 12,000원\r\n수량 30개 확인" })],
+      note: "첫 줄\n둘째 줄",
+    });
+
+    expect(text).toContain("1. 가격은 12,000원 수량은 30개\n");
+    expect(text).toContain("1. 가격 12,000원 수량 30개 확인 — 담당 미지정 · 기한 없음\n");
+    // The memo is a section of its own and keeps its lines.
+    expect(text).toContain("메모\n첫 줄\n둘째 줄");
+  });
+
   it("lists decisions and actions as the review has them, and the memo", () => {
     expect(minutesText(SUMMARY, titleOf(SUMMARY))).toBe(
       [

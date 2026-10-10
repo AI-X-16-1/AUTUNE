@@ -47,6 +47,7 @@ from .schemas import (
     MaskingRule,
     MeetingCreate,
     MeetingDetail,
+    MeetingRename,
     MeetingState,
     MeetingSummary,
     MyData,
@@ -333,6 +334,10 @@ def create_meeting(body: MeetingCreate, user: CurrentUser, session: SessionDep) 
     Separate from the upload below because the live-microphone path needs a
     meeting before it has a recording, and because ``meetings`` is a shared
     entity only module A may write — one writer, one place.
+
+    A title that reads as personal data is refused with 422
+    ``validation_error`` (``details.reason`` ``personal_data``, the categories
+    and never the value) and no meeting is opened (#1161).
     """
     meeting = service.create_meeting(
         session,
@@ -341,6 +346,19 @@ def create_meeting(body: MeetingCreate, user: CurrentUser, session: SessionDep) 
         team_id=body.team_id,
         started_at=body.started_at,
     )
+    return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.patch("/meetings/{meeting_id}", response_model=MeetingState)
+def rename_meeting(
+    meeting_id: str, body: MeetingRename, user: CurrentUser, session: SessionDep
+) -> MeetingState:
+    """Give a meeting a new title, for any member of its team (#1161). The
+    title is the only thing this route changes, and it is not echoed back.
+    Refused with 422 ``validation_error`` on ``title`` when it reads as
+    personal data or is only space; what was already sent keeps the old
+    title. See ``service.rename_meeting``."""
+    meeting = service.rename_meeting(session, meeting_id=meeting_id, member=user, title=body.title)
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
 
 

@@ -12,6 +12,13 @@ reads the lines without the forgotten one and stores nothing. Here the hook is
 held open until the store has either queued behind the lock or, without one,
 finished; the meeting must end with no summary.
 
+The meeting's short titles are the same case (module B's owner, 2026-10-10):
+``title_meeting`` reads the rows' sentences, lets a model answer with no
+transaction open, and ``store_titles`` writes the answer. The request carried
+the deleted sentence beside the others, and one word of any title in the answer
+may be its word. While the hook's transaction is open the store sees the
+deleted row still there, and would write and commit. It takes the same lock.
+
 The rows are committed, because both transactions have to see them, and removed
 at the end (the team's meeting and everything under it cascade).
 """
@@ -30,7 +37,12 @@ from sqlalchemy.orm import Session
 
 from autune_core import Meeting, Participant, Team, Utterance
 from autune_extraction import service
-from autune_extraction.models import ExtForgottenUtterance, ExtMeetingSummary
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtActionItemSource,
+    ExtForgottenUtterance,
+    ExtMeetingSummary,
+)
 
 KEPT = "그럼 배포는 금요일로 미루죠"
 DELETED = "제가 3시까지 릴리스 노트 정리할게요"
@@ -137,6 +149,108 @@ def test_a_summary_finished_while_speech_is_being_deleted_is_not_stored(
     with Session(db_engine) as session:
         assert session.get(ExtMeetingSummary, meeting_id) is None
         assert service.summary_lines(session, meeting_id) == [KEPT]
+
+
+def test_titles_answered_while_speech_is_being_deleted_are_not_stored(
+    db_engine: sa.Engine, meeting: tuple[str, str, str]
+) -> None:
+    """Two drafts titled in one request, one of them drawn from the line being
+    deleted. The other still says its sentence, so nothing about its own row
+    would stop its title."""
+    meeting_id, kept_id, deleted_id = meeting
+    tag = uuid4().hex[:12]
+    stays, goes = f"act_stays_{tag}", f"act_goes_{tag}"
+    with Session(db_engine) as session:
+        for item_id, source, text in ((stays, kept_id, KEPT), (goes, deleted_id, DELETED)):
+            session.add(
+                ExtActionItem(
+                    id=item_id,
+                    meeting_id=meeting_id,
+                    description=text,
+                    status="needs_confirmation",
+                    confidence=0.9,
+                    origin="model",
+                    sources=[ExtActionItemSource(utterance_id=source)],
+                )
+            )
+        session.commit()
+        targets = service.title_targets(session, meeting_id)
+    assert {target.id for target in targets} == {stays, goes}, "what the model was asked about"
+
+    hook_ran = threading.Event()
+    release_hook = threading.Event()
+    store_done = threading.Event()
+    results: dict[str, Any] = {}
+
+    def forget() -> None:
+        with Session(db_engine) as session:
+            service.forget_speech(session, [deleted_id])
+            hook_ran.set()
+            assert release_hook.wait(timeout=10)
+            session.commit()
+
+    def store() -> None:
+        with Session(db_engine) as session:
+            results["written"] = service.store_titles(
+                session, targets, ["릴리스 노트 3시 정리"] * len(targets)
+            )
+            session.commit()
+        store_done.set()
+
+    hook = threading.Thread(target=forget, name="hook")
+    hook.start()
+    assert hook_ran.wait(timeout=10), "the hook never ran"
+    task = threading.Thread(target=store, name="task")
+    task.start()
+    deadline = time.monotonic() + 10
+    while not (someone_waits_on_an_advisory_lock(db_engine) or store_done.is_set()):
+        assert time.monotonic() < deadline, "the store neither waited nor ran"
+        time.sleep(0.05)
+    release_hook.set()
+    hook.join(timeout=10)
+    task.join(timeout=10)
+
+    assert results["written"] == 0, "a sentence of the request was deleted under it"
+    with Session(db_engine) as session:
+        assert session.get(ExtActionItem, goes) is None
+        kept = session.get(ExtActionItem, stays)
+        assert kept is not None
+        assert (kept.description, kept.title) == (KEPT, None)
+
+
+def test_titles_stored_before_the_deletion_are_cleared_by_it(
+    db_engine: sa.Engine, meeting: tuple[str, str, str]
+) -> None:
+    """The other order: the answer was stored and committed first."""
+    meeting_id, kept_id, deleted_id = meeting
+    tag = uuid4().hex[:12]
+    stays, goes = f"act_stays_{tag}", f"act_goes_{tag}"
+    with Session(db_engine) as session:
+        for item_id, source, text in ((stays, kept_id, KEPT), (goes, deleted_id, DELETED)):
+            session.add(
+                ExtActionItem(
+                    id=item_id,
+                    meeting_id=meeting_id,
+                    description=text,
+                    status="needs_confirmation",
+                    confidence=0.9,
+                    origin="model",
+                    sources=[ExtActionItemSource(utterance_id=source)],
+                )
+            )
+        session.commit()
+        targets = service.title_targets(session, meeting_id)
+        assert service.store_titles(session, targets, ["릴리스 노트 3시 정리"] * 2) == 2
+        session.commit()
+
+    with Session(db_engine) as session:
+        service.forget_speech(session, [deleted_id])
+        session.commit()
+
+    with Session(db_engine) as session:
+        kept = session.get(ExtActionItem, stays)
+        assert kept is not None
+        assert (kept.description, kept.title) == (KEPT, None)
 
 
 def test_the_mark_goes_with_the_utterance(

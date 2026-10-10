@@ -21,6 +21,8 @@ const getMeeting = vi.fn<(meetingId: string) => Promise<{ title: string; team_id
 vi.mock("../api", () => ({
   attestConsent: vi.fn(),
   getMeeting: (meetingId: string) => getMeeting(meetingId),
+  // The 회의 중 조사 panel's read; nothing looked up yet.
+  listLiveResearch: () => Promise.resolve([]),
 }));
 
 const microphone: Microphone = {
