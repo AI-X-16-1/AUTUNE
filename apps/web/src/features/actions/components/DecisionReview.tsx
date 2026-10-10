@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
 
@@ -175,6 +175,9 @@ function DecisionRow({
   // window an action card opens (the user, 2026-10-09); it used to turn into
   // the statement, and the line pressed was gone from under the pointer.
   const [whole, setWhole] = useState(false);
+  // Names the opened paragraph for the line that opens it (`aria-controls`),
+  // so a screen reader can go from one to the other (review of #1194).
+  const wholeId = useId();
   // The sentence as the row reads; the stored one is what `RewordForm` edits.
   const shown = shownStatement(decision.statement);
   const title = rowTitle(decision.title, shown);
@@ -241,6 +244,7 @@ function DecisionRow({
                     type="button"
                     className="text-left [text-decoration:inherit]"
                     aria-expanded={whole}
+                    aria-controls={whole ? wholeId : undefined}
                     title={whole ? undefined : shown}
                     onClick={() => setWhole((now) => !now)}
                   >
@@ -252,6 +256,7 @@ function DecisionRow({
               </p>
               {title.cut && whole ? (
                 <p
+                  id={wholeId}
                   className={
                     decision.status === "rejected"
                       ? "mt-1 text-[var(--color-ink-muted)] line-through"

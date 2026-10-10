@@ -141,6 +141,32 @@ describe("a decision row's top line", () => {
     expect(within(list).getByRole("button", { name: SHORT })).toBeTruthy();
   });
 
+  it("names the opened statement as what the line controls, and nothing while it is closed", () => {
+    const list = decisions(
+      decision("dec_1", STATEMENT, SHORT),
+      decision("dec_2", STATEMENT, "다른 결정의 제목"),
+    );
+
+    const line = within(list).getByRole("button", { name: SHORT });
+    // Closed, there is no paragraph: a name for one would point at nothing.
+    expect(line.hasAttribute("aria-controls")).toBe(false);
+
+    fireEvent.click(line);
+
+    const whole = within(list).getByText(/^배포는 다음 주 금요일로 미루기로 함 \(담당 민경, 기한 /);
+    expect(whole.id).not.toBe("");
+    expect(line.getAttribute("aria-controls")).toBe(whole.id);
+
+    // Each row has its own: opening the other names another paragraph.
+    const other = within(list).getByRole("button", { name: "다른 결정의 제목" });
+    fireEvent.click(other);
+    expect(other.getAttribute("aria-controls")).not.toBe(whole.id);
+    expect(list.querySelectorAll(`[id="${whole.id}"]`)).toHaveLength(1);
+
+    fireEvent.click(line);
+    expect(line.hasAttribute("aria-controls")).toBe(false);
+  });
+
   it("shows a statement short enough to be the top line once, with nothing to open", () => {
     const list = decisions(decision("dec_1", "배포 연기", null));
 
