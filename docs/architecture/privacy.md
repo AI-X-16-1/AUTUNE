@@ -552,7 +552,16 @@ person's, those counts are that person's completion record. So:
     account (`DELETE /api/audio/me`) instead of the team leaves the team
     with no member, and nothing deletes such a team today. Its materials
     would then have nobody who can delete them and no window to end them.
-    Upload stays off until that case has an answer.
+    Module B's proposal: the last member's account deletion deletes the
+    team with it, after a confirmation that names the team, so nothing is
+    left that nobody can reach. That is module A's code and module A's
+    decision. Upload stays off until that case has an answer.
+  - **What a meeting makes from a material is the meeting's.** An agenda
+    draft built from a material for a meeting (#1147) is an analysis result
+    of that meeting: it has the meeting's window and goes with the meeting.
+    Deleting the material does not reach a draft already made from it.
+  - **No expiry a team can switch on.** A material has no window, and none
+    can be set per team; a team that wants one gone deletes it.
 - Somebody whose data sits in a document's unmasked prose, and who is not on
   the team, has no route of their own in Autune: the route is a team
   member's delete. The same is true of a third party named in a meeting.
