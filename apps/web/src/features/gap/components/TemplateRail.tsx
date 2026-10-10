@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 import { Button, StatusDot } from "@/shared/ui";
 import type { StatusVariant } from "@/shared/ui";
@@ -69,6 +69,7 @@ export function TemplateRail({
   const scheduling = Boolean(loadAgendaEvents && onScheduleNext);
   const [panelOpen, setPanelOpen] = useState(false);
   const [connectFailed, setConnectFailed] = useState(false);
+  const scheduleWhy = useId();
 
   // Back from connecting Google Calendar, either way: open the panel again,
   // and drop the flag so a reload does not.
@@ -111,14 +112,14 @@ export function TemplateRail({
             <span className="flex items-center" style={{ gap: "var(--space-8)" }}>
               {/* A grey button alone does not say why (#1177). */}
               {comparison.analysed ? null : (
-                <DisabledReason id="schedule-why">대조가 끝나면 쓸 수 있습니다</DisabledReason>
+                <DisabledReason id={scheduleWhy}>대조가 끝나면 쓸 수 있습니다</DisabledReason>
               )}
               <Button
                 tone="secondary"
                 size="compact"
                 disabled={!comparison.analysed}
                 aria-expanded={panelOpen}
-                aria-describedby={comparison.analysed ? undefined : "schedule-why"}
+                aria-describedby={comparison.analysed ? undefined : scheduleWhy}
                 title="내 Google 캘린더에서 다음 회의 일정을 골라 이 회의의 열린 갭을 일정 설명에 넣습니다."
                 onClick={() => setPanelOpen((open) => !open)}
               >
@@ -326,7 +327,7 @@ function TopicDensityPlaceholder() {
           직무 단위
         </span>
       </h2>
-      <More className="mt-2" summary="직무 정보가 기록되면 표시합니다.">
+      <More className="mt-2" summary="직무 정보가 기록되면 표시합니다. 개인별 발언량은 표시하지 않습니다.">
         직무 정보가 아직 기록되지 않아 표시하지 않습니다. 개인별 발언량은 어떤 화면에서도 보여주지
         않으며, 이 표는 직무 단위 집계로만 채워집니다.
       </More>

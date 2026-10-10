@@ -12,7 +12,10 @@ export function DisabledReason({ id, children }: { id: string; children: string 
   return (
     <span
       id={id}
-      className="whitespace-nowrap text-[var(--color-ink-muted)]"
+      // Capped and allowed to wrap below `sm`: at 360px a one-line reason
+      // beside the button would push the top bar past the screen. The floor
+      // keeps a squeezed row from breaking it a letter per line.
+      className="min-w-[6rem] max-w-[9rem] text-right leading-tight text-[var(--color-ink-muted)] sm:max-w-none sm:whitespace-nowrap"
       style={{ fontSize: "var(--text-metaSmall)" }}
     >
       {children}
