@@ -152,17 +152,28 @@ window, `ext_material_chunks`, `ext_material_alarms`, the upload route and
 the expiry task. They arrive in the changes listed on #817 -- the document
 masker in `packages/integrations`, module B's storage, the approvers' alert
 in the agent layer, search -- each built to this text and off by default,
-and none of them merges before this rule is approved. The storage change
-removes this paragraph.
+and none of them merges before this rule is approved. The legal notice
+(`apps/web/src/app/legal/content.ts`) speaks of voice only today -- what is
+collected, how long it is kept, what the terms of use call content -- and it
+is changed before upload is switched on anywhere: while the notice does not
+say what is read of an uploaded file and what is kept of it, the switch
+stays off. The storage change removes this paragraph, and that sentence
+stays until the notice has changed.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.
 
 **What is read.** The file's text: body, tables, notes, comments, and hidden
-sheets and slides with the rest. Its headers, footers and properties (title,
-subject, keywords, a sensitivity label) are read only to look for a
-confidentiality marking and are not kept. Who wrote the file is never read:
-not the author, the last editor, a comment's author or the company. A file
+sheets and slides with the rest. Its properties (title, subject, keywords, a
+sensitivity label) are read only to look for a confidentiality marking and
+are not kept. A header or footer is kept or not as the table for its format
+says (`docs/modules/extraction.md`, "What is read, per format"): a `.docx`
+file's page headers and footers, and whatever a PDF prints at the top and
+the bottom of a page, are text of the file -- masked and kept with the rest;
+an `.xlsx` sheet's print header and footer, and a deck's masters and
+layouts, are read only to look for a marking and are not kept. Who wrote the
+file is never read: not the author, the last editor, a comment's author or
+the company. A file
 whose text cannot be read -- protected by a password, damaged, or a PDF with
 a page that is only a picture -- is refused whole, because text that was not
 read can be neither checked nor masked. There is no OCR: text that exists
@@ -217,7 +228,13 @@ Every excerpt is screened again on the way out. **No language model is
 given a material's text under this rule.** The masked text goes to one model
 only, the embedder on our own inference server that makes the vectors, and to
 nothing outside Autune's own servers. A tool that hands excerpts to the
-chatbot's model is a later change to this section, approved on its own.
+chatbot's model is a later change to this section, approved on its own. One
+thing about that tool is decided already (#817 10(b), 2026-10-08): it is
+given the words of the question, and uses them to search and for nothing
+else. They are not returned in its result, not written to `agent_runs` or to
+a row that waits for approval -- both keep a tool's name and ids, as now --
+and not logged, and the change that builds the tool holds each of the three
+with a test.
 Live transcript text is not searched against materials; that boundary is a
 separate decision (#817 point 6).
 
