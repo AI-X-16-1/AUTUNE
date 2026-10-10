@@ -111,7 +111,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   error = null;
+  window.localStorage.clear();
 });
 
 async function open() {
@@ -352,7 +354,7 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(onScreen()).toEqual([]);
     expect(screen.getByRole("status").textContent).toContain(UNNAMED_TEAM);
-    expect(screen.getByText(/아직 할 일이 없습니다/)).toBeTruthy();
+    expect(screen.getByText(/회의를 올리면 할 일이 여기에 모입니다/)).toBeTruthy();
   });
 
   it("says the list is an earlier one, not that it failed, when the team has none of it", async () => {
@@ -470,5 +472,69 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(inGroup("플랫폼")).toEqual(["a", "c"]);
     expect(screen.queryByRole("region", { name: "디자인" })).toBeNull();
+  });
+});
+
+describe("TeamActionsScreen, what it keeps and offers (#1183)", () => {
+  it("opens on the tab and grouping chosen last time", async () => {
+    render(<TeamActionsScreen me="user_me" />);
+    await screen.findByRole("combobox", { name: "프로젝트로 거르기" });
+    press("팀별");
+    fireEvent.click(screen.getByRole("tab", { name: /기한 초과/ }));
+    cleanup();
+
+    render(<TeamActionsScreen me="user_me" />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "팀별" }).getAttribute("aria-pressed")).toBe("true"),
+    );
+    expect(screen.getByRole("tab", { name: /기한 초과/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("opens as it always did on a choice it cannot use", async () => {
+    // 내 담당 is not offered without the signed-in person.
+    window.localStorage.setItem("autune.actions.boardChoice", '{"tab":"mine","view":"sideways"}');
+
+    await open();
+
+    expect(screen.getByRole("button", { name: "한번에" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("tab", { name: /전체/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("works as before in a browser that refuses storage", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+
+    await open();
+    press("팀별");
+
+    expect(inGroup("플랫폼")).toEqual(["a", "c"]);
+  });
+
+  it("says once that a meeting fills the board, with the way to start one, and draws no columns", async () => {
+    items = [];
+
+    await open();
+
+    expect(screen.getByText(/회의를 올리면 할 일이 여기에 모입니다/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "회의 시작" }).getAttribute("href")).toBe("/meetings/new");
+    expect(screen.queryByRole("region", { name: "확인 필요" })).toBeNull();
+  });
+
+  it("offers the Jira issues in the header and gives the place back on 접기", async () => {
+    jira.mockResolvedValue([]);
+    await open();
+
+    press("Jira 열린 이슈 보기");
+    await waitFor(() => expect(jira).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
+    press("접기");
+
+    expect(screen.getByRole("button", { name: "Jira 열린 이슈 보기" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Jira 열린 이슈" })).toBeNull();
   });
 });

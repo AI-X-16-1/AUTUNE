@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui";
 
@@ -24,6 +24,9 @@ import { shownDue } from "../dates";
  * Under a board showing one team (`teamId`, 2026-10-08) only that team's
  * project is listed. The request is the same one -- every team's is read --
  * and the others are left out of what is shown.
+ *
+ * With `onCollapse` the button that opens it is the caller's (the board's
+ * header, #1183): it reads on mount, and 접기 hands the place back.
  */
 
 type State =
@@ -41,8 +44,17 @@ const WHY_EMPTY: Record<Exclude<JiraProjectIssues["state"], "ok">, string> = {
 const meta = { fontSize: "var(--text-metaSmall)" } as const;
 const body = { fontSize: "var(--text-rowBody)", lineHeight: "var(--text-rowBody-leading)" } as const;
 
-export function JiraOpenIssues({ teamId = null }: { teamId?: string | null }) {
-  const [state, setState] = useState<State>({ kind: "closed" });
+export function JiraOpenIssues({
+  teamId = null,
+  onCollapse,
+}: {
+  teamId?: string | null;
+  /** The caller opened it and takes it back on 접기. */
+  onCollapse?: () => void;
+}) {
+  const [state, setState] = useState<State>({
+    kind: onCollapse === undefined ? "closed" : "loading",
+  });
   // Which request an answer belongs to. Collapsing moves it on, so an answer
   // that arrives after 접기 is dropped instead of opening the list again.
   const request = useRef(0);
@@ -62,7 +74,14 @@ export function JiraOpenIssues({ teamId = null }: { teamId?: string | null }) {
   const collapse = useCallback(() => {
     request.current += 1;
     setState({ kind: "closed" });
-  }, []);
+    onCollapse?.();
+  }, [onCollapse]);
+
+  // Opened by the caller: read once, as the button here would have.
+  const opened = onCollapse !== undefined;
+  useEffect(() => {
+    if (opened) load();
+  }, [opened, load]);
 
   if (state.kind === "closed") {
     return (

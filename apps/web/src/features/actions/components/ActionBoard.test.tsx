@@ -229,4 +229,17 @@ describe("ActionBoard, dragging a card", () => {
 
     expect(onSelect.mock.calls).toEqual([["a"], ["a"], ["a"]]);
   });
+
+  it("shows a grip on a card that can be dragged, and none where nothing moves (#1183)", () => {
+    const candidate = item("d", "needs_confirmation", { is_candidate: true });
+    render(<ActionBoard items={[...ITEMS, candidate]} onMove={() => Promise.resolve()} />);
+
+    expect(card("a").querySelector("[data-drag-handle]")).not.toBeNull();
+    expect(card("a").className).toContain("cursor-grab");
+    expect(card("d").querySelector("[data-drag-handle]")).toBeNull();
+    cleanup();
+
+    render(<ActionBoard items={ITEMS} />);
+    expect(card("a").querySelector("[data-drag-handle]")).toBeNull();
+  });
 });

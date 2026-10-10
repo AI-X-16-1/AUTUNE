@@ -128,6 +128,20 @@ export function ActionCard({
             · AI 재구성
           </span>
         ) : null}
+        {/* A grip at the card's corner, beside the grab cursor, so a card
+            that moves says so before anyone tries (#1183). Decoration for a
+            pointer: the keyboard's way is the window's status select. */}
+        {draggable ? (
+          <span
+            aria-hidden
+            data-drag-handle
+            className="ml-auto shrink-0 select-none text-[var(--color-ink-muted)] group-hover:text-[var(--color-ink-body)]"
+            style={{ fontSize: "var(--text-metaSmall)", fontWeight: 400 }}
+            title="끌어서 다른 열로 옮길 수 있습니다"
+          >
+            ⠿
+          </span>
+        ) : null}
       </div>
 
       {context !== undefined && context.length > 0 ? (

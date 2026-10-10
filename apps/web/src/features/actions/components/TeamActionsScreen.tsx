@@ -1,5 +1,7 @@
 "use client";
 
+import type { Route } from "next";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import { Button, ChipToggle, Tabs } from "@/shared/ui";
@@ -42,8 +44,13 @@ import type { ActionItemRead, Project, TeamName } from "../types";
  * board of everything, 팀별 one board under each team's name, 프로젝트별 one
  * under each project's and then 미분류. A layout and not a filter -- nothing
  * leaves the screen -- so it combines with the tabs and the project filter
- * above it. It opens on 한번에 every time; the choice is not kept. Each item
- * says its team (`team_id`), and `GET /teams/mine` names them.
+ * above it. Each item says its team (`team_id`), and `GET /teams/mine` names
+ * them.
+ *
+ * **The tab and the grouping are remembered between visits** (#1183), in this
+ * browser only (`localStorage`): a per-viewer convenience, read after the
+ * first render so the server's render and the browser's agree, and a browser
+ * that refuses storage simply opens on 전체 and 한번에 as before.
  *
  * **One team's items, when a team is pressed in the sidebar** (the user,
  * 2026-10-08: "액션아이템에서 팀명 누르면 해당 팀의 액션아이템이 뜨는 것으로").
@@ -59,11 +66,21 @@ import type { ActionItemRead, Project, TeamName } from "../types";
  * No add form: an item is added to a meeting, and this screen has none. That
  * stays on the meeting's own actions tab.
  *
- * Under the board, the open issues of the Jira projects the caller's teams
- * connected -- viewed on request and never imported (`JiraOpenIssues`).
+ * "Jira 열린 이슈 보기" sits at the right of the grouping row (#1183) -- it
+ * was alone under the board -- and opens, under that row, the open issues of
+ * the Jira projects the caller's teams connected: viewed on request and never
+ * imported (`JiraOpenIssues`). It is offered to every team: whether one
+ * connected Jira is not something this screen reads, and the list says so
+ * for a team that did not.
+ *
+ * Nothing on the tab: one box saying so instead of four empty columns
+ * (#1183). The columns are only ever a place to drop a card from the board
+ * itself, and an empty board has none to drag.
  */
 
 type Tab = "all" | "mine" | "overdue";
+
+const TABS: Tab[] = ["all", "mine", "overdue"];
 
 const VIEWS: { id: BoardView; label: string }[] = [
   { id: "all", label: "한번에" },
@@ -87,7 +104,10 @@ export function TeamActionsScreen({
     () => (teamId === null ? every : every.filter((item) => item.team_id === teamId)),
     [every, teamId],
   );
-  const [tab, setTab] = useState<Tab>("all");
+  const [chosenTab, setTab] = useState<Tab>("all");
+  // "내 담당" is not offered without the signed-in person; a remembered one
+  // reads as 전체 until they are known.
+  const tab: Tab = chosenTab === "mine" && me === null ? "all" : chosenTab;
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
 
   const today = localToday();
@@ -120,6 +140,20 @@ export function TeamActionsScreen({
   // The names over each team's board. A read that fails leaves the boards
   // apart and headed as unnamed, rather than merging two teams' items.
   const [view, setView] = useState<BoardView>("all");
+  useEffect(() => {
+    const kept = readBoardChoice();
+    if (kept.tab !== undefined) setTab(kept.tab);
+    if (kept.view !== undefined) setView(kept.view);
+  }, []);
+  const chooseTab = (next: Tab) => {
+    setTab(next);
+    keepBoardChoice({ tab: next, view });
+  };
+  const chooseView = (next: BoardView) => {
+    setView(next);
+    keepBoardChoice({ tab, view: next });
+  };
+  const [jiraOpen, setJiraOpen] = useState(false);
   const [teams, setTeams] = useState<TeamName[]>([]);
   useEffect(() => {
     let alive = true;
@@ -210,7 +244,7 @@ export function TeamActionsScreen({
             { id: "overdue", label: "기한 초과", count: lists.overdue.length },
           ]}
           active={tab}
-          onChange={setTab}
+          onChange={chooseTab}
         />
 
         {/* The tabs above filter; this row arranges what they let through.
@@ -224,7 +258,7 @@ export function TeamActionsScreen({
           >
             묶어 보기
             {VIEWS.map(({ id, label }) => (
-              <ChipToggle key={id} selected={view === id} onClick={() => setView(id)}>
+              <ChipToggle key={id} selected={view === id} onClick={() => chooseView(id)}>
                 {label}
               </ChipToggle>
             ))}
@@ -235,7 +269,17 @@ export function TeamActionsScreen({
             value={project}
             onChange={setProject}
           />
+          {!jiraOpen ? (
+            <div className="ml-auto">
+              <Button tone="text" size="compact" onClick={() => setJiraOpen(true)}>
+                Jira 열린 이슈 보기
+              </Button>
+            </div>
+          ) : null}
         </div>
+        {jiraOpen ? (
+          <JiraOpenIssues teamId={teamId} onCollapse={() => setJiraOpen(false)} />
+        ) : null}
 
         <ProjectProgressStrip
           lines={progress}
@@ -252,8 +296,24 @@ export function TeamActionsScreen({
           ) : (
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
-              {shown.length === 0 ? <Empty>{EMPTY[tab]}</Empty> : null}
-              {groups === null || shown.length === 0 ? (
+              {shown.length === 0 ? (
+                <Empty>
+                  {/* Only a board with nothing at all is told to start a
+                      meeting; one the project filter emptied says that. */}
+                  {tab === "all" && items.length > 0 ? "고른 프로젝트에는 할 일이 없습니다." : EMPTY[tab]}
+                  {tab === "all" && items.length === 0 ? (
+                    <>
+                      {" "}
+                      <Link
+                        href={"/meetings/new" as Route}
+                        className="text-[var(--color-accent-default)] hover:text-[var(--color-accent-hover)]"
+                      >
+                        회의 시작
+                      </Link>
+                    </>
+                  ) : null}
+                </Empty>
+              ) : groups === null ? (
                 board(shown)
               ) : (
                 <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
@@ -283,8 +343,6 @@ export function TeamActionsScreen({
             </>
           )}
         </div>
-
-        <JiraOpenIssues teamId={teamId} />
       </div>
 
       {selected !== undefined ? (
@@ -315,7 +373,7 @@ export function TeamActionsScreen({
 }
 
 const EMPTY: Record<Tab, string> = {
-  all: "아직 할 일이 없습니다. 회의가 분석되면 이곳에 모입니다.",
+  all: "회의를 올리면 할 일이 여기에 모입니다.",
   mine: "나에게 배정된 할 일이 없습니다.",
   overdue: "기한이 지난 할 일이 없습니다.",
 };
@@ -335,7 +393,7 @@ function Meta({ children }: { children: string }) {
  * Nothing on this tab: said in a box of its own, at reading size, so it is
  * not mistaken for a caption above an empty board.
  */
-function Empty({ children }: { children: string }) {
+function Empty({ children }: { children: React.ReactNode }) {
   return (
     <p
       className="mb-4 text-center text-[var(--color-ink-body)]"
@@ -357,4 +415,30 @@ function Note({ children }: { children: string }) {
       {children}
     </p>
   );
+}
+
+const BOARD_CHOICE = "autune.actions.boardChoice";
+
+/** The tab and grouping this browser last chose, each only if still one. */
+function readBoardChoice(): { tab?: Tab; view?: BoardView } {
+  try {
+    const kept = JSON.parse(window.localStorage.getItem(BOARD_CHOICE) ?? "{}") as {
+      tab?: unknown;
+      view?: unknown;
+    };
+    return {
+      tab: TABS.find((one) => one === kept.tab),
+      view: VIEWS.find((one) => one.id === kept.view)?.id,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function keepBoardChoice(choice: { tab: Tab; view: BoardView }): void {
+  try {
+    window.localStorage.setItem(BOARD_CHOICE, JSON.stringify(choice));
+  } catch {
+    // Storage refused: the board opens on 전체 and 한번에 next time.
+  }
 }
