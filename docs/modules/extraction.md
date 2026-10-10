@@ -84,11 +84,15 @@ agreement, and sync the result to Notion and Jira.
    commitment and decision, in the request that read the line. A line that
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
-   three said before it; no name mark left over, and none of 이거, 그거, 저거,
+   three said before it; no name mark left over; neither of the request's own
+   line markers, `[대상]` and `[문맥]` -- they say which lines to judge and are
+   no part of what anybody said, and a model wrote `[대상]` in place of what the
+   line was about (measured 2026-10-09); and none of 이거, 그거, 저거,
    이것, 그것, 저것 or their run-together forms (이건, 그걸, 그게, ...) -- a word
    that only points, which the instructions ask to be
    replaced) is the description, and the resolver is asked only
-   about a commitment that has none. So a summary that kept such a word costs
+   about a commitment that has none. So a summary that kept such a word or
+   marker costs
    that row one resolver request, and the row shows what the resolver filled
    in or, when it could not tell, the line as it was said. The classifier does not say what it
    drew on, so that is read off the line: of the three lines with text said
