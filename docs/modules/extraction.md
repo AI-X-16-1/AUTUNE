@@ -94,8 +94,8 @@ agreement, and sync the result to Notion and Jira.
    line was about (measured 2026-10-09); and none of 이거, 그거, 저거,
    이것, 그것, 저것 or their run-together forms (이건, 그걸, 그게, ...) -- a word
    that only points, which the instructions ask to be
-   replaced) is the description, and the resolver is asked only
-   about a commitment that has none. So a summary that kept such a word or
+   replaced) is the description, and the resolver is asked about a
+   commitment only when it has none. So a summary that kept such a word or
    marker costs
    that row one resolver request, and the row shows what the resolver filled
    in or, when it could not tell, the line as it was said. The classifier does not say what it
