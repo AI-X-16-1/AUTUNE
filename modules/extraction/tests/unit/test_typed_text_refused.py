@@ -12,6 +12,7 @@ passes, because the detector reads patterns.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -38,6 +39,7 @@ from autune_extraction.models import (
 )
 from autune_extraction.router import router
 from autune_extraction.typed_text import TypedPersonalDataError, refuse_personal_data
+from autune_integrations.privacy import find_unmasked
 
 from .conftest import sign_in
 
@@ -427,3 +429,195 @@ def test_the_one_sentence_an_agent_tool_writes_through_this_door_is_not_refused(
     a person typed. Were that sentence ever to read as personal data, every
     approval would end in a refusal the approver could do nothing about."""
     refuse_personal_data(tools.FOLLOWUP_DESCRIPTION, field="description")
+
+
+# --- a value broken over lines (module B's owner, 2026-10-10) --------------------
+
+# Invented values. The detector's shapes stop at a line break -- it was written
+# for a transcript, where a break parts two speakers' numbers -- so each of
+# these was read as nothing and stored.
+HEAD, TAIL = "900101", "1234567"
+BROKEN = [
+    pytest.param(f"{HEAD}-\n{TAIL}", "rrn", id="LF after the hyphen"),
+    pytest.param(f"{HEAD}\n-{TAIL}", "rrn", id="LF before the hyphen"),
+    pytest.param(f"{HEAD}-\r\n{TAIL}", "rrn", id="CRLF after the hyphen"),
+    pytest.param(f"{HEAD}\r\n-{TAIL}", "rrn", id="CRLF before the hyphen"),
+    pytest.param(f"{HEAD}-\r{TAIL}", "rrn", id="a lone CR after the hyphen"),
+    pytest.param(f"{HEAD}\r-{TAIL}", "rrn", id="a lone CR before the hyphen"),
+    pytest.param(f"{HEAD}-\n\n{TAIL}", "rrn", id="a blank line between"),
+    pytest.param(f"{HEAD}-\r\n\r\n{TAIL}", "rrn", id="a blank line between, CRLF"),
+    pytest.param(f"{HEAD}-\n    {TAIL}", "rrn", id="a break and an indent"),
+    pytest.param(f"주민번호는 {HEAD}-\n{TAIL}입니다", "rrn", id="inside a sentence"),
+    pytest.param("123456-\n01-\n234567", "digits", id="an account over three lines"),
+    pytest.param("123456-\r\n01-\r\n234567", "digits", id="an account over three lines, CRLF"),
+    pytest.param("+82 10-1234-\n5678", "phone", id="a +82 phone before its last group"),
+]
+
+
+@pytest.mark.parametrize(("broken", "category"), BROKEN)
+def test_a_value_broken_over_lines_is_refused_in_a_memo(
+    broken: str,
+    category: str,
+    client: TestClient,
+    session: Session,
+    queued: list[str],
+) -> None:
+    """The memo is the field a person writes lines in. As typed the detector
+    reads none of these -- which is the hole -- and the save is refused."""
+    assert find_unmasked(broken) == [], "read as nothing as typed"
+    before, held = counts(session), texts(session)
+
+    with capture_logs() as logs:
+        response = _memo(client, f"회의 메모\n{broken}\n다음 주에 확인")
+    session.rollback()
+
+    assert response.status_code == 422
+    assert counts(session) == before, "no row was added"
+    assert texts(session) == held, "and none was changed"
+    assert queued == []
+    details = response.json()["error"]["details"]
+    assert (details["field"], details["reason"]) == ("body", "personal_data")
+    assert category in details["categories"]
+    for said in (response.text, repr(logs)):
+        for digits in re.findall(r"\d{4,}", broken):
+            assert digits not in said
+
+
+@pytest.mark.parametrize("split", ["-\n", "-\r\n"], ids=["LF", "CRLF"])
+@pytest.mark.parametrize(("knock", "field"), DOORS)
+def test_every_door_refuses_a_value_broken_over_two_lines(
+    knock: Any, field: str, split: str, client: TestClient, session: Session, queued: list[str]
+) -> None:
+    before, held = counts(session), texts(session)
+
+    with capture_logs() as logs:
+        response = knock(client, f"거래처 담당 {HEAD}{split}{TAIL} 확인")
+    session.rollback()
+
+    assert response.status_code == 422
+    assert counts(session) == before
+    assert texts(session) == held
+    assert queued == []
+    details = response.json()["error"]["details"]
+    assert (details["field"], details["reason"]) == (field, "personal_data")
+    assert "rrn" in details["categories"]
+    for said in (response.text, repr(logs)):
+        assert TAIL not in said
+        assert "거래처" not in said
+    (line,) = [entry for entry in logs if entry["event"] == "extraction_typed_text_refused"]
+    assert line["field"] == field
+
+
+def test_a_memo_is_stored_with_the_lines_it_was_typed_in(
+    client: TestClient, session: Session
+) -> None:
+    """Folded for the check only. A memo is lines, and stays lines."""
+    memo = "회의 메모\n- 예산 150000\n- 인건비 200000\n\n다음 주에 3건 확인"
+
+    response = _memo(client, memo)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert session.scalars(select(ExtMeetingNote.body)).one() == memo
+
+
+HARMLESS = [
+    "예산 150000\n인건비 200000",
+    "예산 150000\r\n인건비 200000",
+    "- 참석 12\n- 불참 3\n- 안건 5",
+    "1. 로그 정리\n2. 배포 연기\n3. 10월 12일 마감",
+    "마감 2026-10-12\n3건 남음",
+    "2026-10-02\n2026-10-05",
+    "2026-10-02-\n2026-10-05",
+    "2026-10-12\n14:30",
+    "2024-\n2025 계획",
+    "10월 12일\n10월 15일",
+    "9-\n18시",
+    "14:30\n20명",
+    "v1.2.3\n4.5.6",
+    "배포 -\n10월 12일",
+    "내선 1234\n5678",
+    "1234-\n5678",
+    "1,200,000\n1,500,000",
+    "1234567\n1234567",
+    "주문 20261012-\n000123",
+    "AUT-1234\nAUT-5678",
+    "#1195\n#1196\n#1220",
+    "달성 85%\n목표 90%",
+]
+
+
+@pytest.mark.parametrize("memo", HARMLESS)
+def test_numbers_on_neighbouring_lines_of_a_memo_are_still_saved(
+    memo: str, client: TestClient, session: Session
+) -> None:
+    """Without this the tests above would pass on a fold that refuses every
+    memo with two numbers in it. A number with a word on its own side of the
+    break joins nothing; nor does a date, a time, a count or a short pair."""
+    response = _memo(client, memo)
+
+    assert response.status_code == 200, response.text
+    session.expire_all()
+    assert session.scalars(select(ExtMeetingNote.body)).one() == memo, "as typed, breaks and all"
+
+
+@pytest.mark.parametrize(
+    ("memo", "category"),
+    [
+        pytest.param("150000\r\n200000", "rrn", id="six and six digits, CRLF"),
+        pytest.param("150000\n\n200000", "rrn", id="six and six digits, a blank line"),
+        pytest.param("매출 150000\r\n200000 목표", "rrn", id="six and six, words outside, CRLF"),
+        pytest.param("1200000-\n1500000", "digits", id="a hyphenated range of long numbers"),
+    ],
+)
+def test_what_the_fold_newly_refuses_that_is_nobodys_number(
+    memo: str, category: str, client: TestClient
+) -> None:
+    """The cost, written down: two numbers that meet across the break and make
+    a shape together. Each was saved until now. "A sentence the detector reads
+    wrongly cannot be saved; that cost is accepted" (privacy.md, #1130)."""
+    assert find_unmasked(memo) == [], "saved until now"
+
+    response = _memo(client, memo)
+
+    assert response.status_code == 422
+    assert category in response.json()["error"]["details"]["categories"]
+
+
+def test_two_numbers_one_line_feed_apart_were_refused_before_and_name_both_readings(
+    client: TestClient,
+) -> None:
+    """Not new: the detector's account shape already crosses one line break.
+    The refusal lists what each reading found, the typed one first."""
+    memo = "150000\n200000"
+    assert find_unmasked(memo) == ["account"]
+
+    response = _memo(client, memo)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["details"]["categories"] == ["account", "rrn"]
+
+
+@pytest.mark.parametrize(
+    "missed",
+    [
+        pytest.param("8512\n25-1234567", id="a break inside a group of digits"),
+        pytest.param(f"{HEAD}-\n-{TAIL}", id="a hyphen on both sides of the break"),
+        pytest.param("minsu.kim@\nexample.com", id="an email address broken at its @"),
+    ],
+)
+def test_what_the_fold_does_not_catch_is_still_saved(missed: str, client: TestClient) -> None:
+    """Known and not closed here: a fold puts a space where the break was and
+    does not guess which breaks to close up. Pinned so that a change to any of
+    them -- in the detector, which is not module B's -- is seen."""
+    response = _memo(client, missed)
+
+    assert response.status_code == 200, response.text
+
+
+def test_a_broken_value_sent_back_as_it_is_stored_is_not_a_write() -> None:
+    """The rule for a row from before this one holds for it too."""
+    old = f"{HEAD}-\n{TAIL}"
+    refuse_personal_data(old, field="body", stored=old)
+    with pytest.raises(TypedPersonalDataError):
+        refuse_personal_data(old + " 확인", field="body", stored=old)
