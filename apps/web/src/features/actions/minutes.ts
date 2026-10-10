@@ -75,7 +75,7 @@ export function minutesOf(summary: MeetingSummary, title?: string | null): Minut
     decisions: summary.decisions.map((decision) => ({
       id: decision.id,
       // Its deadline as the action lines below write theirs.
-      statement: shownStatement(decision.statement, began ? began.getFullYear() : null),
+      statement: oneLine(shownStatement(decision.statement, began ? began.getFullYear() : null)),
       unconfirmed: decision.status === "pending",
     })),
     actions: items.map((item) => action(item, began)),
@@ -135,7 +135,7 @@ function action(item: ActionItemRead, began: Date | null): MinutesAction {
   const status = item.status ?? "needs_confirmation";
   return {
     id: item.id,
-    description: item.description,
+    description: oneLine(item.description),
     who: item.needs_reassignment
       ? "재배정 필요"
       : (item.assignee_name ?? item.assignee_label ?? "담당 미지정"),
@@ -151,6 +151,16 @@ function action(item: ActionItemRead, began: Date | null): MinutesAction {
         ? null
         : COLUMN_LABELS[status],
   };
+}
+
+/**
+ * A typed sentence on one line. A person may break an item or a decision over
+ * several lines; in the copy each is one numbered line, and a second line
+ * would fall out of the list with no number in front of it. The memo keeps
+ * its lines: it is a section of its own.
+ */
+function oneLine(text: string): string {
+  return text.replace(/\s*\n\s*/g, " ").trim();
 }
 
 /** When the meeting began, in the reader's time zone: the server sends UTC. */
