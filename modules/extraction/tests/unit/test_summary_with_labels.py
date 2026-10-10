@@ -204,6 +204,38 @@ def test_a_summary_with_a_name_mark_that_stands_for_nobody_is_dropped(written: s
 @pytest.mark.parametrize(
     "written",
     [
+        "[대상] 자료를 금요일까지 정리",  # the marker of a line to judge, as measured
+        "[문맥]에서 말한 자료를 금요일까지 정리",
+        "[ 대상 ] 자료를 금요일까지 정리",
+    ],
+)
+def test_a_summary_with_the_requests_own_line_marker_is_dropped(written: str) -> None:
+    (promise,), _ = classify(
+        ["김민경 님 자료는 제가 금요일까지 정리할게요"],
+        {"정리할게요": "commitment"},
+        {"정리할게요": written},
+        roster=("김민경",),
+    )
+
+    assert promise.kind is K.COMMITMENT  # the label stands; only the line is dropped
+    assert promise.summary == ""
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "발표 대상 고객 목록을 금요일까지 정리",  # the word, not the marker
+        "[중요] 자료를 금요일까지 정리",  # another bracket is the meeting's own
+        "대상] 자료를 금요일까지 정리",
+    ],
+)
+def test_a_word_that_is_not_the_line_marker_stays(written: str) -> None:
+    assert usable_summary(written, {}, "") == written
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
         "이거를 금요일까지 정리하겠다고 약속함",
         "그거 금요일까지 정리",
         "저거는 금요일까지 정리해서 공유",
@@ -248,6 +280,13 @@ def test_a_summary_that_kept_a_word_that_only_points_is_dropped(written: str) ->
 )
 def test_a_summary_with_a_word_that_only_looks_like_one_is_kept(written: str) -> None:
     assert usable_summary(written, {}, "") == written
+
+
+def test_the_request_asks_for_a_summary_without_the_one_who_spoke() -> None:
+    # Who promised is the row's owner, which the speaker's label fills; the
+    # model is sent no speaker, so a subject it writes names nobody.
+    assert "주어로 쓰지 말고" in llm_module.INSTRUCTIONS
+    assert "할 일부터 적으세요" in llm_module.INSTRUCTIONS
 
 
 def test_a_name_that_starts_like_a_pointing_word_is_a_name() -> None:
