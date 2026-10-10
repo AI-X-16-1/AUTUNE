@@ -52,6 +52,19 @@ afterEach(() => {
 });
 
 describe("minutesText", () => {
+  it("does not call an item closed without being finished 완료 (#856)", () => {
+    const text = minutesText({
+      ...SUMMARY,
+      action_items: [
+        item({ id: "a9", description: "외주 견적 받기", status: "done", closed_unfinished: true }),
+        item({ id: "a10", description: "회고 자료 정리", status: "done" }),
+      ],
+    });
+
+    expect(text).toContain("1. 외주 견적 받기 — 담당 미지정 · 기한 없음 · 끝내지 않고 닫힘");
+    expect(text).toContain("2. 회고 자료 정리 — 담당 미지정 · 기한 없음 · 완료");
+  });
+
   it("lists decisions and actions as the review has them, and the memo", () => {
     expect(minutesText(SUMMARY, titleOf(SUMMARY))).toBe(
       [
