@@ -50,7 +50,7 @@ from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 from autune_integrations.privacy import find_unmasked
 
-from . import days_off, service, tasks
+from . import days_off, meeting_notice, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
@@ -1076,6 +1076,29 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
     )
 
 
+def may_notify_now(session: Session, user_id: str, *, now: datetime | None = None) -> bool:
+    """Whether Autune may send this person a DM about work right now (#1046).
+
+    Not a tool the model calls -- it is not in ``TOOLS`` -- but the one place
+    the agent layer asks B before Follow-up's approval DMs a meeting's
+    attendees. It answers yes or no and never why, so a caller cannot learn
+    that somebody turned their reminders off or is on leave.
+
+    No when the person turned "마감 알림 받기" off (``ext_due_reminder_optouts``),
+    when today is inside their own 휴가 기간 (``ext_notification_pauses``), or
+    outside 09:00-17:00 on a working day in Korea -- the hours the
+    after-meeting notice keeps (``meeting_notice.sending_time``, public
+    holidays included). Their Google Calendar's out-of-office is not read here:
+    that read is a call out per person, and the morning DM asks it itself.
+    """
+    moment = now or datetime.now(tz=UTC)
+    if not service.due_reminders_on(session, user_id):
+        return False
+    if service.notifications_paused(session, user_id, moment.astimezone(KST).date()):
+        return False
+    return meeting_notice.sending_time(session, moment)
+
+
 TOOLS = [
     meeting_action_items,
     meeting_due_dates,
@@ -1360,7 +1383,11 @@ def add_followup_item(
 ) -> dict[str, Any]:
     """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
     after a meeting that left topics open (#561). It starts waiting for
-    confirmation, so it reaches nobody until someone confirms it.
+    confirmation on the board. Approving the proposal also tells the
+    meeting's attendees, by Slack DM, the day it recommends -- each one only
+    when ``may_notify_now`` says yes for them (#1046); that DM is the agent
+    layer's, not B's. The item itself reaches no calendar and reminds nobody
+    until someone confirms it.
 
     ``due_date`` (``YYYY-MM-DD``, optional) is the day Follow-up recommends
     for that meeting, which the team lead saw on the card they approved
