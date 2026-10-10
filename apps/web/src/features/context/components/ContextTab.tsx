@@ -30,7 +30,8 @@ export function ContextTab({
       <BriefPanel
         brief={brief}
         error={error}
-        carried={agendaSources === undefined ? undefined : carried}
+        carried={agendaSources === undefined ? undefined : carried.groups}
+        carriedWaiting={carried.waiting}
       />
       <TopicLinks meetingId={meetingId} quietWhenEmpty={brief !== null} />
     </div>

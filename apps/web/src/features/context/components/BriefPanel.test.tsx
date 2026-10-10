@@ -120,6 +120,15 @@ describe("BriefPanel, the agenda draft", () => {
     expect(draft()!.textContent).toContain("엮을 것이 없습니다.");
   });
 
+  it("does not say there is nothing while a carried source is still out", () => {
+    render(<BriefPanel brief={brief({ agenda: [] })} error={null} carried={[]} carriedWaiting />);
+
+    // The section and its heading are there; only the verdict waits.
+    expect(draft()).not.toBeNull();
+    expect(draft()!.textContent).toContain("이번 회의에서 다룰 문제");
+    expect(draft()!.textContent).not.toContain("엮을 것이 없습니다.");
+  });
+
   it("is drawn from the Jira entries alone while the carried sources are still out", () => {
     render(<BriefPanel brief={brief()} error={null} carried={[]} />);
 

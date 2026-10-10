@@ -133,9 +133,11 @@ function CarriedEntries({ groups }: { groups: readonly CarriedGroup[] }) {
 function BriefBody({
   brief,
   carried,
+  carriedWaiting,
 }: {
   brief: BriefRead;
   carried: readonly CarriedGroup[] | undefined;
+  carriedWaiting: boolean;
 }) {
   const { recap } = brief;
   const drafted = carried !== undefined;
@@ -254,7 +256,8 @@ function BriefBody({
             </div>
           )}
           <CarriedEntries groups={carried} />
-          {entries === 0 && <Muted>엮을 것이 없습니다.</Muted>}
+          {/* Not while a source is still out: "nothing" is said once it is known. */}
+          {entries === 0 && !carriedWaiting && <Muted>엮을 것이 없습니다.</Muted>}
         </section>
       ) : (
         <div>
@@ -290,16 +293,20 @@ function BriefBody({
  * each under its source's name. It is always drawn when given — there is no
  * switch, because a meeting has no field that could carry one. Without it the
  * panel is what it was. A source that arrives later adds its entries below;
- * nothing above moves.
+ * nothing above moves. `carriedWaiting` says a source is still out: until it
+ * clears, an empty draft does not say "엮을 것이 없습니다." — the line showed
+ * for a moment and was then replaced by the entries (review of #1193).
  */
 export function BriefPanel({
   brief,
   error,
   carried,
+  carriedWaiting = false,
 }: {
   brief: BriefRead | null;
   error: Error | null;
   carried?: readonly CarriedGroup[];
+  carriedWaiting?: boolean;
 }) {
   if (error) {
     return (
@@ -311,5 +318,7 @@ export function BriefPanel({
       </p>
     );
   }
-  return brief ? <BriefBody brief={brief} carried={carried} /> : null;
+  return brief ? (
+    <BriefBody brief={brief} carried={carried} carriedWaiting={carriedWaiting} />
+  ) : null;
 }

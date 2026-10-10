@@ -91,6 +91,45 @@ describe("ContextTab, the agenda draft's carried entries", () => {
     expect(draft()).toBeNull();
   });
 
+  it("does not say there is nothing to draft from while a source is still out, then lists what it had", async () => {
+    getBrief.mockResolvedValue(brief("mtg_next", "mtg_old"));
+    const gaps = held("지난 회의의 미해결 갭");
+    render(<ContextTab meetingId="mtg_next" agendaSources={[gaps.source]} />);
+    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("mtg_old"));
+
+    // The brief is drawn and the source has not answered.
+    expect(draft()).not.toBeNull();
+    expect(draft()!.textContent).not.toContain("엮을 것이 없습니다.");
+
+    gaps.release["mtg_old"]!([{ title: "롤백 계획이 없습니다" }]);
+
+    expect(await screen.findByText("롤백 계획이 없습니다")).toBeTruthy();
+    expect(draft()!.textContent).not.toContain("엮을 것이 없습니다.");
+  });
+
+  it("says there is nothing once the source has answered with nothing", async () => {
+    getBrief.mockResolvedValue(brief("mtg_next", "mtg_old"));
+    const gaps = held("지난 회의의 미해결 갭");
+    render(<ContextTab meetingId="mtg_next" agendaSources={[gaps.source]} />);
+    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("mtg_old"));
+    expect(draft()!.textContent).not.toContain("엮을 것이 없습니다.");
+
+    gaps.release["mtg_old"]!([]);
+
+    await waitFor(() => expect(draft()!.textContent).toContain("엮을 것이 없습니다."));
+  });
+
+  it("says there is nothing when its only source cannot be read: a failure is an answer", async () => {
+    getBrief.mockResolvedValue(brief("mtg_next", "mtg_old"));
+    const sources = [source("지난 회의의 미해결 갭", new Error("boom"))];
+
+    render(<ContextTab meetingId="mtg_next" agendaSources={sources} />);
+
+    await waitFor(() => expect(draft()?.textContent).toContain("엮을 것이 없습니다."));
+    expect(screen.queryByText("브리프를 불러오지 못했습니다.")).toBeNull();
+    expect(document.body.textContent).not.toContain("boom");
+  });
+
   it("leaves out a source that cannot be read and raises no error over the brief", async () => {
     getBrief.mockResolvedValue(brief("mtg_next", "mtg_old"));
     const sources = [
