@@ -81,7 +81,11 @@ agreement, and sync the result to Notion and Jira.
    invents (a number that is no line, the commitment itself) is dropped.
    With `classifier_impl=llm` the sentence comes earlier and from the classifier
    (2026-10-06): its answer carries, beside the label, one line for each
-   commitment and decision, in the request that read the line. A line that
+   commitment and decision, in the request that read the line. The
+   instructions ask for it to start from what is to be done, without the one
+   who spoke as its subject (2026-10-09): the request carries no speaker, so a
+   subject the model writes names nobody, and who promised is the row's owner.
+   A line that
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
    three said before it; no name mark left over; neither of the request's own
