@@ -123,6 +123,9 @@ export function minutesText(summary: MeetingSummary, title?: string | null): str
  * without a date. The weekday lost its own bracket the same day, with every
  * other due date B shows.
  */
+/** The words the item's window and card use for #856's close. */
+const CLOSED_UNFINISHED = "끝내지 않고 닫힘";
+
 export function actionMeta(item: MinutesAction): string {
   return [item.who, item.due ?? "기한 없음", ...(item.state ? [item.state] : [])].join(" · ");
 }
@@ -139,8 +142,14 @@ function action(item: ActionItemRead, began: Date | null): MinutesAction {
     due: dueOf(item.due_date, began),
     overdue: isOverdue(item),
     // "진행 전" is every item a meeting has just made; minutes that said it on
-    // each line would say nothing.
-    state: status === "todo" ? null : COLUMN_LABELS[status],
+    // each line would say nothing. An item closed without being finished sits
+    // in 완료 on the board under 닫힘 (#856); the minutes must not call it
+    // 완료 either, or the copy reads as work somebody finished.
+    state: item.closed_unfinished
+      ? CLOSED_UNFINISHED
+      : status === "todo"
+        ? null
+        : COLUMN_LABELS[status],
   };
 }
 
