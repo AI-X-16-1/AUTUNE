@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 
 import { Button, StatusDot } from "@/shared/ui";
 import type { StatusVariant } from "@/shared/ui";
@@ -13,6 +13,7 @@ import type {
   TemplateComparison,
   TemplateOption,
 } from "../types";
+import { DisabledReason } from "./DisabledReason";
 import { SchedulePanel } from "./SchedulePanel";
 
 /**
@@ -68,6 +69,7 @@ export function TemplateRail({
   const scheduling = Boolean(loadAgendaEvents && onScheduleNext);
   const [panelOpen, setPanelOpen] = useState(false);
   const [connectFailed, setConnectFailed] = useState(false);
+  const scheduleWhy = useId();
 
   // Back from connecting Google Calendar, either way: open the panel again,
   // and drop the flag so a reload does not.
@@ -107,16 +109,23 @@ export function TemplateRail({
             템플릿 대조 · {comparison.name}
           </h2>
           {scheduling ? (
-            <Button
-              tone="secondary"
-              size="compact"
-              disabled={!comparison.analysed}
-              aria-expanded={panelOpen}
-              title="내 Google 캘린더에서 다음 회의 일정을 골라 이 회의의 열린 갭을 일정 설명에 넣습니다."
-              onClick={() => setPanelOpen((open) => !open)}
-            >
-              다음 회의 잡기
-            </Button>
+            <span className="flex items-center" style={{ gap: "var(--space-8)" }}>
+              {/* A grey button alone does not say why (#1177). */}
+              {comparison.analysed ? null : (
+                <DisabledReason id={scheduleWhy}>대조가 끝나면 쓸 수 있습니다</DisabledReason>
+              )}
+              <Button
+                tone="secondary"
+                size="compact"
+                disabled={!comparison.analysed}
+                aria-expanded={panelOpen}
+                aria-describedby={comparison.analysed ? undefined : scheduleWhy}
+                title="내 Google 캘린더에서 다음 회의 일정을 골라 이 회의의 열린 갭을 일정 설명에 넣습니다."
+                onClick={() => setPanelOpen((open) => !open)}
+              >
+                다음 회의 잡기
+              </Button>
+            </span>
           ) : null}
         </div>
         {scheduling && panelOpen && onScheduleNext ? (
@@ -175,16 +184,10 @@ export function TemplateRail({
         </div>
 
         {comparison.analysed ? null : (
-          <p
-            className="mt-3 text-[var(--color-ink-muted)]"
-            style={{
-              fontSize: "var(--text-metaSmall)",
-              lineHeight: "var(--text-metaSmall-leading)",
-            }}
-          >
+          <More className="mt-3" summary="토픽 추출 전이라 아직 판정하지 않았습니다.">
             이 회의에서는 아직 토픽이 추출되지 않아 어떤 항목도 판정하지 않았습니다. 항목이 모두
             &quot;충족&quot;이 아니라, 대조가 일어나지 않은 상태입니다.
-          </p>
+          </More>
         )}
       </section>
 
@@ -324,16 +327,42 @@ function TopicDensityPlaceholder() {
           직무 단위
         </span>
       </h2>
-      <p
-        className="mt-2 text-[var(--color-ink-muted)]"
-        style={{
-          fontSize: "var(--text-metaSmall)",
-          lineHeight: "var(--text-metaSmall-leading)",
-        }}
-      >
+      <More className="mt-2" summary="직무 정보가 기록되면 표시합니다. 개인별 발언량은 표시하지 않습니다.">
         직무 정보가 아직 기록되지 않아 표시하지 않습니다. 개인별 발언량은 어떤 화면에서도 보여주지
         않으며, 이 표는 직무 단위 집계로만 채워집니다.
-      </p>
+      </More>
     </section>
+  );
+}
+
+/**
+ * An explanation read as one line, the rest one press away (#1177).
+ *
+ * The rail used to open on paragraphs. The full text is kept, not cut: the
+ * density block's is the screen's promise that no one's speaking volume is
+ * shown, and it stays a click from the line that stands for it.
+ */
+function More({
+  summary,
+  className = "",
+  children,
+}: {
+  summary: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <details
+      className={`text-[var(--color-ink-muted)] ${className}`}
+      style={{
+        fontSize: "var(--text-metaSmall)",
+        lineHeight: "var(--text-metaSmall-leading)",
+      }}
+    >
+      <summary className="cursor-pointer">
+        {summary} <span className="text-[var(--color-accent-default)]">자세히</span>
+      </summary>
+      <p className="mt-1">{children}</p>
+    </details>
   );
 }

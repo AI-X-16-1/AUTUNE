@@ -63,12 +63,19 @@ export function TeamGapList({ teamId }: { teamId: string }) {
         </div>
       ) : null}
 
+      {/* The way to MEDIUM and LOW is in the sentence that says HIGH is
+          empty, rather than a pointer to the header's toggle (#1177). */}
       {gaps !== null && gaps.length === 0 ? (
-        <Muted>
-          {showAll
-            ? "열린 갭이 없습니다."
-            : `열린 ${SEVERITY_LABELS.high} 갭이 없습니다. ${SEVERITY_LABELS.medium}·${SEVERITY_LABELS.low} 갭은 위에서 볼 수 있습니다.`}
-        </Muted>
+        showAll ? (
+          <Muted>열린 갭이 없습니다.</Muted>
+        ) : (
+          <Muted>
+            {`열린 ${SEVERITY_LABELS.high} 갭이 없습니다. `}
+            <Button tone="text" size="compact" onClick={() => setShowAll(true)}>
+              {`${SEVERITY_LABELS.medium}·${SEVERITY_LABELS.low} 갭 보기`}
+            </Button>
+          </Muted>
+        )
       ) : null}
 
       {gaps !== null && gaps.length > 0

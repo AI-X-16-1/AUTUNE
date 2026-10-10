@@ -104,5 +104,8 @@ describe("TemplateRail — 다음 회의 잡기", () => {
 
     const button = screen.getByRole("button", { name: "다음 회의 잡기" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
+    // The grey button says why, in words a touch screen shows too.
+    const why = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+    expect(why?.textContent).toBe("대조가 끝나면 쓸 수 있습니다");
   });
 });
