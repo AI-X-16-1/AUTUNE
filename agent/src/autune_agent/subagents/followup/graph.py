@@ -39,7 +39,7 @@ from langgraph.graph import END, START, StateGraph
 
 from autune_agent.main.registry import NO_MEETING, Toolbox
 from autune_agent.main.subagents import CompiledSubagent, SubagentState
-from autune_agent.results import ProposedAction, SubagentResult, ToolResult
+from autune_agent.results import Finding, ProposedAction, SubagentResult, ToolResult
 
 from . import explain, rules
 
@@ -203,6 +203,62 @@ def _day(value: date) -> str:
     return f"{value.month}월 {value.day}일({'월화수목금토일'[value.weekday()]})"
 
 
+STATUS_LABEL = {"needs_confirmation": "확인 필요", "todo": "진행 전", "in_progress": "진행 중"}
+"""How the board names an open item's status, for the line that says why
+nothing new was proposed. B reports the item by id and status only (#261)."""
+
+
+def _already_open(open_item: ToolResult) -> dict[str, Any]:
+    """Nothing proposed because B's board still has a Follow-up item open, said
+    with where it stands so the person need not open the board (#1189)."""
+    item = open_item.items[0]
+    status = STATUS_LABEL.get(item.body)
+    summary = "보드에 후속 회의 항목이 이미 열려 있어 새로 제안하지 않았습니다."
+    if status:
+        summary = f"보드에 후속 회의 항목이 이미 열려 있어({status}) 새로 제안하지 않았습니다."
+    return {
+        "outcome": SubagentResult(
+            result=ToolResult(
+                ok=True,
+                summary=summary,
+                items=[
+                    Finding.model_validate(
+                        {
+                            "title": "후속 회의 항목",
+                            "body": status or "",
+                            "id": getattr(item, "id", None),
+                        }
+                    )
+                ],
+            )
+        )
+    }
+
+
+def _already_scheduled(upcoming: ToolResult) -> dict[str, Any]:
+    """Nothing proposed because a follow-up meeting is on a calendar ahead, said
+    with its day -- the soonest, as C lists them (#1189). A row whose day does
+    not read as a date is named without one."""
+    rows: list[Finding] = []
+    for item in upcoming.items:
+        try:
+            day = _day(date.fromisoformat(str(getattr(item, "day", ""))))
+        except ValueError:
+            day = ""
+        rows.append(
+            Finding.model_validate(
+                {"title": "후속 회의", "body": day, "meeting_id": getattr(item, "meeting_id", None)}
+            )
+        )
+    soonest = rows[0].body if rows else ""
+    summary = (
+        f"{soonest}에 후속 회의가 이미 잡혀 있어 새로 제안하지 않았습니다."
+        if soonest
+        else "후속 회의가 이미 잡혀 있어 새로 제안하지 않았습니다."
+    )
+    return {"outcome": SubagentResult(result=ToolResult(ok=True, summary=summary, items=rows))}
+
+
 def build(toolbox: Toolbox) -> CompiledSubagent:
     def read(state: FollowupState) -> dict[str, Any]:
         at: dict[str, str] = {}
@@ -240,7 +296,10 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
     def decide(state: FollowupState) -> dict[str, Any]:
         verdict = rules.decide(state["open_gaps"], state["recurring"], state["questions"])
         if not verdict.fires:
-            return _done("후속 회의가 필요해 보이지 않습니다.")
+            # Said with the counts it rests on (#1189): the answer may not
+            # invent a number the result does not carry.
+            why = rules.why_not(state["open_gaps"], state["questions"])
+            return _done(f"후속 회의가 필요해 보이지 않습니다. {why}")
         # Read only when the rule fires: otherwise the call buys nothing.
         open_item = toolbox.call(OPEN_ITEM)
         if not open_item.ok:
@@ -249,7 +308,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
                 "열린 후속 회의 항목을 확인하지 못해 제안하지 않았습니다.",
             )
         if open_item.items:
-            return _done("이미 열린 후속 회의 항목이 있어 새로 제안하지 않았습니다.")
+            return _already_open(open_item)
         upcoming = toolbox.call(UPCOMING)
         if not upcoming.ok:
             return _stop(
@@ -257,7 +316,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
                 "잡힌 후속 회의를 확인하지 못해 제안하지 않았습니다.",
             )
         if upcoming.items:
-            return _done("이미 잡힌 후속 회의가 있어 새로 제안하지 않았습니다.")
+            return _already_scheduled(upcoming)
         return {"verdict": verdict}
 
     def propose(state: FollowupState) -> dict[str, Any]:
