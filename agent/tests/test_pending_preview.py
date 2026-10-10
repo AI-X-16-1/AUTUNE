@@ -92,8 +92,69 @@ def test_a_reassignment_shows_the_item_and_the_new_assignee(
         tools={"extraction.action_item_status": status},
     )
 
-    assert shown["title"] == "액션아이템 재배정"
+    assert shown["title"] == "할 일 재배정"
     assert "API 문서" in shown["body"] and new.display_name in shown["body"]
+
+
+def _item_read(found: bool = True) -> tuple[Tool, list[dict[str, str]]]:
+    """B's ``action_item_status``: one item, or its refusal for an id it does not know."""
+    asked: list[dict[str, str]] = []
+
+    def read(_s: Session, team_id: str, action_item_id: str) -> dict[str, Any]:
+        asked.append({"team_id": team_id, "action_item_id": action_item_id})
+        if not found:
+            return {"ok": False, "reason": "no action item", "summary": "없습니다", "items": []}
+        return {
+            "ok": True,
+            "summary": "1건",
+            "items": [{"title": "API 문서", "body": "박지영 · 2026-10-01 · 기한 지남 · todo"}],
+        }
+
+    return Tool(name="extraction.action_item_status", description="Use this.", fn=read), asked
+
+
+def _move(team: dict[str, str], due_date: str = "2026-10-14") -> AgentPendingAction:
+    return _row(
+        team,
+        "extraction.set_action_item_due_date",
+        {"action_item_id": "act_1", "due_date": due_date},
+    )
+
+
+def test_a_due_date_move_shows_the_item_as_it_stands_and_the_new_date(
+    session: Session, team: dict[str, str]
+) -> None:
+    status, asked = _item_read()
+
+    shown = preview(session, _move(team), tools={"extraction.action_item_status": status})
+
+    assert shown == {
+        "title": "기한 옮기기",
+        "body": "API 문서 · 박지영 · 2026-10-01 · 기한 지남 · todo\n→ 새 기한: 10월 14일(수)",
+    }
+    assert asked == [{"team_id": team["team"], "action_item_id": "act_1"}], "the row's team"
+
+
+def test_a_due_date_move_whose_item_is_gone_says_so(session: Session, team: dict[str, str]) -> None:
+    status, _ = _item_read(found=False)
+
+    assert preview(session, _move(team), tools={"extraction.action_item_status": status}) == {
+        "title": "기한 옮기기",
+        "body": GONE,
+    }
+    assert preview(session, _move(team), tools={})["body"] == GONE, "B's read is not loaded"
+
+
+def test_a_due_date_move_never_shows_a_date_it_cannot_read(
+    session: Session, team: dict[str, str]
+) -> None:
+    status, _ = _item_read()
+
+    shown = preview(
+        session, _move(team, "next_friday"), tools={"extraction.action_item_status": status}
+    )
+
+    assert shown["body"] == GONE, "not the value as it came"
 
 
 def test_a_report_publish_points_at_the_dashboard_until_e_can_be_read(
@@ -194,7 +255,7 @@ def test_an_assignee_outside_the_team_is_not_named(session: Session, team: dict[
         tools={"extraction.action_item_status": status},
     )
 
-    assert shown["title"] == "액션아이템 재배정"
+    assert shown["title"] == "할 일 재배정"
     assert "알 수 없는 사람" in shown["body"]
 
 
@@ -223,6 +284,7 @@ def _followup(
     *,
     chat: bool = False,
     due_date: str | None = None,
+    tool: str = "gap.schedule_followup_meeting",
 ) -> AgentPendingAction:
     """The two shapes Follow-up leaves (subagents/followup/graph.py).
 
@@ -232,7 +294,7 @@ def _followup(
     arguments: dict[str, Any] = {"meeting_id": team["meeting"]} if chat else {}
     if due_date is not None:
         arguments["due_date"] = due_date
-    row = _row(team, "extraction.add_followup_item", arguments)
+    row = _row(team, tool, arguments)
     if chat:
         row.meeting_id = None
     row.evidence = evidence
@@ -254,6 +316,19 @@ def test_a_followup_shows_the_gaps_behind_it_most_risky_first(
     assert asked == [
         {"team_id": team["team"], "meeting_id": team["meeting"], "gap_ids": ["gap_c", "gap_a"]}
     ]
+
+
+def test_a_followup_queued_under_the_board_item_tool_keeps_its_card(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#1105: a row queued before #1107 still names B's ``add_followup_item``
+    and is shown the same way until it is approved or retired."""
+    gaps, _ = _gaps_by_id(("gap_a", "일정 · 출시일"))
+    row = _followup(team, ["gap_a"], due_date="2026-10-15", tool="extraction.add_followup_item")
+
+    shown = preview(session, row, tools={"gap.gaps_by_id": gaps})
+
+    assert shown == {"title": "후속 회의 잡기", "body": "추천 날짜: 10월 15일(목)\n· 일정 · 출시일"}
 
 
 def test_a_followup_asked_in_chat_reads_the_meeting_it_names(

@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session
 
 from autune_agent.main import Subagent, SubagentState, Toolbox
 from autune_agent.main.actions import KEPT_FOR_APPROVAL, Action
-from autune_agent.main.pending import ARGUMENT_REFUSED, arguments_ok, queue_l2, scope_for
+from autune_agent.main.pending import (
+    ARGUMENT_REFUSED,
+    MEETING_NOT_FOUND,
+    arguments_ok,
+    queue_l2,
+    scope_for,
+)
 from autune_agent.main.store import run_and_record
 from autune_agent.models import AgentPendingAction, AgentRun
 from autune_agent.results import ProposedAction, SubagentResult, ToolResult
@@ -514,6 +520,147 @@ def test_proposals_default_to_per_meeting() -> None:
     assert _proposing("research", _reassign()).proposals_per == "meeting"
 
 
+def _proposing_nothing(name: str, *, read: str = "ok", **declared: Any) -> Subagent:
+    """A subagent whose run proposes nothing: it judged and found nothing to do
+    (``ok``), its read failed (``failed``), or it broke (``raises``)."""
+
+    def build(toolbox: Toolbox) -> Any:
+        def act(state: SubagentState) -> SubagentState:
+            if read == "raises":
+                raise RuntimeError("the subagent broke")
+            if read == "failed":
+                result = ToolResult.failure("items unreadable", "읽지 못했습니다.")
+            else:
+                result = ToolResult(ok=True, summary="제안하지 않습니다.")
+            return {"outcome": SubagentResult(result=result)}
+
+        graph = StateGraph(SubagentState)
+        graph.add_node("act", act)
+        graph.add_edge(START, "act")
+        graph.add_edge("act", END)
+        return graph.compile()
+
+    return Subagent(name=name, description="Use this in tests.", tools=(), build=build, **declared)
+
+
+def _record(
+    session: Session,
+    team: dict[str, str],
+    subagent: Subagent,
+    *,
+    meeting: str | None = None,
+    kind: str = "chat",
+) -> AgentRun:
+    row, _ = run_and_record(
+        "업무 몰린 사람 있어?",
+        session=session,
+        router=FakeRouter({}),
+        team_id=team["team"],
+        meeting_id=meeting,
+        trigger={"kind": kind},
+        subagents={subagent.name: subagent},
+        tools={},
+        actions={},
+        route_to=subagent.name,
+    )
+    return row
+
+
+def _statuses(session: Session) -> dict[str | None, str]:
+    session.expire_all()
+    return {r.run_id: r.status for r in session.scalars(select(AgentPendingAction))}
+
+
+@pytest.mark.parametrize(
+    ("kind", "about"), [("chat", None), ("event", "meeting"), ("periodic", None)]
+)
+def test_a_team_wide_run_that_proposes_nothing_retires_what_was_waiting(
+    session: Session, team: dict[str, str], kind: str, about: str | None
+) -> None:
+    """#1096: "nothing needs doing now" is a judgment of the team too. The card
+    of the run before it stayed, and approving it ran a change the later run had
+    found no reason for -- whatever woke that later run."""
+    proposing = _proposing("workload", _reassign(), proposals_per="team")
+    first = _record(session, team, proposing, meeting=_another_meeting(session, team), kind="event")
+    assert _statuses(session) == {first.id: "pending"}
+
+    silent = _proposing_nothing("workload", proposals_per="team")
+    second = _record(session, team, silent, meeting=team[about] if about else None, kind=kind)
+
+    assert second.outcome == "answered" and second.proposed == []
+    assert _statuses(session) == {first.id: "superseded"}
+
+
+def test_a_team_wide_run_whose_read_failed_keeps_what_was_waiting(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#1096: that run proposed nothing because it saw nothing. It answered --
+    with the failure -- and it says nothing about the cards."""
+    first = _record(session, team, _proposing("workload", _reassign(), proposals_per="team"))
+
+    failed = _proposing_nothing("workload", read="failed", proposals_per="team")
+    second = _record(session, team, failed)
+
+    assert second.outcome == "answered" and second.proposed == []
+    assert _statuses(session) == {first.id: "pending"}
+
+
+def test_a_team_wide_run_that_broke_keeps_what_was_waiting(
+    session: Session, team: dict[str, str]
+) -> None:
+    first = _record(session, team, _proposing("workload", _reassign(), proposals_per="team"))
+
+    with pytest.raises(RuntimeError):
+        _record(session, team, _proposing_nothing("workload", read="raises", proposals_per="team"))
+
+    assert _statuses(session) == {first.id: "pending"}
+
+
+def test_a_per_meeting_run_that_proposes_nothing_leaves_its_meetings_card(
+    session: Session, team: dict[str, str]
+) -> None:
+    """Unchanged by #1096, and not a decision that it should stay so: a
+    per-meeting subagent has the same gap, with #879's rule about a chat and the
+    pipeline's cards in it, and its owners settle that separately."""
+    proposing = _proposing("research", _l2("agent.share_research_document", document_id="rdoc_1"))
+    first = _record(session, team, proposing, meeting=team["meeting"], kind="event")
+
+    _record(session, team, _proposing_nothing("research"), meeting=team["meeting"], kind="event")
+
+    assert _statuses(session) == {first.id: "pending"}
+
+
+def test_a_team_wide_run_that_proposes_nothing_retires_only_its_own_subagents_cards(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The rows ``queue_l2`` would have retired, and no others: another
+    subagent's, another team's and a decided one are left."""
+    workload = _proposing("workload", _reassign(), proposals_per="team")
+    decided = _record(session, team, workload)
+    session.scalars(select(AgentPendingAction)).one().status = "approved"
+    session.commit()
+    waiting = _record(session, team, workload)
+    tracker = _proposing(
+        "tracker",
+        _l2("extraction.set_action_item_due_date", action_item_id="act_1", due_date="2026-10-16"),
+        proposals_per="team",
+    )
+    others = _record(session, team, tracker)
+    elsewhere = Team(name="다른 팀")
+    session.add(elsewhere)
+    session.commit()
+    theirs = _record(session, {"team": elsewhere.id}, workload)
+
+    _record(session, team, _proposing_nothing("workload", proposals_per="team"))
+
+    assert _statuses(session) == {
+        decided.id: "approved",
+        waiting.id: "superseded",
+        others.id: "pending",
+        theirs.id: "pending",
+    }
+
+
 def _publish(meeting: str) -> ProposedAction:
     return _l2("intelligence.publish_meeting_report", meeting_id=meeting, draft_id="rdr_1")
 
@@ -572,3 +719,91 @@ def test_a_team_chat_naming_another_teams_meeting_is_refused(
 
     assert session.scalars(select(AgentPendingAction)).all() == []
     assert [r["reason"] for r in refused] == ["meeting not found"]
+
+
+# --- a team-wide proposal is its item's meeting's (#959) ------------------------------
+
+
+def _rows(session: Session) -> list[AgentPendingAction]:
+    return list(session.scalars(select(AgentPendingAction)))
+
+
+def test_a_team_wide_proposal_is_the_meeting_it_names_not_the_one_that_woke_the_run(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The approval card names the row's meeting (#854, #959). A team-wide
+    subagent judges the team: the meeting that woke its run is not what a
+    proposal is about, the item's meeting is, and the proposal names it."""
+    items_meeting = _another_meeting(session, team)
+    woken = _run(session, team, "workload", team["meeting"])
+    proposal = _l2(
+        "extraction.reassign_action_item",
+        action_item_id="act_1",
+        assignee_id="user_2",
+        meeting_id=items_meeting,
+    )
+
+    assert queue_l2(session, run=woken, proposed=[proposal], actions={}, team_wide=True) == []
+
+    (row,) = _rows(session)
+    assert row.meeting_id == items_meeting
+    assert (row.run_id, woken.meeting_id) == (woken.id, team["meeting"]), "the run is unchanged"
+
+
+def test_a_team_wide_proposal_that_names_no_meeting_is_the_runs_as_before(
+    session: Session, team: dict[str, str]
+) -> None:
+    woken = _run(session, team, "workload", team["meeting"])
+
+    queue_l2(session, run=woken, proposed=[_reassign()], actions={}, team_wide=True)
+
+    (row,) = _rows(session)
+    assert row.meeting_id == team["meeting"]
+
+
+def test_a_proposal_of_a_run_about_its_meeting_stays_that_meetings_whatever_it_names(
+    session: Session, team: dict[str, str]
+) -> None:
+    """Not team-wide: the run is about its meeting, and so are its proposals.
+    #959 changes nothing here."""
+    named = _another_meeting(session, team)
+    run = _run(session, team, "followup", team["meeting"])
+
+    queue_l2(
+        session,
+        run=run,
+        proposed=[_l2("extraction.add_followup_item", meeting_id=named)],
+        actions={},
+    )
+
+    (row,) = _rows(session)
+    assert row.meeting_id == team["meeting"]
+
+
+def test_a_team_wide_proposal_cannot_name_a_meeting_outside_the_team(
+    session: Session, team: dict[str, str]
+) -> None:
+    """The model writes a proposal's arguments. A woken run's own meeting is
+    the team's by construction; a meeting the proposal names is checked, as it
+    already is for a run about no meeting (#862)."""
+    elsewhere = Team(name="다른 팀")
+    session.add(elsewhere)
+    session.flush()
+    theirs = Meeting(team_id=elsewhere.id, title="남의 회의")
+    session.add(theirs)
+    session.flush()
+    woken = _run(session, team, "workload", team["meeting"])
+
+    refused = queue_l2(
+        session,
+        run=woken,
+        proposed=[
+            _l2("extraction.reassign_action_item", action_item_id="act_1", meeting_id=theirs.id),
+            _l2("extraction.reassign_action_item", action_item_id="act_2", meeting_id="mtg_nobody"),
+        ],
+        actions={},
+        team_wide=True,
+    )
+
+    assert [r["reason"] for r in refused] == [MEETING_NOT_FOUND, MEETING_NOT_FOUND]
+    assert _rows(session) == []

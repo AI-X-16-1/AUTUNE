@@ -2,15 +2,19 @@
 
 import { useEffect, useState } from "react";
 
-import { Button, MaskedText, Quote, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import { SourceQuote } from "./SourceQuote";
 import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
-import { CONFIRMED_NOTICE, confirms } from "../board";
+import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
+import { shownDue } from "../dates";
+import { typedTextRefusal } from "../refusal";
+import { rowTitle } from "../title";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -33,17 +37,26 @@ import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
  * are told apart by colour -- red text for the one that destroys, as
  * everywhere -- and 삭제 still only opens the confirmation, so a slip costs a
  * second click, not the item.
+ *
+ * The heading is the line the card was opened by -- the item's short title, or
+ * the sentence cut where it has none (`rowTitle`) -- and the whole sentence
+ * stands under it (the user, 2026-10-09): the window used to open on the
+ * sentence alone, under another heading than the card pressed. A sentence
+ * short enough to be its own top line is shown once.
  */
 export function ActionDetailDrawer({
   item,
   onClose,
   onStatusChange,
+  onCloseUnfinished,
   onAssigneeChange,
   onDelete,
 }: {
   item: ActionItemRead;
   onClose: () => void;
   onStatusChange?: (status: ActionStatus) => void | Promise<void>;
+  /** Close the item without finishing it. The control is not shown without it. */
+  onCloseUnfinished?: () => void | Promise<void>;
   /** Set the assignee: a member's account or a typed name, never both. */
   onAssigneeChange?: (change: {
     assignee_id: string | null;
@@ -51,6 +64,7 @@ export function ActionDetailDrawer({
   }) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
+  const heading = rowTitle(item.title, item.description);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // What the last change the drawer sent failed with. Both changes say so here,
@@ -86,8 +100,12 @@ export function ActionDetailDrawer({
     try {
       await onAssigneeChange?.(assigneeFields(value));
       setTyped(null);
-    } catch {
-      setFailure("담당자를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } catch (cause) {
+      // A typed label is screened like any typed text (#1130); what was typed
+      // stays in the field.
+      setFailure(
+        typedTextRefusal(cause) ?? "담당자를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      );
     } finally {
       setAssigning(false);
     }
@@ -121,7 +139,7 @@ export function ActionDetailDrawer({
     <div
       role="dialog"
       aria-modal
-      aria-label="액션 아이템 상세"
+      aria-label="할 일 상세"
       className="fixed inset-0 z-40 flex items-center justify-center"
       style={{ background: "rgba(22,25,31,.35)", padding: "var(--space-page)" }}
       onClick={onClose}
@@ -151,8 +169,19 @@ export function ActionDetailDrawer({
                 fontWeight: "var(--text-title-weight)",
               }}
             >
-              {item.description}
+              {heading.shown}
             </h2>
+            {heading.cut ? (
+              <p
+                className="mt-1 text-[var(--color-ink-body)]"
+                style={{
+                  fontSize: "var(--text-rowBody)",
+                  lineHeight: "var(--text-rowBody-leading)",
+                }}
+              >
+                {item.description}
+              </p>
+            ) : null}
             <div className="mt-1 flex items-center gap-2">
               <StatusDot
                 variant={isCandidate(item) ? "attention" : "progress"}
@@ -256,8 +285,8 @@ export function ActionDetailDrawer({
               </div>
             )}
           </Field>
-          <Field label="기한" mono>
-            {item.due_date ?? "없음"}
+          <Field label="기한">
+            {item.due_date ? shownDue(item.due_date) : "없음"}
           </Field>
           {item.due_text ? (
             <Field label="기한 파싱 원문">
@@ -304,6 +333,36 @@ export function ActionDetailDrawer({
               ))}
             </select>
           </Field>
+          {/* Under the status it changes, not at the top right: the button
+              there says 닫기 and closes this window. Open items only -- one
+              still waiting has nothing agreed to close, and a finished one is
+              finished. No confirmation (the user, 2026-10-09): the status
+              above re-opens it. */}
+          {onCloseUnfinished !== undefined &&
+          (item.status === "todo" || item.status === "in_progress") ? (
+            <div className="mt-2">
+              <Button
+                tone="quiet"
+                size="compact"
+                disabled={changing}
+                onClick={async () => {
+                  setFailure(null);
+                  setNotice(null);
+                  setChanging(true);
+                  try {
+                    await onCloseUnfinished();
+                    setNotice(CLOSED_NOTICE);
+                  } catch {
+                    setFailure("닫지 못했습니다. 잠시 후 다시 시도해 주세요.");
+                  } finally {
+                    setChanging(false);
+                  }
+                }}
+              >
+                끝내지 않고 닫기
+              </Button>
+            </div>
+          ) : null}
           {notice !== null ? (
             <p
               role="status"
@@ -325,9 +384,7 @@ export function ActionDetailDrawer({
                   )}
                 />
                 {quotation.sources.map((source) => (
-                  <Quote key={source.id}>
-                    <MaskedText>{source.text}</MaskedText>
-                  </Quote>
+                  <SourceQuote key={source.id} source={source} />
                 ))}
                 {item.deleted_source_count > 0 ? (
                   <p
@@ -539,6 +596,7 @@ const FIELD_LABELS: Record<string, string> = {
 
 function historyText(entry: EditHistoryEntry): string {
   if (entry.kind === "created") return "직접 추가함";
+  if (entry.kind === "closed") return "끝내지 않고 닫힘";
   const labels = [
     ...new Set(entry.fields.map((field) => FIELD_LABELS[field] ?? field)),
   ];
@@ -568,15 +626,7 @@ function SectionTitle({ children }: { children: string }) {
   );
 }
 
-function Field({
-  label,
-  mono = false,
-  children,
-}: {
-  label: string;
-  mono?: boolean;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
       <div
@@ -587,10 +637,7 @@ function Field({
       </div>
       <div
         className="mt-1 text-[var(--color-ink-body)]"
-        style={{
-          fontSize: "var(--text-body)",
-          fontFamily: mono ? "var(--font-mono)" : undefined,
-        }}
+        style={{ fontSize: "var(--text-body)" }}
       >
         {children}
       </div>

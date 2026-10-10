@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, UploadFile, status
+from fastapi import APIRouter, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from autune_contracts.events import TRANSCRIPT_READY
 from autune_contracts.transcript import Utterance
-from autune_core import CurrentUser, User, get_logger, get_session
+from autune_core import CurrentUser, User, get_logger
 from autune_core.auth import clear_session_cookie
 from autune_core.errors import AutuneError
 from autune_core.events import publish
@@ -29,9 +29,11 @@ from . import (
     pii_report,
     service,
     storage,
+    team_deletion,
 )
 from .config import MAX_UPLOAD_BYTES
 from .config import get_settings as get_audio_settings
+from .deps import SessionDep
 from .enqueue import enqueue_process_recording
 from .live.routes import router as live_router
 from .persistence import transcript_payload
@@ -45,6 +47,7 @@ from .schemas import (
     MaskingRule,
     MeetingCreate,
     MeetingDetail,
+    MeetingRename,
     MeetingState,
     MeetingSummary,
     MyData,
@@ -56,6 +59,7 @@ from .schemas import (
     SpeakerName,
     SpeechDeleted,
     TeamCreate,
+    TeamDeletion,
     TeamMemberSummary,
     TeamPrivacy,
     TeamPrivacyUpdate,
@@ -87,7 +91,6 @@ class EnqueueFailedError(AutuneError):
 
 router = APIRouter()
 
-SessionDep = Annotated[Session, Depends(get_session)]
 
 # A local-only page for putting a recording through the pipeline by hand.
 # It has no auth, so it is mounted nowhere but a developer's machine.
@@ -234,6 +237,28 @@ def cancel_invitation(
     return _pending(session, team_id, user)
 
 
+@router.delete("/teams/{team_id}/members/me", response_model=list[TeamSummary])
+def leave_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[TeamSummary]:
+    """Leave a team, by the caller's own act, and answer with the teams they
+    are still on. The last member is refused with 409 ``last_team_member``.
+    See ``service.leave_team`` for what stays."""
+    service.leave_team(session, team_id=team_id, member=user)
+    return _my_teams(session, user)
+
+
+@router.delete("/teams/{team_id}", response_model=list[TeamSummary])
+def delete_team(
+    team_id: str, body: TeamDeletion, user: CurrentUser, session: SessionDep
+) -> list[TeamSummary]:
+    """Delete a team, for the one person left on it, and answer with the teams
+    they are still on (#1007). The body carries the team's name as they typed
+    it. Refused with 409 ``team_has_other_members``, 409
+    ``team_meeting_in_progress`` or 422 ``team_name_mismatch``; see
+    ``team_deletion.delete_team`` for what goes and in what order."""
+    team_deletion.delete_team(session, team_id=team_id, member=user, name=body.name)
+    return _my_teams(session, user)
+
+
 @router.post("/invitations/accept", response_model=TeamSummary)
 def accept_invitation(
     body: InvitationAccept, user: CurrentUser, session: SessionDep
@@ -309,6 +334,10 @@ def create_meeting(body: MeetingCreate, user: CurrentUser, session: SessionDep) 
     Separate from the upload below because the live-microphone path needs a
     meeting before it has a recording, and because ``meetings`` is a shared
     entity only module A may write — one writer, one place.
+
+    A title that reads as personal data is refused with 422
+    ``validation_error`` (``details.reason`` ``personal_data``, the categories
+    and never the value) and no meeting is opened (#1161).
     """
     meeting = service.create_meeting(
         session,
@@ -317,6 +346,19 @@ def create_meeting(body: MeetingCreate, user: CurrentUser, session: SessionDep) 
         team_id=body.team_id,
         started_at=body.started_at,
     )
+    return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.patch("/meetings/{meeting_id}", response_model=MeetingState)
+def rename_meeting(
+    meeting_id: str, body: MeetingRename, user: CurrentUser, session: SessionDep
+) -> MeetingState:
+    """Give a meeting a new title, for any member of its team (#1161). The
+    title is the only thing this route changes, and it is not echoed back.
+    Refused with 422 ``validation_error`` on ``title`` when it reads as
+    personal data or is only space; what was already sent keeps the old
+    title. See ``service.rename_meeting``."""
+    meeting = service.rename_meeting(session, meeting_id=meeting_id, member=user, title=body.title)
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
 
 

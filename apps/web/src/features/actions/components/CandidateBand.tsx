@@ -53,7 +53,7 @@ export function CandidateBand({
         className="mt-1 text-[var(--color-ink-muted)]"
         style={{ fontSize: "var(--text-metaSmall)" }}
       >
-        확신이 낮아 액션 아이템으로 확정하지 않은 발화입니다. 맞으면 담당과 기한을 채워 보드로
+        확신이 낮아 할 일로 확정하지 않은 발화입니다. 맞으면 담당과 기한을 채워 보드로
         올리고, 아니면 지우면 됩니다.
       </p>
 

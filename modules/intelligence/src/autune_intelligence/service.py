@@ -51,7 +51,7 @@ from autune_core import (
     new_id,
     session_scope,
 )
-from autune_core.deletion import on_speech_deleted
+from autune_core.deletion import on_meeting_deleted, on_speech_deleted
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -781,14 +781,14 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
     if progress is None:
         return []
     if progress.as_of is None:
-        return ["액션 아이템 완료 현황을 받지 못했습니다."]
+        return ["할 일 완료 현황을 받지 못했습니다."]
     counted = progress.as_of.astimezone(_KST)
     if progress.completion_rate is not None:
-        lines = [f"액션 아이템 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
+        lines = [f"할 일 완료율 (최근 4주 회의): {progress.completion_rate:.0%}"]
     elif 0 < (progress.completion_meetings or 0) < ACTION_PROGRESS_MIN_MEETINGS:
         lines = ["확정 항목이 있는 최근 4주 회의가 3건 미만이라 완료율은 싣지 않습니다."]
     else:
-        lines = ["최근 4주 회의에서 확정된 액션 아이템이 없습니다."]
+        lines = ["최근 4주 회의에서 확정된 할 일이 없습니다."]
     counts = []
     if progress.overdue is not None:
         counts.append(f"기한 지난 항목 {progress.overdue}건")
@@ -798,7 +798,7 @@ def _progress_lines(progress: ActionProgressTotals | None) -> list[str]:
         )
     if counts:
         lines.append(" · ".join(counts))
-    lines.append(f"액션 아이템 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
+    lines.append(f"할 일 수치는 {counted.month}/{counted.day} {counted:%H:%M} 기준입니다.")
     return lines
 
 
@@ -1597,6 +1597,17 @@ def _deliver_personal(
     slack.send_dm(recipient_user_id, fallback, blocks)
 
 
+def _ratio_dm_label(meeting: Meeting) -> str:
+    """Which meeting the ratio DM is about: "{title} · 10/7", or the date alone
+    when the title holds personal data -- the same test the report header makes,
+    because ``check_outbound`` would refuse the whole DM over one string."""
+    when = (meeting.started_at or meeting.created_at).astimezone(_KST)
+    day = f"{when.month}/{when.day}"
+    if meeting.title and not find_unmasked(meeting.title):
+        return f"{_slack_escape(meeting.title)} · {day}"
+    return f"{day} 회의"
+
+
 def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -> int:
     """DM each identified participant their own speaking ratio. Returns the count.
 
@@ -1622,7 +1633,9 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
         return 0
 
     participant_count = _consented_participant_count(session, meeting_id)
-    team_id = session.scalar(sa.select(Meeting.team_id).where(Meeting.id == meeting_id))
+    meeting = session.get(Meeting, meeting_id)
+    team_id = meeting.team_id if meeting is not None else None
+    label = _ratio_dm_label(meeting) if meeting is not None else None
     sent = 0
     for share in shares:
         if share.user_id is None:
@@ -1640,7 +1653,7 @@ def send_personal_feedback(session: Session, slack: SlackApi, meeting_id: str) -
             )
             continue
         fallback, blocks = build_speaking_ratio_dm(
-            ratio=share.ratio, participant_count=participant_count
+            ratio=share.ratio, participant_count=participant_count, meeting_label=label
         )
         try:
             _deliver_personal(slack, share.user_id, fallback, blocks)
@@ -2512,4 +2525,31 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         texts_replaced=done.texts_replaced,
         topics_removed=done.topics_removed,
         reports_changed=done.reports_changed,
+    )
+
+
+# --- a meeting is deleted (#1161) -----------------------------------------------
+
+
+@on_meeting_deleted("intelligence")
+def forget_deleted_meeting(meeting_id: str) -> None:
+    """Before a meeting's row goes -- at its expiry, with its team, or by a
+    member's own act: E takes it out of the other meetings' rows that would
+    outlive it (``forget.forget_meeting``). E's own rows of the meeting go with
+    the row.
+
+    Registered from this file for the reason ``forget_deleted_speech`` is: a
+    member's and a team's deletion run in the API process, which imports every
+    router and no ``tasks`` module; an expiry runs in the worker, whose
+    ``tasks`` imports this file too. Opens its own session and commits before
+    the caller deletes; raises on failure, so the caller keeps the meeting.
+    Does not read the meeting's row and locks none of the caller's. Safe to
+    repeat. Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget.forget_meeting(session, meeting_id)
+    log.info(
+        "intelligence_meeting_forgotten",
+        meeting_id=meeting_id,
+        statements_cleared=done.statements_cleared,
     )

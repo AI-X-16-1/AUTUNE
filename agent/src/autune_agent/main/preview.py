@@ -21,6 +21,11 @@ FOLLOWUP_GAPS_CLOSED = "근거가 된 갭이 모두 닫혔습니다"
 REPORT_ON_DASHBOARD = "리포트 초안 — 회의 대시보드에서 보기"
 REPORT_ALREADY_POSTED = "이미 게시된 리포트입니다"
 
+# Follow-up's proposal: C's calendar event since #1107, B's board item before
+# it. Both take the same arguments, and rows queued under the old name stay
+# until they are approved or retired (#1105).
+FOLLOWUP_TOOLS = frozenset({"gap.schedule_followup_meeting", "extraction.add_followup_item"})
+
 
 def preview(
     session: Session, row: AgentPendingAction, *, tools: Mapping[str, Tool]
@@ -42,7 +47,7 @@ def preview(
             item = result.items[0] if result.ok and result.items else None
         who = session.get(User, args.get("assignee_id", ""))
         if item is None:
-            return {"title": "액션아이템 재배정", "body": GONE}
+            return {"title": "할 일 재배정", "body": GONE}
         # Check if the assignee is a member of the team
         to = "알 수 없는 사람"
         if who is not None:
@@ -54,16 +59,47 @@ def preview(
             )
             if is_member:
                 to = who.display_name
-        return {"title": "액션아이템 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
-    if row.tool == "extraction.add_followup_item":
+        return {"title": "할 일 재배정", "body": f"{item.title} · {item.body}\n→ {to}"}
+    if row.tool in FOLLOWUP_TOOLS:
         gaps = _followup_gaps(session, row, tools)
         when = _suggested_date(row.arguments.get("due_date"))
         body = f"추천 날짜: {when}\n{gaps}" if when and gaps != GONE else gaps
         return {"title": "후속 회의 잡기", "body": body}
     if row.tool == "intelligence.publish_meeting_report":
         return {"title": "리포트 게시", "body": _report_draft(session, row, tools)}
+    if row.tool == "extraction.set_action_item_due_date":
+        # What Tracker proposes (#856), and the card of anything else that
+        # names this write: the item as it stands now, then the date an
+        # approval would give it.
+        when = _suggested_date(args.get("due_date"))
+        line = _item_line(session, row, tools)
+        if line is None or when is None:
+            return {"title": "기한 옮기기", "body": GONE}
+        return {"title": "기한 옮기기", "body": f"{line}\n→ 새 기한: {when}"}
     ids = ", ".join(f"{k}={v}" for k, v in args.items())
     return {"title": row.kind, "body": ids}
+
+
+def _item_line(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str | None:
+    """The item a proposal would change, as B's ``action_item_status`` gives it
+    now: its text, who holds it, its date and status -- or ``None`` when it is
+    gone or not this team's (B checks the team, as ``bind_scope`` does on
+    approval).
+
+    Read when the card is read, so the approver sees the item as it stands,
+    not as it stood when the proposal was made. An item still waiting for
+    confirmation comes back from B without its text (rule 3).
+    """
+    read = tools.get("extraction.action_item_status")
+    if read is None:
+        return None
+    result = read(
+        session, team_id=row.team_id, action_item_id=row.arguments.get("action_item_id", "")
+    )
+    if not result.ok or not result.items:
+        return None
+    item = result.items[0]
+    return f"{item.title} · {item.body}"
 
 
 def _followup_gaps(session: Session, row: AgentPendingAction, tools: Mapping[str, Tool]) -> str:

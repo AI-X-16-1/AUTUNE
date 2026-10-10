@@ -127,8 +127,19 @@ class MeetingCreate(BaseModel):
     """When the meeting began. Absent for a recording uploaded after the fact."""
 
 
+class MeetingRename(BaseModel):
+    """A meeting's new title (#1161). In the body, never the address: a title
+    can name a client, and addresses are logged.
+
+    No lower bound here: a title of nothing, or of nothing but space, is
+    refused by ``service.rename_meeting`` once it is stripped, in our own
+    error shape. The framework's refusal repeats what was sent."""
+
+    title: str = Field(max_length=400)
+
+
 class MeetingState(BaseModel):
-    """The id and where the meeting has got to. Returned by both write routes.
+    """The id and where the meeting has got to. Returned by the write routes.
 
     Deliberately thin. A meeting carries a title the team wrote and, once the
     pipeline has run, its transcript — none of which the caller of a write route
@@ -138,6 +149,22 @@ class MeetingState(BaseModel):
 
     meeting_id: str
     status: str
+
+
+class LiveTicket(BaseModel):
+    """A ticket for one live socket, from ``POST /live/{meeting_id}/ticket``.
+
+    The socket is opened on the API's own address where the page's address
+    cannot carry a WebSocket (the dev server), and the session cookie belongs
+    to the page's host, not the API's. The page asks for this over its own
+    origin, where the cookie does go, and puts it in ``hello``. Not a session
+    token: it opens that meeting's socket once and nothing else
+    (``live/tickets.py``).
+    """
+
+    token: str
+    expires_in: int
+    """Seconds until it can no longer open the socket."""
 
 
 class MeetingDetail(MeetingState):
@@ -289,6 +316,14 @@ class InvitationAccept(BaseModel):
     the same answer as every other refusal."""
 
     token: str = Field(min_length=1, max_length=512)
+
+
+class TeamDeletion(BaseModel):
+    """The team's name, typed by the person deleting it (#1007). In the body,
+    never the address: a team's name can name a client, and addresses are
+    logged."""
+
+    name: str = Field(min_length=1, max_length=200)
 
 
 class TeamSummary(BaseModel):

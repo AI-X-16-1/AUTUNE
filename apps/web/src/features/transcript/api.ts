@@ -1,8 +1,8 @@
 /**
  * Calls to /api/audio. This feature calls no other module's endpoints, with one
- * exception: /api/agent/research, where the research card on the meeting screen
- * reads the agent layer's documents for this meeting (Research subagent spec,
- * section 4 ④).
+ * exception: /api/agent, where the research card on the meeting screen reads the
+ * agent layer's documents for this meeting (Research subagent spec, section 4 ④)
+ * and the live screen relays masked lines and reads live research documents.
  */
 import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shared/api/client";
 
@@ -10,6 +10,7 @@ export { api };
 
 import type {
   AccountDeleted,
+  LiveResearchDocument,
   MaskingRule,
   MeetingDetail,
   MeetingSummary,
@@ -146,6 +147,28 @@ export const cancelInvitation = (teamId: string, invitationId: number) =>
   );
 
 /**
+ * Leave a team, by the caller's own act. Answers with the teams they are
+ * still on. The last member is refused: 409 `last_team_member`.
+ */
+export const leaveTeam = (teamId: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}/members/me`, {
+    method: "DELETE",
+  });
+
+/**
+ * Delete a team, by the one person left on it (#1007). Answers with the
+ * teams they are still on. The name is the team's, typed by the person, and
+ * goes in the body: a team's name can name a client, and an address is
+ * logged. Refused: 409 `team_has_other_members`, 409
+ * `team_meeting_in_progress`, 422 `team_name_mismatch`.
+ */
+export const deleteTeam = (teamId: string, name: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ name }),
+  });
+
+/**
  * Join the team an invitation link names, as the signed-in owner of the
  * invited address. Every refusal is the same 404; show one sentence for it.
  */
@@ -177,6 +200,20 @@ export const createMeeting = (body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+
+/**
+ * Give a meeting a new title, as any member of its team (#1161). The title
+ * goes in the body: it can name a client, and an address is logged. The
+ * answer is the meeting's id and state and does not repeat the title.
+ * Refused: 422 `validation_error` on `title` -- with
+ * `details.reason: "personal_data"` when the title reads as personal data
+ * (`titleRefusal`) -- and 403 or 404 as for any read of the meeting.
+ */
+export const renameMeeting = (meetingId: string, title: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${encodeURIComponent(meetingId)}`,
+    { method: "PATCH", body: JSON.stringify({ title }) },
+  );
 
 /** The meeting's speakers and who each one is or might be (S13, S15). */
 export const getSpeakers = (meetingId: string) =>
@@ -341,17 +378,47 @@ export function getToken(): string | null {
 }
 
 /**
- * `ws://` or `wss://` for the live channel, on the page's own origin.
+ * Where the live socket opens, when not on the page's own origin: the API's
+ * address as the browser reaches it, `wss://...` with no path. Inlined at
+ * build time; empty means the page's origin.
  *
- * Through the same `/api` rewrite as every HTTP call: Next proxies the
- * WebSocket upgrade too (probed against `next dev` — the API logged the
- * handshake as accepted). Same origin keeps the session cookie first-party on
- * the handshake, which is how a Google-signed-in browser authenticates the
- * socket, and leaves no second API address to configure per environment.
+ * The dev server needs it: the site's address carries every HTTP call to the
+ * API, but a WebSocket handshake reaches the API there without its `Upgrade`
+ * header and is answered 404, while the API's own address carries it.
+ */
+const LIVE_ORIGIN = (process.env.NEXT_PUBLIC_LIVE_URL ?? "").replace(/\/+$/, "");
+
+/** Whether the live socket opens on another host than the page's. */
+export const liveIsCrossOrigin = (): boolean => LIVE_ORIGIN !== "";
+
+/**
+ * `ws://` or `wss://` for the live channel.
+ *
+ * On the page's own origin by default, through the same `/api` rewrite as
+ * every HTTP call: Next proxies the WebSocket upgrade too (probed against
+ * `next dev` -- the API logged the handshake as accepted). Same origin keeps
+ * the session cookie first-party on the handshake, which is how a
+ * Google-signed-in browser authenticates the socket. With
+ * `NEXT_PUBLIC_LIVE_URL` set the socket goes there instead, and the cookie
+ * does not: `getLiveTicket` stands in for it.
  */
 export function liveSocketUrl(meetingId: string): string {
+  if (LIVE_ORIGIN) return `${LIVE_ORIGIN}/api/audio/live/${meetingId}`;
   const { protocol, host } = window.location;
   return `${protocol === "https:" ? "wss" : "ws"}://${host}/api/audio/live/${meetingId}`;
+}
+
+/**
+ * A one-use ticket for the live socket's `hello`, asked for over the
+ * page's own origin, where the session cookie goes. Only for a socket on
+ * another host (`liveIsCrossOrigin`), which the cookie does not reach.
+ */
+export async function getLiveTicket(meetingId: string): Promise<string> {
+  const ticket = await api.audio<{ token: string; expires_in: number }>(
+    `/live/${encodeURIComponent(meetingId)}/ticket`,
+    { method: "POST" },
+  );
+  return ticket.token;
 }
 
 /** The meeting's research documents the reader may see: approved ones for any member. */
@@ -359,6 +426,24 @@ export const getResearch = (teamId: string, meetingId: string) =>
   api.agent<ResearchDocument[]>(
     `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
   );
+
+type LiveLine = { start: number; text: string };
+
+/** Live research: relay masked live lines (never the speaker) to the agent layer. */
+export const detectLive = (meetingId: string, rows: LiveLine[]) =>
+  api.agent<{ queued: boolean }>(`/live/${encodeURIComponent(meetingId)}/detect`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+
+export const researchLive = (meetingId: string, row: LiveLine, context: LiveLine[]) =>
+  api.agent<{ id: string }>(`/live/${encodeURIComponent(meetingId)}/research`, {
+    method: "POST",
+    body: JSON.stringify({ row, context }),
+  });
+
+export const listLiveResearch = (meetingId: string) =>
+  api.agent<LiveResearchDocument[]>(`/live/${encodeURIComponent(meetingId)}/documents`);
 
 /** S29 "내 데이터": counts of what Autune holds about the caller. Only theirs. */
 export const getMyData = () => api.audio<MyData>("/me/data");

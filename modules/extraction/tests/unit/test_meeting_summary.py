@@ -102,6 +102,23 @@ def item(session: Session, item_id: str, status: str) -> None:
     session.flush()
 
 
+def test_the_summary_names_the_meeting_and_its_day_with_no_row_to_take_them_from(
+    session: Session,
+) -> None:
+    """The page of minutes is headed with these. A meeting with no action item
+    used to have no title on it: the title came from the first item."""
+    began = datetime(2026, 10, 8, 1, 0, tzinfo=UTC)
+    session.get(Meeting, MEETING).started_at = began
+    session.flush()
+
+    summary = service.meeting_summary(session, MEETING)
+
+    assert summary.action_items == []
+    assert summary.meeting_title == "주간 회의"
+    assert summary.meeting_started_at is not None
+    assert summary.meeting_started_at.replace(tzinfo=UTC) == began
+
+
 def test_the_summary_lists_what_the_meeting_settled_and_left(session: Session) -> None:
     decision(session, "dec_pending", "배포는 금요일로 하기로 했습니다", None)
     decision(session, "dec_yes", "검색은 인기순으로 하기로 했습니다", "confirmed")

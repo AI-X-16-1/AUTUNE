@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -38,19 +38,21 @@ from autune_extraction.decisions import (
     group_decisions,
     identified,
     in_pieces,
-    needs_write_up,
 )
 from autune_extraction.models import (
     ExtActionItem,
+    ExtActionItemSource,
     ExtClassification,
     ExtConfirmation,
     ExtDecision,
     ExtDecisionRelated,
+    ExtDecisionReview,
     ExtDecisionSource,
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli, Prediction
 from autune_extraction.pipeline.base import Resolution
 from autune_extraction.pipeline.llm import _prediction, strongest
+from autune_extraction.schemas import DecisionReviewUpdate
 
 K = UtteranceKind
 MEETING = "mtg_1"
@@ -375,13 +377,263 @@ def test_the_lines_a_piece_summary_used_are_stored_as_the_utterances_they_are_in
     ) == ["utt_3"]
 
 
-def test_a_decision_that_is_a_piece_is_always_worth_a_write_up() -> None:
-    """Half a request of speech is not a line of minutes."""
-    said = "이번 분기에는 여러 사정을 다 따져 본 끝에 결국 A안으로 가기로 했습니다"
-    (whole,) = group_decisions([turn("utt_1", K.DECISION, said)])
-    (piece,) = group_decisions(
-        in_pieces([turn("utt_1", K.DECISION, "", pieces=((said, K.DECISION), (CHAT, None)))])
+# --- which part of the turn a row was made from --------------------------------------
+
+
+def test_a_row_made_from_a_piece_quotes_that_piece_and_keeps_only_where_it_is(
+    wired: Session,
+) -> None:
+    """The reader is shown the sentence, not the minute it was said in (the
+    user, 2026-10-08) -- cut from the stored turn, of which no word is copied."""
+    tasks.on_transcript_ready(meeting(wired, CHAT, LONG))
+
+    items = wired.query(ExtActionItem).order_by(ExtActionItem.due_text).all()
+    quoted = [service.source_utterances(wired, item.id) for item in items]
+    assert [[(s.id, s.excerpt) for s in sources] for sources in quoted] == [
+        [("utt_2", SURVEY)],
+        [("utt_2", QUOTE)],
+    ]
+    # The whole turn is still beside it for a reader who asks.
+    assert all(s.text == LONG for sources in quoted for s in sources)
+    assert [
+        LONG[row.excerpt_start : row.excerpt_end]
+        for row in wired.query(ExtActionItemSource).order_by(ExtActionItemSource.excerpt_start)
+    ] == [SURVEY, QUOTE]
+
+    (decision,) = wired.query(ExtDecision).all()
+    detail = service.read_decision_detail(wired, decision)
+    assert [(s.id, s.excerpt, s.text) for s in detail.sources] == [("utt_2", DECIDED, LONG)]
+    # And the 요약 tab has the same sentence beneath the decision's line.
+    assert [d.summary for d in service.meeting_summary(wired, MEETING).decisions] == [DECIDED]
+
+
+def test_a_turn_that_was_not_cut_has_no_part_and_is_quoted_whole(wired: Session) -> None:
+    tasks.on_transcript_ready(meeting(wired, DECIDED, SURVEY))
+
+    (item,) = wired.query(ExtActionItem).all()
+    assert [(s.text, s.excerpt) for s in service.source_utterances(wired, item.id)] == [
+        (SURVEY, None)
+    ]
+    (decision,) = wired.query(ExtDecision).all()
+    assert [s.excerpt for s in service.read_decision_detail(wired, decision).sources] == [None]
+    assert wired.query(ExtActionItemSource).one().excerpt_start is None
+    assert wired.query(ExtDecisionSource).one().excerpt_start is None
+
+
+def test_a_rerun_gives_a_decision_from_before_the_offsets_its_part(wired: Session) -> None:
+    """A decision keeps its id and its source rows across runs, so the part is
+    written for every decision of a run and not only for a new one."""
+    event = meeting(wired, CHAT, LONG)
+    tasks.on_transcript_ready(event)
+    wired.execute(update(ExtDecisionSource).values(excerpt_start=None, excerpt_end=None))
+    wired.commit()
+    (before,) = wired.query(ExtDecision.id).all()
+
+    tasks.on_transcript_ready(event)
+
+    (decision,) = wired.query(ExtDecision).all()
+    assert (decision.id,) == tuple(before)
+    wired.expire_all()
+    assert [s.excerpt for s in service.read_decision_detail(wired, decision).sources] == [DECIDED]
+
+
+def test_a_rerun_that_finds_no_part_drops_the_one_recorded_before(wired: Session) -> None:
+    """Offsets a run did not write are not that run's: left on the row they
+    would cut the decision's quotation at a place nothing chose."""
+    event = meeting(wired, DECIDED, SURVEY)
+    tasks.on_transcript_ready(event)
+    wired.execute(update(ExtDecisionSource).values(excerpt_start=0, excerpt_end=3))
+    wired.commit()
+
+    tasks.on_transcript_ready(event)
+
+    wired.expire_all()
+    (row,) = wired.query(ExtDecisionSource).all()
+    assert (row.excerpt_start, row.excerpt_end) == (None, None)
+    (decision,) = wired.query(ExtDecision).all()
+    assert [(s.text, s.excerpt) for s in service.read_decision_detail(wired, decision).sources] == [
+        (DECIDED, None)
+    ]
+
+
+def test_a_card_shows_the_part_beneath_a_summary_and_nothing_beneath_the_line_itself(
+    session: Session,
+) -> None:
+    """``summary`` is the words a model's sentence stands for. An item whose
+    description is the line itself has nothing to add beneath it."""
+    spoken = TranscriptReady.model_validate(meeting(session, CHAT, LONG)).utterances
+    read = in_pieces(
+        [
+            turn("utt_1", None, CHAT),
+            turn(
+                "utt_2",
+                K.COMMITMENT,
+                LONG,
+                pieces=((DECIDED, K.DECISION), (SURVEY, K.COMMITMENT), (QUOTE, K.COMMITMENT)),
+            ),
+        ]
     )
 
-    assert not needs_write_up(whole)
-    assert needs_write_up(piece)
+    summarised, as_said = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=spoken,
+        classified=read,
+        resolved={"utt_2#2": "설문 문항을 금요일까지 다시 쓰기"},
+    )
+
+    assert summarised.description_resolved and not as_said.description_resolved
+    assert service.action_item_summaries(session, [summarised, as_said]) == {summarised.id: SURVEY}
+
+
+def test_a_summary_from_before_the_offsets_shows_the_start_of_the_whole_turn(
+    session: Session,
+) -> None:
+    """No backfill (the user, 2026-10-08): an older row is quoted as it always
+    was, and the card cuts it short."""
+    long_turn = CUT.join([DECIDED, SURVEY, CHAT, QUOTE, LATER])
+    spoken = TranscriptReady.model_validate(meeting(session, long_turn)).utterances
+    read = in_pieces(
+        [turn("utt_1", K.COMMITMENT, long_turn, pieces=((DECIDED, None), (SURVEY, K.COMMITMENT)))]
+    )
+    (item,) = service.build_action_items(
+        session,
+        meeting_id=MEETING,
+        utterances=spoken,
+        classified=read,
+        resolved={"utt_1#2": "설문 문항을 금요일까지 다시 쓰기"},
+    )
+    item.sources[0].excerpt_start = item.sources[0].excerpt_end = None
+    session.flush()
+
+    preview = service.action_item_summaries(session, [item])[item.id]
+
+    assert len(long_turn) > service.SUMMARY_MAX_CHARS
+    assert preview == long_turn[: service.SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+
+
+# --- a decision of a turn that a person marked (2026-10-09) --------------------------
+
+TWO = CUT.join([CHAT, DECIDED, LATER, CHAT])
+"""Two decisions back to back in one turn: two rows, the first with the turn's
+plain id (``identified``)."""
+
+
+def statements(session: Session) -> dict[str, str]:
+    session.expire_all()
+    return {d.id: d.statement for d in session.query(ExtDecision)}
+
+
+def test_confirming_one_decision_of_a_turn_leaves_the_other_its_own_row(wired: Session) -> None:
+    """The kept row holds its part of the turn, not the turn: the second
+    decision is still made, and with the id it had -- not the plain id the
+    kept row has."""
+    event = meeting(wired, TWO)
+    tasks.on_transcript_ready(event)
+    before = statements(wired)
+    plain = decision_id(MEETING, ["utt_1"])
+    (other,) = before.keys() - {plain}
+    service.review_decision(
+        wired, wired.get(ExtDecision, plain), DecisionReviewUpdate(status="confirmed")
+    )
+    wired.commit()
+
+    tasks.on_transcript_ready(event)
+
+    assert statements(wired) == before
+    review = wired.get(ExtDecisionReview, plain)
+    assert review is not None and review.status == "confirmed"
+    assert wired.get(ExtDecisionReview, other) is None
+
+
+def test_a_confirmed_decision_made_from_two_parts_of_a_turn_keeps_both(wired: Session) -> None:
+    """A row as the grouping left this turn before 2026-10-09 -- one decision
+    from the first part to the second -- that a person confirmed. Neither part
+    is made a row again, and the row is not rewritten as the first part alone,
+    which its id would otherwise name."""
+    event = meeting(wired, TWO)
+    tasks.on_transcript_ready(event)
+    plain = decision_id(MEETING, ["utt_1"])
+    (other,) = statements(wired).keys() - {plain}
+    wired.execute(delete(ExtDecisionSource).where(ExtDecisionSource.decision_id == other))
+    wired.execute(delete(ExtDecision).where(ExtDecision.id == other))
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    link.excerpt_start, link.excerpt_end = TWO.index(DECIDED), TWO.index(LATER) + len(LATER)
+    row = wired.get(ExtDecision, plain)
+    row.statement = "출시는 다음 달로 미루기로 함"
+    service.review_decision(wired, row, DecisionReviewUpdate(status="confirmed"))
+    wired.commit()
+
+    tasks.on_transcript_ready(event)
+
+    assert statements(wired) == {plain: "출시는 다음 달로 미루기로 함"}
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    assert TWO[link.excerpt_start : link.excerpt_end] == CUT.join([DECIDED, LATER])
+
+    # The turn is corrected, and the run writes up the first part under the
+    # plain id, which is also this row's. The row is read again from both of
+    # its parts and is not given a sentence written about one.
+    corrected = TWO.replace(CHAT, "[이름] 님 오셨네요", 1)
+    stored = wired.get(Utterance, "utt_1")
+    stored.text = corrected
+    wired.commit()
+    parts = corrected.split(CUT)
+    read = in_pieces(
+        [
+            turn(
+                "utt_1",
+                K.DECISION,
+                corrected,
+                pieces=tuple(zip(parts, (None, K.DECISION, K.DECISION, None), strict=True)),
+            )
+        ]
+    )
+    service.build_decisions(
+        wired,
+        meeting_id=MEETING,
+        utterances=read,
+        summaries={plain: Resolution("이번 분기는 A안으로 진행", used=())},
+    )
+
+    assert statements(wired) == {plain: "출시는 다음 달로 미루기로 함"}
+    assert not wired.get(ExtDecision, plain).statement_resolved
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    assert corrected[link.excerpt_start : link.excerpt_end] == CUT.join([DECIDED, LATER])
+
+
+def test_a_kept_decision_of_a_turn_is_read_again_from_its_decisions_not_the_talk_between(
+    wired: Session,
+) -> None:
+    """The part a row was made from runs from its first decision to its last,
+    and what was said in between is in it. Read again after a correction, the
+    row's sentence is still the decision's and not the longest thing there."""
+    aside = "오늘 날씨가 참 좋네요 다들 점심은 맛있게 드셨는지 모르겠네요"
+    assent = "그럼 그렇게 갑니다"
+    whole = CUT.join([DECIDED, aside, assent, CHAT])
+    tasks.on_transcript_ready(meeting(wired, whole))
+    plain = decision_id(MEETING, ["utt_1"])
+    before = statements(wired)
+    assert list(before) == [plain]
+    link = wired.query(ExtDecisionSource).filter_by(decision_id=plain).one()
+    assert whole[link.excerpt_start : link.excerpt_end] == CUT.join([DECIDED, aside, assent])
+    service.review_decision(
+        wired, wired.get(ExtDecision, plain), DecisionReviewUpdate(status="confirmed")
+    )
+    corrected = whole.replace(CHAT, "[이름] 님 오셨네요")
+    wired.get(Utterance, "utt_1").text = corrected
+    wired.commit()
+
+    parts = corrected.split(CUT)
+    read = in_pieces(
+        [
+            turn(
+                "utt_1",
+                K.DECISION,
+                corrected,
+                pieces=tuple(zip(parts, (K.DECISION, None, K.DECISION, None), strict=True)),
+            )
+        ]
+    )
+    service.build_decisions(wired, meeting_id=MEETING, utterances=read)
+
+    assert statements(wired) == before

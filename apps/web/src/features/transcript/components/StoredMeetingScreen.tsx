@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 
 import { useMeeting } from "../hooks/useMeeting";
 import { STATUS_LABEL } from "../status";
+import { LiveResearchList } from "./LiveResearchPanel";
+import { MeetingTitle, TITLE_STYLE } from "./MeetingTitle";
 import { ProcessingStages } from "./ProcessingStages";
 import { ResearchCard } from "./ResearchCard";
 import { StoredTranscript } from "./StoredTranscript";
@@ -29,9 +32,15 @@ import { StoredTranscript } from "./StoredTranscript";
  * its one fetch lands after the utterances were written — the "아직 없습니다"
  * it used to show forever was a fetch that landed too early with nothing to
  * tell it to try again.
+ *
+ * The title can be changed here (#1161, `MeetingTitle`). The route does not
+ * repeat a title and `useMeeting` reads once for a meeting at rest, so the
+ * title just saved is kept beside the meeting it was saved for and shown
+ * until the hook has read it.
  */
 export function StoredMeetingScreen({ meetingId }: { meetingId: string }) {
   const state = useMeeting(meetingId);
+  const [renamed, setRenamed] = useState<{ meetingId: string; title: string } | null>(null);
 
   return (
     <main className="max-w-[720px] pb-[var(--space-page)]">
@@ -42,16 +51,19 @@ export function StoredMeetingScreen({ meetingId }: { meetingId: string }) {
         >
           회의
         </p>
-        <h1
-          className="text-ink-strong"
-          style={{
-            fontSize: "var(--text-title)",
-            fontWeight: "var(--text-title-weight)",
-            letterSpacing: "var(--text-title-tracking)",
-          }}
-        >
-          {state.status === "ready" ? state.meeting.title : "회의 전사"}
-        </h1>
+        {state.status === "ready" ? (
+          <MeetingTitle
+            meetingId={meetingId}
+            title={
+              renamed?.meetingId === meetingId ? renamed.title : state.meeting.title
+            }
+            onRenamed={(title) => setRenamed({ meetingId, title })}
+          />
+        ) : (
+          <h1 className="text-ink-strong" style={TITLE_STYLE}>
+            회의 전사
+          </h1>
+        )}
         <p
           className="mt-2 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-meta)" }}
@@ -104,29 +116,41 @@ function body(state: ReturnType<typeof useMeeting>, meetingId: string) {
 
   const { meeting } = state;
   switch (meeting.status) {
+    // A live session's documents exist before any recording does, and the
+    // Slack link lands here whatever the upload's state, so every branch
+    // lists them (hidden when there are none).
     case "scheduled":
       return (
-        <p
-          className="text-[var(--color-ink-muted)]"
-          style={{ fontSize: "var(--text-meta)" }}
-        >
-          아직 녹음이 없습니다.{" "}
-          <Link
-            href={`/meetings/new?meeting=${meetingId}`}
-            className="text-[var(--color-accent-default)]"
+        <>
+          <p
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-meta)" }}
           >
-            녹음 파일 올리기
-          </Link>
-        </p>
+            아직 녹음이 없습니다.{" "}
+            <Link
+              href={`/meetings/new?meeting=${meetingId}`}
+              className="text-[var(--color-accent-default)]"
+            >
+              녹음 파일 올리기
+            </Link>
+          </p>
+          <LiveResearchList meetingId={meetingId} />
+        </>
       );
     case "recording":
     case "analyzing":
     case "failed":
-      return <ProcessingStages meeting={meeting} />;
+      return (
+        <>
+          <ProcessingStages meeting={meeting} />
+          <LiveResearchList meetingId={meetingId} />
+        </>
+      );
     default:
       return (
         <>
           <ResearchCard meetingId={meetingId} teamId={meeting.team_id} />
+          <LiveResearchList meetingId={meetingId} />
           <div className="border-t border-[var(--color-hairline)]">
             <StoredTranscript meetingId={meetingId} teamId={meeting.team_id} />
           </div>

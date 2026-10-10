@@ -673,9 +673,11 @@ brief reads "지난 회의는 보존 기간이 지나 삭제되었습니다" ins
 runs and a meeting enqueued on several ticks send once — and stamps `sent_at`
 in the same commit, before the Slack post. A failure before that commit rolls
 the claim back and the next tick retries; a worker lost after it loses the
-brief rather than sending it twice, the trade the other notices make. A team
-with no Slack channel still gets the row (readable in the app) with `sent_at`
-left `NULL`.
+brief rather than sending it twice, the trade the other notices make. A Slack
+rate limit or timeout on the post deletes the row again (#339), so the meeting is
+due on the next tick and the brief is sent while the meeting is still ahead; any
+other failure keeps the claim. A team with no Slack channel still gets the row
+(readable in the app) with `sent_at` left `NULL`.
 
 **In the app**, the same brief sits at the top of S15's context tab
 (`features/context` `BriefPanel`), rendered from `GET /briefs/{meeting_id}`. A
@@ -957,7 +959,10 @@ lands, the one `send_task` call here moves behind it.
   회의에서..."), not just that it "changed" — a late-arriving lineage
   (fallback-then-late-lineage, or a backfilled recording) otherwise reads as
   "just now" regardless of when the meeting actually happened. Omits the date
-  when the meeting has none set (see PR #263's discussion, issue #257).
+  when the meeting has none set (see PR #263's discussion, issue #257). Says that
+  a key stakeholder was absent, **not how many**: in a small team "1 was absent"
+  points at one person (#339). Each of them hears it by DM. The statement is printed once: the thread's label is its head
+  statement, so for the head version it is the same sentence (#282).
 - **Pre-meeting brief** — `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` (default 10)
   before a scheduled meeting, to the team channel. The past meeting's topic
   labels and decision statements, and the issues this meeting takes up; never
@@ -1069,7 +1074,23 @@ separate the two.
   would cost everyone after it their notice, for good. **The skip is logged by
   Slack's error code and a count, never by recipient id**: each recipient is
   someone who was absent when a decision changed, which the channel notice
-  deliberately reduces to a count.
+  deliberately does not name or count.
+- **A transient failure hands the claim back and the task retries** (#339). A
+  Slack rate limit or timeout halfway through the batch used to leave the
+  meeting claimed with notices unsent, and the redelivery found the claim and
+  did nothing. `notify_context_events` and `notify_late_drift` now clear their
+  claim (the late one puts `late_drift_due_at` back too) and retry with backoff,
+  three times. The cost is that what had already gone out before the failure goes
+  out again; a repeated post is the lesser harm against an absent stakeholder
+  who is never told. A refusal for good, or a privacy guard, is not retried.
+- **A drift DM goes only to somebody who is on the team when it is collected.**
+  `key_stakeholders_absent` is narrowed to current members when it is computed,
+  and `collect_drift_notices` narrows it again against `team_members` of the
+  meeting's team, because a person can leave in between (seconds for the
+  ordinary warning, hours for the catch-up one) and the DM quotes up to 400
+  characters of the decision. An event left with nobody to tell is dropped
+  whole, its channel notice included. What remains is the moment between that
+  read and Slack's answer.
 
 ## Phased delivery
 

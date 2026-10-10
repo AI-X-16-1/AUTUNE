@@ -68,6 +68,7 @@ from . import (
     days_off,
     jira_sync,
     leave_calendar,
+    meeting_notice,
     notion_backfill,
     notion_setup,
     project_send,
@@ -75,6 +76,7 @@ from . import (
     reminders,
     service,
     sync_state,
+    work_report,
 )
 from .config import get_settings, require_loadable
 from .confirmations import build_confirmation_dm
@@ -95,9 +97,36 @@ from .models import (
     ExtProjectSendCleanup,
 )
 from .pipeline.base import give_roster
-from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
+from .pipeline.registry import (
+    get_classifier,
+    get_nli,
+    get_resolver,
+    get_summarizer,
+    get_titler,
+)
+from .pipeline.summary import TooLongError
+from .pipeline.title import TitleRequest
 
 log = get_logger(__name__)
+
+SWEEP_EVERY = timedelta(minutes=10)
+"""How often a periodic task of this module runs unless it has a reason for
+another pace: the retries, the drains, the read-backs from Calendar and Jira,
+and the sends that wait for their hour. Each task's docstring says why ten
+minutes is enough for it."""
+
+REQUESTED_RUN_EVERY = timedelta(minutes=1)
+"""``run_requested_extractions``: a person is waiting at the screen."""
+
+AFTER_MEETING_DM_EVERY = timedelta(minutes=5)
+"""``ask_confirmations`` and ``send_meeting_notices``: a message meant for
+right after the meeting should be minutes behind it."""
+
+PAUSE_FORGET_EVERY = timedelta(hours=1)
+"""``forget_ended_notification_pauses``."""
+
+HOLIDAY_REFRESH_EVERY = timedelta(hours=12)
+"""``refresh_public_holidays``."""
 
 # Before anything of module B is served or run: a configuration B refuses
 # (an unacknowledged cloud model, #392) stops the process that imports this,
@@ -202,8 +231,14 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, utterances, consented=consented)
+    # Windows of the transcript whose answer could not be read while others
+    # were (``LlmClassifier.unread_windows``): what was read is stored below as
+    # any run's, and the run is counted as one that left a part unread.
+    unread = int(getattr(classifier, "unread_windows", 0) or 0)
     # "네 알겠습니다." called ambiguous is nothing to verify or to ask about.
     classified = service.drop_bare_acknowledgements(classified)
+    # "출시는 10월 20일입니다" left unlabelled is a decision: a rule, no model.
+    classified = service.stated_dates_are_decisions(classified, day=day)
     nli = get_nli()
     # Step 4 sends text out too, when it is the ``llm`` one.
     give_roster(nli, roster)
@@ -276,8 +311,13 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
-        # With the rows too: only a run that stored its result ends the count.
-        attempts.note_success(session, meeting_id)
+        # With the rows too: only a run that stored its result ends the count
+        # -- and only one that read the whole transcript. One that left a part
+        # unread adds to it, so the sweep runs the meeting again.
+        if unread:
+            attempts.note_partly_unread(session, meeting_id)
+        else:
+            attempts.note_success(session, meeting_id)
         result = service.result_for_meeting(session, meeting_id)
 
     _follow_corrections(corrections)
@@ -304,6 +344,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         model_version=classifier.model_version,
         resolver_model_version=resolver.model_version,
         resolved_commitments=len(resolved_descriptions),
+        unread_windows=unread,
     )
     # Step 6, the DM, is ``ask_confirmations``, not this run: a speaker who is
     # identified or links Slack a little later is still asked. Step 7 waits for
@@ -338,12 +379,61 @@ def _announce(meeting_id: str, result: ExtractionResult) -> None:
             summarize_meeting.delay(meeting_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
             log.warning("extraction_summary_not_queued", error=type(exc).__name__)
+    if get_settings().title_impl != "none":
+        try:
+            title_meeting.delay(meeting_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
+            log.warning("extraction_titles_not_queued", error=type(exc).__name__)
     # The project minutes that already went out, brought in line with what
     # this run left confirmed: a corrected line, and also a confirmed decision
     # the rebuild no longer has, which no correction names (#787 review). A
     # meeting that sent nothing costs one query; a copy that already says the
     # minutes is not written to.
     refresh_project_minutes(meeting_id)
+
+
+@shared_task(name="autune.extraction.title_meeting", acks_late=True)
+def title_meeting(meeting_id: str) -> int:
+    """A short title for each of the meeting's items and decisions that has
+    none (``title_impl``; ``pipeline.title``). Returns how many were written.
+
+    Its own task, after the run that built the rows: the rows are already
+    there and already announced, and a title is a way of showing them. Reads,
+    then calls the model with no session open, then writes -- only onto a row
+    that still says the sentence its title is of, and onto none when a row of
+    the request was deleted or lost its line to a speech deletion meanwhile
+    (``service.store_titles``). A failed call, a refused
+    title and a privacy refusal all leave the row without one, and the screen
+    shows the sentence cut as it did before; logged by meeting id and counts,
+    never the text.
+    """
+    try:
+        titler = get_titler()
+    except ValueError as exc:
+        log.error("extraction_titles_not_configured", error=type(exc).__name__)
+        return 0
+    if titler is None:
+        return 0
+    with session_scope() as session:
+        targets = service.title_targets(session, meeting_id)
+        if not targets:
+            return 0
+        roster = service.team_roster(session, meeting_id)
+    give_roster(titler, roster)
+    try:
+        titles = titler.titles([TitleRequest(t.asked, t.kind) for t in targets])
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_titles_blocked_by_privacy_guard", meeting_id=meeting_id, rows=len(targets)
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 -- the rows keep no title; logged by id, never the text
+        log.warning("extraction_titles_failed", meeting_id=meeting_id, error=type(exc).__name__)
+        return 0
+    with session_scope() as session:
+        written = service.store_titles(session, targets, [t.text for t in titles])
+    log.info("extraction_titles_stored", meeting_id=meeting_id, rows=len(targets), written=written)
+    return written
 
 
 @shared_task(name="autune.extraction.summarize_meeting", acks_late=True)
@@ -356,7 +446,10 @@ def summarize_meeting(meeting_id: str) -> bool:
     that changed no line does not ask again. Reads, then calls the model with no
     session open, then writes: a transaction is never held across a call that
     takes seconds. A failed or unusable answer leaves the tab as v1 built it and
-    is logged by meeting id; nothing about it fails the meeting.
+    is logged by meeting id; nothing about it fails the meeting. A meeting too
+    long for a summary (``TooLongError``) leaves a row that says so and no text
+    (``service.mark_summary_too_long``): the tab then says why it has none, and
+    the same lines are not asked about again.
 
     A stored summary of other lines than the meeting has now is deleted before
     the model is asked, so none of the ways this can end without a new summary
@@ -388,6 +481,16 @@ def summarize_meeting(meeting_id: str) -> bool:
         written = summarizer.summarize(lines, board=board)
     except PrivacyViolationError:
         log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
+        return False
+    except TooLongError:
+        # Not a failure to retry: these lines need more calls than a meeting
+        # gets. Said in the row, so the tab can say it and the next run over
+        # the same lines does not spend the calls to find it out again.
+        with session_scope() as session:
+            service.mark_summary_too_long(
+                session, meeting_id, model_version=summarizer.model_version, lines=lines
+            )
+        log.info("extraction_summary_too_long", meeting_id=meeting_id, lines=len(lines))
         return False
     except Exception as exc:  # noqa: BLE001 -- the tab keeps v1; logged by id, never the text
         log.warning("extraction_summary_failed", meeting_id=meeting_id, error=type(exc).__name__)
@@ -551,7 +654,7 @@ def refresh_project_minutes(meeting_id: str) -> bool:
             log.warning(
                 "extraction_project_minutes_refresh_owed",
                 meeting_id=meeting_id,
-                behind=sum(1 for s in sent if s.outcome in ("failed", "not_connected")),
+                behind=sum(1 for s in sent if s.outcome in project_send.BEHIND),
             )
             return False
     except Exception as exc:  # noqa: BLE001 -- the change itself is committed
@@ -596,7 +699,7 @@ next change to the meeting rewrites it."""
 
 
 @shared_task(name="autune.extraction.periodic.retry_project_minutes_refresh")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retry_project_minutes_refresh() -> int:
     """Refresh again the project minutes a refresh left behind (#787 review).
     Returns how many meetings are in line now.
@@ -668,7 +771,7 @@ PROJECT_CLEANUP_BATCH = 100
 
 
 @shared_task(name="autune.extraction.periodic.drain_project_send_cleanup")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def drain_project_send_cleanup() -> int:
     """Retract the minutes copies whose meeting or project was deleted (#787
     review), with each team's own connection. Returns how many went.
@@ -723,7 +826,7 @@ def drain_project_send_cleanup() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.reextract_consent_changes")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def reextract_consent_changes() -> list[str]:
     """Extract again every meeting whose consenting speech changed after its
     last extraction (#518). Returns those meetings' ids.
@@ -829,7 +932,7 @@ def _extract_counted(meeting_id: str, utterances: Sequence[TranscriptUtterance])
 @shared_task(name="autune.extraction.reextract_meeting", acks_late=True)
 def reextract_meeting(meeting_id: str) -> None:
     """Extract one meeting again from its stored transcript -- a failed run's
-    next try, or the 액션 tab's "다시 추출".
+    next try, or the 할 일 tab's "다시 추출".
 
     The event's own run (``_extract``): model rows are replaced, an item list
     a person has edited is kept (``service.build_action_items``), and
@@ -873,21 +976,21 @@ def _republish_counted(meeting_id: str) -> None:
 def _failure_notice(title: str, board_url: str, *, not_published: bool = False) -> str:
     if not_published:
         return (
-            f"「{title}」 회의의 액션 아이템과 결정은 추출했지만, 그 결과를 회의 연결과 "
+            f"「{title}」 회의의 할 일과 결정은 추출했지만, 그 결과를 회의 연결과 "
             f"리포트 분석에 전달하지 못했습니다. {attempts.MAX_ATTEMPTS}번 시도했고, "
-            "자동으로는 더 시도하지 않습니다. 회의의 액션 화면에서 '다시 추출'을 눌러 "
+            "자동으로는 더 시도하지 않습니다. 회의의 할 일 화면에서 '다시 추출'을 눌러 "
             f"다시 시도할 수 있습니다.\n{board_url}"
         )
     return (
-        f"「{title}」 회의에서 액션 아이템과 결정을 추출하지 못했습니다. "
+        f"「{title}」 회의에서 할 일과 결정을 추출하지 못했습니다. "
         f"{attempts.MAX_ATTEMPTS}번 시도했고, 자동으로는 더 시도하지 않습니다. "
-        f"회의의 액션 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
+        f"회의의 할 일 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
     )
 
 
 def _tell_teams() -> list[str]:
     """One message to the team's Slack channel for each meeting out of tries:
-    its title, the count and a link to its 액션 tab, nothing that was said in
+    its title, the count and a link to its 할 일 tab, nothing that was said in
     it. A team with no channel
     connected is not told here; the meeting's own screen says it either way.
 
@@ -942,7 +1045,7 @@ def _tell_teams() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.retry_failed_extractions")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retry_failed_extractions() -> list[str]:
     """Try again every meeting whose extraction failed and has tries left, then
     tell the teams of those that have none. Returns the meetings that went
@@ -955,7 +1058,7 @@ def retry_failed_extractions() -> list[str]:
     most, and stops (the user, 2026-10-06: three in all, and after them no
     automatic attempt of any kind). A failure that repeats every time -- a refusal by the outbound
     check, a bug -- is spent in twenty minutes and then said, in the team's
-    channel and on the meeting's 액션 tab, instead of being retried for good.
+    channel and on the meeting's 할 일 tab, instead of being retried for good.
 
     **A meeting with a transcript and no extraction on record is taken for a
     failed one** (``attempts.adopt_unextracted``): a run that raised before
@@ -1012,7 +1115,7 @@ def retry_failed_extractions() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.run_requested_extractions")
-@periodic(timedelta(minutes=1))
+@periodic(REQUESTED_RUN_EVERY)
 def run_requested_extractions() -> list[str]:
     """Run the extractions people asked for with "다시 추출". Returns the
     meetings that went through.
@@ -1049,7 +1152,7 @@ def run_requested_extractions() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.fill_identified_assignees")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def fill_identified_assignees() -> list[str]:
     """Items whose speaker was identified after extraction get that person as
     their assignee (#360), and an item whose speaker was since corrected to
@@ -1088,7 +1191,7 @@ def fill_identified_assignees() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.ask_confirmations")
-@periodic(timedelta(minutes=5))
+@periodic(AFTER_MEETING_DM_EVERY)
 def ask_confirmations() -> list[str]:
     """Step 6: DM each speaker the ambiguous agreement they made -- "was that a
     commitment?" -- and start its clock (#70, WBS 8.3). Returns the utterance
@@ -1170,8 +1273,127 @@ def ask_confirmations() -> list[str]:
     return asked
 
 
+@shared_task(name="autune.extraction.periodic.send_meeting_notices")
+@periodic(AFTER_MEETING_DM_EVERY)
+def send_meeting_notices() -> int:
+    """Soon after a meeting: tell each person, alone, that work of it has
+    landed on them -- how many drafts wait for their confirmation, and where
+    (the user, 2026-10-07; ``meeting_notice``). Returns how many went.
+
+    **A count, and a refusal that names meetings** (PARKJAEKYUNG0525's review
+    of #953; the user, 2026-10-07). A task's return value and the message of
+    what it raises are kept by Celery's result backend: the list of user ids
+    a notice went to, and the ids in a refusal, sat there as a record of who
+    was given work in which run. A refusal is about a text -- here a
+    meeting's title or an item's wording -- so it names the meeting, which is
+    where the text is found and put right; the person it was for is on that
+    meeting's claim rows (``ext_meeting_notices``), not in the error.
+
+    ``send_daily_digests``' shape, for the same reasons: each notice claimed
+    and sent in its own transaction, a team without Slack or a person without
+    a linked account skipped and looked at again next run until the window
+    closes, an unexpected error that one notice's, and a privacy refusal never
+    swallowed -- its claim kept so it is reported once, and raised after the
+    rest are sent. Every five minutes, so "right after the meeting" is minutes;
+    a run with nothing owed is one query, and outside the sending hours it
+    finds nothing.
+    """
+    if not get_settings().after_meeting_notice:
+        return 0
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        owed = meeting_notice.notices_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({n.team_id for n in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent = 0
+    # Meetings, not people: see the docstring.
+    refused: list[str] = []
+    unasked: list[str] = []
+    not_linked = 0
+    leave = get_settings().leave_from_calendar
+    for notice in owed:
+        secret = secrets[notice.team_id]
+        if secret is None:
+            continue
+        if leave:
+            would_go = partial(meeting_notice.notice_would_go, owed=notice, now=now)
+            try:
+                if _held_back(would_go, notice.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message.
+                unasked.append(notice.meeting_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
+                log.warning(
+                    "extraction_meeting_notice_failed",
+                    user_id=notice.user_id,
+                    meeting_id=notice.meeting_id,
+                    reason=type(exc).__name__,
+                )
+                continue
+        try:
+            with session_scope() as session:
+                went = meeting_notice.send_meeting_notice(
+                    session, SlackClient(secret), notice, now=now
+                )
+        except PrivacyViolationError:
+            refused.append(notice.meeting_id)
+            # Reported once: the claim is kept, in its own transaction, so the
+            # next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    meeting_notice.settle_refused_notice(session, notice, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_meeting_notice_refusal_not_kept",
+                    user_id=notice.user_id,
+                    meeting_id=notice.meeting_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one notice's; logged by type, ids only
+            log.warning(
+                "extraction_meeting_notice_failed",
+                user_id=notice.user_id,
+                meeting_id=notice.meeting_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent += 1
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
+        log.info(
+            "extraction_meeting_notices_sent",
+            owed=len(owed),
+            sent=sent,
+            not_linked=not_linked,
+        )
+    said = []
+    if refused:
+        said.append(
+            f"meeting notice refused by the outbound check: {len(refused)}, "
+            f"for meeting(s) {', '.join(sorted(set(refused)))}"
+        )
+    if unasked:
+        said.append(
+            "meeting notice: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, for meeting(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+    return sent
+
+
 @shared_task(name="autune.extraction.periodic.send_weekly_digests")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def send_weekly_digests() -> list[str]:
     """Monday's digest of each person's own open items, by Slack DM to that
     person alone (the user, 2026-10-04; ``service.weekly_digests_to_send``).
@@ -1270,7 +1492,7 @@ def send_weekly_digests() -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.send_daily_digests")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def send_daily_digests() -> list[str]:
     """The morning DM: to each person alone, what changed on their own items
     since the last one and what is theirs to do today (the user, 2026-10-05;
@@ -1368,6 +1590,118 @@ def send_daily_digests() -> list[str]:
     return sent
 
 
+@shared_task(name="autune.extraction.periodic.send_work_reports")
+@periodic(SWEEP_EVERY)
+def send_work_reports() -> int:
+    """The work-report draft: to each person alone, their own items
+    on one team as a text they can paste to that team -- finished today, moved
+    to in progress today, going on to tomorrow, late (the user, 2026-10-07;
+    ``work_report``). Returns how many went.
+
+    **A count, and no ids anywhere** (mkkim68, review of #954). This goes only
+    on a day something of the person's was finished or moved, so a result, a
+    log line or an error that names a person names a day they worked. The
+    result is a number, a failed send is logged by team and error type, and a
+    refusal is raised by team. And first of all, on every run -- with the
+    feature off, and outside its hour -- the rows of earlier days are deleted
+    (``work_report.forget_past_days``): a row is the "once" of its own day.
+
+    ``send_daily_digests``' shape, for the same reasons: each DM claimed and
+    sent in its own transaction, a team without Slack or a person without a
+    linked account skipped and looked at again next run, an unexpected error
+    that one DM's, and a privacy refusal never swallowed -- settled so it is
+    reported once, and raised after the rest are sent. Every ten minutes;
+    outside a Monday-to-Friday afternoon in Korea it finds nothing owed. Nobody
+    who turned their reminders off, and nobody on a day they paused, is in the
+    list.
+    """
+    now = datetime.now(tz=UTC)
+    with session_scope() as session:
+        work_report.forget_past_days(session, today=reminders.korean_day(now))
+    if not get_settings().work_report:
+        return 0
+    with session_scope() as session:
+        owed = work_report.reports_to_send(session, now=now)
+        secrets: dict[str, str | None] = {}
+        for team_id in sorted({r.team_id for r in owed}):
+            config = load_integration(session, team_id, "slack")
+            secrets[team_id] = config.require_secret() if config is not None else None
+
+    sent = 0
+    # Teams, not people: see the docstring.
+    refused: list[str] = []
+    unasked: list[str] = []
+    not_linked = 0
+    leave = get_settings().leave_from_calendar
+    for report in owed:
+        secret = secrets[report.team_id]
+        if secret is None:
+            continue
+        if leave:
+            would_go = partial(work_report.would_go, owed=report, now=now)
+            try:
+                if _held_back(would_go, report.user_id, now):
+                    continue
+            except PrivacyViolationError:
+                # The question to the calendar was refused, not the message:
+                # nothing is claimed for it, and it is raised as what it was.
+                unasked.append(report.team_id)
+                continue
+            except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
+                log.warning(
+                    "extraction_work_report_failed",
+                    team_id=report.team_id,
+                    reason=type(exc).__name__,
+                )
+                continue
+        try:
+            with session_scope() as session:
+                went = work_report.send_report(session, SlackClient(secret), report, now=now)
+        except PrivacyViolationError:
+            refused.append(report.team_id)
+            # Reported once: the day's claim is kept, in its own transaction,
+            # so the next run does not refuse the same text again.
+            try:
+                with session_scope() as session:
+                    work_report.settle_refused(session, report, now=now)
+            except Exception as exc:  # noqa: BLE001 -- the violation is still raised
+                log.warning(
+                    "extraction_work_report_refusal_not_kept",
+                    team_id=report.team_id,
+                    reason=type(exc).__name__,
+                )
+            continue
+        except SlackRecipientNotLinkedError:
+            not_linked += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 -- one DM's; by team and type, no person
+            log.warning(
+                "extraction_work_report_failed",
+                team_id=report.team_id,
+                reason=type(exc).__name__,
+            )
+            continue
+        if went:
+            sent += 1
+    if owed and not leave:
+        # No summary where calendars are read (``_held_back``).
+        log.info("extraction_work_reports_sent", owed=len(owed), sent=sent, not_linked=not_linked)
+    said = []
+    if refused:
+        said.append(
+            f"work report refused by the outbound check: {len(refused)}, "
+            f"in team(s) {', '.join(sorted(set(refused)))}"
+        )
+    if unasked:
+        said.append(
+            "work report: the read of a person's calendar was refused by the outbound "
+            f"check: {len(unasked)}, in team(s) {', '.join(sorted(set(unasked)))}"
+        )
+    if said:
+        raise PrivacyViolationError("; ".join(said))
+    return sent
+
+
 def _raise_refusals(what: str, refused: list[str], unasked: list[str]) -> None:
     """Raise the privacy refusals a digest run collected, each as what it was:
     a message the outbound check refused (its claim already settled), or a
@@ -1444,14 +1778,15 @@ def _out_of_office(user_id: str, now: datetime) -> bool:
 
 
 @shared_task(name="autune.extraction.periodic.refresh_public_holidays")
-@periodic(timedelta(hours=12))
+@periodic(HOLIDAY_REFRESH_EVERY)
 def refresh_public_holidays() -> int:
     """Read Korea's public holidays from Google's public holiday calendar and
     keep them (``days_off``), so no digest goes on one. Returns how many days
     were kept; 0 when nothing was read.
 
-    Only where a digest is switched on and ``public_holiday_calendar`` is not
-    off: a deployment that sends none makes no call. A read that fails leaves
+    Only where a digest or the after-meeting notice is switched on and
+    ``public_holiday_calendar`` is not off: a deployment that sends none makes
+    no call. A read that fails leaves
     the last good one in place -- and once that is older than
     ``days_off.FRESH_FOR`` the table in code answers -- so the failure is
     logged by type and not raised: there is nothing for a retry queue to do
@@ -1459,7 +1794,10 @@ def refresh_public_holidays() -> int:
     """
     settings = get_settings()
     if not settings.public_holiday_calendar or not (
-        settings.daily_digest or settings.weekly_digest
+        settings.daily_digest
+        or settings.weekly_digest
+        or settings.work_report
+        or settings.after_meeting_notice
     ):
         return 0
     now = datetime.now(tz=UTC)
@@ -1477,7 +1815,7 @@ def refresh_public_holidays() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.forget_ended_notification_pauses")
-@periodic(timedelta(hours=1))
+@periodic(PAUSE_FORGET_EVERY)
 def forget_ended_notification_pauses() -> int:
     """Delete the pauses that have ended (``service.forget_ended_pauses``):
     when a person was away is kept only while it stops a message. Its own
@@ -1493,7 +1831,7 @@ def forget_ended_notification_pauses() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.remind_due_items")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def remind_due_items() -> list[str]:
     """Tell each assignee, once, that an item of theirs is due tomorrow or has
     passed its date (``reminders``). Returns the item ids a message went for.
@@ -2004,7 +2342,7 @@ CALENDAR_FIRST_LOOKBACK = timedelta(days=1)
 
 
 @shared_task(name="autune.extraction.periodic.pull_calendar_changes")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def pull_calendar_changes() -> None:
     """Every ten minutes, read back what each connected person changed on their
     own calendar (#435): a task they dragged to another day has a new due date.
@@ -2087,7 +2425,7 @@ def _pull_one(user_id: str) -> list[str]:
 
 
 @shared_task(name="autune.extraction.periodic.pull_jira_changes")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def pull_jira_changes() -> None:
     """Every ten minutes, read back the status people moved their issues to in
     Jira (``jira_sync.read_back``): an issue dragged to Done is a done item on
@@ -2249,7 +2587,7 @@ def backfill_notion(team_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.retire_decision_pages")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retire_decision_pages() -> int:
     """Take out of Notion the decision pages that should no longer be there,
     on a timer (#683). Returns how many were retired.
@@ -2552,7 +2890,7 @@ def queue_meeting_calendar_events(meeting_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.drain_calendar_cleanup")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def drain_calendar_cleanup() -> int:
     """Take queued due-date events off their owners' calendars (#588).
 
@@ -2615,7 +2953,7 @@ def drain_calendar_cleanup() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.take_back_departed_calendar_events")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def take_back_departed_calendar_events() -> int:
     """Take a due-date event off the calendar of somebody who has left the
     meeting's team (#552). Returns how many events were taken off.
@@ -2677,7 +3015,7 @@ def take_back_departed_calendar_events() -> int:
 
 
 @shared_task(name="autune.extraction.periodic.drain_external_cleanup")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def drain_external_cleanup() -> int:
     """Trash the Notion pages and close the Jira issues of deleted items whose
     cleanup the deleting request could not do (#692). Returns how many went.
@@ -2955,7 +3293,7 @@ def _sync_decision_jira_logged(decision_id: str) -> None:
 
 
 @shared_task(name="autune.extraction.periodic.retire_decision_issues")
-@periodic(timedelta(minutes=10))
+@periodic(SWEEP_EVERY)
 def retire_decision_issues() -> int:
     """Retire, on a timer, the Jira issues of decisions that are gone or no
     longer confirmed -- what ``retire_decision_pages`` is for Notion (#683).

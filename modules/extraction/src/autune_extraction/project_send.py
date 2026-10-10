@@ -64,7 +64,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
-from autune_core import Meeting, Team, get_logger
+from autune_core import Meeting, PrivacyViolationError, Team, get_logger
 from autune_integrations.errors import PermanentIntegrationError
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
 
@@ -88,9 +88,6 @@ TARGETS = ("notion", "slack", "jira", "calendar")
 MINUTES_TAG = ("autune_minutes", "1")
 """The private property on a minutes event. Not ``calendar_sync.TAG``: the
 due-date read-back asks Google for that one, and must not see these."""
-
-NOTION_TEXT_LIMIT = 2000
-"""Notion's limit on one text object; a longer line is cut, never sent whole."""
 
 REQUEST_BUDGET = MAX_OUTBOUND_CHARS - 1000
 """Text one request carries, under the outbound check's limit with room for the
@@ -235,7 +232,7 @@ def minutes(session: Session, meeting_id: str) -> tuple[list[Minutes], int]:
 
 
 def _text(content: str) -> list[dict[str, Any]]:
-    return [{"type": "text", "text": {"content": content[:NOTION_TEXT_LIMIT]}}]
+    return [{"type": "text", "text": {"content": content[: service.NOTION_TEXT_LIMIT]}}]
 
 
 def _notion_blocks(m: Minutes) -> list[dict[str, Any]]:
@@ -622,6 +619,10 @@ def queue_project(session: Session, project_id: str) -> int:
     return _queue(session, project.team_id, list(rows)) + _queue_events(session, list(events))
 
 
+BEHIND = ("failed", "held", "not_connected")
+"""The outcomes of a copy that does not say what the meeting now says."""
+
+
 def _try(
     session: Session,
     meeting_id: str,
@@ -630,9 +631,21 @@ def _try(
     attempt: Any,
 ) -> Sent:
     """One copy's work, whatever it raises costing that copy only. Ids and the
-    error's class in the log: the text is meeting content."""
+    error's class in the log: the text is meeting content.
+
+    A copy the outbound check refused is ``held``, not ``failed``: the sender
+    is told why, since sending again meets the same refusal and only a
+    rewording ends it. Nothing left; the log line says which copy, by id."""
     try:
         outcome = attempt()
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_project_send_blocked_by_privacy_guard",
+            meeting_id=meeting_id,
+            project_id=project[0],
+            target=target,
+        )
+        outcome = "held"
     except Exception as exc:  # noqa: BLE001 -- one copy never stops the others
         log.warning(
             "extraction_project_send_failed",
@@ -917,8 +930,9 @@ def _refresh_event(
 
 def in_line(sent: Iterable[Sent]) -> bool:
     """Whether a refresh left no copy behind. ``not_connected`` counts as left
-    behind: the copy is still out there saying what it said."""
-    return all(s.outcome not in ("failed", "not_connected") for s in sent)
+    behind: the copy is still out there saying what it said. So does ``held``,
+    as it did while it was reported as ``failed``."""
+    return all(s.outcome not in BEHIND for s in sent)
 
 
 def owe_refresh(session: Session, meeting_ids: Iterable[str]) -> list[str]:

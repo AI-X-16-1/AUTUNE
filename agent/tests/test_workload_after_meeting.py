@@ -169,3 +169,30 @@ def test_the_timer_runs_it_for_each_team_and_replaces_what_a_meeting_left(
     pending = _pending(session)
     assert {p.run_id for p in pending} == {by_team[team["team"]].id}
     assert [(p.tool, p.scope) for p in pending] == [(REASSIGN, "workload")] * 2
+
+
+def test_a_move_is_its_items_meetings_whichever_meeting_woke_the_run(
+    session: Session, team: dict[str, str]
+) -> None:
+    """#959: the approval card names the row's meeting and its date. Every item
+    here is ``mtg_1``'s; the run is woken by ``mtg_2`` being processed."""
+    (run,) = _wake(session, "mtg_2")
+
+    pending = _pending(session)
+
+    assert run.meeting_id == "mtg_2"
+    assert len(pending) == 2
+    assert {p.meeting_id for p in pending} == {"mtg_1"}
+    assert {p.arguments["meeting_id"] for p in pending} == {"mtg_1"}
+
+
+def test_a_move_the_timer_proposed_is_its_items_meetings_too(
+    session: Session, team: dict[str, str]
+) -> None:
+    """A periodic run is about no meeting; its card used to name none."""
+    on_tick(session=session, subagents={"workload": SUBAGENT})
+
+    pending = _pending(session)
+
+    assert len(pending) == 2
+    assert {p.meeting_id for p in pending} == {"mtg_1"}

@@ -42,10 +42,10 @@ def test_the_message_puts_the_late_first_escapes_and_stops_at_ten() -> None:
     text = build_weekly_digest(lines, today=MONDAY, board_url="https://autune.example/actions")
     body = text.split("\n")
 
-    assert body[0] == "이번 주 열린 액션 아이템 13개입니다."
-    assert body[1] == "• 늦은 일 &lt;!channel&gt; · 기한 지남(2026-10-01) · 주간 회의"
-    assert body[2] == "• 이번 주 일 · 이번 주 2026-10-08"
-    assert body[3] == "• 다음 달 일 · 기한 2026-11-20"
+    assert body[0] == "이번 주 열린 할 일 13개입니다."
+    assert body[1] == "• 늦은 일 &lt;!channel&gt; · 기한 지남(10월 1일 목) · 주간 회의"
+    assert body[2] == "• 이번 주 일 · 이번 주 10월 8일 목"
+    assert body[3] == "• 다음 달 일 · 기한 11월 20일 금"
     assert body[-2] == "외 3개"
     assert body[-1] == "https://autune.example/actions"
 
@@ -116,6 +116,26 @@ def session() -> Iterator[Session]:
             )
         s.flush()
         yield s
+
+
+def test_a_date_says_its_year_only_when_it_is_not_the_digests() -> None:
+    """The user, 2026-10-09: a due date as B's screens write one."""
+    last_monday_of_the_year = date(2026, 12, 28)
+    lines = [
+        DigestLine("지난해 일", date(2025, 12, 31), None),
+        DigestLine("연말 일", date(2026, 12, 30), None),
+        DigestLine("새해 첫 주 일", date(2027, 1, 2), None),
+        DigestLine("새해 일", date(2027, 1, 4), None),
+    ]
+
+    body = build_weekly_digest(lines, today=last_monday_of_the_year, board_url="u").split("\n")
+
+    assert body[1:5] == [
+        "• 지난해 일 · 기한 지남(2025년 12월 31일 수)",
+        "• 연말 일 · 이번 주 12월 30일 수",
+        "• 새해 첫 주 일 · 이번 주 2027년 1월 2일 토",
+        "• 새해 일 · 기한 2027년 1월 4일 월",
+    ]
 
 
 def test_one_digest_is_owed_per_person_and_team_with_open_work(session: Session) -> None:

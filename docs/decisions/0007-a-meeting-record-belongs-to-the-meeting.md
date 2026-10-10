@@ -104,6 +104,33 @@ it removes a `team_members` row and touches no participant. Clearing
 cascade — the one piece of new behaviour this ADR asks of the tables. No column
 or constraint changes.
 
+**Not taken yet (2026-10-06, #552).** Leaving a team is now built, and that
+explicit step was left out on purpose: `autune_audio.service.leave_team`
+removes the `team_members` row and nothing else, so a departed member's
+participant rows keep their `user_id`. The reason is decision 5 below. A
+person's own deletion request (`DELETE /api/audio/me/speech`) finds their
+lines through that column, and nothing else records which lines are theirs;
+clearing it at departure would end their right to delete at the moment they
+stop being able to see the record. The ownership rule is followed -- the
+record stays with the meeting and access ends with the membership -- and the
+mechanism is not. What that leaves different from the text of this ADR:
+
+- Nothing on the `user_id` path is deleted when somebody leaves a *team*.
+  Their account, sessions and voice profile belong to the person and go when
+  the person deletes them or their account, as before.
+- Module C's hazard above does not arise yet: the merge key is still there.
+  It arises the day the column is cleared.
+- `key_stakeholders_absent` keeps a departed member's id, for the same reason.
+- "Every consumer that reads a null `user_id` as *not identified yet*" has
+  nothing new to handle yet.
+- The identity link of a departed member is **not** cleared, so the *Accepted
+  cost* paragraph's claim "the identity link is cleared" is not true of
+  departure today. It is true once the person deletes their account.
+
+If review (#92) comes back wanting the link cleared at departure, the step is
+one statement in `leave_team` -- and before it runs, the departing person has
+to be offered the deletion it would end.
+
 That is the whole mechanism. There is no de-identification migration and no
 per-module anonymisation path — the earlier draft of this ADR required one in
 every module, and this version requires none. A record nobody has to operate on
@@ -196,6 +223,28 @@ part of keeping a record needs it. It is on the `user_id` path and it goes.
 
 **Delete when the last member leaves, and rely on that alone.** Rejected — see
 decision 1. It is a condition that almost never occurs.
+
+**Deletion of a team by its last member (2026-10-09, #1007; written before the
+legal review, #92).** The one person left on a team may now delete it: the
+team, every meeting of it, their transcripts and everything modules A to E and
+the agent layer made from them go together, the utterances of people who left
+the team earlier among them. What goes, what is refused and what stays in the
+team's own tools is in `../architecture/privacy.md` section 4. This is not the
+alternative rejected above, on two counts:
+
+- **It is not relied on alone.** The retention window stays the bound, as
+  decision 1 says. Deleting the team is a way added beside it.
+- **It is not what leaving does.** It is an act of its own, taken by somebody
+  who is shown what goes and types the team's name. For a member who is not
+  the last, leaving is still an access change and not a data change, and
+  nobody deletes a team that has two members.
+
+One thing in it is not in this ADR's text. *The meeting owns its record; a
+participant holds access to it* -- and here the last person holding access
+deletes a record that carries other people's speech. It runs towards deletion,
+so it takes nobody's right to delete away, but it is a power this ADR gave to
+nobody. The five owners agreed to it on #1007 without waiting for #92. If that
+review objects, this paragraph and section 4 are where it changes.
 
 **Give a new member the full history by default.** Rejected — see decision 4.
 

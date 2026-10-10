@@ -89,6 +89,9 @@ class FakeCalendar:
             self.descriptions[event_id] = kwargs["json"]["description"]
             return {}
         found: dict[str, Any] = {"description": self.descriptions.get(event_id, "")}
+        listed = next((e for e in self.events if e["id"] == event_id), None)
+        if listed is not None:
+            found["start"] = listed["start"]
         if event_id in self.attendees:
             found["attendees"] = self.attendees[event_id]
         found.update(self.extra.get(event_id, {}))
@@ -456,6 +459,7 @@ def test_the_picker_and_the_write_ask_google_for_named_fields_only(
     assert google.fields == [calendar_writes.LIST_FIELDS, calendar_writes.WRITE_FIELDS]
     assert "description" not in calendar_writes.LIST_FIELDS
     assert "attendees" not in calendar_writes.LIST_FIELDS
+    assert "summary" not in calendar_writes.WRITE_FIELDS  # the notice never names the event
 
 
 # --- an event shared outside the team (mkkim68 on #824) -------------------------
@@ -704,6 +708,96 @@ def test_a_question_whose_words_were_deleted_has_its_line_taken_out(
     assert session.get(GapGap, "gap_1").carried_at is not None
 
 
+def leave(session: Session, user_id: str, team_id: str = TEAM) -> None:
+    """What #937's ``leave_team`` does to C: the membership goes, nothing else."""
+    member = session.scalar(
+        select(TeamMember).where(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+    )
+    assert member is not None
+    session.delete(member)
+    session.flush()
+
+
+def test_lines_come_off_the_calendar_of_somebody_who_left_the_team(
+    client: TestClient, session: Session, calendars: dict[str, Any], hooks: Session
+) -> None:
+    """#937: they can no longer open the meeting, so its gaps leave their
+    calendar too, as B's due-date event does (#944)."""
+    gap(session, "gap_1")
+    gap(session, "gap_2", risk_score=0.8)
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.descriptions["evt_picked"] = "1. 지난주 회고"
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+    assert "(gap_1)" in google.descriptions["evt_picked"]
+
+    leave(session, MEMBER)
+    assert calendar_writes.queue_departed_lines() == 2
+    assert calendar_writes.queue_departed_lines() == 0  # safe to run twice
+    assert recorded(session) == set()
+
+    assert calendar_writes.drain_agenda_cleanup() == 1
+    assert google.descriptions["evt_picked"] == "1. 지난주 회고"
+    assert google.send_updates[-1] == "none"
+    assert list(session.scalars(select(GapAgendaCleanup))) == []
+
+
+def test_lines_of_somebody_still_on_the_team_stay(
+    client: TestClient,
+    session: Session,
+    calendars: dict[str, Any],
+    hooks: Session,
+    teammate: str,
+) -> None:
+    gap(session, "gap_1")
+    calendars[MEMBER] = FakeCalendar([event("evt_mine", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_mine"})
+    session.add(
+        GapAgendaEvent(
+            meeting_id=MEETING,
+            gap_id="gap_1",
+            user_id=teammate,
+            calendar_id="primary",
+            event_id="evt_theirs",
+        )
+    )
+    session.flush()
+
+    leave(session, teammate)
+    assert calendar_writes.queue_departed_lines() == 1
+
+    assert recorded(session) == {("gap_1", MEMBER, "evt_mine")}
+    assert {(q.user_id, q.event_id) for q in session.scalars(select(GapAgendaCleanup))} == {
+        (teammate, "evt_theirs")
+    }
+
+
+def test_being_on_another_team_does_not_keep_the_lines(
+    client: TestClient, session: Session, calendars: dict[str, Any], hooks: Session
+) -> None:
+    """Membership is the meeting's team's, not any team's."""
+    gap(session, "gap_1")
+    calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+    session.add(TeamMember(team_id="team_2", user_id=MEMBER))
+    session.flush()
+
+    leave(session, MEMBER)
+
+    assert calendar_writes.queue_departed_lines() == 1
+
+
+def test_the_periodic_drain_queues_departed_lines_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    from autune_gap import tasks
+
+    calls: list[str] = []
+    monkeypatch.setattr(calendar_writes, "queue_departed_lines", lambda: calls.append("queue") or 0)
+    monkeypatch.setattr(calendar_writes, "drain_agenda_cleanup", lambda: calls.append("drain") or 0)
+
+    tasks.drain_agenda_cleanup()
+
+    assert calls == ["queue", "drain"]
+
+
 def test_both_hooks_are_registered() -> None:
     from autune_core.deletion import registered_modules
 
@@ -744,6 +838,60 @@ def test_scheduling_tells_the_team_channel_once(
     card = slack.card()
     assert "다음 회의 안건" in card
     assert "목표 응답 시간을 누가 정합니까?" in card
+
+
+def test_the_notice_says_when_the_next_meeting_starts(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    """In the event's own time zone, as Google gave it -- not the server's UTC."""
+    gap(session, "gap_1")
+    kst = datetime.fromisoformat("2026-10-15T14:00:00+09:00")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", kst)])
+    google.events[0]["summary"] = "홍길동 1:1"
+    slack.connect()
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    card = slack.card()
+    assert "다음 회의(10월 15일(목) 14:00) 캘린더 일정에" in card
+    assert "*다음 회의:* 10월 15일(목) 14:00" in card
+    assert "홍길동" not in card
+
+
+def test_the_next_scheduled_meetings_event_gives_its_start_too(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    gap(session, "gap_1")
+    next_meeting(session)
+    calendars[MEMBER] = FakeCalendar([event("evt_next", STARTS)])
+    slack.connect()
+
+    client.post(f"{PREFIX}/agenda/{MEETING}")
+
+    assert f"*다음 회의:* {team_notice.when(STARTS)}" in slack.card()
+
+
+def test_a_notice_without_a_start_from_google_leaves_the_time_out(
+    client: TestClient, session: Session, calendars: dict[str, Any], slack: TeamSlack
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_picked", STARTS)])
+    google.extra["evt_picked"] = {"start": {"dateTime": "not a time"}}
+    slack.connect()
+
+    response = client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_picked"})
+
+    assert response.json()["slack"] == "posted"
+    card = slack.card()
+    assert "다음 회의 캘린더 일정에" in card
+    assert "*다음 회의:*" not in card
+
+
+def test_when_reads_a_time_or_an_all_day_date() -> None:
+    assert team_notice.when(datetime.fromisoformat("2026-12-31T09:05:00+09:00")) == (
+        "12월 31일(목) 09:05"
+    )
+    assert team_notice.when(date(2026, 10, 12)) == "10월 12일(월)"
 
 
 def test_nothing_is_announced_when_the_calendar_refused(
@@ -929,3 +1077,66 @@ def test_the_notice_names_lines_new_on_the_next_meetings_event(
     assert response.json()["slack"] == "posted"
     assert len(channel.posted) == 1
     assert ("gap_old", MEMBER, "evt_meeting") in recorded(session)
+
+
+# --- the day the picked event starts (the Follow-up card's dates) ------------
+
+
+def days(session: Session) -> set[date | None]:
+    session.expire_all()
+    return {r.event_day for r in session.scalars(select(GapAgendaEvent))}
+
+
+def test_the_events_day_is_recorded_in_korea(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    next_meeting(session)
+    calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+
+    client.post(f"{PREFIX}/gaps/gap_1/carry")
+
+    assert days(session) == {calendar_writes.day_of(STARTS)}
+
+
+def test_pressing_again_on_a_moved_event_keeps_its_new_day(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+    google.events = [event("evt_meeting", STARTS + timedelta(days=3))]
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+
+    assert days(session) == {calendar_writes.day_of(STARTS + timedelta(days=3))}
+
+
+def test_pressing_again_without_a_readable_start_keeps_the_known_day(
+    client: TestClient, session: Session, calendars: dict[str, Any]
+) -> None:
+    gap(session, "gap_1")
+    google = calendars[MEMBER] = FakeCalendar([event("evt_meeting", STARTS)])
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+    google.events = [{**event("evt_meeting", STARTS), "start": {"dateTime": "not a time"}}]
+
+    client.post(f"{PREFIX}/agenda/{MEETING}", json={"event_id": "evt_meeting"})
+
+    assert days(session) == {calendar_writes.day_of(STARTS)}
+
+
+@pytest.mark.parametrize(
+    ("starts", "expected"),
+    [
+        (datetime(2026, 10, 8, 16, 0, tzinfo=UTC), date(2026, 10, 9)),
+        (datetime(2026, 10, 8, 14, 59, tzinfo=UTC), date(2026, 10, 8)),
+        (datetime(2026, 10, 8, 16, 0), date(2026, 10, 9)),
+        (date(2026, 10, 20), date(2026, 10, 20)),
+        (None, None),
+    ],
+    ids=["utc-evening-is-korea-next-day", "utc-afternoon", "naive-is-utc", "all-day", "none"],
+)
+def test_an_events_day_is_its_day_in_korea(
+    starts: datetime | date | None, expected: date | None
+) -> None:
+    assert calendar_writes.day_of(starts) == expected

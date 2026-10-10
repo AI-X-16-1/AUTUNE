@@ -371,3 +371,172 @@ def test_a_decision_put_back_with_its_page_still_there_is_queued_too(
 
     decisions = {ident for task, ident in queued if task == "sync_decision"}
     assert decisions == {"dec_line", "dec_writeup", "dec_pending"}
+
+
+# --- the short title of a line that is gone (reviews of #1141) ------------------
+
+
+def _give_titles(session: Session) -> None:
+    for item_id in ("act_line", "act_summary", "act_other"):
+        item = session.get(ExtActionItem, item_id)
+        assert item is not None
+        item.title = f"{item_id} 제목"
+    for dec_id in ("dec_line", "dec_writeup"):
+        decision = session.get(ExtDecision, dec_id)
+        assert decision is not None
+        decision.title = f"{dec_id} 제목"
+    session.commit()
+
+
+def test_deleting_speech_takes_the_title_of_its_line_with_it(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    """A title is the deleted line in twenty characters: it goes when the line
+    does. Through the deletion itself and not the model's validator alone, so a
+    deletion that one day writes the placeholder some other way still has to
+    clear it."""
+    _give_titles(session)
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    session.expire_all()
+    line = session.get(ExtActionItem, "act_line")
+    said = session.get(ExtDecision, "dec_line")
+    assert line is not None and said is not None
+    assert (line.description, line.title) == (PLACEHOLDER, None)
+    assert (said.statement, said.title) == (PLACEHOLDER, None)
+
+
+def test_deleting_speech_takes_every_title_of_that_meeting(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    """Module B's owner, 2026-10-10. A title is written in a request that
+    carried the meeting's other sentences, and one word of it may be another
+    row's -- a row this deletion removes or blanks. No title says which
+    request wrote it, so every title of the meeting goes: on a row whose
+    sentence stays (a summary is the team's record; its title was never
+    accepted by anybody), and on a row drawn from speech that was not deleted.
+    Until then the title of a row that stayed stayed with it (#1141)."""
+    _give_titles(session)
+    session.add(Meeting(id="mtg_2", team_id="team_1", title="다른 회의"))
+    session.add(
+        ExtActionItem(
+            id="act_elsewhere",
+            meeting_id="mtg_2",
+            description="다른 회의의 할 일",
+            title="다른 회의 제목",
+            status="todo",
+            confidence=0.9,
+            origin="model",
+        )
+    )
+    session.commit()
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    session.expire_all()
+    titles = {
+        row.id: row.title
+        for model in (ExtActionItem, ExtDecision)
+        for row in session.scalars(select(model).where(model.meeting_id == "mtg_1"))
+    }
+    assert titles["act_summary"] is None, "its sentence stays, its title does not"
+    assert titles["dec_writeup"] is None
+    assert titles["act_other"] is None, "drawn from a line nobody deleted, in the same meeting"
+    assert set(titles.values()) == {None}
+    summary, other = (
+        session.get(ExtActionItem, "act_summary"),
+        session.get(ExtActionItem, "act_other"),
+    )
+    assert summary is not None and other is not None
+    assert (summary.description, other.description) == ("act_summary 원문", "act_other 원문")
+    elsewhere = session.get(ExtActionItem, "act_elsewhere")
+    assert elsewhere is not None and elsewhere.title == "다른 회의 제목", "another meeting's"
+    # A title is not a change of text: no copy outside is queued for it.
+    assert ("sync_item_copies", "act_other") not in queued
+
+
+def test_no_title_is_asked_for_a_row_that_reads_the_placeholder(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    before = {target.id for target in service.title_targets(session, "mtg_1")}
+    assert {"act_line", "dec_line", "dec_pending"} <= before
+
+    tasks.forget_deleted_speech("user_1", GONE)
+
+    targets = service.title_targets(session, "mtg_1")
+    assert PLACEHOLDER not in {target.text for target in targets}
+    assert not {"act_line", "dec_line", "dec_pending"} & {target.id for target in targets}
+    assert {"act_summary", "act_other", "dec_writeup"} <= {target.id for target in targets}, (
+        "a row that still says a sentence of the pipeline's is still asked about"
+    )
+
+
+def test_a_title_answered_while_the_speech_was_deleted_is_not_stored(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    """The model answers with no session open. Its title is of the line that
+    was sent, and that line is gone."""
+    targets = [
+        target
+        for target in service.title_targets(session, "mtg_1")
+        if target.id in ("act_line", "dec_line")
+    ]
+    assert len(targets) == 2
+
+    tasks.forget_deleted_speech("user_1", GONE)
+    written = service.store_titles(session, targets, ["지워진 말의 제목"] * 2)
+
+    assert written == 0
+    session.expire_all()
+    line, said = session.get(ExtActionItem, "act_line"), session.get(ExtDecision, "dec_line")
+    assert line is not None and said is not None
+    assert (line.title, said.title) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "gone",
+    [
+        "act_draft",  # an unconfirmed draft: the deletion removes the row
+        "act_line",  # a confirmed line: the row stays and reads the placeholder
+    ],
+)
+def test_a_title_of_another_row_answered_while_the_speech_was_deleted_is_not_stored(
+    session: Session, queued: list[tuple[str, str]], gone: str
+) -> None:
+    """The request that titled ``act_other`` carried the deleted sentence
+    beside it, and one word of the answer may be that sentence's. ``act_other``
+    still says what it said, so nothing about its own row stops the title;
+    the row that is gone from the same request does."""
+    targets = [
+        target
+        for target in service.title_targets(session, "mtg_1")
+        if target.id in ("act_other", gone)
+    ]
+    assert {target.id for target in targets} == {"act_other", gone}
+
+    tasks.forget_deleted_speech("user_1", GONE)
+    written = service.store_titles(session, targets, ["지워진 말을 빌린 제목"] * 2)
+
+    assert written == 0
+    session.expire_all()
+    other = session.get(ExtActionItem, "act_other")
+    assert other is not None
+    assert (other.description, other.title) == ("act_other 원문", None)
+
+
+def test_a_title_is_stored_when_every_sentence_of_its_request_still_stands(
+    session: Session, queued: list[tuple[str, str]]
+) -> None:
+    """The deletion does not close the meeting to titles: a request made of
+    what is left afterwards is stored."""
+    tasks.forget_deleted_speech("user_1", GONE)
+    targets = service.title_targets(session, "mtg_1")
+    assert "act_other" in {target.id for target in targets}
+
+    written = service.store_titles(session, targets, ["남은 문장의 제목"] * len(targets))
+
+    assert written == len(targets)
+    session.expire_all()
+    other = session.get(ExtActionItem, "act_other")
+    assert other is not None and other.title == "남은 문장의 제목"

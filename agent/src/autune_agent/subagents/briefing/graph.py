@@ -122,7 +122,7 @@ def build(toolbox: Toolbox) -> CompiledSubagent:
         sections: list[tuple[str, Finding | None, ToolResult | None]] = [
             ("지난 회의", recap_section(recap, not_composed=not_composed), recap),
             ("Jira 안건", agenda_section(agenda), agenda),
-            ("액션 아이템", actions_section(actions), actions),
+            ("할 일", actions_section(actions), actions),
             ("닫히지 않은 갭", gaps_section(gaps), gaps),
         ]
         findings = [section for _, section, _ in sections if section is not None]

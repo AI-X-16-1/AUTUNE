@@ -6,7 +6,7 @@ shared exactly one page on Notion's consent screen it calls ``set_up`` with it
 straight away, so the whole connection is one click. ``set_up`` is also what
 moving to another page (or another workspace) runs:
 
-1. ``notion_setup.provision_databases`` makes "액션 아이템", "결정" and "회의록"
+1. ``notion_setup.provision_databases`` makes "할 일", "결정" and "회의록"
    under the page -- or keeps the ones already made under that same page.
 2. The ids go in B's own ``ext_notion_targets``.
 3. ``tasks.backfill_notion`` is queued: every confirmed action item and decision

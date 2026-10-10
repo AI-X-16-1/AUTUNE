@@ -1,8 +1,9 @@
 import { MaskedText, StatusDot } from "@/shared/ui";
 
 import { SYSTEM_LABEL } from "./SyncStatus";
-import { isOverdue } from "../dates";
+import { isOverdue, shownDue } from "../dates";
 import { staleLabel } from "../stale";
+import { rowTitle } from "../title";
 import { isCandidate } from "../types";
 import type { ActionItemRead, SourceUtterance } from "../types";
 
@@ -98,14 +99,22 @@ export function ActionCard({
           {item.meeting_title}
         </div>
       ) : null}
+      {/* Twenty characters at most (module B's owner, 2026-10-08): a card is a
+          line to recognise the item by -- the item's own short title when
+          it has one, else the sentence cut (`rowTitle`). The sentence itself is
+          unchanged -- it is in the detail window this card opens, and in the
+          `title` on hover. Two lines stay the limit for a narrow column. The
+          mark stays beside the lines so a cut never takes it. */}
       <div
-        className="text-[var(--color-ink-strong)]"
+        className="flex items-start gap-1.5 text-[var(--color-ink-strong)]"
         style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
       >
-        {item.description}
+        <span className="line-clamp-2 min-w-0" title={item.description}>
+          {rowTitle(item.title, item.description).shown}
+        </span>
         {item.description_resolved ? (
           <span
-            className="ml-1.5 text-[var(--color-ink-muted)]"
+            className="shrink-0 whitespace-nowrap text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)", fontWeight: 400 }}
             title="AI가 발화 속 지시어(그거, 저희 팀 등)를 풀어 다시 쓴 설명입니다. 원문과 다를 수 있어 확인이 필요합니다."
           >
@@ -131,7 +140,7 @@ export function ActionCard({
       ) : null}
 
       <div
-        className="mt-1 text-[var(--color-ink-muted)]"
+        className="mt-1 line-clamp-2 text-[var(--color-ink-muted)]"
         style={{ fontSize: "var(--text-metaSmall)" }}
       >
         {reasonFor(item)}
@@ -146,6 +155,18 @@ export function ActionCard({
             style={{ fontWeight: "var(--text-status-weight)" }}
           >
             {staleLabel(item)}
+          </span>
+        ) : null}
+        {item.closed_unfinished ? (
+          // Among the finished ones in 완료, and not one of them (#856): said
+          // in muted text, since nothing about it is late or wrong.
+          <span
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontWeight: "var(--text-status-weight)" }}
+            title="끝내지 않고 닫힘"
+            aria-label="끝내지 않고 닫힘"
+          >
+            닫힘
           </span>
         ) : null}
         {item.needs_reassignment ? (
@@ -165,11 +186,10 @@ export function ActionCard({
         {item.due_date ? (
           <span
             style={{
-              fontFamily: "var(--font-mono)",
               color: overdue ? "var(--color-signal-critical)" : "var(--color-ink-muted)",
             }}
           >
-            {item.due_date}
+            {shownDue(item.due_date)}
           </span>
         ) : null}
       </div>
@@ -220,9 +240,10 @@ export function ActionCard({
 /**
  * The line under the title: what to read to decide if the item is real.
  *
- * `summary` -- a preview of the sources beyond the title itself -- stands in
- * for the count when there is one; the full quotations stay drawer-only
- * either way, so this is never more than the one line was.
+ * `summary` -- what was said, cut to the part the item is about -- stands in
+ * for the count when there is one, so a model's sentence has the words it
+ * stands for beneath it. Two lines at most; the quotation itself is in the
+ * detail window.
  */
 function reasonFor(item: ActionItemRead): string {
   // Ahead of everything else: the text above may still carry what a PII

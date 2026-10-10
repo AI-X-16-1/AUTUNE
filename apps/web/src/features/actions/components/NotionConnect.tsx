@@ -22,7 +22,7 @@ import { getNotionSetup, setUpNotion, type NotionSetupState } from "../api";
  * A teamspace page is the safe parent: a private page goes with its owner, and
  * the databases with it (external-approvals.md).
  *
- * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
+ * Takes the meeting the 할 일 tab shows, or the team itself on S28 settings
  * (#496); the server checks membership either way.
  */
 export function NotionConnect({
@@ -41,16 +41,28 @@ export function NotionConnect({
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // `again`: the team already has its databases and asks for the setup once
+  // more. The server keeps them and asks Notion about each afresh -- what a
+  // team needs after it gave Autune a database back, since a refusal is
+  // remembered and no sync asks twice (`notion_setup.ensure_content`).
   const setUp = useCallback(
-    async (pageId?: string) => {
+    async (pageId?: string, again = false) => {
       setBusy(true);
-      setNote("Notion에 Autune 페이지와 DB를 만드는 중입니다…");
+      setNote(again ? "Notion의 DB를 다시 확인하는 중입니다…" : "Notion에 Autune 페이지와 DB를 만드는 중입니다…");
       try {
         await setUpNotion(scope, pageId);
-        setNote("Autune 페이지에 DB를 준비했습니다. 확정된 액션과 결정을 넣고 있습니다 — 많으면 몇 분 걸립니다.");
+        setNote(
+          again
+            ? "DB를 다시 확인했습니다. 확정된 할 일과 결정을 다시 넣고 있습니다 — 많으면 몇 분 걸립니다."
+            : "Autune 페이지에 DB를 준비했습니다. 확정된 할 일과 결정을 넣고 있습니다 — 많으면 몇 분 걸립니다.",
+        );
         setSetup(await getNotionSetup(scope));
       } catch {
-        setNote("DB를 만들지 못했습니다. 페이지를 Autune에 공유했는지 확인해 주세요.");
+        setNote(
+          again
+            ? "DB를 확인하지 못했습니다. 페이지를 Autune에 공유했는지 확인해 주세요."
+            : "DB를 만들지 못했습니다. 페이지를 Autune에 공유했는지 확인해 주세요.",
+        );
       } finally {
         setBusy(false);
       }
@@ -128,11 +140,25 @@ export function NotionConnect({
       {setup?.target ? (
         <>
           <a className="text-[var(--color-accent-default)]" style={meta} href={setup.target.action_db_url} target="_blank" rel="noopener noreferrer">
-            액션 DB
+            할 일 DB
           </a>
           <a className="text-[var(--color-accent-default)]" style={meta} href={setup.target.decision_db_url} target="_blank" rel="noopener noreferrer">
             결정 DB
           </a>
+          {/* The screen ran the setup only while it showed no databases, so a
+              team that shared a database with Autune again had nothing to
+              press (review of #1195). */}
+          <span className="text-[var(--color-ink-muted)]" style={meta}>
+            Notion에서 권한을 다시 공유했다면
+          </span>
+          <Button
+            tone="text"
+            size="compact"
+            disabled={busy}
+            onClick={() => void setUp(setup.target?.parent_page_id, true)}
+          >
+            DB 다시 확인
+          </Button>
         </>
       ) : null}
       {setup && !setup.target && setup.pages && setup.pages.length === 0 ? (

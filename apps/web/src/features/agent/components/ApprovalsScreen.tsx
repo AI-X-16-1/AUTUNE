@@ -16,6 +16,7 @@ const SUBAGENT_LABEL: Record<string, string> = {
   workload: "업무 분배",
   followup: "후속 회의",
   report: "리포트",
+  tracker: "할 일 챙김",
 };
 
 const REASONS: { value: RejectReason; label: string }[] = [

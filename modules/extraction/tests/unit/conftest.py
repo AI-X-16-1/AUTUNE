@@ -53,6 +53,20 @@ def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tasks, "_record_failure", lambda _id, _system, _kind: None)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real ``publish`` sends to the broker in any process where a consuming
+    task is registered -- D's and E's are, once the agent layer or ``apps`` is
+    imported -- and sends nothing when B's tests run alone. A test that leaves
+    it real passes or fails by what was imported before it (#940). A test that
+    runs a publishing task puts its own ``publish`` in."""
+
+    def unstubbed(event: str, _payload: dict[str, object]) -> list[str]:
+        pytest.fail(f"this test reached the real publish of {event}; stub tasks.publish")
+
+    monkeypatch.setattr(tasks, "publish", unstubbed)
+
+
 def sign_in(app: FastAPI, session: Session, *, team_id: str = "team_1") -> None:
     """Every route but /health takes ``CurrentUser`` (#189). Make ``READER`` the
     caller and put them on ``team_id``. ``team_members`` must be in the test's

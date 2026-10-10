@@ -49,3 +49,19 @@ def test_dm_has_no_action_buttons() -> None:
     _fallback, blocks = build_speaking_ratio_dm(ratio=0.42, participant_count=3)
 
     assert all(block.get("type") != "actions" for block in blocks)
+
+
+def test_dm_names_the_meeting_once_opened_but_not_in_the_preview() -> None:
+    """#945: another DM may arrive beside this one, so it says which meeting."""
+    fallback, blocks = build_speaking_ratio_dm(
+        ratio=0.42, participant_count=3, meeting_label="결제 회의 · 10/7"
+    )
+
+    assert "결제 회의 · 10/7" in _text(blocks)
+    assert "결제" not in fallback
+
+
+def test_dm_without_a_label_has_no_empty_line() -> None:
+    _fallback, blocks = build_speaking_ratio_dm(ratio=0.42, participant_count=3)
+
+    assert all(_text([b]).strip() for b in blocks)

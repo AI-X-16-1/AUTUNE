@@ -472,6 +472,53 @@ def test_an_unticked_box_still_removes(session: Session, calendar: FakeCalendar,
     assert calendar.deleted == [("primary", "evt_1")]
 
 
+class Gone404(FakeCalendar):
+    """Google answering 404 for an event it no longer has, rather than keeping
+    it as ``cancelled``."""
+
+    def request(self, method: str, path: str, *, json: dict[str, Any]) -> dict[str, Any]:  # noqa: A002
+        if method == "PATCH" and path.rsplit("/", 1)[1] in self.gone:
+            raise PermanentIntegrationError("no such event", upstream_status=404)
+        return super().request(method, path, json=json)
+
+
+@pytest.mark.parametrize("answers", ["cancelled", "404"])
+def test_a_save_that_does_not_say_never_makes_an_event_deleted_by_hand_again(
+    session: Session, answers: str
+) -> None:
+    """The person deleted the event in Calendar. Making it again takes a tick
+    (the module's rule); a save that says nothing finds it gone, drops the id
+    and answers ``off`` -- it does not POST (lsh2217's and pr's note on #922)."""
+    calendar = FakeCalendar() if answers == "cancelled" else Gone404()
+
+    def theirs(_user: str) -> Any:
+        return (calendar, "primary")
+
+    assert save(session, theirs) == "added"
+    calendar.gone.add("evt_1")
+
+    assert save(session, theirs, LATER_FIRST, LATER_LAST, on_calendar=None) == "off"
+
+    assert len(calendar.posted) == 1, "nothing was made"
+    row = pause(session)
+    assert row is not None
+    assert (row.starts_on, row.calendar_event_id, row.calendar_claimed_at) == (
+        LATER_FIRST,
+        None,
+        None,
+    )
+
+    # And the next save that does not say has nothing to ask the calendar about.
+    assert save(session, theirs, LATER_FIRST, LATER_LAST, on_calendar=None) == "off"
+    assert len(calendar.posted) == 1 and calendar.patched == []
+
+    # A tick is what makes one.
+    assert save(session, theirs, LATER_FIRST, LATER_LAST) == "added"
+    assert len(calendar.posted) == 2
+    made = pause(session)
+    assert made is not None and made.calendar_event_id == "evt_2"
+
+
 # --- Google is asked with nothing open, one save at a time -------------------------
 
 
@@ -930,3 +977,25 @@ def test_a_save_while_an_earlier_one_is_out_answers_409_and_changes_nothing(
     read = api.get(f"{PREFIX}/me/notification-pause").json()
     assert (read["starts_on"], read["ends_on"]) == (FIRST.isoformat(), LAST.isoformat())
     assert calendar.patched == [] and len(calendar.posted) == 1
+
+
+def test_a_save_without_the_field_does_not_remake_an_event_deleted_in_calendar(
+    api: TestClient, session: Session, calendar: FakeCalendar
+) -> None:
+    """Through the route, connected: the field is left out (a stale tab, a
+    caller that is not our screen) and the event was deleted by hand. The
+    dates are saved, nothing is made, and the read stops saying an event
+    stands."""
+    put(api, starts_on=FIRST.isoformat(), ends_on=LAST.isoformat(), on_calendar=True)
+    calendar.gone.add("evt_1")
+
+    answer = put(api, starts_on=LATER_FIRST.isoformat(), ends_on=LATER_LAST.isoformat())
+
+    assert (answer["starts_on"], answer["on_calendar"], answer["calendar"]) == (
+        LATER_FIRST.isoformat(),
+        False,
+        "off",
+    )
+    assert len(calendar.posted) == 1
+    row = session.get(ExtNotificationPause, READER)
+    assert row is not None and row.calendar_event_id is None

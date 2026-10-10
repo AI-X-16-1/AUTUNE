@@ -4,31 +4,34 @@ A team connects Notion by sharing one page with the integration. Under it this
 module makes a page of Autune's own, titled "Autune", and everything Autune
 writes lives in databases inside that page -- so the team finds it all in one
 place and the page they shared keeps only that one child (decided with the
-user, 2026-10-01). Three databases: "액션 아이템", "결정" and "회의록", each
+user, 2026-10-01). Three databases: "할 일", "결정" and "회의록", each
 with exactly the property names
 the sync uses -- ``service.NOTION_PROPERTIES``,
 ``service.DECISION_NOTION_PROPERTIES`` and ``MINUTES_NOTION_PROPERTIES`` below
 -- so the schema created here and the pages written later cannot drift apart.
 
 **Why this is not in the dev route any more.** It started inside
-``dev/routes.py`` (#402), the local-only page that connects Notion by hand until
-S28 exists. S28's one-click connect (#428) needs the same step after its OAuth
-callback, and ``packages/core`` cannot import a module (invariant 2), so the
-consumer of the connect event #428 proposes will call ``provision_databases``
-from here. The dev route is now one caller of it, not its owner.
+``dev/routes.py`` (#402), the local-only page that connects Notion by hand.
+S28's one-click connect (#428) needs the same step after its OAuth callback, and
+``packages/core``, which holds that callback, cannot import a module
+(invariant 2). No event carries the connection across: the callback sends the
+browser back to the screen with ``?notion=connected``, the screen calls this
+module's own routes, and ``notion_connect.set_up`` calls ``provision_databases``
+from here. The dev route is one more caller of it, not its owner.
 
 **Why httpx and not ``packages/integrations``.** ``NotionClient`` has
 ``create_page`` and ``update_page`` -- what the sync needs. Creating a database
 is a one-time setup call only B makes, and putting it in the shared package
-would need team approval for code one module uses. What leaves here is three
-fixed database titles and property names; no meeting content, so the outbound
-check ``packages/integrations`` applies has nothing to catch.
+would need team approval for code one module uses. What leaves here is the
+"Autune" page's title and three fixed database titles and property names; no
+meeting content, so the outbound check ``packages/integrations`` applies has
+nothing to catch.
 
-**The 회의록 database has no writer yet.** ``ui-spec.md`` lists it for S28 ("a
-page on confirmation") but not what the page holds; #428 item 7 proposes only
-what the action and decision databases already receive, never a transcript.
-Creating it now means a team connected today does not have to reconnect when
-that writer lands.
+**The 회의록 database is written by ``project_send``.** It was made here before
+anything wrote to it, so that a team connected then would not have to reconnect
+when a writer landed. The writer is a project's minutes: one page for each
+project a person sends from the 요약 tab, holding that project's confirmed
+decisions and items -- never a transcript.
 """
 
 from __future__ import annotations
@@ -68,14 +71,14 @@ _ACTION_STATUS_OPTIONS = list(NOTION_STATUS_LABELS.values())
 
 HOME_TITLE = "Autune"
 HOME_INTRO = (
-    "Autune이 회의에서 확정한 액션 아이템과 결정을 이 페이지 아래 데이터베이스에 "
+    "Autune이 회의에서 확정한 할 일과 결정을 이 페이지 아래 데이터베이스에 "
     "정리합니다. 데이터베이스와 속성 이름을 바꾸면 동기화가 멈추니 그대로 두세요."
 )
 """The page every database goes in, and the one line on it. Fixed text: no
 meeting content leaves here."""
 
 DATABASES: tuple[tuple[str, str, Mapping[str, str], bool], ...] = (
-    ("action_db_id", "액션 아이템", NOTION_PROPERTIES, True),
+    ("action_db_id", "할 일", NOTION_PROPERTIES, True),
     ("decision_db_id", "결정", DECISION_NOTION_PROPERTIES, False),
     ("minutes_db_id", "회의록", MINUTES_NOTION_PROPERTIES, False),
 )

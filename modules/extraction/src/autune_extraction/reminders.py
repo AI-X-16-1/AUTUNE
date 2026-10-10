@@ -62,14 +62,27 @@ SEND_UNTIL = time(20, 0)
 """Korea time. Reminders go out from nine in the morning until eight at night."""
 
 _OPENING = {
-    DUE_SOON: "내일까지인 액션 아이템이 있습니다.",
-    OVERDUE: "기한이 지난 액션 아이템이 있습니다.",
+    DUE_SOON: "내일까지인 할 일이 있습니다.",
+    OVERDUE: "기한이 지난 할 일이 있습니다.",
 }
 
 
 def korean_day(now: datetime) -> date:
     """The date in Korea at ``now``."""
     return now.astimezone(KST).date()
+
+
+_WEEKDAYS = "월화수목금토일"
+
+
+def written_day(day: date, *, year: int) -> str:
+    """``10월 13일 화``: a due date as B's screens write one, where every
+    message here said ``2026-10-13`` (the user, 2026-10-09). The weekday has no
+    bracket of its own, so a date inside one -- "(기한 10월 13일 화)" -- is one
+    bracket. The year is written only when it is not ``year``, the one the
+    message is read in."""
+    written = f"{day.month}월 {day.day}일 {_WEEKDAYS[day.weekday()]}"
+    return written if day.year == year else f"{day.year}년 {written}"
 
 
 def sending_hours(now: datetime) -> bool:
@@ -99,15 +112,23 @@ def slack_escape(text: str) -> str:
 
 
 def build_due_reminder(
-    kind: str, *, description: str, due_date: date, meeting_title: str | None, board_url: str
+    kind: str,
+    *,
+    description: str,
+    due_date: date,
+    meeting_title: str | None,
+    board_url: str,
+    today: date,
 ) -> str:
-    """The message, as plain text: what it is, when it was due, where to act."""
+    """The message, as plain text: what it is, when it was due, where to act.
+    ``today`` is the day it is sent on: the date says its year only when it is
+    another one."""
     where = f" · 회의: {slack_escape(meeting_title)}" if meeting_title else ""
     return "\n".join(
         [
             _OPENING[kind],
             f"• {slack_escape(description)}",
-            f"기한: {due_date.isoformat()}{where}",
+            f"기한: {written_day(due_date, year=today.year)}{where}",
             board_url,
         ]
     )
@@ -173,16 +194,16 @@ def build_weekly_digest(lines: Sequence[DigestLine], *, today: date, board_url: 
         return (0 if line.due_date < today else 1, line.due_date)
 
     ordered = sorted(lines, key=order)
-    out = [f"이번 주 열린 액션 아이템 {len(ordered)}개입니다."]
+    out = [f"이번 주 열린 할 일 {len(ordered)}개입니다."]
     for line in ordered[:DIGEST_MAX_LINES]:
         when = ""
         if line.due_date is not None:
             if line.due_date < today:
-                when = f" · 기한 지남({line.due_date.isoformat()})"
+                when = f" · 기한 지남({written_day(line.due_date, year=today.year)})"
             elif line.due_date <= week_end:
-                when = f" · 이번 주 {line.due_date.isoformat()}"
+                when = f" · 이번 주 {written_day(line.due_date, year=today.year)}"
             else:
-                when = f" · 기한 {line.due_date.isoformat()}"
+                when = f" · 기한 {written_day(line.due_date, year=today.year)}"
         where = f" · {slack_escape(line.meeting_title)}" if line.meeting_title else ""
         out.append(f"• {slack_escape(line.description)}{when}{where}")
     if len(ordered) > DIGEST_MAX_LINES:
@@ -236,7 +257,9 @@ def previous_morning(day: date) -> datetime:
 class DailyDigest:
     """What one person's morning DM says, already chosen and ordered.
 
-    ``done`` and ``taken_on`` are what changed since their last morning DM;
+    ``done``, ``closed`` and ``taken_on`` are what changed since their last
+    morning DM -- ``closed`` is what was closed without being finished, which
+    is never in ``done``;
     ``late``, ``due_today``, ``stalled`` and ``in_progress`` are today's work,
     each item in the first of the four it fits; ``others`` counts their
     remaining open items, which the board lists. ``stalled`` is what is in
@@ -244,6 +267,7 @@ class DailyDigest:
     more, longest first, each line carrying its ``idle_days``."""
 
     done: Sequence[DigestLine] = ()
+    closed: Sequence[DigestLine] = ()
     taken_on: Sequence[DigestLine] = ()
     late: Sequence[DigestLine] = ()
     due_today: Sequence[DigestLine] = ()
@@ -256,6 +280,7 @@ class DailyDigest:
         """Nothing changed and nothing is open: there is no message to send."""
         return not (
             self.done
+            or self.closed
             or self.taken_on
             or self.late
             or self.due_today
@@ -265,10 +290,16 @@ class DailyDigest:
         )
 
 
-def _daily_lines(label: str, lines: Sequence[DigestLine], *, dated: bool) -> list[str]:
+def _daily_lines(label: str, lines: Sequence[DigestLine], *, dated: int | None = None) -> list[str]:
+    """``dated`` is the year the DM is read in, on the one group whose lines
+    say their date; ``None`` on the others."""
     out: list[str] = []
     for line in lines[:DAILY_MAX_LINES]:
-        when = f"({line.due_date.isoformat()})" if dated and line.due_date is not None else ""
+        when = (
+            f"({written_day(line.due_date, year=dated)})"
+            if dated is not None and line.due_date is not None
+            else ""
+        )
         where = f" · {slack_escape(line.meeting_title)}" if line.meeting_title else ""
         out.append(f"• {label}{when}: {slack_escape(line.description)}{where}")
     if len(lines) > DAILY_MAX_LINES:
@@ -287,21 +318,23 @@ def _stalled_lines(lines: Sequence[DigestLine]) -> list[str]:
     return out
 
 
-def build_daily_digest(digest: DailyDigest, *, board_url: str) -> str:
+def build_daily_digest(digest: DailyDigest, *, board_url: str, today: date) -> str:
     """The morning DM as plain text: what changed since the last one, then
     today's work -- late first -- then how many other items are open, and
-    where to see all of them."""
+    where to see all of them. ``today`` is the morning it is sent on: a late
+    item's date says its year only when it is another one."""
     out = ["좋은 아침입니다. 지난 진행 상황과 오늘 할 일입니다.", "지난 진행 상황"]
-    changed = _daily_lines("완료", digest.done, dated=False)
-    changed += _daily_lines("새로 맡음", digest.taken_on, dated=False)
+    changed = _daily_lines("완료", digest.done)
+    changed += _daily_lines("끝내지 않고 닫힘", digest.closed)
+    changed += _daily_lines("새로 맡음", digest.taken_on)
     out += changed or ["• 바뀐 것이 없습니다."]
     out.append("오늘 할 일")
-    today = _daily_lines("기한 지남", digest.late, dated=True)
-    today += _daily_lines("오늘 기한", digest.due_today, dated=False)
-    today += _stalled_lines(digest.stalled)
-    today += _daily_lines("진행 중", digest.in_progress, dated=False)
-    out += today or ["• 오늘 기한이거나 진행 중인 항목이 없습니다."]
+    todo = _daily_lines("기한 지남", digest.late, dated=today.year)
+    todo += _daily_lines("오늘 기한", digest.due_today)
+    todo += _stalled_lines(digest.stalled)
+    todo += _daily_lines("진행 중", digest.in_progress)
+    out += todo or ["• 오늘 기한이거나 진행 중인 항목이 없습니다."]
     if digest.others:
-        out.append(f"그 밖의 열린 액션 아이템 {digest.others}개")
+        out.append(f"그 밖의 열린 할 일 {digest.others}개")
     out.append(board_url)
     return "\n".join(out)

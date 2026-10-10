@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -504,8 +504,8 @@ def test_the_detail_quotes_its_sources_in_the_order_they_were_spoken(
     body = client.get(f"{PREFIX}/action-items/act_1").json()
 
     assert body["sources"] == [
-        {"id": "utt_early", "text": "배포 스크립트 누가 정리하죠?"},
-        {"id": "utt_late", "text": "제가 금요일까지 할게요"},
+        {"id": "utt_early", "text": "배포 스크립트 누가 정리하죠?", "excerpt": None},
+        {"id": "utt_late", "text": "제가 금요일까지 할게요", "excerpt": None},
     ]
     assert body["source_utterance_ids"] == ["utt_late", "utt_early"], "insertion order"
 
@@ -1030,6 +1030,145 @@ def test_history_carries_no_person(client: TestClient, session: Session) -> None
     (entry,) = client.get(f"{PREFIX}/action-items/act_1").json()["history"]
 
     assert set(entry) == {"kind", "fields", "at"}
+
+
+@pytest.mark.usefixtures("no_sync")
+def test_a_close_without_finishing_reaches_the_card_the_drawer_and_the_history(
+    client: TestClient, session: Session
+) -> None:
+    """The card says 닫힘 and the drawer's history says the item was closed --
+    naming no field, and no person (#856). A finished item says neither."""
+    action_item(session, "act_1", status="todo")
+    action_item(session, "act_2", status="todo")
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert service.close_without_finishing(session, row) is True
+    session.flush()
+    client.patch(f"{PREFIX}/action-items/act_2", json={"status": "done"})
+
+    listed = {i["id"]: i["closed_unfinished"] for i in client.get(f"{PREFIX}/action-items").json()}
+    closed = client.get(f"{PREFIX}/action-items/act_1").json()
+    finished = client.get(f"{PREFIX}/action-items/act_2").json()
+
+    assert listed == {"act_1": True, "act_2": False}
+    assert (closed["status"], closed["closed_unfinished"]) == ("done", True)
+    assert (finished["status"], finished["closed_unfinished"]) == ("done", False)
+    (entry,) = closed["history"]
+    assert entry["kind"] == "closed" and entry["fields"] == []
+    assert set(entry) == {"kind", "fields", "at"}
+
+
+# --- POST /action-items/{id}/close ------------------------------------------
+
+
+@pytest.fixture
+def synced(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The items whose copies outside were asked to follow, in place of the task."""
+    seen: list[str] = []
+    monkeypatch.setattr(tasks, "sync_after_confirmation", seen.append)
+    return seen
+
+
+@pytest.mark.parametrize("status", ["todo", "in_progress"])
+def test_closing_an_open_item_marks_it_closed_and_not_finished(
+    client: TestClient, session: Session, synced: list[str], status: str
+) -> None:
+    """What the board's control does: the item leaves the open work, the card
+    says 닫힘, the history holds a close and no edit, and its copies follow."""
+    action_item(session, "act_1", status=status)
+
+    response = client.post(f"{PREFIX}/action-items/act_1/close")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert (body["id"], body["status"], body["closed_unfinished"]) == ("act_1", "done", True)
+    again = client.get(f"{PREFIX}/action-items/act_1").json()
+    assert (again["status"], again["closed_unfinished"]) == ("done", True)
+    assert [(e["kind"], e["fields"]) for e in again["history"]] == [("closed", [])]
+    assert synced == ["act_1"]
+
+
+@pytest.mark.parametrize(
+    ("status", "closed_before", "message"),
+    [
+        ("needs_confirmation", False, "an item waiting for confirmation cannot be closed"),
+        ("done", False, "this item is already done"),
+        ("todo", True, "this item is already closed"),
+    ],
+)
+def test_a_close_is_refused_for_an_item_that_is_not_open(
+    client: TestClient,
+    session: Session,
+    synced: list[str],
+    status: str,
+    closed_before: bool,
+    message: str,
+) -> None:
+    """The agent tool's three refusals, with nothing written and nothing sent."""
+    row = action_item(session, "act_1", status=status)
+    if closed_before:
+        assert service.close_without_finishing(session, row) is True
+        session.flush()
+    events_before = session.scalar(select(func.count()).select_from(ExtEditEvent))
+    status_before = row.status
+
+    response = client.post(f"{PREFIX}/action-items/act_1/close")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["message"] == message
+    session.expire_all()
+    after = session.get(ExtActionItem, "act_1")
+    assert after is not None and after.status == status_before
+    assert session.scalar(select(func.count()).select_from(ExtEditEvent)) == events_before
+    assert synced == []
+
+
+def test_a_close_clears_the_recheck_flag_like_any_change_a_person_makes(
+    client: TestClient, session: Session, synced: list[str]
+) -> None:
+    row = action_item(session, "act_1", status="todo")
+    row.needs_recheck = True
+    session.flush()
+
+    assert client.post(f"{PREFIX}/action-items/act_1/close").status_code == 200
+
+    session.expire_all()
+    after = session.get(ExtActionItem, "act_1")
+    assert after is not None and after.needs_recheck is False
+
+
+def test_closing_somebody_elses_item_is_the_404_an_unknown_one_gets(
+    client: TestClient, session: Session, synced: list[str]
+) -> None:
+    """A person off the meeting's team learns nothing from the answer, and the
+    item stays open."""
+    session.add(Meeting(id="mtg_theirs", team_id="team_other", title="남의 회의"))
+    session.flush()
+    action_item(session, "act_theirs", meeting_id="mtg_theirs", status="todo")
+
+    theirs = client.post(f"{PREFIX}/action-items/act_theirs/close")
+    unknown = client.post(f"{PREFIX}/action-items/act_nowhere/close")
+
+    assert (theirs.status_code, unknown.status_code) == (404, 404)
+    assert theirs.json()["error"]["code"] == unknown.json()["error"]["code"]
+    session.expire_all()
+    after = session.get(ExtActionItem, "act_theirs")
+    assert after is not None and after.status == "todo"
+    assert synced == []
+
+
+def test_a_closed_item_moved_back_is_open_again_and_then_finished_is_finished(
+    client: TestClient, session: Session, synced: list[str]
+) -> None:
+    """The control needs no undo of its own: the status select re-opens it."""
+    action_item(session, "act_1", status="todo")
+    client.post(f"{PREFIX}/action-items/act_1/close")
+
+    reopened = client.patch(f"{PREFIX}/action-items/act_1", json={"status": "todo"}).json()
+    finished = client.patch(f"{PREFIX}/action-items/act_1", json={"status": "done"}).json()
+
+    assert (reopened["status"], reopened["closed_unfinished"]) == ("todo", False)
+    assert (finished["status"], finished["closed_unfinished"]) == ("done", False)
 
 
 # --- a meeting past its retention window (#656) -----------------------------------

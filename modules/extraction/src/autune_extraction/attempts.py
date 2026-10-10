@@ -1,7 +1,7 @@
 """What became of a meeting's extraction since it last went through.
 
 An extraction that raised used to leave nothing behind: no row, no retry, and
-a meeting whose 액션 tab stayed empty with nothing to say why (dev,
+a meeting whose 할 일 tab stayed empty with nothing to say why (dev,
 2026-10-05). ``ext_extraction_attempts`` keeps the count of failures in a row,
 so that the sweep can try again, the team can be told once the tries are spent,
 and the meeting's own screen can show it -- and a person's request to run the
@@ -15,11 +15,12 @@ exception raised over a meeting's rows can carry what was said in it
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
@@ -88,6 +89,27 @@ NOT_PUBLISHED = ResultNotPublishedError.__name__
 NOT_EXTRACTED = "NotExtracted"
 """``reason`` for a meeting the sweep adopted: no run of it is on record at all."""
 
+PARTLY_UNREAD = "PartlyUnread"
+"""``reason`` for a meeting whose run stored its rows and could not read part
+of the transcript: the model's answer for some window said nothing
+(``llm.unreadable``) while others were read (the user, 2026-10-08: keep what
+was read, say a part was not, try again).
+
+Not an extraction that failed -- the rows are on the board -- and not one that
+went through: what was said in the unread part is unknown. So it is counted
+like a failure, which is what makes the sweep run the meeting again and the
+할 일 tab say so, and the tab's sentence is its own. Each further run that
+still leaves a part unread counts one more, and so does one that fails
+outright -- the reason stays this one until a run reads everything, because the
+board still holds the partial read. After ``MAX_ATTEMPTS`` the sweep stops and
+the tab keeps saying it. The team's channel is not told (``owed_notices``): its
+message says a meeting could not be extracted, and this one was.
+
+Every run asks about the whole meeting again: which windows were unread is
+not kept, and a window is read with the lines before it. So a rerun follows
+the rules of any rerun -- a meeting a person corrected keeps its items, a
+confirmed row stays -- and what is stored is always the latest run's."""
+
 
 def adopt_unextracted(session: Session, *, now: datetime | None = None) -> list[str]:
     """Count one failure for each meeting that has a transcript and no
@@ -133,8 +155,18 @@ def note_failure(
 
     One statement, so the event's task and the sweep failing at once count
     two and not one."""
-    when = now or datetime.now(tz=UTC)
-    reason = type(exc).__name__[:80]
+    return _count(session, meeting_id, type(exc).__name__[:80], now or datetime.now(tz=UTC))
+
+
+def note_partly_unread(session: Session, meeting_id: str, *, now: datetime | None = None) -> int:
+    """One more run of this meeting that stored its rows with part of the
+    transcript unread (``PARTLY_UNREAD``); returns how many failures there are
+    now. In the run's own transaction, in the place of ``note_success``: the
+    count and the rows it is about are committed together."""
+    return _count(session, meeting_id, PARTLY_UNREAD, now or datetime.now(tz=UTC))
+
+
+def _count(session: Session, meeting_id: str, reason: str, when: datetime) -> int:
     statement = _insert(session).values(
         meeting_id=meeting_id, failures=1, reason=reason, failed_at=when
     )
@@ -144,7 +176,15 @@ def note_failure(
                 index_elements=["meeting_id"],
                 set_={
                     "failures": ExtExtractionAttempt.failures + 1,
-                    "reason": reason,
+                    # The board of a meeting counted as partly unread holds a
+                    # partial read until a run goes through, whatever the run
+                    # after it failed at: the reason stays, so the tab keeps
+                    # saying that and not "could not extract" over rows.
+                    # (``note_success`` clears it.)
+                    "reason": case(
+                        (ExtExtractionAttempt.reason == PARTLY_UNREAD, PARTLY_UNREAD),
+                        else_=reason,
+                    ),
                     "failed_at": when,
                 },
             ).returning(ExtExtractionAttempt.failures)
@@ -235,13 +275,16 @@ def unpublished(session: Session, meeting_ids: Collection[str]) -> set[str]:
 
 
 def owed_notices(session: Session, *, now: datetime | None = None) -> list[str]:
-    """Meetings out of tries whose team has not been told yet."""
+    """Meetings out of tries whose team has not been told yet. Not one whose
+    rows are stored with a part unread (``PARTLY_UNREAD``): the message is
+    about a meeting with nothing on its board."""
     when = now or datetime.now(tz=UTC)
     return list(
         session.scalars(
             select(ExtExtractionAttempt.meeting_id)
             .where(
                 ExtExtractionAttempt.failures >= MAX_ATTEMPTS,
+                ExtExtractionAttempt.reason.is_distinct_from(PARTLY_UNREAD),
                 ExtExtractionAttempt.told_at.is_(None),
                 ExtExtractionAttempt.failed_at > when - NOTICE_WINDOW,
             )
@@ -308,6 +351,12 @@ def release_notice(session: Session, meeting_id: str) -> None:
     )
 
 
+NOTHING_READ = hashlib.sha256(b"").hexdigest()
+"""``ExtExtractionRun.consent_key`` of a run that was allowed to read no line:
+``service.consent_key`` of no ids. Written out here because ``service`` imports
+this module; a test holds the two together."""
+
+
 def transcribed(session: Session, meeting_id: str) -> bool:
     """Whether module A has stored any line of this meeting yet."""
     return (
@@ -316,18 +365,39 @@ def transcribed(session: Session, meeting_id: str) -> bool:
     )
 
 
-def state(session: Session, meeting_id: str) -> ExtractionState:
-    """What the meeting's 액션 screen says about its extraction."""
+def state(session: Session, meeting_id: str, *, now: datetime | None = None) -> ExtractionState:
+    """What the meeting's 할 일 screen says about its extraction.
+
+    A transcript with neither a run nor a failure on record is a first run
+    that has not finished: ``in_progress`` for as long as ``adopt_unextracted``
+    leaves such a meeting alone, ``overdue`` after that -- the same clock, the
+    newest line module A stored, so the screen stops saying "in progress" when
+    the sweep stops believing it."""
+    when = now or datetime.now(tz=UTC)
     row = session.get(ExtExtractionAttempt, meeting_id)
     failures = row.failures if row is not None else 0
+    run = session.execute(
+        select(ExtExtractionRun.extracted_at, ExtExtractionRun.consent_key).where(
+            ExtExtractionRun.meeting_id == meeting_id
+        )
+    ).first()
+    stored = session.scalar(
+        select(func.max(Utterance.created_at)).where(Utterance.meeting_id == meeting_id)
+    )
+    if stored is not None and stored.tzinfo is None:
+        stored = stored.replace(tzinfo=UTC)
+    unrun = stored is not None and run is None and not failures
+    fresh = stored is not None and stored > when - ADOPT_AFTER
     return ExtractionState(
-        extracted_at=session.scalar(
-            select(ExtExtractionRun.extracted_at).where(ExtExtractionRun.meeting_id == meeting_id)
-        ),
+        extracted_at=run.extracted_at if run is not None else None,
+        in_progress=unrun and fresh,
+        overdue=unrun and not fresh,
+        read_nothing=stored is not None and run is not None and run.consent_key == NOTHING_READ,
         failures=failures,
         failed_at=row.failed_at if row is not None and failures else None,
         will_retry=0 < failures < MAX_ATTEMPTS,
         not_published=bool(failures) and row is not None and row.reason == NOT_PUBLISHED,
+        partly_unread=bool(failures) and row is not None and row.reason == PARTLY_UNREAD,
         requested=row.requested if row is not None else False,
         requested_at=row.requested_at if row is not None else None,
     )

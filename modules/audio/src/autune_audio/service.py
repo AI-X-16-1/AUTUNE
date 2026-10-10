@@ -18,17 +18,29 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from autune_audio.live import registry as live_registry
+from autune_audio.live import tickets as live_tickets
 from autune_contracts.transcript import Utterance as ContractUtterance
 from autune_core import Meeting, Participant, Team, TeamMember, User, get_logger, session_scope
 from autune_core.auth import user_for_token
 from autune_core.deletion import on_user_deleted
 from autune_core.entities import team_order
-from autune_core.errors import ConflictError, NotFoundError, PermissionDeniedError
+from autune_core.errors import (
+    ConflictError,
+    NotFoundError,
+    PermissionDeniedError,
+    ValidationError,
+)
 
-from . import identification, storage
+from . import identification, meeting_title, storage
 from .config import AudioSettings, get_settings
 from .job_guard import JobStopped
-from .models import AudConsentAttestation, AudSpeakerEmbedding, AudSpeakerName, TranscriptionJob
+from .models import (
+    AudConsentAttestation,
+    AudSpeakerEmbedding,
+    AudSpeakerName,
+    AudTeamInvitation,
+    TranscriptionJob,
+)
 from .persistence import transcript_payload
 from .schemas import SpeakerCandidate, SpeakerEntry, TeamMemberSummary
 from .speakers import UNIDENTIFIED
@@ -272,6 +284,69 @@ def pin_team(session: Session, *, team_id: str, member: User, now: datetime | No
     log.info("team_pinned", team_id=team_id, user_id=member.id)
 
 
+class LastTeamMemberError(ConflictError):
+    """The only member of a team asked to leave it. Its own code, so the
+    screen can say why instead of "try again"."""
+
+    code = "last_team_member"
+
+
+def leave_team(session: Session, *, team_id: str, member: User) -> None:
+    """Take ``member`` off ``team_id``, by their own act (#552).
+
+    Only a person's own membership: there is no argument for anybody else's,
+    so nobody is removed from a team by somebody else here. The row is what
+    every module checks before it lets a person read the team's data, so that
+    stops with this commit; their pin goes with the row.
+
+    **What they said and what they hold stays, and stays theirs to delete**
+    (decided with the user, 2026-10-06; privacy.md section 4). Their
+    utterances, the items assigned to them and the decisions they took part
+    in are the team's record, as ADR 0007 argues. **Their participant rows
+    keep their ``user_id``**, which is not what that ADR's mechanism says: it
+    clears the link on departure. The link is how
+    ``account.delete_my_speech`` finds a person's lines, so clearing it here
+    would end, at the moment they leave, their way to take their own words
+    out. The ADR is Proposed and its legal review (#92) has not happened; if
+    it comes back wanting the link cleared, this is the place, and deletion
+    has to be offered before the link goes.
+
+    **The invitations they sent to this team go with them** (the module
+    owner, on #552): a link made by somebody who is no longer on the team
+    must not bring anybody onto it. Only the pending ones they made, for this
+    team; another member's invitation, and theirs to another team, stay.
+
+    **The last member cannot leave.** A team with nobody on it has meetings
+    nobody can read or delete and nothing that would ever remove them.
+    Deleting a team is a decision of its own and is not made by this button.
+    Every membership of the team is locked first, so the last two members
+    leaving at once are counted one after the other and cannot both go.
+    """
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.team_id == team_id).with_for_update()
+        )
+    )
+    own = next((row for row in rows if row.user_id == member.id), None)
+    if own is None:
+        # Gone while this request waited for the lock: the same person's
+        # other request left first. Refused as for anybody not on the team.
+        raise NotATeamMemberError("you are not a member of this team")
+    if len(rows) <= 1:
+        raise LastTeamMemberError("the last member of a team cannot leave it")
+    session.delete(own)
+    result = session.execute(
+        sa.delete(AudTeamInvitation).where(
+            AudTeamInvitation.team_id == team_id, AudTeamInvitation.invited_by == member.id
+        )
+    )
+    withdrawn = int(getattr(result, "rowcount", 0))
+    session.flush()
+    # Ids and a count: an invitation's address is never logged.
+    log.info("team_left", team_id=team_id, user_id=member.id, invitations_withdrawn=withdrawn)
+
+
 def unpin_team(session: Session, *, team_id: str, member: User) -> None:
     """Take the pin off. The team goes back to where the order of joining puts
     it. Unpinning a team that is not pinned is not an error."""
@@ -384,6 +459,10 @@ def create_meeting(
     team = session.get(Team, team_id)
     if team is None:  # membership just passed, so the team exists; this is a torn read
         raise NotFoundError("team", team_id)
+    # A title is typed by a member: screened before it is stored (#1130,
+    # #1161). After the membership check, so a stranger learns nothing of the
+    # team from a refusal.
+    meeting_title.refuse_personal_data(title, team_id=team_id, user_id=owner.id)
 
     now = datetime.now(tz=UTC)
     meeting = Meeting(
@@ -403,6 +482,55 @@ def create_meeting(
     # The title is the team's own words and can carry a client name; it is not
     # logged. The id is enough to follow the meeting through the pipeline.
     log.info("audio_meeting_created", meeting_id=meeting.id, team_id=team_id, owner_id=owner.id)
+    return meeting
+
+
+class EmptyTitleError(ValidationError):
+    """Nothing but space was sent as a title."""
+
+    def __init__(self) -> None:
+        super().__init__("a title is at least one character", field=meeting_title.FIELD)
+
+
+def rename_meeting(session: Session, *, meeting_id: str, member: User, title: str) -> Meeting:
+    """Give ``meeting_id`` a new title, for any member of its team (#1161).
+
+    **Only the title, and only this row.** Decided on #1161 by A's owner: a
+    ``PATCH`` of the title in this module, any member of the team, screened at
+    save. Every module reads a title from ``meetings`` when it sends
+    something, so what is sent from now on carries the new one. What has
+    already gone out -- a Slack message, a Notion page, a calendar entry --
+    keeps the title it was sent with (2-3): nothing here reaches outside, and
+    no event is published.
+
+    **Screened like a title typed at creation** (``meeting_title``): a title
+    that reads as personal data is refused with the categories and never the
+    value, and the meeting keeps the title it had. The title a meeting
+    already has, sent back, changes nothing and is not screened again.
+
+    **In any state.** The pipeline never writes ``title``, so a rename while a
+    transcription runs or a live session is open touches nothing they hold;
+    the row is not locked, and the ``UPDATE`` names this one column.
+
+    Space around a title does not count, so a title cannot be made to look
+    empty in a list.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=member.id, team_id=meeting.team_id)
+    title = title.strip()
+    if not title:
+        raise EmptyTitleError
+    if title == meeting.title:
+        return meeting
+    meeting_title.refuse_personal_data(title, meeting_id=meeting.id, user_id=member.id)
+    meeting.title = title
+    session.flush()
+    # Neither title is logged: a title can name a client.
+    log.info(
+        "audio_meeting_renamed", meeting_id=meeting.id, team_id=meeting.team_id, user_id=member.id
+    )
     return meeting
 
 
@@ -450,11 +578,15 @@ def start_transcription(session: Session, *, meeting_id: str, uploader: User) ->
             f"submitted for a meeting that is {' or '.join(sorted(_ACCEPTS_A_RECORDING))}"
         )
 
-    if meeting.status == "recording" and live_registry.is_open(meeting_id):
-        # The browser that owns the live session uploads after ``ended``,
-        # when the claim is already gone. Anyone else uploading now would
-        # flip the meeting to analyzing under a socket that is still
-        # streaming, and the real recording would be refused when it comes.
+    if (
+        meeting.status == "recording"
+        and live_registry.is_open(meeting_id)
+        and not live_registry.give_up_for_upload(meeting_id, user_id=uploader.id)
+    ):
+        # The live session's own person may upload over it
+        # (``give_up_for_upload``). Anyone else uploading now would flip the
+        # meeting to analyzing under a socket that is still streaming, and the
+        # real recording would be refused when it comes.
         raise ConflictError(
             f"meeting {meeting_id} has a live session open; stop it before uploading"
         )
@@ -1096,6 +1228,42 @@ def authenticate_live(session: Session, *, token: str, meeting_id: str) -> User:
     return user
 
 
+def live_ticket(session: Session, *, user: User, meeting_id: str) -> str:
+    """A one-use ticket for ``user`` to open the live socket of a meeting.
+
+    For a browser whose session is an HttpOnly cookie on another host than the
+    socket's (``live/tickets.py``). Refused where the socket would refuse the
+    person: no meeting, not a member.
+    """
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return live_tickets.issue(
+        user_id=user.id, meeting_id=meeting_id, sessions_valid_from=user.sessions_valid_from
+    )
+
+
+def authenticate_live_ticket(session: Session, *, ticket: str, meeting_id: str) -> User:
+    """``authenticate_live`` for a ticket: spend it, then the same membership
+    check. ``PermissionDeniedError`` for a ticket that opens nothing here --
+    unknown, spent, expired, another meeting's, or its person signed out
+    since it was issued."""
+    held = live_tickets.redeem(ticket, meeting_id=meeting_id)
+    if held is None:
+        raise PermissionDeniedError("ticket is not good for this meeting")
+    user = session.get(User, held.user_id)
+    if user is None:
+        raise PermissionDeniedError("ticket names nobody")
+    if user.sessions_valid_from != held.sessions_valid_from:
+        raise PermissionDeniedError("signed out since the ticket was issued")
+    meeting = session.get(Meeting, meeting_id)
+    if meeting is None:
+        raise NotFoundError("meeting", meeting_id)
+    require_team_member(session, user_id=user.id, team_id=meeting.team_id)
+    return user
+
+
 _ACCEPTS_A_LIVE_SESSION = frozenset({"scheduled", "recording"})
 
 
@@ -1415,11 +1583,14 @@ def unassign_speaker(
     assign. Unassigning a label nobody is put to is a no-op, not an error, so
     a second press after a lost response does not fail.
 
-    No event goes out, as none goes out for an assignment. What follows the
-    change is whatever reads ``Participant.user_id`` again: C's participation
-    and E's own speaking ratio recompute from it. B does not follow it: it
-    fills an action item's assignee once from an identified label and keeps
-    it after the label is undone or reassigned (#929, B's to fix).
+    No event goes out, as none goes out for an assignment. The other modules
+    follow by reading ``Participant.user_id`` again: E's own speaking ratio at
+    once, on request; C's participation on the next read of its report, and
+    its stored risk scores on its ten-minute rescore (#415); B's assignee on a
+    model-made item nobody reassigned, within its ten-minute fill (#936), while
+    an item a person assigned, or one that is done, keeps its assignee and is
+    corrected on the board; D's ``key_stakeholders_absent`` within ten
+    minutes, for meetings of the last 30 days (``refresh_absence``, #360).
     """
     meeting = session.get(Meeting, meeting_id, with_for_update=True)
     if meeting is None:

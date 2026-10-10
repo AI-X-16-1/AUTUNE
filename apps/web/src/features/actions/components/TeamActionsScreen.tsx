@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { ChipToggle, Tabs } from "@/shared/ui";
+import { Button, ChipToggle, Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
 import { ActionDetailDrawer } from "./ActionDetailDrawer";
@@ -15,15 +15,16 @@ import {
   byProject,
   byTeam,
   projectTeams,
+  UNNAMED_TEAM,
   type BoardView,
 } from "../groups";
 import { useActionItems } from "../hooks/useActionItems";
-import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
+import { ALL_PROJECTS, inProject, UNSORTED, type ProjectChoice } from "../projectFilter";
 import { projectProgress } from "../projectProgress";
 import type { ActionItemRead, Project, TeamName } from "../types";
 
 /**
- * S17 across every meeting — the sidebar's "액션아이템".
+ * S17 across every meeting — the sidebar's "할 일".
  *
  * `ActionItemsScreen` is one meeting's review: its decisions, its connections
  * and its board. This is the board alone, over every item the caller can see.
@@ -44,6 +45,17 @@ import type { ActionItemRead, Project, TeamName } from "../types";
  * above it. It opens on 한번에 every time; the choice is not kept. Each item
  * says its team (`team_id`), and `GET /teams/mine` names them.
  *
+ * **One team's items, when a team is pressed in the sidebar** (the user,
+ * 2026-10-08: "액션아이템에서 팀명 누르면 해당 팀의 액션아이템이 뜨는 것으로").
+ * The screen still opens on every team. `teamId` narrows it to one: the same
+ * fetch, with the other teams' items and projects left out, so the tabs'
+ * counts, the project filter, the strip and 보기 are all of that team. A line
+ * over the tabs names the team and offers the way back to every team. An item
+ * open in the drawer, or a project chosen in the filter, that is not that
+ * team's lets go rather than leaving an empty board behind. The route passes
+ * the team in: the sidebar's menu is another feature's, and this one does not
+ * import it. The Jira issues under the board are that team's too.
+ *
  * No add form: an item is added to a meeting, and this screen has none. That
  * stays on the meeting's own actions tab.
  *
@@ -59,8 +71,22 @@ const VIEWS: { id: BoardView; label: string }[] = [
   { id: "project", label: "프로젝트별" },
 ];
 
-export function TeamActionsScreen({ me }: { me: string | null }) {
-  const { items, settled, error, edit, remove, reload } = useActionItems({});
+export function TeamActionsScreen({
+  me,
+  teamId = null,
+  onEveryTeam,
+}: {
+  me: string | null;
+  /** The one team to show; null is every team the person is on. */
+  teamId?: string | null;
+  /** Back to every team, from the line that names the one team. */
+  onEveryTeam?: () => void;
+}) {
+  const { items: every, settled, error, edit, close, remove, reload } = useActionItems({});
+  const items = useMemo(
+    () => (teamId === null ? every : every.filter((item) => item.team_id === teamId)),
+    [every, teamId],
+  );
   const [tab, setTab] = useState<Tab>("all");
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
 
@@ -72,7 +98,14 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
   }, [items, me, today]);
 
   // The project filter (2026-10-04), across every team the person is on.
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [everyProject, setProjects] = useState<Project[]>([]);
+  const projects = useMemo(
+    () =>
+      teamId === null
+        ? everyProject
+        : everyProject.filter((one) => one.team_id === undefined || one.team_id === teamId),
+    [everyProject, teamId],
+  );
   const [project, setProject] = useState<ProjectChoice>(ALL_PROJECTS);
   useEffect(() => {
     let alive = true;
@@ -117,6 +150,23 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
   );
   const selected = items.find((item) => item.id === selectedId);
 
+  // The team changed under the screen: what was open or chosen and is not on
+  // the board any more lets go, so going back to every team does not bring a
+  // drawer back, and another team's project does not leave the board empty.
+  const [shownTeam, setShownTeam] = useState(teamId);
+  if (shownTeam !== teamId) {
+    setShownTeam(teamId);
+    if (selected === undefined) setSelectedId(undefined);
+    if (
+      project !== ALL_PROJECTS &&
+      project !== UNSORTED &&
+      !projects.some((one) => one.id === project)
+    )
+      setProject(ALL_PROJECTS);
+  }
+  const teamName =
+    teamId === null ? null : (teams.find((team) => team.id === teamId)?.name ?? UNNAMED_TEAM);
+
   // One board of `list`: the whole screen's under 한번에, a group's otherwise.
   const board = (list: ActionItemRead[]) => (
     <ActionBoard
@@ -139,6 +189,20 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
       style={{ padding: "var(--space-16) var(--space-page) var(--space-page)" }}
     >
       <div className="min-w-0 flex-1">
+        {teamName !== null ? (
+          <div
+            role="status"
+            className="mb-3 flex flex-wrap items-center gap-3 text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            <span>{`${teamName}의 할 일만 보고 있습니다.`}</span>
+            {onEveryTeam !== undefined ? (
+              <Button tone="text" size="compact" onClick={onEveryTeam}>
+                전체 보기
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         <Tabs
           tabs={[
             { id: "all", label: "전체", count: lists.all.length },
@@ -180,9 +244,9 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
 
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
-            <Note>액션 아이템을 불러오는 중입니다.</Note>
-          ) : error !== null && items.length === 0 ? (
-            <Note>액션 아이템을 불러오지 못했습니다.</Note>
+            <Note>할 일을 불러오는 중입니다.</Note>
+          ) : error !== null && every.length === 0 ? (
+            <Note>할 일을 불러오지 못했습니다.</Note>
           ) : (
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
@@ -218,7 +282,7 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
           )}
         </div>
 
-        <JiraOpenIssues />
+        <JiraOpenIssues teamId={teamId} />
       </div>
 
       {selected !== undefined ? (
@@ -228,6 +292,9 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
           onClose={() => setSelectedId(undefined)}
           onStatusChange={async (status) => {
             await edit(selected.id, { status });
+          }}
+          onCloseUnfinished={async () => {
+            await close(selected.id);
           }}
           onAssigneeChange={async (change) => {
             await edit(selected.id, change);
@@ -243,9 +310,9 @@ export function TeamActionsScreen({ me }: { me: string | null }) {
 }
 
 const EMPTY: Record<Tab, string> = {
-  all: "아직 액션 아이템이 없습니다. 회의가 분석되면 이곳에 모입니다.",
-  mine: "나에게 배정된 액션 아이템이 없습니다.",
-  overdue: "기한이 지난 액션 아이템이 없습니다.",
+  all: "아직 할 일이 없습니다. 회의가 분석되면 이곳에 모입니다.",
+  mine: "나에게 배정된 할 일이 없습니다.",
+  overdue: "기한이 지난 할 일이 없습니다.",
 };
 
 function Meta({ children }: { children: string }) {

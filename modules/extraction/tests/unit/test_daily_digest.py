@@ -90,6 +90,7 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
     text = build_daily_digest(
         DailyDigest(
             done=[DigestLine("로그인 고치기", None, "주간 회의")],
+            closed=[DigestLine("접은 일", None, "주간 회의")],
             taken_on=[DigestLine("새 일 <!channel>", date(2026, 10, 8), None)],
             late=[DigestLine("늦은 일", date(2026, 10, 1), "기획 <회의>")],
             due_today=[DigestLine("오늘 일", TUESDAY, None)],
@@ -97,34 +98,51 @@ def test_the_message_says_what_changed_then_today_late_first_and_escapes() -> No
             others=3,
         ),
         board_url="https://autune.example/actions",
+        today=TUESDAY,
     )
 
     assert text.split("\n") == [
         "좋은 아침입니다. 지난 진행 상황과 오늘 할 일입니다.",
         "지난 진행 상황",
         "• 완료: 로그인 고치기 · 주간 회의",
+        "• 끝내지 않고 닫힘: 접은 일 · 주간 회의",
         "• 새로 맡음: 새 일 &lt;!channel&gt;",
         "오늘 할 일",
-        "• 기한 지남(2026-10-01): 늦은 일 · 기획 &lt;회의&gt;",
+        "• 기한 지남(10월 1일 목): 늦은 일 · 기획 &lt;회의&gt;",
         "• 오늘 기한: 오늘 일",
         "• 진행 중: 하던 일",
-        "그 밖의 열린 액션 아이템 3개",
+        "그 밖의 열린 할 일 3개",
         "https://autune.example/actions",
     ]
 
 
 def test_a_quiet_day_says_so_rather_than_leaving_a_heading_empty() -> None:
-    text = build_daily_digest(DailyDigest(others=2), board_url="https://autune.example/actions")
+    text = build_daily_digest(
+        DailyDigest(others=2), board_url="https://autune.example/actions", today=TUESDAY
+    )
 
     assert "• 바뀐 것이 없습니다." in text
     assert "• 오늘 기한이거나 진행 중인 항목이 없습니다." in text
-    assert "그 밖의 열린 액션 아이템 2개" in text
+    assert "그 밖의 열린 할 일 2개" in text
+
+
+def test_a_late_items_date_says_its_year_only_when_it_is_not_this_mornings() -> None:
+    """The user, 2026-10-09: a due date as B's screens write one."""
+    late = [
+        DigestLine("올해 일", date(2026, 10, 2), None),
+        DigestLine("지난해 일", date(2025, 12, 31), None),
+    ]
+
+    text = build_daily_digest(DailyDigest(late=late), board_url="u", today=TUESDAY)
+
+    assert "• 기한 지남(10월 2일 금): 올해 일" in text
+    assert "• 기한 지남(2025년 12월 31일 수): 지난해 일" in text
 
 
 def test_a_long_list_is_cut_and_counted() -> None:
     late = [DigestLine(f"늦은 일 {n}", date(2026, 10, 1), None) for n in range(8)]
 
-    lines = build_daily_digest(DailyDigest(late=late), board_url="u").split("\n")
+    lines = build_daily_digest(DailyDigest(late=late), board_url="u", today=TUESDAY).split("\n")
 
     assert sum(1 for line in lines if line.startswith("• 기한 지남(")) == 5
     assert "• 기한 지남 외 3개" in lines
@@ -142,13 +160,14 @@ def test_what_has_stood_for_days_comes_after_todays_dates_and_says_how_long() ->
             in_progress=[DigestLine("하던 일", None, None)],
         ),
         board_url="https://autune.example/actions",
+        today=TUESDAY,
     )
 
     lines = text.split("\n")
     start = lines.index("오늘 할 일")
     assert lines[start : start + 5] == [
         "오늘 할 일",
-        "• 기한 지남(2026-10-01): 늦은 일",
+        "• 기한 지남(10월 1일 목): 늦은 일",
         "• 오늘 기한: 오늘 일",
         "• 12일째 그대로: 오래 둔 일 &lt;b&gt; · 기획 회의",
         "• 5일째 그대로: 며칠 둔 일",
@@ -159,7 +178,9 @@ def test_what_has_stood_for_days_comes_after_todays_dates_and_says_how_long() ->
 def test_a_long_list_of_standing_items_is_cut_and_counted_too() -> None:
     stalled = [DigestLine(f"둔 일 {n}", None, None, idle_days=30 - n) for n in range(7)]
 
-    lines = build_daily_digest(DailyDigest(stalled=stalled), board_url="u").split("\n")
+    lines = build_daily_digest(DailyDigest(stalled=stalled), board_url="u", today=TUESDAY).split(
+        "\n"
+    )
 
     assert sum(1 for line in lines if "일째 그대로: " in line) == 5
     assert "• 그대로인 일 외 2개" in lines
@@ -171,6 +192,7 @@ def test_nothing_changed_and_nothing_open_is_no_message() -> None:
     assert DailyDigest().empty is True
     assert DailyDigest(others=1).empty is False
     assert DailyDigest(done=[DigestLine("끝", None, None)]).empty is False
+    assert DailyDigest(closed=[DigestLine("접음", None, None)]).empty is False
 
 
 # --- who is owed, and what is read -------------------------------------------------
@@ -513,6 +535,77 @@ def test_an_edit_from_before_fields_were_named_may_have_been_the_confirmation(
     assert content_for(session).taken_on == []
 
 
+# --- closed without being finished (#856; the user, 2026-10-07) --------------------
+
+
+def closed(session: Session, item_id: str, *, at: datetime) -> None:
+    """A close through the real ``close_without_finishing`` -- so the event is
+    whatever that function records -- stamped ``at``."""
+    item = session.get(ExtActionItem, item_id)
+    assert item is not None
+    before = {e.id for e in session.query(ExtEditEvent)}
+    assert service.close_without_finishing(session, item) is True
+    session.flush()
+    (event,) = [e for e in session.query(ExtEditEvent) if e.id not in before]
+    event.created_at = at
+    session.flush()
+
+
+def test_an_item_closed_without_finishing_is_told_as_closed_and_not_as_done(
+    session: Session,
+) -> None:
+    edited(session, "act_done", "status", at=MONDAY_NOON_KST)
+    closed(session, "act_doing", at=MONDAY_NOON_KST)
+    closed(session, "act_lee", at=MONDAY_NOON_KST)  # somebody else's
+    closed(session, "act_other", at=MONDAY_NOON_KST)  # theirs, another team's
+
+    content = content_for(session)
+
+    assert [line.description for line in content.done] == ["어제 끝낸 일"]
+    assert [line.description for line in content.closed] == ["하던 일"]
+    assert content.in_progress == []
+    lines = build_daily_digest(
+        content, board_url="https://autune.example/actions", today=TUESDAY
+    ).split("\n")
+    assert lines[2:4] == [
+        "• 완료: 어제 끝낸 일 · team_1 회의",
+        "• 끝내지 않고 닫힘: 하던 일 · team_1 회의",
+    ]
+
+
+def test_an_item_moved_and_then_closed_since_is_closed(session: Session) -> None:
+    item = session.get(ExtActionItem, "act_later")
+    assert item is not None
+    moved(session, item, ActionStatus.IN_PROGRESS, at=MONDAY_NOON_KST)
+    closed(session, "act_later", at=MONDAY_NOON_KST + timedelta(hours=1))
+
+    content = content_for(session)
+
+    assert content.done == []
+    assert [line.description for line in content.closed] == ["나중 일"]
+
+
+def test_an_item_closed_then_reopened_and_finished_is_done(session: Session) -> None:
+    item = session.get(ExtActionItem, "act_later")
+    assert item is not None
+    closed(session, "act_later", at=MONDAY_NOON_KST)
+    moved(session, item, ActionStatus.TODO, at=MONDAY_NOON_KST + timedelta(hours=1))
+    moved(session, item, ActionStatus.DONE, at=MONDAY_NOON_KST + timedelta(hours=2))
+
+    content = content_for(session)
+
+    assert [line.description for line in content.done] == ["나중 일"]
+    assert content.closed == []
+
+
+def test_an_item_closed_before_the_last_one_is_not_said_again(session: Session) -> None:
+    closed(session, "act_later", at=datetime(2026, 9, 1, tzinfo=UTC))
+
+    content = content_for(session)
+
+    assert content.closed == [] and content.done == []
+
+
 def test_a_meeting_past_its_retention_is_in_neither_half(session: Session) -> None:
     """What the weekly digest leaves out, this leaves out -- finished items too."""
     owed = owed_for(session)
@@ -545,7 +638,7 @@ def test_a_dm_goes_to_its_person_once_a_day_with_their_own_items_only(
     ((who, text),) = slack.sent
     assert who == "user_kim"
     assert "• 완료: 어제 끝낸 일 · team_1 회의" in text
-    assert "• 기한 지남(2026-10-02): 늦은 일" in text
+    assert "• 기한 지남(10월 2일 금): 늦은 일" in text
     assert "다른 팀 일" not in text, "one team's bot, its own work"
     assert "이 님의 일" not in text and "팀에 없는 사람 일" not in text
     assert [

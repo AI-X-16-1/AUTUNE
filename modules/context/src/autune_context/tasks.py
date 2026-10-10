@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 import autune_context.pipeline  # noqa: F401  (registers the worker_process_init warm-up hook)
 from autune_context import briefs, service
 from autune_context.config import get_settings
-from autune_context.models import CtxMeetingStatus
+from autune_context.models import CtxBrief, CtxMeetingStatus
 from autune_context.notify import build_pre_meeting_brief
 from autune_contracts import (
     ExtractionResult,
@@ -54,7 +54,7 @@ from autune_core import (
     periodic,
     session_scope,
 )
-from autune_integrations import SlackClient
+from autune_integrations import SlackClient, TransientIntegrationError
 
 log = get_logger(__name__)
 
@@ -224,7 +224,39 @@ def republish(meeting_id: str) -> None:
     log.info("context_republish_checked", meeting_id=meeting_id, republished=republished)
 
 
-@shared_task(name="autune.context.notify_context_events", acks_late=True)
+_NOTIFY_RETRY = {
+    "autoretry_for": (TransientIntegrationError,),
+    "retry_backoff": True,
+    "retry_kwargs": {"max_retries": 3},
+}
+"""A Slack rate limit or timeout is retried, with the claim handed back first
+(``_release_claim``). Anything else -- a refusal for good, a privacy guard --
+is not: it would fail the same way again."""
+
+
+def _release_claim(meeting_id: str, **restore: datetime | None) -> None:
+    """Hand a notice claim back after a transient Slack failure (#339).
+
+    The claim commits before the first message goes out, so that a redelivered
+    task is not a second post. The price is that a rate limit halfway through
+    the batch left the meeting claimed with notices unsent, and the retry then
+    found it claimed and did nothing -- an absent stakeholder who was never
+    told, for good. Releasing it lets the retry send again.
+
+    The retry also sends again what had already gone out before the failure:
+    a repeated channel post and a repeated DM, against a warning that never
+    arrives. That is the better of the two, and the one this module can bound
+    (three tries).
+    """
+    with session_scope() as session:
+        status = session.get(CtxMeetingStatus, meeting_id, with_for_update=True)
+        if status is None:
+            return
+        for column, value in restore.items():
+            setattr(status, column, value)
+
+
+@shared_task(name="autune.context.notify_context_events", acks_late=True, **_NOTIFY_RETRY)
 def notify_context_events(meeting_id: str) -> None:
     """Post this meeting's topic-link notices and decision-drift warnings.
 
@@ -277,8 +309,13 @@ def notify_context_events(meeting_id: str) -> None:
         status.notified_at = datetime.now(tz=UTC)
 
     slack = SlackClient(config.require_secret())
-    links_sent = service.send_topic_link_notices(slack, channel, topic_notices)
-    drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)
+    try:
+        links_sent = service.send_topic_link_notices(slack, channel, topic_notices)
+        drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)
+    except TransientIntegrationError:
+        log.warning("context_notify_released", meeting_id=meeting_id)
+        _release_claim(meeting_id, notified_at=None)
+        raise
 
     log.info(
         "context_notify_sent",
@@ -288,7 +325,7 @@ def notify_context_events(meeting_id: str) -> None:
     )
 
 
-@shared_task(name="autune.context.notify_late_drift", acks_late=True)
+@shared_task(name="autune.context.notify_late_drift", acks_late=True, **_NOTIFY_RETRY)
 def notify_late_drift(meeting_id: str) -> None:
     """Send this meeting's decision-drift warnings when its lineage finished
     late -- after ``ContextLinks`` had already published via the B-timeout
@@ -327,11 +364,20 @@ def notify_late_drift(meeting_id: str) -> None:
         channel, config = target
 
         drift_notices = service.collect_drift_notices(session, meeting_id)
+        owed_since = status.late_drift_due_at
         status.late_drift_notified_at = datetime.now(tz=UTC)
         status.late_drift_due_at = None
 
     slack = SlackClient(config.require_secret())
-    drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)
+    try:
+        drift_sent = service.send_decision_drift_notices(slack, channel, drift_notices)
+    except TransientIntegrationError:
+        # ``late_drift_due_at`` goes back too: ``notify_context_events`` reads it
+        # to leave drift to this task, and cleared with no claim it would send
+        # the same warnings itself.
+        log.warning("context_late_drift_released", meeting_id=meeting_id)
+        _release_claim(meeting_id, late_drift_notified_at=None, late_drift_due_at=owed_since)
+        raise
     log.info("context_late_drift_sent", meeting_id=meeting_id, drift_warnings=drift_sent)
 
 
@@ -390,6 +436,11 @@ def send_brief(meeting_id: str) -> None:
     marked sent. Claimed and composed in one session that closes before the
     Slack call, the "gather in session, send after" shape
     ``notify_context_events`` uses.
+
+    A transient Slack failure deletes the claim and raises, and the clock
+    retries; it does not retry itself, because the next tick is a minute away
+    and the meeting only needs the brief before it starts. Anything else keeps
+    the claim, as the other notices do.
     """
     now = datetime.now(tz=UTC)
     with session_scope() as session:
@@ -408,5 +459,15 @@ def send_brief(meeting_id: str) -> None:
         agenda=brief.agenda,
         recap_is_related=brief.match_reason != briefs.LATEST,
     )
-    SlackClient(config.require_secret()).post_message(channel, fallback, blocks)
+    try:
+        SlackClient(config.require_secret()).post_message(channel, fallback, blocks)
+    except TransientIntegrationError:
+        # The claim is the ``ctx_briefs`` row, and it is what ``due_meeting_starts``
+        # looks for: with it gone, the next tick finds the meeting due again and
+        # sends once more while it is still ahead. Left in place, a rate limit
+        # cost the meeting its brief for good (#339).
+        log.warning("context_brief_released", meeting_id=meeting_id)
+        with session_scope() as session:
+            session.execute(sa.delete(CtxBrief).where(CtxBrief.meeting_id == meeting_id))
+        raise
     log.info("context_brief_sent", meeting_id=meeting_id, match_reason=brief.match_reason)

@@ -1,14 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
-import { Button, MaskedText, Quote, StatusDot, type StatusVariant } from "@/shared/ui";
+import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
 
 import { ConfirmDelete } from "./ConfirmDelete";
 import { ContextLines } from "./ContextLines";
+import type { NotExtracted } from "./ReExtract";
+import { SourceQuote } from "./SourceQuote";
 import { useDecisionReview } from "../hooks/useDecisionReview";
 import { useDecisionSources } from "../hooks/useDecisionSources";
+import { useTitleReads } from "../hooks/useTitleReads";
+import { typedTextRefusal } from "../refusal";
+import { shownStatement } from "../statement";
+import { rowTitle } from "../title";
+import { awaitsTitle } from "../titleReads";
 import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
+
+/**
+ * The item notice's first sentence (`SyncStatus`), and this screen's way out:
+ * "문장 고치기" sends the decision again by itself, so there is no retry to press.
+ */
+export const HELD_BACK =
+  "개인정보로 보이는 값이 있어 보내지 않았습니다. 문장을 고치면 다시 보냅니다.";
 
 /**
  * S15's decisions: what the meeting settled, as the model proposed it, for a
@@ -22,9 +36,27 @@ import type { DecisionStatus, ReviewAmbiguous, ReviewDecision } from "../types";
  * "삭제" appears only on a decision a person added. A model's decision is
  * rejected rather than deleted — a deleted one would be proposed again by the
  * next run — and "거부" already says that.
+ *
+ * A confirmed decision whose copy the outbound check refuses says so on its
+ * row. Before, only a log line knew: the page in Notion kept the earlier
+ * wording, or never appeared, and nothing here said why.
  */
-export function DecisionReview({ meetingId }: { meetingId: string }) {
-  const { review, loading, error, setStatus, reword, add, remove } = useDecisionReview(meetingId);
+export function DecisionReview({
+  meetingId,
+  unrun = null,
+  run = 0,
+}: {
+  meetingId: string;
+  /** The meeting's first extraction is not in: an empty list is not "none". */
+  unrun?: NotExtracted;
+  /** How many runs this screen has seen end; after one, the titles are read (`useTitleReads`). */
+  run?: number;
+}) {
+  const { review, loading, error, readTitles, setStatus, reword, add, remove } =
+    useDecisionReview(meetingId);
+  // A decision a person reworded is shown without a title and is given none.
+  const untitled = (review?.decisions ?? []).filter((d) => d.statement === d.model_statement);
+  useTitleReads(run, awaitsTitle(untitled), () => void readTitles());
 
   const decisions = review ? [...review.decisions].sort(byStatus) : [];
 
@@ -39,7 +71,7 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
         </h2>
         {review !== null && (
           <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-            확인 대기 {review.pending_decisions}
+            확인 필요 {review.pending_decisions}
           </span>
         )}
         {review !== null && <AddDecision onAdd={add} />}
@@ -51,7 +83,13 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
         <>
           {error ? <Note>최신 결정을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
           {decisions.length === 0 ? (
-            <Note>이 회의에서 제안된 결정이 없습니다. 놓친 결정은 직접 추가할 수 있습니다.</Note>
+            <Note>
+              {unrun === "in_progress"
+                ? "이 회의의 결정을 추출하고 있습니다. 끝나면 여기에 나타납니다."
+                : unrun === "overdue"
+                  ? "이 회의의 결정은 아직 추출되지 않았습니다. 놓친 결정은 직접 추가할 수 있습니다."
+                  : "이 회의에서 제안된 결정이 없습니다. 놓친 결정은 직접 추가할 수 있습니다."}
+            </Note>
           ) : (
             <ul className="grid gap-2">
               {decisions.map((decision) => (
@@ -72,14 +110,47 @@ export function DecisionReview({ meetingId }: { meetingId: string }) {
   );
 }
 
+/**
+ * What a row says of where its decision came from.
+ *
+ * A source whose utterance was deleted is said, in the words the action card
+ * uses (#400): "근거 발화 0건" would read as if the model had made the decision
+ * up, and a hand-added decision that pointed at a line would read as one that
+ * never had.
+ */
+export function decisionSourceLine(
+  decision: Pick<
+    ReviewDecision,
+    "origin" | "summary" | "confidence" | "source_utterance_ids" | "deleted_source_count"
+  >,
+): string {
+  const sources = decision.source_utterance_ids.length;
+  const deleted = decision.deleted_source_count ?? 0;
+  if (decision.origin === "user") {
+    if (deleted === 0) return "직접 추가";
+    return sources === 0
+      ? "직접 추가 · 근거 발화 삭제됨"
+      : `직접 추가 · 근거 발화 ${deleted}건 삭제됨`;
+  }
+  const from =
+    sources === 0 && deleted > 0
+      ? "근거 발화 삭제됨"
+      : (decision.summary ? shownStatement(decision.summary) : `근거 발화 ${sources}건`) +
+        (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
+  return `${from} · 신뢰도 ${Math.round(decision.confidence * 100)}%`;
+}
+
 const ORDER: Record<DecisionStatus, number> = { pending: 0, confirmed: 1, rejected: 2 };
 
 function byStatus(a: ReviewDecision, b: ReviewDecision): number {
   return ORDER[a.status] - ORDER[b.status];
 }
 
+// A pending decision reads as an unconfirmed item does on the board
+// (`COLUMN_LABELS.needs_confirmation`): what there is to do, not a queue
+// it is waiting in (the user, 2026-10-08).
 const STATUS: Record<DecisionStatus, { label: string; variant: StatusVariant }> = {
-  pending: { label: "확인 대기", variant: "attention" },
+  pending: { label: "확인 필요", variant: "attention" },
   confirmed: { label: "확정", variant: "confirmed" },
   rejected: { label: "거부", variant: "idle" },
 };
@@ -96,6 +167,20 @@ function DecisionRow({
   onDelete: () => Promise<unknown>;
 }) {
   const [editing, setEditing] = useState(false);
+  // The row's top line is twenty characters: the decision's short title
+  // when it has one, else the statement cut (`rowTitle`).
+  // A decision has no detail window to hold the rest, so the line itself
+  // opens: pressing it shows the whole statement under it, pressing again
+  // takes that away. The top line stays what it was -- the shape of the
+  // window an action card opens (the user, 2026-10-09); it used to turn into
+  // the statement, and the line pressed was gone from under the pointer.
+  const [whole, setWhole] = useState(false);
+  // Names the opened paragraph for the line that opens it (`aria-controls`),
+  // so a screen reader can go from one to the other (review of #1194).
+  const wholeId = useId();
+  // The sentence as the row reads; the stored one is what `RewordForm` edits.
+  const shown = shownStatement(decision.statement);
+  const title = rowTitle(decision.title, shown);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, setPending] = useState(false);
   // Every change the row sends says so when it fails, the way the drawer does.
@@ -107,8 +192,10 @@ function DecisionRow({
     try {
       await action();
       return true;
-    } catch {
-      setFailure(failed);
+    } catch (cause) {
+      // A rewording refused as personal data says so; the editor stays open
+      // with what was typed (#1130).
+      setFailure(typedTextRefusal(cause) ?? failed);
       return false;
     } finally {
       setPending(false);
@@ -143,20 +230,48 @@ function DecisionRow({
               }}
             />
           ) : (
-            <p
-              className={
-                decision.status === "rejected"
-                  ? "text-[var(--color-ink-muted)] line-through"
-                  : "text-[var(--color-ink-strong)]"
-              }
-              style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
-            >
-              {decision.statement}
-            </p>
+            <>
+              <p
+                className={
+                  decision.status === "rejected"
+                    ? "text-[var(--color-ink-muted)] line-through"
+                    : "text-[var(--color-ink-strong)]"
+                }
+                style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
+              >
+                {title.cut ? (
+                  <button
+                    type="button"
+                    className="text-left [text-decoration:inherit]"
+                    aria-expanded={whole}
+                    aria-controls={whole ? wholeId : undefined}
+                    title={whole ? undefined : shown}
+                    onClick={() => setWhole((now) => !now)}
+                  >
+                    {title.shown}
+                  </button>
+                ) : (
+                  shown
+                )}
+              </p>
+              {title.cut && whole ? (
+                <p
+                  id={wholeId}
+                  className={
+                    decision.status === "rejected"
+                      ? "mt-1 text-[var(--color-ink-muted)] line-through"
+                      : "mt-1 text-[var(--color-ink-body)]"
+                  }
+                  style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
+                >
+                  {shown}
+                </p>
+              ) : null}
+            </>
           )}
           {reworded && !editing ? (
             <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-              모델 문장: {decision.model_statement}
+              모델 문장: {shownStatement(decision.model_statement)}
             </p>
           ) : null}
           {quotation.sources && quotation.sources.length > 0 ? (
@@ -171,9 +286,7 @@ function DecisionRow({
                 원본 발화
               </p>
               {quotation.sources.map((source) => (
-                <Quote key={source.id}>
-                  <MaskedText>{source.text}</MaskedText>
-                </Quote>
+                <SourceQuote key={source.id} source={source} />
               ))}
             </div>
           ) : quotation.error ? (
@@ -184,10 +297,17 @@ function DecisionRow({
           <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
             {decision.needs_recheck ? "출처 발화가 정정됨 · 확인 필요 · " : null}
             {status.label} ·{" "}
-            {decision.origin === "user"
-              ? "직접 추가"
-              : `${decision.summary ?? `근거 발화 ${decision.source_utterance_ids.length}건`} · 신뢰도 ${Math.round(decision.confidence * 100)}%`}
+            {decisionSourceLine(decision)}
           </p>
+          {decision.held_back ? (
+            <p
+              role="status"
+              className="mt-1 text-[var(--color-ink-body)]"
+              style={{ fontSize: "var(--text-metaSmall)" }}
+            >
+              {HELD_BACK}
+            </p>
+          ) : null}
           {decision.sync_refs?.length ? (
             <div
               className="mt-1 flex items-center gap-2 text-[var(--color-ink-muted)]"
@@ -242,7 +362,7 @@ function DecisionRow({
               disabled={pending}
               onClick={() => run(() => onStatus("pending"), "되돌리지 못했습니다. 잠시 후 다시 시도해 주세요.")}
             >
-              확인 대기로 되돌리기
+              확인 필요로 되돌리기
             </Button>
           )}
           {decision.status !== "rejected" ? (
@@ -271,7 +391,7 @@ function DecisionRow({
       {confirmingDelete ? (
         <ConfirmDelete
           noun="결정"
-          description={decision.statement}
+          description={shown}
           pending={pending}
           onCancel={() => setConfirmingDelete(false)}
           onConfirm={async () => {
@@ -363,7 +483,10 @@ function AddDecision({ onAdd }: { onAdd: (statement: string) => Promise<unknown>
       setOpen(false);
     } catch (cause) {
       // The typed text stays, as in the action-item form.
-      setError(cause instanceof Error ? cause.message : "추가하지 못했습니다.");
+      setError(
+        typedTextRefusal(cause) ??
+          (cause instanceof Error ? cause.message : "추가하지 못했습니다."),
+      );
     } finally {
       setPending(false);
     }

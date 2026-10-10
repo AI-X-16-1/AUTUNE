@@ -288,6 +288,58 @@ def test_the_table_answers_when_nothing_was_read_or_the_read_is_old(session: Ses
     assert not days_off.is_public_holiday(session, date(2026, 10, 8), now=later)
 
 
+def test_a_range_is_answered_by_the_calendar_while_its_read_is_fresh(session: Session) -> None:
+    """Both ends are in the range, the days come earliest first, and the table
+    is not mixed in: a day the calendar does not list is not a holiday."""
+    declared = date(2026, 10, 8)
+    days_off.store_public_holidays(
+        session,
+        {date(2026, 10, 5), declared, date(2026, 12, 25), date(2026, 9, 25)},
+        now=TUESDAY_10_KST,
+    )
+
+    got = days_off.public_holidays_between(
+        session, date(2026, 10, 5), date(2026, 12, 25), now=TUESDAY_10_KST
+    )
+
+    assert got == [date(2026, 10, 5), declared, date(2026, 12, 25)]
+    assert HANGUL_DAY not in got, "in the table, and the calendar that was read does not list it"
+
+
+def test_a_range_is_answered_by_the_table_when_nothing_was_read_or_the_read_is_old(
+    session: Session,
+) -> None:
+    first, last = date(2026, 10, 1), date(2026, 10, 31)
+    from_table = [date(2026, 10, 3), date(2026, 10, 5), HANGUL_DAY]
+
+    assert days_off.public_holidays_between(session, first, last, now=TUESDAY_10_KST) == from_table
+
+    days_off.store_public_holidays(session, {date(2026, 10, 8)}, now=TUESDAY_10_KST)
+    later = TUESDAY_10_KST + days_off.FRESH_FOR + timedelta(hours=1)
+
+    assert days_off.public_holidays_between(session, first, last, now=later) == from_table
+
+
+def test_a_range_agrees_with_asking_about_each_day_of_it(session: Session) -> None:
+    """One rule for a day and for a range, from either source and across a
+    year's end: the range is the days ``is_public_holiday`` says yes to."""
+    first, last = date(2026, 12, 20), date(2027, 2, 12)
+    span = [first + timedelta(days=n) for n in range((last - first).days + 1)]
+
+    def one_by_one() -> list[date]:
+        return [d for d in span if days_off.is_public_holiday(session, d, now=TUESDAY_10_KST)]
+
+    by_table = days_off.public_holidays_between(session, first, last, now=TUESDAY_10_KST)
+    assert by_table == one_by_one()
+    assert date(2026, 12, 25) in by_table and date(2027, 1, 1) in by_table
+
+    days_off.store_public_holidays(
+        session, {date(2026, 12, 25), date(2027, 2, 8)}, now=TUESDAY_10_KST
+    )
+    by_calendar = days_off.public_holidays_between(session, first, last, now=TUESDAY_10_KST)
+    assert by_calendar == one_by_one() == [date(2026, 12, 25), date(2027, 2, 8)]
+
+
 def test_a_read_replaces_the_last_one_whole(session: Session) -> None:
     days_off.store_public_holidays(session, {date(2026, 10, 8), HANGUL_DAY}, now=TUESDAY_10_KST)
     later = TUESDAY_10_KST + timedelta(hours=12)
@@ -824,6 +876,20 @@ def test_the_holidays_are_read_and_kept_where_a_digest_is_on(
 
     assert asked == [TUESDAY]
     assert {row.day for row in session.query(ExtPublicHoliday)} == {HANGUL_DAY, date(2026, 12, 25)}
+
+
+@pytest.mark.parametrize("switch", ["work_report", "after_meeting_notice"])
+def test_the_holidays_are_read_where_only_another_message_that_keeps_working_days_is_on(
+    session: Session, world: World, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    # Neither digest on: the work report and the notice after a meeting ask
+    # the same table whether today is a working day, so the read still runs.
+    world.settings.update({"daily_digest": False, "weekly_digest": False, switch: True})
+    monkeypatch.setattr(days_off, "fetch_public_holidays", lambda *, today: {HANGUL_DAY})
+
+    assert tasks.refresh_public_holidays() == 1
+
+    assert {row.day for row in session.query(ExtPublicHoliday)} == {HANGUL_DAY}
 
 
 @pytest.mark.parametrize(

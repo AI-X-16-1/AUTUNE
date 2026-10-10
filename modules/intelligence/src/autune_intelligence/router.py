@@ -18,12 +18,9 @@ meeting's team (#937).
 
 from __future__ import annotations
 
-from typing import Annotated
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
-from autune_core import CurrentUser, get_logger, get_session
+from autune_core import CurrentUser, SessionDep, get_logger
 from autune_core.errors import NotFoundError
 
 from . import enqueue, service
@@ -44,8 +41,6 @@ from .schemas import (
 
 router = APIRouter()
 log = get_logger(__name__)
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @router.get("/health")

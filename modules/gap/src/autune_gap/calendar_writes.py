@@ -39,7 +39,10 @@ has its lines queued for removal (``queue_gap_lines``, #587). When the meeting
 goes -- deleted or expired -- its records are copied to ``GapAgendaCleanup``
 and ``drain_agenda_cleanup`` takes the lines out with each owner's own grant;
 when an account goes, its lines are taken out at once, while the grant still
-exists. Both best effort, as module B's are (privacy.md section 4).
+exists. When the owner leaves the meeting's team (#937), the lines on their
+calendar are queued the same way by ``queue_departed_lines``, as module B
+takes back a departed assignee's due-date event (#944). All best effort, as
+module B's are (privacy.md section 4).
 
 What leaves for Google is the gap's title and its question, both stored masked
 (``graph.build_topics`` refuses a label holding a masked span), and the gap id
@@ -65,8 +68,9 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 
@@ -124,12 +128,13 @@ LIST_FIELDS = "items(id,summary,start,end,status),nextPageToken"
 Google (mkkim68 on #824)."""
 
 WRITE_FIELDS = (
-    "description,attendees(email,self,resource),attendeesOmitted,"
+    "description,start,attendees(email,self,resource),attendeesOmitted,"
     "guestsCanSeeOtherGuests,organizer(self)"
 )
-"""All the write reads of the picked event: the description it edits, the
-attendees' addresses to refuse an event shared outside the team, and whether
-that list is whole (``attendees_hidden``)."""
+"""All the write reads of the picked event: the description it edits, when it
+starts (for the team channel's notice to say), the attendees' addresses to
+refuse an event shared outside the team, and whether that list is whole
+(``attendees_hidden``)."""
 
 DESCRIPTION_FIELDS = "description"
 """All the cleanup reads: the description it takes lines out of."""
@@ -276,11 +281,38 @@ def update_agenda(
     never is. What was written is recorded in ``GapAgendaEvent`` with the
     caller's own session, for the caller to commit.
     """
+    outcome, _ = write_agenda(
+        session,
+        gaps,
+        team_id=team_id,
+        user_id=user_id,
+        carried=carried,
+        event_id=event_id,
+        now=now,
+    )
+    return outcome
+
+
+def write_agenda(
+    session: Session,
+    gaps: Sequence[GapGap],
+    *,
+    team_id: str,
+    user_id: str,
+    carried: bool,
+    event_id: str | None = None,
+    now: datetime | None = None,
+) -> tuple[AgendaOutcome, datetime | date | None]:
+    """``update_agenda``, and when the event it wrote to starts, as Google gave
+    it in the event's own time zone -- a ``date`` for an all-day event, ``None``
+    when nothing was written or Google did not say. The team channel's notice
+    reads it, and its day is kept as ``event_day`` (``next_meeting_days``); the
+    time itself is not stored or logged."""
     starts: datetime | None = None
     if event_id is None:
         meeting = next_meeting(session, team_id, now=now or datetime.now(UTC))
         if meeting is None or meeting.started_at is None:
-            return "no_next_meeting"
+            return "no_next_meeting", None
         # SQLite hands back a naive datetime; PostgreSQL's is already UTC-aware.
         starts = meeting.started_at
         if starts.tzinfo is None:
@@ -288,22 +320,22 @@ def update_agenda(
     try:
         with calendar_of(session, user_id) as calendar:
             if calendar is None:
-                return "not_connected"
+                return "not_connected", None
             client, calendar_id = calendar
             if event_id is None and starts is not None:
                 event_id = _event_starting(client, calendar_id, starts)
             if event_id is None:
-                return "no_event"
+                return "no_event", None
             path = f"/calendars/{calendar_id}/events/{event_id}"
             current = client.request("GET", path, params={"fields": WRITE_FIELDS})
             if carried and attendees_hidden(current):
                 log.info("gap_agenda_refused_hidden", gaps=len(gaps))
-                return "hidden_attendees"
+                return "hidden_attendees", None
             if carried and outside_team(
                 list(current.get("attendees") or []), _team_addresses(session, team_id)
             ):
                 log.info("gap_agenda_refused_external", gaps=len(gaps))
-                return "external_attendees"
+                return "external_attendees", None
             updated = edited(str(current.get("description") or ""), gaps, carried=carried)
             if updated is not None:
                 client.request(
@@ -313,16 +345,17 @@ def update_agenda(
                     json={"description": updated},
                 )
             written_to = (calendar_id, event_id)
+            event_starts = _start_of(current)
     except ReconnectRequiredError:
-        return "reconnect_required"
+        return "reconnect_required", None
     except PermanentIntegrationError as exc:
         if exc.details.get("upstream_status") in (404, 410):
-            return "no_event"
+            return "no_event", None
         log.warning("gap_agenda_failed", error=type(exc).__name__)
-        return "failed"
+        return "failed", None
     except (IntegrationError, PrivacyViolationError) as exc:
         log.warning("gap_agenda_failed", error=type(exc).__name__)
-        return "failed"
+        return "failed", None
     _record(
         session,
         gaps,
@@ -330,9 +363,10 @@ def update_agenda(
         calendar_id=written_to[0],
         event_id=written_to[1],
         kept=carried,
+        event_day=day_of(event_starts),
     )
     log.info("gap_agenda_set", gaps=len(gaps), carried=carried, picked=starts is None)
-    return "added" if carried else "removed"
+    return ("added" if carried else "removed"), event_starts
 
 
 def written_lines(
@@ -354,6 +388,29 @@ def written_lines(
     }
 
 
+def record_lines(
+    session: Session,
+    gaps: Sequence[GapGap],
+    *,
+    user_id: str,
+    calendar_id: str,
+    event_id: str,
+    event_day: date | None,
+) -> None:
+    """Record lines written onto an event some other way than ``write_agenda``
+    -- the follow-up meeting's, written when it was made
+    (``followup_meeting``) -- so they come out as every other line does."""
+    _record(
+        session,
+        gaps,
+        user_id=user_id,
+        calendar_id=calendar_id,
+        event_id=event_id,
+        kept=True,
+        event_day=event_day,
+    )
+
+
 def _insert(session: Session, model: Any) -> Any:
     dialect = session.get_bind().dialect.name
     return (postgresql.insert if dialect == "postgresql" else sqlite.insert)(model)
@@ -367,8 +424,11 @@ def _record(
     calendar_id: str,
     event_id: str,
     kept: bool,
+    event_day: date | None = None,
 ) -> None:
-    """Remember which event holds each gap's line, or forget it once taken out."""
+    """Remember which event holds each gap's line, and the day it starts, or
+    forget it once taken out. Pressing again on a moved event keeps its new day;
+    pressing again when Google gave no readable start keeps the day known."""
     if not gaps:
         return
     if not kept:
@@ -390,11 +450,15 @@ def _record(
                     "user_id": user_id,
                     "calendar_id": calendar_id,
                     "event_id": event_id,
+                    "event_day": event_day,
                 }
                 for gap in gaps
             ]
         )
-        .on_conflict_do_nothing(index_elements=["gap_id", "user_id", "event_id"])
+        .on_conflict_do_update(
+            index_elements=["gap_id", "user_id", "event_id"],
+            set_={"event_day": func.coalesce(event_day, GapAgendaEvent.event_day)},
+        )
     )
 
 
@@ -418,6 +482,28 @@ def _when(raw: dict[str, Any] | None) -> datetime | date | None:
     if "date" in raw:
         return date.fromisoformat(raw["date"])
     return None
+
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def day_of(starts: datetime | date | None) -> date | None:
+    """The day an event starts, in Korea: an all-day event's own date, a timed
+    one's start moved to Korea first."""
+    if starts is None or not isinstance(starts, datetime):
+        return starts
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=UTC)
+    return starts.astimezone(KST).date()
+
+
+def _start_of(event: dict[str, Any]) -> datetime | date | None:
+    """When ``event`` starts, or ``None`` when Google said nothing readable --
+    the line is already written by then, so this never fails the write."""
+    try:
+        return _when(event.get("start"))
+    except (TypeError, ValueError):
+        return None
 
 
 def _timed_events(
@@ -627,6 +713,61 @@ def queue_gap_lines(session: Session, gap_ids: Sequence[str]) -> int:
         .on_conflict_do_nothing(index_elements=["user_id", "event_id", "gap_id"])
     )
     session.execute(delete(GapAgendaEvent).where(GapAgendaEvent.gap_id.in_(gap_ids)))
+    return len(rows)
+
+
+def queue_departed_lines() -> int:
+    """Queue for ``drain_agenda_cleanup`` the lines on the calendar of somebody
+    no longer on their meeting's team, and forget where they were; returns how
+    many were queued.
+
+    A line holds a gap's title and question, and its owner is the person who
+    pressed. Once they leave the team (#937) they can no longer open the
+    meeting, so its gaps come off their own calendar, as module B takes a
+    departed assignee's due-date event off theirs (#944). Leaving starts
+    nothing in C, so this runs with the drain. The owner's grant takes the
+    lines out: it is theirs, not the team's.
+
+    A line on somebody else's event that a departed person was invited to is
+    not touched: it is on a member's calendar, and who that member invites is
+    theirs. Somebody who comes back loses the lines; pressing again writes
+    them. Safe to run twice."""
+    with session_scope() as session:
+        still_on_team = (
+            select(TeamMember.id)
+            .where(
+                TeamMember.team_id == Meeting.team_id,
+                TeamMember.user_id == GapAgendaEvent.user_id,
+            )
+            .exists()
+        )
+        rows = session.execute(
+            select(
+                GapAgendaEvent.id,
+                GapAgendaEvent.user_id,
+                GapAgendaEvent.calendar_id,
+                GapAgendaEvent.event_id,
+                GapAgendaEvent.gap_id,
+            )
+            .join(Meeting, Meeting.id == GapAgendaEvent.meeting_id)
+            .where(~still_on_team)
+        ).all()
+        if rows:
+            session.execute(
+                _insert(session, GapAgendaCleanup)
+                .values(
+                    [
+                        {"user_id": u, "calendar_id": c, "event_id": e, "gap_id": g}
+                        for _, u, c, e, g in rows
+                    ]
+                )
+                .on_conflict_do_nothing(index_elements=["user_id", "event_id", "gap_id"])
+            )
+            session.execute(
+                delete(GapAgendaEvent).where(GapAgendaEvent.id.in_([r.id for r in rows]))
+            )
+    if rows:
+        log.info("gap_departed_agenda_lines_queued", lines=len(rows))
     return len(rows)
 
 

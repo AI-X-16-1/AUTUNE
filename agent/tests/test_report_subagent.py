@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from autune_agent.main import BudgetExceededError, CallBudget, RunScope, Tool, Toolbox
 from autune_agent.main.pending import arguments_ok
@@ -23,7 +24,9 @@ from autune_agent.subagents.report.graph import (
     PUBLISH_ACTION,
     REVIEW_TOOL,
 )
+from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK
 from autune_agent.testing import mock_tool
+from autune_core.errors import PrivacyViolationError
 
 TEAM = "team_a"
 MEETING = "mtg_ab12cd"
@@ -102,7 +105,7 @@ def test_a_finished_meeting_becomes_a_draft_at_l1_and_a_post_at_l2() -> None:
     assert set(draft.arguments) == {"body_markdown", "pending_review", "draft_id"}
     assert post.arguments == {"draft_id": draft.arguments["draft_id"]}
     assert draft.arguments["pending_review"] is True
-    assert draft.arguments["body_markdown"].startswith("✅ 확정된 액션 아이템")
+    assert draft.arguments["body_markdown"].startswith("✅ 확정된 할 일")
 
 
 # --- a person edited the draft (#674) ---------------------------------------------
@@ -212,6 +215,61 @@ def test_an_edit_on_another_teams_meeting_proposes_nothing() -> None:
 
 def test_the_awaiting_read_is_a_tool_e_actually_ships() -> None:
     assert AWAITING_TOOL in collect_tools(["intelligence"])
+
+
+# --- no Slack channel to post to (#1000 review) -------------------------------------
+
+
+def _channel(connected: bool) -> dict[str, Any]:
+    title = "Slack 채널이 연결되어 있습니다." if connected else "Slack이 연결되어 있지 않습니다."
+    return {"ok": True, "summary": title, "items": [{"title": title, "connected": connected}]}
+
+
+def test_without_a_channel_a_finished_meeting_is_drafted_and_its_post_not_proposed() -> None:
+    """E would refuse the post at approval; a card that can only fail is not offered."""
+    tools = {**_all_tools(), CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, _channel(False))}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert outcome.result.ok is True
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION]
+    assert NO_SLACK in outcome.result.summary
+
+
+@pytest.mark.parametrize(
+    "check",
+    [_channel(True), {"ok": False, "reason": "boom", "summary": "읽지 못했습니다."}],
+    ids=["connected", "check-failed"],
+)
+def test_with_a_channel_or_no_answer_the_post_is_proposed_as_before(check: dict[str, Any]) -> None:
+    """A failed check proposes the post: E's action still refuses it at approval."""
+    tools = {**_all_tools(), CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, check)}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
+
+
+@pytest.mark.parametrize(
+    "awaiting",
+    [_awaiting("rdr_edited"), _awaiting_correction("rcr_fix")],
+    ids=["edited-draft", "correction"],
+)
+def test_without_a_channel_a_persons_change_proposes_nothing(awaiting: dict[str, Any]) -> None:
+    tools = {
+        AWAITING_TOOL: mock_tool(AWAITING_TOOL, awaiting),
+        CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, _channel(False)),
+    }
+
+    outcome = _run(CHANGED, tools, scope_meeting=MEETING)
+
+    assert outcome.result.ok is True and outcome.proposed == []
+    assert outcome.result.summary == NO_SLACK
+
+
+def test_the_channel_read_is_a_tool_e_actually_ships() -> None:
+    assert CHANNEL_TOOL in collect_tools(["intelligence"])
+    assert CHANNEL_TOOL in SUBAGENT.tools
 
 
 # --- asked in chat ----------------------------------------------------------------
@@ -324,7 +382,40 @@ def test_an_optional_tool_that_raises_drops_only_its_section() -> None:
     outcome = _run(EVENT, tools, scope_meeting=MEETING)
 
     body = outcome.proposed[0].arguments["body_markdown"]
-    assert "열린 갭" not in body and "✅ 확정된 액션 아이템" in body
+    assert "열린 갭" not in body and "✅ 확정된 할 일" in body
+
+
+def _raising(name: str, exc: Exception) -> Tool:
+    def fn(_session: object, **_kw: object) -> dict[str, Any]:
+        raise exc
+
+    return Tool(name=name, description="Use this in tests.", fn=fn)
+
+
+_NOT_SWALLOWED = [
+    PrivacyViolationError("refused"),
+    SQLAlchemyError("connection lost"),
+    BudgetExceededError("budget"),
+]
+
+
+@pytest.mark.parametrize("tool", [GAPS_TOOL, CHANNEL_TOOL], ids=["optional-read", "channel"])
+@pytest.mark.parametrize("exc", _NOT_SWALLOWED, ids=["privacy", "database", "budget"])
+def test_a_privacy_database_or_budget_error_is_never_swallowed(tool: str, exc: Exception) -> None:
+    """The chat path re-raises the same three (RAISED): a privacy guard is never
+    downgraded, and a database error leaves the session unusable for the run."""
+    tools = {**_all_tools(), tool: _raising(tool, exc)}
+
+    with pytest.raises(type(exc)):
+        _run(EVENT, tools, scope_meeting=MEETING)
+
+
+def test_a_channel_check_that_raises_proposes_the_post_as_before() -> None:
+    tools = {**_all_tools(), CHANNEL_TOOL: _raising(CHANNEL_TOOL, RuntimeError("bug"))}
+
+    outcome = _run(EVENT, tools, scope_meeting=MEETING)
+
+    assert [p.tool for p in outcome.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
 
 
 def test_an_unknown_meeting_is_a_failure_with_no_proposal() -> None:
@@ -364,3 +455,14 @@ def test_the_allow_list_is_the_template_reads_and_es_chat_reads() -> None:
     assert SUBAGENT.description.startswith("Use this")
     # E refuses a report already posted, so the subagent must not promise a resend.
     assert "resend" not in SUBAGENT.description
+
+
+def test_the_description_claims_the_teams_completion_rate() -> None:
+    """With the real router, "액션 아이템 완료율 어때?" reached Report 0 of 5 while the
+    description said only "trend and completion" and kept "action items" out
+    whole; naming the team's completion rate and keeping out only one item or
+    one person's items took it to 5 of 5, with B's questions unchanged."""
+    description = SUBAGENT.description
+    assert "action-item completion rate" in description
+    assert "one person's items" in description
+    assert "Do not use it for action items" not in description

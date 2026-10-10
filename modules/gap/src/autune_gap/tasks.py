@@ -67,8 +67,11 @@ def rescore_changed_people() -> None:
 @shared_task(name="autune.gap.periodic.drain_agenda_cleanup")
 @periodic(timedelta(minutes=10))
 def drain_agenda_cleanup() -> int:
-    """Take the gap lines of deleted or expired meetings off their owners'
+    """Take the gap lines of deleted or expired meetings, and those on the
+    calendar of somebody who left the meeting's team (#937), off their owners'
     calendars, each with the owner's own grant (privacy.md section 4). See
-    ``calendar_writes.drain_agenda_cleanup``. A run with nothing queued is one
-    query."""
+    ``calendar_writes.queue_departed_lines`` and
+    ``calendar_writes.drain_agenda_cleanup``. A run with nothing to do is two
+    queries."""
+    calendar_writes.queue_departed_lines()
     return calendar_writes.drain_agenda_cleanup()

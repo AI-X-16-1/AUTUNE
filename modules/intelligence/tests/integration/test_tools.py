@@ -65,9 +65,63 @@ def test_the_tool_list_is_exactly_these_reads() -> None:
         "weekly_reports",
         "weekly_report_schedule",
         "explain_metric",
+        "report_channel",  # the Report subagent's check before it proposes a post
+        "asker_has_other_teams",  # whether a schedule change points to the other teams
     ]
     for fn in tools.TOOLS:
         assert fn.__doc__ and fn.__doc__.strip().startswith("Use this")
+
+
+# --- asker_has_other_teams ------------------------------------------------------
+
+
+def test_asker_has_other_teams_says_whether_never_which(db_session: Session, team: str) -> None:
+    from autune_core import Team, TeamMember, User
+
+    person = User(email="p@example.com", display_name="p")
+    other = Team(name="Other Team")
+    db_session.add_all([person, other])
+    db_session.flush()
+    db_session.add(TeamMember(team_id=team, user_id=person.id))
+    db_session.flush()
+
+    alone = tools.asker_has_other_teams(db_session, team, person.id)
+    db_session.add(TeamMember(team_id=other.id, user_id=person.id))
+    db_session.flush()
+    two = tools.asker_has_other_teams(db_session, team, person.id)
+
+    assert alone["items"][0]["other_teams"] is False
+    assert two["items"][0]["other_teams"] is True
+    assert other.id not in str(two) and "Other Team" not in str(two)
+
+
+# --- report_channel -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "secret", "connected"),
+    [
+        ({"channel": "C123"}, "stored-token", True),
+        ({}, "stored-token", False),  # connected, no channel picked
+        ({"channel": "C123"}, None, False),  # no token
+        (None, None, False),  # never connected
+    ],
+    ids=["connected", "no-channel", "no-token", "never"],
+)
+def test_report_channel_says_whether_a_post_could_go_out(
+    db_session: Session, team: str, config: dict | None, secret: str | None, connected: bool
+) -> None:
+    from autune_core import TeamIntegration
+
+    if config is not None:
+        db_session.add(TeamIntegration(team_id=team, service="slack", config=config, secret=secret))
+        db_session.flush()
+
+    result = tools.report_channel(db_session, team)
+
+    assert result["ok"] is True and result["items"][0]["connected"] is connected
+    # Whether, never which: no channel, workspace or token in the answer.
+    assert "C123" not in str(result) and "stored-token" not in str(result)
 
 
 # --- meeting_quality ----------------------------------------------------------
@@ -106,7 +160,7 @@ def test_meeting_quality_ranks_the_weakest_component_first(
     assert "C" in result["summary"]
     titles = [i["title"] for i in result["items"]]
     # Measured components weakest first; the unmeasured one last, never scored as zero.
-    assert titles == ["액션아이템 확정률", "고위험 갭", "결정 밀도", "참여 균형"]
+    assert titles == ["할 일 확정률", "고위험 갭", "결정 밀도", "참여 균형"]
     assert result["items"][-1]["body"] == "측정 안 됨"
     assert result["items"][1]["body"] == "1건"
     assert result["confidence"] == 1.0
@@ -278,11 +332,11 @@ def _predicted(db_session: Session, team: str, probability: float, scored_at: da
     db_session.flush()
 
 
-def test_misalignment_risk_withholds_the_probability_before_the_history_gate(
+def test_misalignment_risk_withholds_the_probability_below_the_meeting_floor(
     db_session: Session, team: str
 ) -> None:
-    for _ in range(5):
-        _predicted(db_session, team, 0.37, datetime.now(UTC))
+    for _ in range(2):
+        _predicted(db_session, team, 0.37, datetime.now(UTC) - timedelta(weeks=10))
 
     result = tools.misalignment_risk(db_session, team)
 

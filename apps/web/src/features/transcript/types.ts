@@ -111,7 +111,7 @@ export type MeetingSummary = {
 };
 
 /** `pinned`: the caller put this team at the top of their own list. */
-export type TeamSummary = { team_id: string; name: string; pinned?: boolean };
+export type TeamSummary = { team_id: string; name: string; pinned: boolean };
 
 /**
  * Module A's own speaker endpoints — `/api/audio/meetings/{id}/speakers` and
@@ -177,3 +177,15 @@ export type PiiReported = {
 };
 /** One of a team's own masking shapes — `schemas.MaskingRule`. */
 export type MaskingRule = { id: number; shape: string; category: string; created_at: string };
+
+/** A question researched during a live meeting (agent live research). Masked text. */
+export type LiveResearchDocument = {
+  id: string;
+  origin: "auto" | "manual";
+  status: "running" | "done" | "failed";
+  question: string;
+  body: string | null;
+  web_sources: { title: string; url: string }[];
+  meeting_sources: { meeting_id: string; title: string }[];
+  created_at: string;
+};

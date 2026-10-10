@@ -41,7 +41,8 @@ See `/docs/architecture/contracts.md`, "The B → D boundary".
 `TeamActionProgress` on `autune.extraction.action_progress`, every ten
 minutes for each team with a meeting in the last 91 days that is still inside
 its retention window, consumed by **E** for its real completion rate (#605). A
-meeting past `expires_at` is not counted. Counts per meeting and meeting ids only —
+meeting past `expires_at` is not counted, and an item closed without being
+finished is in none of the counts (#856). Counts per meeting and meeting ids only —
 no assignee, title or item id, so no per-person completion record can be
 built from it.
 
@@ -59,7 +60,8 @@ built from it.
 `ext_sync_retries`,
 `ext_extraction_attempts`, `ext_extraction_runs`, `ext_meeting_notes`, `ext_meeting_summaries`,
 `ext_forgotten_utterances`, `ext_weekly_digests`, `ext_daily_digests`,
-`ext_notification_pauses`, `ext_public_holidays`, `ext_projects`,
+`ext_work_reports`, `ext_meeting_notices`,
+`ext_notification_pauses`, `ext_public_holidays`, `ext_projects`, `ext_materials`,
 `ext_project_sends`, `ext_project_send_cleanup`, `ext_project_refresh_owed`,
 `ext_minutes_events`.
 

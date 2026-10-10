@@ -5,6 +5,7 @@ import type {
   GapAgendaEvents,
   GapAsk,
   GapAskTargets,
+  GapCardsSent,
   GapMeetingCarry,
   GapQuestion,
   GapDismissal,
@@ -15,7 +16,6 @@ import type {
   TemplateComparison,
   TemplateOption,
   TemplateSelection,
-  TopicGraph,
 } from "./types";
 
 export { api };
@@ -37,17 +37,6 @@ export { api };
  */
 export const getReport = (meetingId: string) =>
   api.gap<GapReport>(`/reports/${meetingId}`);
-
-/**
- * The topic graph behind the report, for drawing.
- *
- * Nodes come in the report's order, so a screen showing both never has to
- * reconcile two orderings. It carries no participation: who spoke is in the
- * report, keyed by topic id, and a node is the one place a per-person number
- * could arrive attached to a picture.
- */
-export const getTopicGraph = (meetingId: string) =>
-  api.gap<TopicGraph>(`/topics/${meetingId}`);
 
 /**
  * The checklist this meeting is held to, item by item — the S20 rail.
@@ -114,6 +103,14 @@ export const askGap = (gapId: string, userId: string) =>
     method: "POST",
     body: JSON.stringify({ user_id: userId }),
   });
+
+/**
+ * "질문 카드 Slack 전송": post the meeting's open high gaps on the team's Slack
+ * channel as question cards, a few at most and a link for the rest (#824).
+ * Nobody is mentioned; nothing is stored.
+ */
+export const sendCards = (meetingId: string) =>
+  api.gap<GapCardsSent>(`/reports/${meetingId}/slack`, { method: "POST" });
 
 /**
  * The caller's own Google Calendar events over the next two weeks, for "다음

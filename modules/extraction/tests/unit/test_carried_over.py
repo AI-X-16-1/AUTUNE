@@ -24,6 +24,7 @@ from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import ExtActionItem
 from autune_extraction.router import router
+from autune_extraction.slots import KST
 
 from .conftest import sign_in
 
@@ -173,6 +174,30 @@ def test_the_route_answers_a_member(client: TestClient, session: Session) -> Non
     assert (body["open"], body["overdue"]) == (1, 1)
     assert body["items"][0]["id"] == "act_todo"
     assert body["items"][0]["meeting_title"] == "mtg_last 회의"
+
+
+def test_the_route_counts_late_by_koreas_day_before_the_servers_day_turns(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route gives no day, so ``carried_over`` reads the clock itself. A
+    server on UTC is on Korea's yesterday from 00:00 to 09:00 KST; read by that
+    day, the item that went late at midnight was not counted as late and was
+    listed behind a stuck one that is only due today."""
+    korea = datetime.now(tz=KST).date()
+
+    class _ServersDay(date):
+        @classmethod
+        def today(cls) -> date:
+            return korea - timedelta(days=1)
+
+    monkeypatch.setattr(service, "date", _ServersDay)
+    item(session, "act_late_since_midnight", "mtg_last", due=korea - timedelta(days=1))
+    item(session, "act_stuck_due_today", "mtg_old", due=korea)
+
+    body = client.get(f"{PREFIX}/carried-over/mtg_later").json()
+
+    assert (body["open"], body["overdue"], body["stale"]) == (2, 1, 1)
+    assert [i["id"] for i in body["items"]] == ["act_late_since_midnight", "act_stuck_due_today"]
 
 
 def test_another_teams_meeting_is_not_found(client: TestClient, session: Session) -> None:

@@ -19,13 +19,13 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
-from autune_core import CurrentUser, Meeting, User, get_session
+from autune_core import CurrentUser, Meeting, SessionDep, User
 from autune_core.errors import ConflictError, NotFoundError
 from autune_core.settings import get_settings as get_core_settings
 
@@ -33,9 +33,11 @@ from . import (
     attempts,
     jira_issues,
     leave_calendar,
+    materials,
     notion_connect,
     projects,
     service,
+    sync_log,
     sync_state,
     tasks,
 )
@@ -50,6 +52,7 @@ from .schemas import (
     BulkActionItems,
     BulkActionResult,
     CarriedOver,
+    CloudModelUse,
     ConfirmationAnswerIn,
     DecisionCreate,
     DecisionDetail,
@@ -58,6 +61,8 @@ from .schemas import (
     DueReminderSettingIn,
     ExtractionState,
     JiraProjectIssues,
+    MaterialRead,
+    MaterialWrite,
     MeetingNoteUpdate,
     MeetingReview,
     MeetingSummary,
@@ -73,12 +78,11 @@ from .schemas import (
     ProjectSendResult,
     ProjectWrite,
     ReviewDecision,
+    SyncLogRead,
     TeamRead,
 )
 
 router = APIRouter()
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 def dev_routes_enabled() -> bool:
@@ -121,7 +125,7 @@ def get_extraction_state(
     meeting_id: str, session: SessionDep, reader: CurrentUser
 ) -> ExtractionState:
     """Whether this meeting's extraction went through, failed, or is waiting to
-    run again -- what the 액션 tab says above its board. Members of the
+    run again -- what the 할 일 tab says above its board. Members of the
     meeting's team only; anyone else gets the 404 an unknown meeting gets."""
     service.require_readable_meeting(session, meeting_id, reader)
     return attempts.state(session, meeting_id)
@@ -135,7 +139,7 @@ def get_extraction_state(
 def request_extraction(
     meeting_id: str, session: SessionDep, reader: CurrentUser
 ) -> ExtractionState:
-    """Extract this meeting's action items and decisions again -- the 액션
+    """Extract this meeting's action items and decisions again -- the 할 일
     tab's "다시 추출" (the user, 2026-10-06).
 
     Accepted, not done: the request is recorded and the worker runs it within
@@ -372,6 +376,38 @@ def delete_action_item(
     background.add_task(tasks.refresh_project_minutes, meeting_id)
 
 
+@router.post("/action-items/{action_item_id}/close", response_model=ActionItemRead)
+def close_action_item(
+    action_item_id: str, session: SessionDep, reader: CurrentUser, background: BackgroundTasks
+) -> ActionItemRead:
+    """Close a confirmed item that will not be finished -- dropped, overtaken,
+    no longer needed (#856). The board's way to what ``tools.close_action_item``
+    does after an approval, with the same refusals: an item still waiting for
+    confirmation has nothing a person agreed to close, a finished one is
+    finished, and one already closed is not closed twice.
+
+    Not a ``PATCH`` of the status: the item ends ``done`` either way, and what
+    tells a close from finished work is the event kept
+    (``service.close_without_finishing``), which a status edit does not write.
+    Moving the status back re-opens it, as it does a finished item.
+    """
+    item = service.readable_action_item(session, action_item_id, reader)
+    # Held to the commit, as the tool holds it: a second close, or an edit of
+    # the status, waits and then reads what this one left (review of #979).
+    session.refresh(item, with_for_update=True)
+    if item.status == ActionStatus.NEEDS_CONFIRMATION.value:
+        raise ConflictError("an item waiting for confirmation cannot be closed")
+    if item.status == ActionStatus.DONE.value and service.closed_unfinished(session, [item.id]):
+        raise ConflictError("this item is already closed")
+    if not service.close_without_finishing(session, item):
+        raise ConflictError("this item is already done")
+    response = service.read_one(session, item, reader_id=reader.id)
+    session.commit()
+    # Its copies outside follow as they follow any change of status.
+    background.add_task(tasks.sync_after_confirmation, item.id)
+    return response
+
+
 @router.get("/reviews/{meeting_id}", response_model=MeetingReview)
 def get_review(meeting_id: str, session: SessionDep, reader: CurrentUser) -> MeetingReview:
     """What needs a person in this meeting before anything is sent (S15, #246)."""
@@ -500,11 +536,31 @@ def my_projects(session: SessionDep, reader: CurrentUser) -> list[ProjectRead]:
     return [service.project_read(row) for row in projects.reader_projects(session, reader.id)]
 
 
+@router.get("/cloud-model", response_model=CloudModelUse)
+def cloud_model_use(reader: CurrentUser) -> CloudModelUse:
+    """Whether this server sends meeting text to a cloud model (#392).
+
+    A fact about the deployment and not about the caller or a meeting, so it
+    reads no row; it still takes the user, like every route here. The screens
+    that take a recording in ask it to decide whether to show the operating
+    rule -- a notice, which checks nothing."""
+    return CloudModelUse(in_use=get_settings().sends_meeting_text_out)
+
+
 @router.get("/teams/mine", response_model=list[TeamRead])
 def my_teams(session: SessionDep, reader: CurrentUser) -> list[TeamRead]:
     """The reader's own teams, by name -- for the board across meetings, which
     shows the items team by team and has only each item's ``team_id``."""
     return service.reader_teams(session, reader.id)
+
+
+@router.get("/sync-log", response_model=SyncLogRead)
+def team_sync_log(team_id: str, session: SessionDep, reader: CurrentUser) -> SyncLogRead:
+    """S28's "동기화 기록": the copies of the team's items that failed and still
+    stand, and the latest that were made. Any member; a calendar row only to
+    the person it is about. See ``sync_log``."""
+    team = _member_team(session, reader, None, team_id)
+    return sync_log.team_sync_log(session, team_id=team, reader_id=reader.id)
 
 
 @router.get("/projects", response_model=list[ProjectRead])
@@ -563,6 +619,40 @@ def delete_project(project_id: str, team_id: str, session: SessionDep, reader: C
     session.commit()
 
 
+@router.get("/materials", response_model=list[MaterialRead])
+def list_materials(team_id: str, session: SessionDep, reader: CurrentUser) -> list[MaterialRead]:
+    """The Drive files the team keeps on its 자료 screen (#817), the newest
+    first. Members of the team only; anyone else gets the 404 an unknown team
+    gets."""
+    team = _member_team(session, reader, None, team_id)
+    return [materials.read(row) for row in materials.team_materials(session, team)]
+
+
+@router.post("/materials", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
+def register_material(
+    payload: MaterialWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialRead:
+    """Put a Drive file on the team's shelf: a title and a pasted link. Any
+    member, as with the team's projects. Only the file's id is kept, and the
+    file itself is never read."""
+    team = _member_team(session, reader, None, team_id)
+    row = materials.register(session, team, title=payload.title, link=payload.link)
+    response = materials.read(row)
+    session.commit()
+    return response
+
+
+@router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_material(
+    material_id: str, team_id: str, session: SessionDep, reader: CurrentUser
+) -> None:
+    """Take a material off the team's shelf. Any member; the Drive file is not
+    touched."""
+    team = _member_team(session, reader, None, team_id)
+    materials.delete_material(session, team, material_id)
+    session.commit()
+
+
 @router.put("/action-items/{action_item_id}/project", response_model=ActionItemRead)
 def place_action_item(
     action_item_id: str, payload: ProjectPlacement, session: SessionDep, reader: CurrentUser
@@ -587,7 +677,10 @@ def place_decision(
 
 @router.get("/reviews/{meeting_id}/outbound", response_model=Outbound)
 def get_outbound(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Outbound:
-    """Exactly what confirm-and-send would send: confirmed decisions and accepted items."""
+    """What of the meeting would go to Notion, Jira or Slack -- confirmed
+    decisions and accepted items -- and what is held back. A read: no sync
+    asks it before sending, each is checked on its own request
+    (``service.outbound_for_meeting``)."""
     service.require_readable_meeting(session, meeting_id, reader)
     return service.outbound_for_meeting(session, meeting_id)
 
@@ -633,7 +726,7 @@ def _member_team(
     session: Session, reader: User, meeting_id: str | None, team_id: str | None = None
 ) -> str:
     """The team an integration-setup request is about, after checking the caller
-    belongs to it -- named by a meeting (the 액션 tab) or by the team itself (S28
+    belongs to it -- named by a meeting (the 할 일 tab) or by the team itself (S28
     settings, #496). Anyone else gets the 404 an unknown meeting or team gets
     (#189)."""
     if meeting_id:
@@ -674,7 +767,7 @@ def answer_confirmation(
 
 
 def _reminder_setting(on: bool) -> DueReminderSetting:
-    """The person's choice, and which of the three messages it governs this
+    """The person's choice, and which of the messages it governs this
     deployment sends at all."""
     settings = get_settings()
     return DueReminderSetting(
@@ -682,6 +775,8 @@ def _reminder_setting(on: bool) -> DueReminderSetting:
         sent_here=settings.due_reminders,
         weekly_here=settings.weekly_digest,
         daily_here=settings.daily_digest,
+        work_report_here=settings.work_report,
+        after_meeting_here=settings.after_meeting_notice,
     )
 
 

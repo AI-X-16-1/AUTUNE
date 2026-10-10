@@ -64,6 +64,8 @@ def test_what_the_proposer_wrote_for_a_commitment_goes_on_with_it() -> None:
         summary="시안을 금요일까지 정리",
         pieces=(("앞 문장.", None), ("제가 금요일까지 정리할게요.", K.COMMITMENT)),
         piece_summaries=("", "시안을 금요일까지 정리"),
+        part="금요일까지 정리할게요",
+        piece_parts=("", "금요일까지 정리할게요."),
     )
 
     combined = combine(proposed, said(K.COMMITMENT))
@@ -72,6 +74,9 @@ def test_what_the_proposer_wrote_for_a_commitment_goes_on_with_it() -> None:
     assert combined.summary == proposed.summary
     assert combined.pieces == proposed.pieces
     assert combined.piece_summaries == proposed.piece_summaries
+    # And the words it named for the quotation (2026-10-08).
+    assert combined.part == proposed.part
+    assert combined.piece_parts == proposed.piece_parts
 
 
 def test_a_commitment_only_the_llm_found_is_kept_as_a_candidate() -> None:
@@ -214,3 +219,14 @@ def test_llm_checked_is_the_llm_checked_by_local_deberta(configured) -> None:
 
 def test_llm_checked_is_not_a_resolver() -> None:
     assert "llm_checked" not in registry._RESOLVERS
+
+
+def test_the_windows_the_proposer_could_not_read_are_the_pairs() -> None:
+    """``llm_checked`` wraps the classifier that has windows: a run under it
+    must still learn that part of the transcript went unread."""
+    proposer, checker = Scripted([None]), Scripted([None])
+    pair = CheckedClassifier(proposer, checker)
+    assert pair.unread_windows == 0  # neither reads in windows
+
+    proposer.unread_windows = 2  # type: ignore[attr-defined]
+    assert pair.unread_windows == 2

@@ -241,13 +241,69 @@ describe("NotificationPauseSetting", () => {
         ends_on: "2026-10-23",
       }),
     );
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다",
+    // The state is said once, and the save's line agrees with it (the user,
+    // 2026-10-07): the event is still there, on the range it had.
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "기간은 저장했습니다. 캘린더가 연결되어 있지 않아 캘린더의 휴가 일정은 이전 기간 그대로입니다.",
     );
+    expect(
+      screen.getByText(
+        "내 Google 캘린더에 넣어 둔 휴가 일정이 있지만, 지금은 캘린더가 연결되어 있지 않아 그 일정을 옮기거나 지울 수 없습니다. 다시 연결한 뒤 저장하면 이 기간으로 옮겨집니다.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeNull();
+    expect(screen.queryByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeNull();
+    expect(screen.queryByText(/캘린더에는 넣지 못했습니다/)).toBeNull();
+    expect(screen.queryByText(/이 기간은 내 Google 캘린더/)).toBeNull();
+  });
+
+  it("says the same state after a reload, with no save's line left", async () => {
+    get.mockResolvedValue({ ...WEEK, on_calendar: true });
+    render(<NotificationPauseSetting />);
+    await first();
+
+    expect(screen.getByText(/넣어 둔 휴가 일정이 있지만/)).toBeTruthy();
+    expect(screen.queryByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/)).toBeNull();
+    expect(screen.queryByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps its promise after reconnecting: the box opens ticked, and saving sends the tick", async () => {
+    // "다시 연결한 뒤 저장하면 이 기간으로 옮겨집니다" is true of this save: the
+    // server moves the event that stands when the tick comes with the dates.
+    get.mockResolvedValue({ ...WEEK, on_calendar: true, calendar_connected: true });
+    put.mockResolvedValue({
+      ...WEEK,
+      on_calendar: true,
+      calendar_connected: true,
+      calendar: "added",
+    } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    await first();
+
+    expect(box()?.checked).toBe(true);
+    expect(screen.queryByText(/넣어 둔 휴가 일정이 있지만/)).toBeNull();
     expect(
       screen.getByText(/내 Google 캘린더에도 휴가 일정이 들어가 있습니다/),
     ).toBeTruthy();
-    expect(screen.queryByText(/이 기간은 내 Google 캘린더/)).toBeNull();
+    fireEvent.click(save());
+    await waitFor(() =>
+      expect(put).toHaveBeenCalledWith({ ...WEEK, on_calendar: true }),
+    );
+  });
+
+  it("still says connect-to-choose and could-not-put to a person with no event on a calendar", async () => {
+    get.mockResolvedValue(WEEK);
+    put.mockResolvedValue({ ...WEEK, on_calendar: false, calendar: "not_connected" } as NotificationPauseRead);
+    render(<NotificationPauseSetting />);
+    await first();
+    expect(screen.getByText(/연결하면 이 기간을 캘린더에도 넣을지/)).toBeTruthy();
+    fireEvent.click(save());
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "기간은 저장했습니다. 캘린더가 연결되어 있지 않아 캘린더에는 넣지 못했습니다.",
+    );
+    expect(screen.queryByText(/넣어 둔 휴가 일정이 있지만/)).toBeNull();
   });
 
   it("says nothing about a calendar after a save that touched none", async () => {

@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 
+import { onAgentActed } from "@/shared/lib/agentActed";
 import { Button, StatusDot } from "@/shared/ui";
 
 import { getCarriedOver } from "../api";
-import { isOverdue } from "../dates";
+import { isOverdue, shownDue } from "../dates";
 import type { CarriedOver, CarriedOverItem } from "../types";
 import { staleLabel } from "../stale";
 
@@ -22,6 +23,12 @@ import { staleLabel } from "../stale";
  * text, never a fill — red belongs to elapsing time (ui-spec section 0). The
  * list is read-only: an item is changed on its own meeting's board, where its
  * evidence is.
+ *
+ * Read again when the assistant changed something (#1055): a due date moved on
+ * a chat card is one of these rows, and the counts above them. Only the first
+ * answer may open the popup -- a later one changes what is shown and never
+ * puts the popup back in front of someone who closed it, which a browser that
+ * refuses storage would otherwise see on every approval.
  */
 export function CarriedOverActions({ meetingId }: { meetingId: string }) {
   const [result, setResult] = useState<CarriedOver | null>(null);
@@ -29,16 +36,27 @@ export function CarriedOverActions({ meetingId }: { meetingId: string }) {
 
   useEffect(() => {
     let alive = true;
-    getCarriedOver(meetingId)
-      .then((answer) => {
-        if (!alive) return;
-        setResult(answer);
-        if (answer.open > 0 && !seen(meetingId)) setOpen(true);
-      })
-      // Nothing to say when the read fails: the board below is the real work.
-      .catch(() => undefined);
+    let first = true;
+    // Of two reads in flight only the later one lands.
+    let latest = 0;
+    const read = () => {
+      const ticket = latest + 1;
+      latest = ticket;
+      getCarriedOver(meetingId)
+        .then((answer) => {
+          if (!alive || ticket !== latest) return;
+          setResult(answer);
+          if (first && answer.open > 0 && !seen(meetingId)) setOpen(true);
+          first = false;
+        })
+        // Nothing to say when the read fails: the board below is the real work.
+        .catch(() => undefined);
+    };
+    read();
+    const stop = onAgentActed(read);
     return () => {
       alive = false;
+      stop();
     };
   }, [meetingId]);
 
@@ -57,7 +75,7 @@ export function CarriedOverActions({ meetingId }: { meetingId: string }) {
       >
         <StatusDot variant="attention" />
         <span className="flex-1 text-[var(--color-ink-body)]">
-          지난 회의에서 넘어온 미완료 액션 {result.open}건
+          지난 회의에서 넘어온 미완료 할 일 {result.open}건
           {result.overdue > 0 ? (
             <span className="text-[var(--color-signal-critical)]">
               {" "}
@@ -93,7 +111,7 @@ function Popup({
     <div
       role="dialog"
       aria-modal
-      aria-label="지난 회의 미완료 액션"
+      aria-label="지난 회의 미완료 할 일"
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: "rgba(22,25,31,.35)" }}
       onClick={onClose}
@@ -115,7 +133,7 @@ function Popup({
             fontWeight: "var(--text-title-weight)",
           }}
         >
-          지난 회의에서 넘어온 미완료 액션 {result.open}건
+          지난 회의에서 넘어온 미완료 할 일 {result.open}건
         </h2>
         <p
           className="mt-1 text-[var(--color-ink-muted)]"
@@ -137,7 +155,7 @@ function Popup({
             className="mt-2 text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)" }}
           >
-            외 {rest}건은 각 회의의 액션 보드에서 확인할 수 있습니다.
+            외 {rest}건은 각 회의의 할 일 보드에서 확인할 수 있습니다.
           </p>
         ) : null}
 
@@ -185,12 +203,9 @@ function CarriedRow({ item }: { item: CarriedOverItem }) {
           </span>
           {item.due_date ? (
             <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                color: overdue ? "var(--color-signal-critical)" : undefined,
-              }}
+              style={{ color: overdue ? "var(--color-signal-critical)" : undefined }}
             >
-              {item.due_date}
+              {shownDue(item.due_date)}
             </span>
           ) : null}
           <span>

@@ -14,6 +14,7 @@ import re
 from datetime import date
 
 import pytest
+from sqlalchemy import Integer
 
 from autune_contracts.enums import UtteranceKind
 from autune_extraction.decisions import (
@@ -21,7 +22,9 @@ from autune_extraction.decisions import (
     ClassifiedUtterance,
     DecisionGroup,
     decision_id,
+    decision_of,
     group_decisions,
+    identified,
 )
 from autune_extraction.models import ExtDecision, ExtDecisionSource
 
@@ -45,6 +48,9 @@ def test_consecutive_decision_utterances_are_one_decision_not_several() -> None:
     Three labelled utterances are one thing the meeting settled. Emitting three
     decisions would hand D three lineages for one decision, and the summary tab
     would then disagree with the lineage view.
+
+    True of turns that only agree or point, as these three-character ones do.
+    Turns that each say what was decided are told apart further down.
     """
     groups = group_decisions(
         [
@@ -56,6 +62,213 @@ def test_consecutive_decision_utterances_are_one_decision_not_several() -> None:
 
     assert len(groups) == 1
     assert groups[0].source_utterance_ids == ("utt_1", "utt_2", "utt_3")
+
+
+# --- turns that each say something are decisions of their own (2026-10-09) -----
+
+LOGIN = "로그인은 소셜 로그인만 지원하기로 했습니다"
+SEARCH = "검색 기능은 다음 분기로 미루기로 했습니다"
+PRICE = "가격은 월 9900원으로 갑니다"
+WEEKDAY = "배포 요일은 화요일로 바꾸기로 했습니다"
+OCTOBER_8 = date(2026, 10, 8)
+
+
+def test_a_wrap_up_that_lists_three_decisions_is_three_decisions() -> None:
+    """The invented meeting the rule came from: read as one run it was one row
+    quoting the price, with the login and the search in no row at all."""
+    groups = group_decisions(
+        [
+            utterance("utt_1", CHAT, text="그럼 오늘 나온 얘기 정리해 보죠"),
+            utterance("utt_2", UtteranceKind.DECISION, text=LOGIN),
+            utterance("utt_3", UtteranceKind.DECISION, text=SEARCH),
+            utterance("utt_4", UtteranceKind.DECISION, text=PRICE),
+            utterance("utt_5", CHAT, text="네 좋아요"),
+        ],
+        day=OCTOBER_8,
+    )
+
+    assert [(group.statement, group.source_utterance_ids) for group in groups] == [
+        ("로그인은 소셜 로그인만 지원하기로 함", ("utt_2",)),
+        ("검색 기능은 다음 분기로 미루기로 함", ("utt_3",)),
+        ("가격은 월 9900원으로 진행", ("utt_4",)),
+    ]
+
+
+def test_assent_belongs_with_the_decision_it_follows_not_with_the_next() -> None:
+    groups = group_decisions(
+        [
+            utterance("utt_1", UtteranceKind.DECISION, text=LOGIN),
+            utterance("utt_2", UtteranceKind.DECISION, text="네 그렇게 하죠"),
+            utterance("utt_3", UtteranceKind.DECISION, text=PRICE),
+            utterance("utt_4", UtteranceKind.DECISION, text="그럼 그대로 가죠"),
+        ]
+    )
+
+    assert [group.source_utterance_ids for group in groups] == [
+        ("utt_1", "utt_2"),
+        ("utt_3", "utt_4"),
+    ]
+    assert [group.core_text for group in groups] == [LOGIN, PRICE]
+
+
+def test_a_date_said_for_one_decision_is_not_the_deadline_of_the_next() -> None:
+    """Read as one run, the payment decision carried the release date."""
+    groups = group_decisions(
+        [
+            utterance("utt_1", UtteranceKind.DECISION, text="릴리스는 10월 20일에 내기로 했습니다"),
+            utterance("utt_2", UtteranceKind.DECISION, text="결제 모듈은 외부 라이브러리로 갑니다"),
+        ],
+        day=OCTOBER_8,
+    )
+
+    assert [group.statement for group in groups] == [
+        "릴리스는 10월 20일에 내기로 함 (기한 2026-10-20)",
+        "결제 모듈은 외부 라이브러리로 진행",
+    ]
+
+
+def test_one_decision_said_twice_in_full_is_two_rows() -> None:
+    """The cost of the rule, taken knowingly: a person deletes one."""
+    groups = group_decisions(
+        [
+            utterance("utt_1", UtteranceKind.DECISION, text="검색 정렬은 인기순으로 바꾸시죠"),
+            utterance(
+                "utt_2", UtteranceKind.DECISION, text="네 검색 정렬은 인기순으로 바꾸기로 했습니다"
+            ),
+        ]
+    )
+
+    assert len(groups) == 2
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        WEEKDAY,
+        "릴리스는 10월 20일로 정하기로 했습니다",
+        "정기 회의는 매주 월요일에 하기로 했습니다",
+        "회고는 금요일마다 하기로 했습니다",
+    ],
+)
+def test_a_date_that_is_what_was_decided_is_not_a_deadline(text: str) -> None:
+    """ "화요일로 바꾸기로 함 (기한 2026-10-13)" set a deadline nobody had."""
+    (group,) = group_decisions(
+        [utterance("utt_1", UtteranceKind.DECISION, text=text)], day=OCTOBER_8
+    )
+
+    assert "기한" not in group.statement
+    assert group.suffix == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "QA는 10월 13일부터 시작하기로 하죠.",
+        "피드백 설문은 베타 시작 2주 뒤에 보내기로 하죠.",
+        "이번 분기부터 주간 보고는 월요일 오전에 하기로 합시다.",
+    ],
+)
+def test_a_start_an_offset_and_a_weekly_slot_put_no_deadline_on_a_decision(text: str) -> None:
+    """Each had "(기한 …)" after it: the day QA starts, the meeting's day plus
+    two weeks, and the next Monday."""
+    (group,) = group_decisions(
+        [utterance("utt_1", UtteranceKind.DECISION, text=text)], day=OCTOBER_8
+    )
+
+    assert "기한" not in group.statement
+    assert group.suffix == ""
+
+
+@pytest.mark.parametrize(
+    ("text", "due"),
+    [
+        ("릴리스는 10월 20일에 내기로 했습니다", "2026-10-20"),
+        ("견적서는 다음 주 금요일까지 받기로 했습니다", "2026-10-16"),
+        ("마감은 금요일까지로 하기로 했습니다", "2026-10-09"),
+    ],
+)
+def test_a_date_something_is_due_by_is_still_the_deadline(text: str, due: str) -> None:
+    (group,) = group_decisions(
+        [utterance("utt_1", UtteranceKind.DECISION, text=text)], day=OCTOBER_8
+    )
+
+    assert group.suffix == f"기한 {due}"
+
+
+# --- turns a kept row holds (``service.build_decisions``) ---------------------
+
+
+def test_no_decision_is_made_again_from_turns_a_kept_row_holds() -> None:
+    read = [
+        utterance("utt_1", UtteranceKind.DECISION, text=LOGIN),
+        utterance("utt_2", UtteranceKind.DECISION, text=SEARCH),
+        utterance("utt_3", UtteranceKind.DECISION, text=PRICE),
+    ]
+
+    groups = group_decisions(read, held={"utt_1", "utt_2"})
+
+    assert [group.source_utterance_ids for group in groups] == [("utt_3",)]
+
+
+def test_assent_to_a_held_decision_is_not_a_decision_by_itself() -> None:
+    """Its content is in the kept row. Left alone it would be a row reading
+    "네 그렇게 하죠"."""
+    read = [
+        utterance("utt_1", UtteranceKind.DECISION, text=PRICE),
+        utterance("utt_2", UtteranceKind.DECISION, text="네 그렇게 하죠"),
+    ]
+
+    assert group_decisions(read, held={"utt_1"}) == []
+    assert len(group_decisions(read)) == 1
+
+
+def test_a_decision_whose_assent_alone_is_held_is_made_from_the_rest() -> None:
+    read = [
+        utterance("utt_1", UtteranceKind.DECISION, text="그럼 그렇게 하죠"),
+        utterance("utt_2", CHAT, text="금요일까지 하면 될까요"),
+        utterance("utt_3", UtteranceKind.DECISION, text=PRICE),
+    ]
+
+    (group,) = group_decisions(read, held={"utt_1"}, day=OCTOBER_8)
+
+    assert group.source_utterance_ids == ("utt_3",)
+    assert group.statement == "가격은 월 9900원으로 진행", "and reads only what it spans"
+
+
+def test_a_decision_can_be_read_from_exactly_the_turns_named() -> None:
+    """What a kept row whose line was corrected is read again from."""
+    read = [
+        utterance("utt_1", UtteranceKind.DECISION, text=LOGIN),
+        utterance("utt_2", UtteranceKind.DECISION, text=PRICE),
+        utterance("utt_3", UtteranceKind.DECISION, text=SEARCH),
+    ]
+
+    group = decision_of(read, {"utt_1", "utt_2"})
+
+    assert group is not None
+    assert group.source_utterance_ids == ("utt_1", "utt_2")
+    assert group.statement == "가격은 월 9900원으로 진행"
+    assert (group.first_position, group.last_position) == (0, 1)
+    assert decision_of(read, {"utt_9"}) is None
+
+
+def test_an_id_a_kept_row_has_is_not_given_to_another_decision_of_its_turn() -> None:
+    """Two decisions of one long turn: the first has the turn's plain id. When a
+    kept row has that id and holds the first, the second keeps the id it had."""
+    read = [
+        ClassifiedUtterance(
+            id="utt_1#1", kind=UtteranceKind.DECISION, confidence=0.9, text=LOGIN, part_of="utt_1"
+        ),
+        ClassifiedUtterance(
+            id="utt_1#2", kind=UtteranceKind.DECISION, confidence=0.9, text=PRICE, part_of="utt_1"
+        ),
+    ]
+    both = [id_ for id_, _ in identified("mtg_1", group_decisions(read), read)]
+    assert both[0] == decision_id("mtg_1", ["utt_1"])
+
+    left = identified("mtg_1", group_decisions(read, held={"utt_1#1"}), read, taken={both[0]})
+
+    assert [id_ for id_, _ in left] == [both[1]]
 
 
 def test_a_stretch_of_other_talk_separates_two_decisions() -> None:
@@ -369,6 +582,9 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
         "meeting_id",
         "statement",
         "original_statement",
+        # The statement in twenty characters, for the row's top line: about
+        # the text, and carrying no person (``pipeline.title.accept``).
+        "title",
         # Whether a model wrote the statement or it is the line tidied: about
         # the text, as ``origin`` is, and about no person.
         "statement_resolved",
@@ -383,16 +599,26 @@ def test_a_decision_belongs_to_the_meeting_and_carries_no_owner() -> None:
     }
 
 
-def test_decision_sources_hold_a_link_and_a_position_only() -> None:
+def test_decision_sources_hold_a_link_a_position_and_where_the_part_is() -> None:
     """No copy of the utterance text.
 
     The quotation is read by joining ``utterances``, so a deleted meeting takes
     it along. Denormalising the text here would leave transcript content behind a
-    cascade that no longer reaches it.
+    cascade that no longer reaches it. The part a decision was made from is two
+    numbers into that text for the same reason, and never the words.
     """
-    columns = {column.name for column in ExtDecisionSource.__table__.columns}
+    columns = ExtDecisionSource.__table__.columns
 
-    assert columns == {"id", "decision_id", "utterance_id", "position"}
+    assert {column.name for column in columns} == {
+        "id",
+        "decision_id",
+        "utterance_id",
+        "position",
+        "excerpt_start",
+        "excerpt_end",
+    }
+    assert isinstance(columns["excerpt_start"].type, Integer)
+    assert isinstance(columns["excerpt_end"].type, Integer)
 
 
 def test_both_tables_are_deleted_with_their_meeting() -> None:

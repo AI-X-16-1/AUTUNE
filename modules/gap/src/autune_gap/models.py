@@ -14,10 +14,11 @@ See docs/architecture/data-model.md and docs/modules/gap.md.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -417,12 +418,23 @@ class GapAgendaEvent(Base):
     account goes (taken out at once, with the owner's own grant). ``user_id``
     is the calendar's owner, who is also who pressed the button -- the line can
     only be removed with their grant, as module B keeps an item's assignee on
-    ``ext_calendar_events``. It is read by nothing but the cleanup: no screen,
-    route or tool says who sent a gap on (``GapGap.carried_at`` names nobody).
+    ``ext_calendar_events``. ``GapGap.carried_at`` names nobody; ``user_id``
+    is read by the cleanup, and by ``tools.next_meeting_days`` for the name
+    beside a picked day.
+
+    ``event_day`` is the one thing kept from the event: the day it starts, in
+    Korea, as Google gave it when the line was written. A person picking an
+    event for the next meeting has chosen that day, and the Follow-up card
+    offers it among its dates (``tools.next_meeting_days``), with the display
+    name of who picked it: an act they took for the team, and the name C's
+    team Slack notice posts for the same press where a channel is connected.
+    Never the calendar or the event. The event's attendees,
+    all on the team, already see that day on the event the line went onto.
+    ``None`` when Google did not say, and on records from before it was kept.
 
     ``gap_id`` is not a foreign key: a gap a rescore drops leaves its line on
     the calendar, and the record has to outlive it until the meeting goes.
-    Goes with the meeting and with the owner. Nothing from the event is here.
+    Goes with the meeting and with the owner.
     """
 
     __tablename__ = "gap_agenda_events"
@@ -440,6 +452,7 @@ class GapAgendaEvent(Base):
     )
     calendar_id: Mapped[str] = mapped_column(String(320), nullable=False)
     event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
+    event_day: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -469,6 +482,45 @@ class GapAgendaCleanup(Base):
     event_id: Mapped[str] = mapped_column(String(1024), nullable=False)
     gap_id: Mapped[str] = mapped_column(String(64), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GapFollowupEvent(Base):
+    """The follow-up meeting an approver had C put on their own calendar --
+    Follow-up's proposal, approved (``tools.schedule_followup_meeting``).
+
+    One per meeting: the row is written before Google is asked, under a unique
+    ``meeting_id``, so a second approval for the same meeting -- even at the
+    same instant -- makes no second event. ``event_id`` is ``None`` only while
+    that first request is out; a request that fails takes the row back.
+
+    ``user_id`` is the approver, whose calendar holds the event: the event can
+    only be reached with their grant. ``event_day`` is the day it starts, in
+    Korea. Nothing else of the event is kept: not its title or time.
+    Goes with the meeting and with the approver. The event itself stays on
+    the approver's calendar -- a meeting they organised, and cancelling it
+    is theirs to do -- while its gap lines, recorded in ``GapAgendaEvent``,
+    come out as every other line does.
+    """
+
+    __tablename__ = "gap_followup_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("meetings.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    calendar_id: Mapped[str | None] = mapped_column(String(320))
+    event_id: Mapped[str | None] = mapped_column(String(1024))
+    event_day: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

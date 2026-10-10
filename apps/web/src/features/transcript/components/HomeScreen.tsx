@@ -16,6 +16,7 @@ import { onTeamChosen, onTeamsChanged, rememberTeam, teamsToList } from "../sele
 import { STATUS_DOT, STATUS_LABEL, isBeingRecorded } from "../status";
 import type { MeetingSummary, TeamSummary } from "../types";
 
+import { TeamMemberWindow } from "./TeamMemberWindow";
 import { below, TeamsWindow, type Place } from "./TeamsWindow";
 
 /**
@@ -104,6 +105,10 @@ function HomeTeams() {
   const [teamId, setTeamId] = useState<string | null>(null);
   const [at, setAt] = useState<Place | null>(null);
   const more = useRef<HTMLSpanElement>(null);
+  // The team members are being invited to, while the window for it is open.
+  const [addingTo, setAddingTo] = useState<TeamSummary | null>(null);
+  const add = useRef<HTMLSpanElement>(null);
+  const closeAdding = useCallback(() => setAddingTo(null), []);
 
   const show = useCallback((id: string | null) => {
     setTeamId(id);
@@ -150,8 +155,48 @@ function HomeTeams() {
     );
   if (teams === null) return <p style={MUTED}>팀을 불러오는 중입니다…</p>;
   if (teams.length === 0) return <p style={MUTED}>속한 팀이 없습니다.</p>;
+  // "팀원 추가", at the right end of the row (the user, 2026-10-07): for the
+  // one team being shown. With 전체 there is no one team to invite to, so it
+  // is not offered until a team is chosen.
+  const adding = (team: TeamSummary) => (
+    <>
+      <span ref={add} className="ml-auto">
+        <Button
+          tone="secondary"
+          size="compact"
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={addingTo !== null}
+          onClick={() => setAddingTo((open) => (open === null ? team : null))}
+        >
+          팀원 추가
+        </Button>
+      </span>
+      {addingTo !== null ? (
+        <TeamMemberWindow
+          teamId={addingTo.team_id}
+          teamName={addingTo.name}
+          opener={add}
+          onClose={closeAdding}
+        />
+      ) : null}
+    </>
+  );
+
   const only = teams.length === 1 ? teams[0] : undefined;
-  if (only !== undefined) return <Meetings teamId={only.team_id} />;
+  if (only !== undefined)
+    // One team: no row to choose from, and the button alone where it would be.
+    return (
+      <>
+        <div
+          className="flex max-w-[720px] items-center"
+          style={{ marginBottom: "var(--space-16)" }}
+        >
+          {adding(only)}
+        </div>
+        <Meetings teamId={only.team_id} />
+      </>
+    );
 
   // A team that is not in the list -- never theirs, or left since the
   // address was made or the choice was kept -- shows every team: it is not
@@ -163,7 +208,9 @@ function HomeTeams() {
       <div
         role="group"
         aria-label="팀"
-        className="flex flex-wrap items-center gap-1.5"
+        // As wide as the list under it, so the button at its end sits over
+        // the list's right edge.
+        className="flex max-w-[720px] flex-wrap items-center gap-1.5"
         style={{ marginBottom: "var(--space-16)" }}
       >
         <ChipToggle selected={shown === null} onClick={() => show(null)}>
@@ -209,6 +256,10 @@ function HomeTeams() {
             onClose={close}
           />
         ) : null}
+        {(() => {
+          const team = teams.find((one) => one.team_id === shown);
+          return team === undefined ? null : adding(team);
+        })()}
       </div>
       <Meetings teamId={shown ?? undefined} />
     </>

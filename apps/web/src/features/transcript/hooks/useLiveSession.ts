@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Utterance } from "@autune/contracts";
 
-import { getToken, liveSocketUrl, uploadRecording } from "../api";
+import { getLiveTicket, getToken, liveIsCrossOrigin, liveSocketUrl, uploadRecording } from "../api";
 import { recordingToSave, saveRecordingFile, serverHasRecording } from "../recordingFile";
 import type { LiveRow } from "../types";
 
@@ -201,7 +201,9 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     // Null for a browser signed in with Google: its session is an HttpOnly
     // cookie the page cannot read, and the socket's handshake carries it
     // instead. The server takes a hello token first and the cookie otherwise.
-    const token = getToken();
+    // A socket on another host gets no cookie; a ticket fetched below stands
+    // in for it.
+    let token = getToken();
     // Before the socket opens: a browser that cannot record webm/opus must
     // not claim the meeting on the server and then throw on the recorder,
     // which left the claim held and the next start() blocked. Chrome,
@@ -218,6 +220,18 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
     setElapsed(0);
     chunks.current = [];
     stopping.current = false;
+
+    if (!token && liveIsCrossOrigin()) {
+      try {
+        token = await getLiveTicket(meetingId);
+      } catch (caught) {
+        if (stale()) return;
+        setError(caught instanceof Error ? caught.message : "실시간 전사에 연결하지 못했습니다.");
+        setPhase("error");
+        return;
+      }
+      if (stale()) return;
+    }
 
     const ws = new WebSocket(liveSocketUrl(meetingId));
     ws.binaryType = "arraybuffer";

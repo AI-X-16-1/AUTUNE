@@ -2,7 +2,8 @@
 
 > **Status: Decided.** The direction was decided on #260 (closed 2026-09-29)
 > and the layer's location is ADR 0010, `Accepted`. Much of it is built since:
-> the skeleton (#432), the five subagents, plan mode (#556) and the approver
+> the skeleton (#432), the five subagents and a sixth since (Tracker, #856;
+> section 3.1), plan mode (#556) and the approver
 > settings (#592); sections marked "as built" say what landed. The two questions that blocked the first line
 > of code are answered: the layer lives in a top-level `agent/` (13.1) and a
 > periodic trigger is a `@periodic` task (13.2, #374). **Who builds what is in
@@ -119,9 +120,23 @@ and keeps their module's `tools.py`.
 | **Main agent** | 김민경 | Chat entry point; routes a request or a trigger to one subagent, or answers from tools directly; combines the answer; owns the work-item store, the trigger scheduler, the approval gate and `agent_runs` | every trigger, every chat message | any | the chat answer; L2 plans to the approval screen |
 | **Research** | 김민경 | When a meeting raises an idea or argues over a fact nobody could confirm, gathers what is known into a short document and proposes sending it to the people involved | `autune.intelligence.completed`; a chat request | A (the team's meetings), B (open questions); D once it ships tools.py. Uploaded material has no store yet | a document shown to the team in the app after an approver with scope `research` approves it — L2; a Slack DM to participants follows #478 |
 | **Briefing** | 문민재 | Ten minutes before a meeting, sends the previous meeting's summary and the issues this one should settle; lists the team's open Jira issues (B's `TeamAgenda`, #436) | time, from Google Calendar (`list_events`) | D (links, decision threads), B (open items), C (undismissed gaps and their questions), the team's open Jira issues as B reported them (`brief_agenda`) | D's pre-meeting brief — D's own surface, rule 2 |
-| **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one), B (unresolved questions; whether a Follow-up item is still open), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no calendar | a proposal on the lead's approval screen; after approval, an unconfirmed "후속 회의 잡기" item on the board (B's `add_followup_item`) — L2. It reaches a calendar only through B's sync, once a person confirms it with an assignee and a due date (#441) |
+| **Follow-up** | 박재경 | Watches the gaps nobody closed; when a follow-up meeting looks needed, proposes one — to the team lead only | `autune.intelligence.completed`; a chat request | C (undismissed gaps; the template items left open in this meeting and the team's previous one; whether the team has a follow-up meeting ahead, `upcoming_followup`), B (unresolved questions; whether a Follow-up item is still open; the meeting's due dates, `meeting_due_dates` — each confirmed, unfinished item's date and, since #1038, its title when the description carries no unmasked personal data, an unconfirmed item only as a count; Korea's public holidays, #985), A (the team's latest meeting, on a chat run about none). No participation, no `silent_share`, no assignee, reads no calendar | a proposal on the lead's approval screen; after approval, the follow-up meeting on the approver's own calendar on the card's day with the open gaps in its description, nobody invited (#756), and one notice on the team's Slack channel (C's `schedule_followup_meeting`) — L2. Until 2026-10-09 the approval made an unconfirmed "후속 회의 잡기" item on the board instead (B's `add_followup_item`) |
 | **Workload** | 강민구 | Notices that one person is overloaded while another has finished, and proposes a redistribution — to the manager only; owns the Gmail, Google Calendar and Jira integrations | state, `@periodic` | B (items per owner and their state), Calendar (`free_busy`), Jira only after #82 | a proposal on the manager's approval screen; any reassignment only after approval — L2 |
+| **Tracker** ("할 일 챙김", #856) | 강민구 | Finds confirmed action items that are past their due date and proposes moving the date a week on — to the manager only (`any`; no approval scope of its own). Closing an item carried through three or more meetings is accepted on #856 and not built yet: it waits for B to mark a close apart from finished work | `@periodic`, weekly; `autune.intelligence.completed`; a chat request | B (`stalled_action_items`) | a proposal on the manager's approval screen; the due date changes only after approval — L2 |
 | **Report** | 이승환 | After a meeting, composes its structured minutes from a template (no LLM) and proposes that E store and post them. A chat request is answered about all of E through a Gemini tool loop (`chat.py`); the template path (no LLM) is unchanged | `autune.intelligence.completed`; a chat request | B (confirmed action items, review-state counts); C's open gaps (`gap.open_gaps`, HIGH and MEDIUM listed, as S20 shows them; LOW only in C's count); D (linked meetings, by title and date only) once its `tools.py` ships — until then that section is absent. Not E's scores: the report carries no quality grade. The chat path also reads E's own tools and `explain_metric` | a draft stored by E at L1 (`draft_meeting_report`); the channel post through E's report delivery at L2 (`publish_meeting_report`) — E's own surface, rule 2 |
+
+**Live research is not in that table, and it skips approval** (#1162). It is
+the main agent's (`autune_agent.live`, 김민경), not a subagent: while a meeting
+runs, it looks up a question raised in the live rows, or a line a person pressed
+조사 on, and shows a short note beside the live transcript and on the meeting
+page. A note is written and shown to the team with no approver, unlike
+Research's documents, which wait for an approver with scope `research`. The
+reason is the moment: an answer that waits for approval arrives after the
+meeting it was for. What bounds it instead is narrower than an approval: at
+most five automatic notes a meeting, a meeting recorded with consent attested
+only (`privacy.md` section 5), nothing sent to anyone (no Slack message; a DM
+to participants waits for #1046), and every note deleted with its meeting, with
+any meeting it quotes, and with the speech it was made from.
 
 Three things in that table are decisions, not descriptions:
 
@@ -130,7 +145,7 @@ Three things in that table are decisions, not descriptions:
   proposal lands on the lead's approval screen (section 8, plan mode), and what
   it proposes — a follow-up item on the board, a reassignment, a message to
   the people affected — happens only when the lead approves it item by item.
-- **Workload and Follow-up read counts of work, never speech.** How many open
+- **Workload and Follow-up read the state of work, never speech.** How many open
   items a person owns and how late they are is work state, which a manager
   already sees on a task board. How much a person spoke, or whether they were
   silent on a topic, is not: privacy.md section 3 keeps a speaking ratio with
@@ -143,6 +158,48 @@ Three things in that table are decisions, not descriptions:
   meeting a share of one-half says a lot about one person, and Follow-up's rule
   does not need it (its spec, section 6). No speaking-ratio tool is registered
   at all (section 4, `PERSONAL_ONLY_TOOLS`).
+
+  **Of B's work Follow-up reads dates, not people** (#963, #970). For the day
+  it suggests, it reads `meeting_due_dates`: the due date of each confirmed,
+  unfinished item of the meeting, and never an assignee — with an owner beside
+  it a date would tell the lead who is late. An item nobody has confirmed comes
+  out only as a count (section 8, rule 3). It also reads Korea's public
+  holidays from B (#985), which are dates of public record.
+
+  Since #1038 a confirmed entry also carries the item's `title`, its
+  description, on two conditions that B's docstring states and a caller keeps.
+  *Screened*: a description a person typed or edited never passed module A's
+  masker, so B leaves the title off an entry whose description carries
+  personal data, and a caller has to work without one. *Shown, not kept*: the
+  title fills a sentence at the moment it is shown and is not written into an
+  `agent_` row, so a deleted item or a meeting past its retention takes its
+  title with it; a card that shows the sentence later reads the tool again.
+  A title is the name of a piece of work, so it is still work state — but it
+  is text a person may have written, which a count is not, and that is why the
+  conditions exist.
+
+  **Where a title can reach a model.** In a chat turn the main agent's compose
+  step sends a subagent's `summary` and items to the model (`main/gemini.py`,
+  through `check_outbound`), so a title a subagent writes into its summary goes
+  to the model there, as a title from `meeting_action_items` already does. A
+  run started by an event composes nothing: its summary is returned as it is.
+  Follow-up's own wording call (`explain.py`) sends counts and days, and no
+  title.
+- **Tracker is about items, never people, and only confirmed ones.** It
+  reads which items have stopped moving and proposes one change for one
+  item; nothing counts or ranks what a person has left undone. An item still
+  waiting for a person's confirmation is never raised as an approval card:
+  the card would either hide what is approved or quote a model's draft
+  (section 8, rule 3; mkkim68 on #856). Those stay with B's morning DM and
+  the review screen. **It does not propose closing an item yet.** An item has
+  no cancelled state, so closing means marking it done, and B tells a person
+  what they finished from the item's status alone -- it keeps that an item
+  was edited and never who edited it (ADR 0003). An item the manager closed
+  would be told to its holder as work they finished. B first marks a close
+  apart from finished work; the proposal follows (the user, 2026-10-07).
+  And there is no notify-only path: the layer has "propose, then approve"
+  and "answer in chat", and telling a lead something without an approval
+  would be a new send policy in `main/notify.py`, put after the deadline.
 - **Research reads what we hold, not the open web.** The team's past meetings through A's tools and open questions through B; past meetings through D once D ships its `tools.py`. Uploaded material would belong here too, but there is no store for it yet. Open-web search is still out
   of scope (section 13.3); a subagent owner who wants it raises it there rather
   than adding a search tool.
@@ -390,9 +447,9 @@ says.
 | Module | What it can already answer | Note |
 | --- | --- | --- |
 | B | its action items; the stored classifications; an item's review state | B's read API, nothing new. `list_action_items` exists today |
-| C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form |
+| C | a meeting's gaps with `risk_score` and `suggested_question`; the topic graph; a topic's `silent_share` | all four of C's steps produce values; what is left is measuring precision on real meetings (#22). Tools are C's owner's, in topic-level form. Follow-up also reads `upcoming_followup`, whether the team has such a meeting ahead. Action for the Follow-up subagent: `schedule_followup_meeting` (L2) -- the follow-up meeting on the approver's own calendar, nobody invited (#756), and a notice on the team channel |
 | D | this meeting's links; a decision thread; the team's decisions; the earlier meeting an upcoming meeting follows; the Jira issues it should take up | `links_for_meeting`, `decision_thread`, `list_decisions` over #185's read routes, and `brief_recap`, `brief_agenda` over the pre-meeting brief's own rows (Briefing's reads), named by D's owner |
-| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate); a meeting report's stored draft, by `draft_id`, for the approval card | E's aggregate reads. No speaking-ratio tool (invariant 11). Six more reads for the Report subagent's chat path: `meeting_reports`, `meeting_report_body`, `role_alignment`, `weekly_reports`, `weekly_report_schedule` and `explain_metric` (a metric's meaning, from a glossary). Actions for the Report subagent: `draft_meeting_report` (L1), `set_weekly_report_schedule` (L1, offered in chat since #874), `publish_meeting_report` (L2) and `publish_meeting_report_correction` (L2) |
+| E | a meeting's quality score; the team's trend; its recurring gap patterns; the misalignment risk (withheld before #27's history gate); a meeting report's stored draft, by `draft_id`, for the approval card | E's aggregate reads. No speaking-ratio tool (invariant 11). Six more reads for the Report subagent's chat path: `meeting_reports`, `meeting_report_body`, `role_alignment`, `weekly_reports`, `weekly_report_schedule` and `explain_metric` (a metric's meaning, from a glossary). `report_channel` says whether the team has a Slack channel; without one the Report subagent proposes no post, since E would refuse it at approval. Actions for the Report subagent: `draft_meeting_report` (L1), `set_weekly_report_schedule` (L1, offered in chat since #874), `publish_meeting_report` (L2) and `publish_meeting_report_correction` (L2) |
 
 - **C — the charter reaching gap detection is a proposal, to be agreed with
   C.** An earlier draft said `detect_gaps` would take a `checklist: list[str]`
@@ -862,7 +919,7 @@ its guard, never a client of its own:
 | Surface | Owner | Level |
 | --- | --- | --- |
 | Research document to the meeting's participants | Research | L2 — an approver with scope `research` |
-| A proposed follow-up meeting, as an unconfirmed board item (no calendar event: B's sync adds one after a person confirms it, #441) | Follow-up | L2 — an approver with scope `followup` |
+| A proposed follow-up meeting: an event on the approver's own calendar, nobody invited, and a team channel notice | Follow-up | L2 — an approver with scope `followup` |
 | A proposed redistribution, and any reassignment or message it implies | Workload | L2 — an approver with scope `workload` |
 
 Consequences worth naming:
@@ -1162,8 +1219,10 @@ T3 mean.
 since added `classifier_impl=llm`, which sends masked utterance windows to
 Gemini through `check_outbound`, so the door the paragraph above describes is
 open in B's own code. Whether that meets section 6's second condition is a
-team decision on #392 (`decision`, `privacy`) rather than B's owner's alone,
-and it is still open; until it closes, `llm` runs on demo meetings only. This
+team decision on #392 (`decision`, `privacy`) rather than B's owner's alone.
+For the team's dev site it is answered -- the whole meeting, in windows, is
+what classifying needs, and `llm` runs there on the team's own meetings only
+(#392, 2026-10-05; #818). For a real service it is still open. This
 section keeps the old wording only so the history reads straight, and T2 now
 has a running implementation to measure.
 
@@ -1250,10 +1309,14 @@ the rule below is what holds until it is answered.
 What is undecided is narrower than the architecture: **which providers we send
 to, and under what agreement.** Two parts, and each carries a condition:
 
-- **The LLM provider: Gemini, on the same terms as B's `classifier_impl=llm` —
-  demo meetings only until #392 is decided and a paid key with recorded
-  data-processing terms replaces the free one.** Nothing in the code tells a
-  demo meeting from a real one, nor a free key from a paid one (#405), so this
+- **The LLM provider: Gemini, on the same terms as B's `classifier_impl=llm`.**
+  On the team's dev site those are the terms agreed on #392: the agent's key
+  there is a paid one (confirmed on #392, 2026-10-06), and the meetings it
+  reads are the ones B's rule lets onto that site -- the team's own, none with
+  a participant from outside the team. On a free-tier key, dummy meetings
+  only. Whether a real service calls the provider is not decided, and waits on
+  #392 and on recorded data-processing terms. Nothing in the code tells one
+  meeting from another, nor a free key from a paid one (#405), so this
   is a deployment rule and not a runtime check. Module B already calls Gemini
   through `check_outbound` (#393), so the agent layer adds no new provider;
   what is still owed is those terms, recorded next to the credential in
@@ -1272,8 +1335,9 @@ meeting now sends its raised questions and the matching past utterances to the
 model automatically**, through Research on `autune.intelligence.completed` —
 not only when someone chats. What is sent is masked text plus each quoted
 meeting's title and date; the speaker label is stripped before the prompt is
-built, so no speaker name is sent. The rule above applies unchanged: until #392
-is decided and the key is paid, demo meetings only.
+built, so no speaker name is sent. The rule above applies unchanged: the
+team's own meetings on the dev site, dummy meetings on a free-tier key, and no
+real service until #392 decides it.
 
 One thing is worth restating rather than rediscovering: `privacy.md` section 2's
 masking scope does not include a person's name, so a name does reach every

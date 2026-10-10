@@ -34,9 +34,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
-from autune_core import Meeting, get_logger, session_scope
+from autune_core import Meeting, TeamMember, get_logger, session_scope
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -112,7 +113,7 @@ def meeting_quality(session: Session, meeting_id: str) -> dict[str, Any]:
             _gap_burden(score.gap_count) if score.gap_count is not None else None,
             f"{score.gap_count}건",
         ),
-        ("액션아이템 확정률", score.action_item_completion_rate, None),
+        ("할 일 확정률", score.action_item_completion_rate, None),
         ("참여 균형", score.participation_balance, None),
     ):
         if value is None:
@@ -147,9 +148,7 @@ def team_trend(session: Session, team_id: str) -> dict[str, Any]:
     # B's counts do not wait for E's scores (#800 review): say them either way.
     completion = ""
     if dashboard.action_item_completion_rate is not None:
-        completion += (
-            f" 최근 4주 회의의 액션아이템 완료율 {dashboard.action_item_completion_rate:.0%}."
-        )
+        completion += f" 최근 4주 회의의 할 일 완료율 {dashboard.action_item_completion_rate:.0%}."
     if dashboard.overdue_action_items is not None:
         # Over every kept meeting, not the four weeks, and shown on its own floor.
         completion += f" 기한 지난 항목 {dashboard.overdue_action_items}건(보관 중인 회의 전체)."
@@ -161,7 +160,7 @@ def team_trend(session: Session, team_id: str) -> dict[str, Any]:
         f"평균 {dashboard.average_grade}등급 ({dashboard.average_score:.2f})."
     )
     if dashboard.action_item_confirmation_rate is not None:
-        summary += f" 액션아이템 확정률 {dashboard.action_item_confirmation_rate:.0%}."
+        summary += f" 할 일 확정률 {dashboard.action_item_confirmation_rate:.0%}."
     summary += completion
     return _result(
         summary=summary,
@@ -360,6 +359,9 @@ def _report_item(
         "editor": read.edited_by_name,
         "date": held.astimezone(service._KST).date().isoformat(),
         "correction": read.correction_status,
+        # The chat opens this row on the dashboard's report card, not the
+        # meeting screen that a bare ``meeting_id`` links to.
+        "link": "report",
     }
 
 
@@ -506,6 +508,41 @@ def weekly_report_schedule(session: Session, team_id: str) -> dict[str, Any]:
     return _result(summary=f"{when}에 팀 채널로 보냅니다. {empty}{by}", items=[])
 
 
+def report_channel(session: Session, team_id: str) -> dict[str, Any]:
+    """Use this before proposing a report's post: whether the team has a Slack
+    channel to post to. Do not use it for anything a person asked about Slack.
+
+    Returns one item whose ``connected`` is true or false. Never the channel,
+    the workspace or the token. Without a channel the post would be refused at
+    approval (``slack not connected``), so it is not worth proposing.
+    """
+    connected = service._slack_connected(session, team_id)
+    title = "Slack 채널이 연결되어 있습니다." if connected else "Slack이 연결되어 있지 않습니다."
+    return _result(
+        summary=title, items=[{"title": title, "body": "", "score": 1.0, "connected": connected}]
+    )
+
+
+def asker_has_other_teams(session: Session, team_id: str, user_id: str) -> dict[str, Any]:
+    """Use this before pointing the person asking at a change for their other
+    teams: whether they belong to a team besides this one. Do not use it to
+    read anyone's teams.
+
+    Returns one item whose ``other_teams`` is true or false -- never which
+    teams, nor anyone else's. ``user_id`` is the run's asker, filled by the run.
+    """
+    others = session.scalar(
+        sa.select(sa.func.count())
+        .select_from(TeamMember)
+        .where(TeamMember.user_id == user_id, TeamMember.team_id != team_id)
+    )
+    title = "다른 팀에도 속해 있습니다." if others else "이 팀에만 속해 있습니다."
+    return _result(
+        summary=title,
+        items=[{"title": title, "body": "", "score": 1.0, "other_teams": bool(others)}],
+    )
+
+
 def explain_metric(session: Session, team_id: str, question: str) -> dict[str, Any]:
     """Use this to say what one of E's numbers means or how it is computed --
     the quality grade, a gap pattern, alignment, the prediction, completion or
@@ -541,6 +578,8 @@ TOOLS = [
     weekly_reports,
     weekly_report_schedule,
     explain_metric,
+    report_channel,
+    asker_has_other_teams,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
@@ -569,6 +608,14 @@ def _acted(summary: str, meeting_id: str) -> dict[str, Any]:
     return _result(
         summary=summary, items=[{"title": summary, "body": "", "score": 1.0, "id": meeting_id}]
     )
+
+
+NO_SLACK = (
+    "Slack이 연결되어 있지 않아 게시하지 못했습니다. "
+    "설정에서 Slack과 채널을 연결한 뒤 다시 요청해 주세요."
+)
+"""An approved post with nowhere to go. Said at approval, because the delivery
+task can only log it, and "예약했습니다" would tell the approver it is on its way."""
 
 
 def _not_found() -> dict[str, Any]:
@@ -645,8 +692,9 @@ def publish_meeting_report(
     draft is another one, the approval posts nothing: a later run replaced it,
     or this run's draft was never stored (refused for personal data or length)
     and an earlier one is still there. Refused for another team's meeting, a
-    meeting with no draft, a draft that is not the approved one, or a report
-    already posted.
+    meeting with no draft, a draft that is not the approved one, a report
+    already posted, or a team with no Slack channel to post to. The draft stays
+    stored, so it can be approved again once Slack is connected.
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -665,6 +713,8 @@ def publish_meeting_report(
                 "승인한 초안이 지금 저장된 초안이 아닙니다. "
                 "새 초안으로 바뀌었거나 저장되지 않았습니다.",
             )
+        if not service._slack_connected(session, team_id):
+            return _refused("slack not connected", NO_SLACK)
     # The transaction has committed: a worker that picks this up finds the row.
     try:
         # The draft can still be replaced before the task claims it; the claim checks again.
@@ -687,8 +737,10 @@ def publish_meeting_report_correction(
     L2 -- runs only after a person approves (#674). Posts the correction
     ``correction_id`` names, once, as a reply under the original post (or a new
     message when that thread is out of reach). When a later correction replaced
-    it, the approval posts nothing. Refused for another team's meeting and for
-    a report with no such correction waiting.
+    it, the approval posts nothing. Refused for another team's meeting, for
+    a report with no such correction waiting, and for a team whose Slack went
+    away after the report was posted: the correction is then marked failed, as
+    the delivery task does (#698), rather than left "승인 대기".
     """
     with session_scope() as session:
         meeting = session.get(Meeting, meeting_id)
@@ -701,6 +753,9 @@ def publish_meeting_report_correction(
                 "승인한 수정본이 지금 기다리는 수정본이 아닙니다. "
                 "새 수정본으로 바뀌었거나 이미 보냈습니다.",
             )
+        if not service._slack_connected(session, team_id):
+            service.fail_meeting_report_correction(session, meeting_id, correction_id=correction_id)
+            return _refused("slack not connected", NO_SLACK)
     try:
         # The correction can still be replaced before the task claims it; the claim checks again.
         tasks.deliver_meeting_report_correction.apply_async((meeting_id, correction_id))

@@ -38,7 +38,7 @@ internally (L0) and must not post them anywhere without a person's review.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -48,8 +48,9 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
+from autune_integrations.privacy import find_unmasked
 
-from . import service, tasks
+from . import days_off, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
@@ -64,6 +65,18 @@ MAX_DAYS = 365
 any retention window a team can set."""
 
 _OPEN = (ActionStatus.TODO, ActionStatus.IN_PROGRESS)
+
+
+def _today() -> date:
+    """Today, as every tool here means it: the date in Korea, not the server's.
+
+    There is no team time zone. A server's ``date.today()`` on UTC is a day
+    behind from 00:00 to 09:00 KST, and in those hours an item due today was
+    answered as due tomorrow and an item a day late as not late -- against the
+    reminders and ``service.team_action_progress`` (#619 review), which take
+    Korea's day.
+    """
+    return datetime.now(tz=KST).date()
 
 
 def _result(
@@ -141,9 +154,11 @@ def _item_finding(item: ActionItemRead, today: date) -> dict[str, Any]:
         who = "재배정 필요"
     due = item.due_date.isoformat() if item.due_date else "기한 없음"
     overdue = _overdue(item, today)
+    # ``done`` would have the reader say it was finished (review of #979).
+    status = "closed" if item.closed_unfinished else item.status
     return {
         "title": item.description,
-        "body": f"{who} · {due}{' · 기한 지남' if overdue else ''} · {item.status}",
+        "body": f"{who} · {due}{' · 기한 지남' if overdue else ''} · {status}",
         "score": _urgency(item, today),
         "id": item.id,
         "meeting_id": item.meeting_id,
@@ -176,6 +191,18 @@ def _urgency(item: ActionItemRead, today: date) -> float:
     return max(0.2, 0.8 - 0.05 * days)
 
 
+def _most_urgent_first(items: Iterable[ActionItemRead], today: date) -> list[ActionItemRead]:
+    """``items`` by ``_urgency``, and among equals the earlier date first.
+
+    Every late item has the one score, so by the score alone the late ones
+    came out in the order they were written down: of eight late items the five
+    shown -- and what a subagent then proposed about -- could be the ones a
+    day late while one a week late was left out. The earlier date is the
+    longer late. Items with no date stay in the order the service gave.
+    """
+    return sorted(items, key=lambda i: (-_urgency(i, today), i.due_date or date.max))
+
+
 def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
     """Use this right after a meeting is processed, or when asked what a meeting
     decided people should do. Do not use it for work across several meetings --
@@ -184,20 +211,22 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
 
     Returns the meeting's confirmed action items, most urgent first (at most
     five), and in ``summary`` how many are still waiting for confirmation.
-    Unconfirmed items are counted, never quoted.
+    Unconfirmed items are counted, never quoted. Each item's line ends with its
+    status; ``closed`` is an item closed without being finished -- do not
+    report it as done.
     """
     if service.live_meeting(session, meeting_id) is None:
         return _missing(meeting_id)
-    today = date.today()
+    today = _today()
     confirmed = service.outbound_for_meeting(session, meeting_id).action_items
     waiting = [
         i
         for i in service.list_action_items(session, meeting_id=meeting_id)
         if i.status == ActionStatus.NEEDS_CONFIRMATION.value
     ]
-    ranked = sorted(confirmed, key=lambda i: _urgency(i, today), reverse=True)
+    ranked = _most_urgent_first(confirmed, today)
     reassign = sum(i.needs_reassignment for i in confirmed)
-    summary = f"확정된 액션아이템 {len(confirmed)}건, 확인 대기 {len(waiting)}건."
+    summary = f"확정된 할 일 {len(confirmed)}건, 확인 필요 {len(waiting)}건."
     if reassign:
         summary += f" 담당자가 팀에 없어 재배정이 필요한 항목 {reassign}건."
     return _result(
@@ -205,6 +234,112 @@ def meeting_action_items(session: Session, meeting_id: str) -> dict[str, Any]:
         items=[_item_finding(i, today) for i in ranked],
         evidence=[u for i in ranked[:MAX_ITEMS] for u in i.source_utterance_ids],
     )
+
+
+def _shown_title(description: str) -> dict[str, str]:
+    """A due-date entry's ``title``, or nothing (#1038): the item's description
+    when it carries no personal data. A description a person typed or edited
+    never passed module A's masker, so it is screened here as
+    ``service.outbound_for_meeting`` screens what leaves for Notion, Jira or
+    Slack; one that fails gives the entry no ``title`` key and stays in B."""
+    return {} if find_unmasked(description) else {"title": description}
+
+
+def meeting_due_dates(session: Session, meeting_id: str) -> dict[str, Any]:
+    """Use this when a day has to be chosen around one meeting's work -- a
+    follow-up meeting after most of what it agreed is due (#963, #966). Do not
+    use it to learn what the items are, whose they are or which is late: that
+    is ``meeting_action_items``.
+
+    Returns one row, ``기한``, whose ``due_dates`` lists the due date of every
+    action item of the meeting that is **confirmed**, not done and has a date,
+    earliest first -- one entry an item, so a day two items share is there
+    twice. An entry is a date, ``confirmed`` and, when it may be shown, the
+    item's ``title`` (below) -- never an assignee. With an assignee beside it a
+    date would say who is late; without one it says only when the meeting's
+    work falls due and what a piece of it is called. ``evidence`` holds those
+    items' ids.
+
+    **``title`` is a confirmed item's description, for one use: a sentence shown
+    to the meeting's own team that names a piece of the work beside the day**
+    (#1038; the user, 2026-10-08: "두 조건을 붙여 추가"). The two conditions:
+
+    - *Screened.* An entry has a ``title`` only when ``find_unmasked`` finds no
+      personal data in the description (``_shown_title``). Otherwise the entry
+      is a date and ``confirmed`` as before: the item still counts and its text
+      stays in B. A caller has to work without a title.
+    - *Shown, not kept.* The title fills a sentence at the moment it is shown.
+      It is not to be written into an ``agent_`` row or any other store outside
+      B: a copy there would outlive the item's deletion and the meeting's
+      retention, which B's own row does not. A card that shows the sentence
+      later reads this tool again and fills it then. B cannot enforce this on a
+      caller; it is the condition the title is handed over on.
+
+    Every confirmed entry's title comes out, not one: which item a sentence
+    names is the caller's rule. A caller that puts a title into text a model
+    then reads -- the main agent's compose step in a chat turn does -- sends it
+    to that model, through ``check_outbound``, as it already does a title from
+    ``meeting_action_items``.
+
+    The row also counts, for a card that says how much of the dated work is
+    settled ("기한 있는 항목 0/5 확정", #966, #967): ``dated_open`` is how many
+    items of the meeting are not done and have a date, confirmed or not, and
+    ``dated_confirmed`` how many of those are confirmed -- the length of
+    ``due_dates``. So the row is there whenever any unfinished item has a
+    date, with an empty ``due_dates`` when none of them is confirmed, and
+    there is no row at all when none has one.
+
+    **An unconfirmed item's date does not come out** (#246, #261 rule 3: B's
+    unconfirmed content is counted, never quoted; the user, 2026-10-07, asked
+    whether a draft's date might go: "확정된 항목의 기한만"). A date is not
+    text, but it is content of a draft nobody has accepted, and a date
+    recommended to a team from it would be built on that draft. Unconfirmed
+    items are in ``summary`` as a count, with how many confirmed open items
+    there are and how many of those have no date, and in ``dated_open`` as a
+    count of the dated ones (decided on #966, 2026-10-07: a number is still
+    "counted, never quoted") -- never as a date, an id or an entry of
+    ``evidence``. ``confirmed`` is therefore
+    always ``true``; it is in each entry because the caller asked for the
+    shape, so nothing has to change there if a draft's date is ever allowed.
+
+    A meeting that does not exist or is past retention is ``ok: false``, as
+    for every tool that takes one.
+    """
+    if service.live_meeting(session, meeting_id) is None:
+        return _missing(meeting_id)
+    rows = service.list_action_items(session, meeting_id=meeting_id)
+    waiting = [i for i in rows if i.status == ActionStatus.NEEDS_CONFIRMATION.value]
+    opened = [i for i in rows if i.status in {status.value for status in _OPEN}]
+    dated = sorted((i for i in opened if i.due_date is not None), key=lambda i: (i.due_date, i.id))
+    # Counted and nothing more: which drafts, and their dates, stay in B.
+    dated_open = len(dated) + sum(i.due_date is not None for i in waiting)
+    summary = (
+        f"확정된 열린 할 일 {len(opened)}건 중 기한 있음 {len(dated)}건, "
+        f"기한 없음 {len(opened) - len(dated)}건. 확인 필요 {len(waiting)}건."
+    )
+    items = (
+        [
+            {
+                "title": "기한",
+                # One row holding them all: a row an item would be cut at five
+                # (``MAX_ITEMS``), and the rule this feeds needs every date.
+                "due_dates": [
+                    {
+                        "date": i.due_date.isoformat(),
+                        "confirmed": True,
+                        **_shown_title(i.description),
+                    }
+                    for i in dated
+                    if i.due_date is not None
+                ],
+                "dated_open": dated_open,
+                "dated_confirmed": len(dated),
+            }
+        ]
+        if dated_open
+        else []
+    )
+    return _result(summary=summary, items=items, evidence=[i.id for i in dated])
 
 
 def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -> dict[str, Any]:
@@ -220,7 +355,7 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
     window = _whole_days(within_days, low=0)
     if window is None:
         return _not_a_day_count("within_days")
-    today = date.today()
+    today = _today()
     horizon = today + timedelta(days=window)
     meeting_ids = set(
         session.scalars(
@@ -240,13 +375,13 @@ def open_action_items(session: Session, team_id: str, *, within_days: int = 7) -
         for i in open_items
         if i.needs_reassignment or (i.due_date is not None and i.due_date <= horizon)
     ]
-    ranked = sorted(due, key=lambda i: _urgency(i, today), reverse=True)
+    ranked = _most_urgent_first(due, today)
     overdue = sum(_overdue(i, today) for i in due)
     soon = sum(1 for i in due if i.due_date is not None and today <= i.due_date <= horizon)
     reassign = sum(i.needs_reassignment for i in due)
     return _result(
         summary=(
-            f"진행 중인 액션아이템 {len(open_items)}건 중 기한 지남 {overdue}건, "
+            f"진행 중인 할 일 {len(open_items)}건 중 기한 지남 {overdue}건, "
             f"{window}일 안에 기한 {soon}건, 재배정 필요 {reassign}건."
         ),
         items=[_item_finding(i, today) for i in ranked],
@@ -269,7 +404,11 @@ def stalled_action_items(
 
     Returns the team's items that are stalled in one of three ways, most
     pressing first (at most five), each saying which in ``stalled``, with a
-    count of each in ``summary``:
+    count of each in ``summary``. The late come first, the longest late of
+    them first; then the carried, the longest carried first; then the
+    unconfirmed. Each confirmed row says in ``overdue_in_all`` how many
+    confirmed items are late in all, so a caller shown five can say how many
+    it was not shown -- a count, and no id or title beyond the five:
 
     - ``overdue`` -- confirmed, unfinished, and past its due date;
     - ``carried`` -- confirmed, unfinished, and carried through
@@ -295,7 +434,7 @@ def stalled_action_items(
     if not meeting_ids:
         return _result(summary="이 팀의 회의가 없습니다.", items=[], evidence=[])
 
-    today = date.today()
+    today = _today()
     open_items = [
         i
         for status in _OPEN
@@ -314,9 +453,16 @@ def stalled_action_items(
         ]
         if ways:
             confirmed.append((i, ways))
-    # Both ways before one; late before carried; then the longer carried.
-    confirmed.sort(key=lambda pair: (len(pair[1]), "overdue" in pair[1], pair[0].carried_meetings))
-    confirmed.reverse()
+    # Late before carried only. Among the late the longest late, and the
+    # longer carried of two as late as each other; then the longer carried.
+    confirmed.sort(
+        key=lambda pair: (
+            "overdue" not in pair[1],
+            (pair[0].due_date or date.max) if "overdue" in pair[1] else date.max,
+            -pair[0].carried_meetings,
+        )
+    )
+    overdue = sum("overdue" in ways for _, ways in confirmed)
 
     now = datetime.now(tz=UTC)
     waiting: list[tuple[int, str, str]] = []
@@ -337,13 +483,14 @@ def stalled_action_items(
             "score": 0.9 if "overdue" in ways else 0.7,
             "stalled": ways,
             "carried_meetings": i.carried_meetings,
+            "overdue_in_all": overdue,
         }
         for i, ways in confirmed
     ]
     items += [
         {
-            "title": "액션아이템 확인 대기",
-            "body": f"{days}일째 확인 대기",
+            "title": "할 일 확인 필요",
+            "body": f"{days}일째 확인 필요",
             "score": 0.5,
             "id": item_id,
             "meeting_id": meeting_id,
@@ -352,13 +499,12 @@ def stalled_action_items(
         }
         for days, item_id, meeting_id in waiting
     ]
-    overdue = sum("overdue" in ways for _, ways in confirmed)
     carried = sum("carried" in ways for _, ways in confirmed)
     return _result(
         summary=(
-            f"멈춰 있는 액션아이템: 기한 지남 {overdue}건, "
+            f"멈춰 있는 할 일: 기한 지남 {overdue}건, "
             f"회의 {service.STALE_AFTER}번 이상 이월 {carried}건, "
-            f"{window}일 넘게 확인 대기 {len(waiting)}건."
+            f"{window}일 넘게 확인 필요 {len(waiting)}건."
         ),
         items=items,
         # Only what a person has confirmed is quoted, so only that is sourced.
@@ -408,7 +554,7 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
     span = _whole_days(days, low=1)
     if span is None:
         return _not_a_day_count("days")
-    today = date.today()
+    today = _today()
     cutoff = datetime.now(UTC) - timedelta(days=span)
     meeting_ids = set(
         session.scalars(
@@ -438,7 +584,8 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
             # so ``None`` here is exactly "nobody on the team holds it".
             load = members.get(i.assignee_id) if i.assignee_id else None
             if status == ActionStatus.DONE:
-                if load is not None:
+                # Closed without being finished is nobody's finished work.
+                if load is not None and not i.closed_unfinished:
                     load.done += 1
                 continue
             load = load or unowned
@@ -468,7 +615,7 @@ def workload_by_owner(session: Session, team_id: str, *, days: int = 30) -> dict
     ordered = head + [p for p in (*overloaded[3:], *free[2:], *rest) if p not in head]
     return _result(
         summary=(
-            f"최근 {days}일 회의의 확정 액션아이템 기준, 팀원 {len(people)}명 중 "
+            f"최근 {days}일 회의의 확정 할 일 기준, 팀원 {len(people)}명 중 "
             f"몰림 {len(overloaded)}명, 진행 중 0건 {len(free)}명, "
             f"담당 없는 진행 중 항목 {unowned.open}건."
         ),
@@ -543,7 +690,7 @@ def open_item_owners(
     ):
         return _not_found("project", project_id)
 
-    today = date.today()
+    today = _today()
     live = set(
         session.scalars(
             select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
@@ -577,7 +724,7 @@ def open_item_owners(
         rows.append(_owner_finding(None, "담당 없음", held[None], today))
     return _result(
         summary=(
-            f"진행 중인 확정 액션아이템의 담당자 {len(people)}명, "
+            f"진행 중인 확정 할 일의 담당자 {len(people)}명, "
             f"담당 없는 항목 {len(held.get(None, []))}건."
         ),
         items=rows,
@@ -664,11 +811,10 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     unanswered = [a for a in review.ambiguous_agreements if a.outcome in ("not_asked", "pending")]
     items: list[dict[str, Any]] = [
-        {"title": "결정 확인 대기", "body": "", "score": 1.0, "id": d.id} for d in pending_decisions
+        {"title": "결정 확인 필요", "body": "", "score": 1.0, "id": d.id} for d in pending_decisions
     ]
     items += [
-        {"title": "액션아이템 확인 대기", "body": "", "score": 0.8, "id": i.id}
-        for i in waiting_items
+        {"title": "할 일 확인 필요", "body": "", "score": 0.8, "id": i.id} for i in waiting_items
     ]
     items += [
         {"title": "약한 동의, 답 없음", "body": "", "score": 0.5, "id": a.utterance_id}
@@ -676,7 +822,7 @@ def review_state(session: Session, meeting_id: str) -> dict[str, Any]:
     ]
     return _result(
         summary=(
-            f"결정 확인 대기 {len(pending_decisions)}건, 액션아이템 확인 대기 "
+            f"결정 확인 필요 {len(pending_decisions)}건, 할 일 확인 필요 "
             f"{len(waiting_items)}건, 답 없는 약한 동의 {len(unanswered)}건."
         ),
         items=items,
@@ -702,7 +848,7 @@ def meeting_decisions(session: Session, meeting_id: str) -> dict[str, Any]:
     sources = {d.id: d.source_utterance_ids for d in review.decisions}
     pending = sum(d.status == "pending" for d in review.decisions)
     held = sum(b.kind == "decision" for b in outbound.blocked)
-    summary = f"확정된 결정 {len(outbound.decisions)}건, 확인 대기 {pending}건."
+    summary = f"확정된 결정 {len(outbound.decisions)}건, 확인 필요 {pending}건."
     if held:
         summary += f" 개인정보가 남아 보낼 수 없는 결정 {held}건."
     return _result(
@@ -739,7 +885,7 @@ def person_action_items(session: Session, team_id: str, user_id: str) -> dict[st
             evidence=[],
             confidence=0.0,
         )
-    today = date.today()
+    today = _today()
     meeting_ids = set(
         session.scalars(
             select(Meeting.id).where(Meeting.team_id == team_id, service.within_retention())
@@ -751,10 +897,10 @@ def person_action_items(session: Session, team_id: str, user_id: str) -> dict[st
         for i in service.list_action_items(session, assignee_id=user_id, status=status)
         if i.meeting_id in meeting_ids
     ]
-    ranked = sorted(mine, key=lambda i: _urgency(i, today), reverse=True)
+    ranked = _most_urgent_first(mine, today)
     overdue = sum(_overdue(i, today) for i in mine)
     return _result(
-        summary=f"{member}님의 진행 중 액션아이템 {len(mine)}건, 기한 지남 {overdue}건.",
+        summary=f"{member}님의 진행 중 할 일 {len(mine)}건, 기한 지남 {overdue}건.",
         items=[_item_finding(i, today) for i in ranked],
         evidence=[u for i in ranked[:MAX_ITEMS] for u in i.source_utterance_ids],
     )
@@ -766,15 +912,16 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
     tools return ids.
 
     Returns the item as one finding. An item still waiting for confirmation is
-    reported as waiting, without its text (#261 rule 3).
+    reported as waiting, without its text (#261 rule 3). A status of ``closed``
+    is an item closed without being finished -- not done.
     """
     row = session.get(ExtActionItem, action_item_id)
     if row is None or _team_of(session, row.meeting_id) != team_id:
         return _not_found("action item", action_item_id)
     if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
         return _result(
-            summary="확인 대기 중인 액션아이템입니다. 확정 전이라 내용은 보여주지 않습니다.",
-            items=[{"title": "확인 대기", "body": "", "score": 0.8, "id": row.id}],
+            summary="확인이 필요한 할 일입니다. 확정 전이라 내용은 보여주지 않습니다.",
+            items=[{"title": "확인 필요", "body": "", "score": 0.8, "id": row.id}],
             evidence=[],
         )
     (read,) = [
@@ -782,10 +929,10 @@ def action_item_status(session: Session, team_id: str, action_item_id: str) -> d
         for i in service.list_action_items(session, meeting_id=row.meeting_id)
         if i.id == action_item_id
     ]
-    finding = _item_finding(read, date.today())
+    finding = _item_finding(read, _today())
     synced = [r.system for r in read.sync_refs if r.url]
     finding["body"] += f" · {'·'.join(synced)} 연동됨" if synced else " · 외부 연동 없음"
-    return _result(summary="액션아이템 1건.", items=[finding], evidence=read.source_utterance_ids)
+    return _result(summary="할 일 1건.", items=[finding], evidence=read.source_utterance_ids)
 
 
 FOLLOWUP_DESCRIPTION = "후속 회의 잡기"
@@ -846,6 +993,67 @@ def open_followup_item(session: Session, team_id: str) -> dict[str, Any]:
     )
 
 
+MAX_HOLIDAY_RANGE_DAYS = 366
+"""The longest range ``public_holidays`` answers, from its first day to its
+last. A year, leap day included: nothing here plans further ahead, and a wider
+one is a wrong argument rather than a question."""
+
+
+def _not_a_range(reason: str, summary: str) -> dict[str, Any]:
+    """The refusal for a range ``public_holidays`` cannot answer. It names the
+    argument and never repeats the value, as ``_not_a_day_count`` does."""
+    return _result(ok=False, reason=reason, summary=summary, items=[], evidence=[], confidence=0.0)
+
+
+def public_holidays(session: Session, start: str, end: str) -> dict[str, Any]:
+    """Use this when a day has to be chosen and must not fall on a public holiday
+    -- a follow-up meeting's suggested date (#964, #985). Do not use it to learn
+    whether a person is away or a team is off: nothing here is about a person
+    or a team, and it takes neither.
+
+    ``start`` and ``end`` are ``YYYY-MM-DD``; both days are in the range, which
+    may be at most ``MAX_HOLIDAY_RANGE_DAYS`` days long.
+
+    Returns one row, ``공휴일``, whose ``days`` lists Korea's public holidays in
+    the range as ISO dates, earliest first -- substitute holidays and election
+    days among them, and a holiday that falls on a weekend too. One row holding
+    them all, because a row a day would be cut at five. The row is there with
+    an empty list when the range has none: that is an answer, and not the same
+    thing as a refusal.
+
+    They are the days B holds its own digests back on
+    (``days_off.is_public_holiday``): Google's public calendar of Korea's
+    holidays as it was last read and stored, or the table in code while there
+    is no read from the last two weeks. Dates of public record -- no call
+    leaves when this is asked, and nothing is read or said about anybody.
+
+    ``ok: false`` for a date that is not one, an ``end`` before ``start``, or a
+    longer range.
+    """
+    try:
+        first = date.fromisoformat(start)
+    except (TypeError, ValueError):
+        return _not_a_range("start is not a date", "시작일이 날짜 형식이 아닙니다 (YYYY-MM-DD).")
+    try:
+        last = date.fromisoformat(end)
+    except (TypeError, ValueError):
+        return _not_a_range("end is not a date", "종료일이 날짜 형식이 아닙니다 (YYYY-MM-DD).")
+    if last < first:
+        return _not_a_range("end is before start", "종료일이 시작일보다 앞입니다.")
+    if (last - first).days >= MAX_HOLIDAY_RANGE_DAYS:
+        return _not_a_range(
+            f"the range is longer than {MAX_HOLIDAY_RANGE_DAYS} days",
+            f"기간은 {MAX_HOLIDAY_RANGE_DAYS}일 이내여야 합니다.",
+        )
+    days = days_off.public_holidays_between(session, first, last, now=datetime.now(UTC))
+    return _result(
+        summary=f"{first.isoformat()} ~ {last.isoformat()} 공휴일 {len(days)}일.",
+        items=[{"title": "공휴일", "days": [day.isoformat() for day in days]}],
+        # Public dates cite no utterance: evidence is for what was said.
+        evidence=[],
+    )
+
+
 def _team_of(session: Session, meeting_id: str) -> str | None:
     """The meeting's team -- ``None`` for a meeting that is not there or is past
     its retention window (``service.within_retention``, #656), so every tool
@@ -870,6 +1078,7 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
 
 TOOLS = [
     meeting_action_items,
+    meeting_due_dates,
     open_action_items,
     open_item_owners,
     stalled_action_items,
@@ -880,6 +1089,7 @@ TOOLS = [
     person_action_items,
     action_item_status,
     open_followup_item,
+    public_holidays,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
 
@@ -935,13 +1145,36 @@ def _on_team(session: Session, team_id: str, user_id: str) -> bool:
 
 
 def _change_item(
-    team_id: str, action_item_id: str, payload: ActionItemUpdate
+    team_id: str,
+    action_item_id: str,
+    payload: ActionItemUpdate,
+    *,
+    meeting_id: str | None = None,
+    unfinished_only: bool = False,
 ) -> dict[str, Any] | str:
-    """Apply ``payload`` to one of the team's items; the new status, or a refusal."""
+    """Apply ``payload`` to one of the team's items; the new status, or a refusal.
+
+    ``meeting_id``, when the caller names one, is the item's meeting: an item
+    of another meeting reads as missing, the same as one of another team.
+
+    ``unfinished_only`` refuses an item that is done or closed. A proposal
+    waits for its approval, and the item can be finished meanwhile: moved to
+    another person then, it would be counted as work that person finished
+    (``workload_by_owner``), and a finished item has no date left to move.
+    The row is held to the commit, as ``close_action_item`` holds it, so an
+    approval and a person finishing the item at the same moment do not both
+    go through.
+    """
     with session_scope() as session:
-        row = session.get(ExtActionItem, action_item_id)
+        row = session.get(ExtActionItem, action_item_id, with_for_update=unfinished_only)
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
+        if meeting_id is not None and row.meeting_id != meeting_id:
+            return _not_found("action item", action_item_id)
+        if unfinished_only and row.status == ActionStatus.DONE.value:
+            if service.closed_unfinished(session, [row.id]):
+                return _refused("already closed", "이미 닫힌 할 일입니다.")
+            return _refused("already done", "이미 완료된 할 일입니다.")
         assignee = payload.assignee_id
         if assignee is not None and not _on_team(session, team_id, assignee):
             # The same rule ``service.require_assignable`` keeps for every
@@ -969,37 +1202,60 @@ def confirm_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
         if row is None or _team_of(session, row.meeting_id) != team_id:
             return _not_found("action item", action_item_id)
         if row.status != ActionStatus.NEEDS_CONFIRMATION.value:
-            return _refused("already confirmed", "이미 확정된 액션아이템입니다.")
+            return _refused("already confirmed", "이미 확정된 할 일입니다.")
     result = _change_item(team_id, action_item_id, ActionItemUpdate(status=ActionStatus.TODO))
-    return (
-        result if isinstance(result, dict) else _acted("액션아이템을 확정했습니다.", action_item_id)
-    )
+    return result if isinstance(result, dict) else _acted("할 일을 확정했습니다.", action_item_id)
 
 
-def reassign_action_item(team_id: str, action_item_id: str, assignee_id: str) -> dict[str, Any]:
+def reassign_action_item(
+    team_id: str, action_item_id: str, assignee_id: str, meeting_id: str | None = None
+) -> dict[str, Any]:
     """Give an item to another member of the team -- what the Workload subagent
     proposes when one person holds too much.
 
     L2 -- runs only after a person (the manager, for Workload) approves. The new
-    assignee must be on the team.
+    assignee must be on the team. ``meeting_id`` is optional: the item's own
+    meeting, named so that the proposal is filed under that meeting and not
+    the one whose processing woke the run (#959). An item that is not that
+    meeting's is refused. Refused for an item already done or closed: finished
+    while the proposal waited, it stays the work of the person who finished it.
     """
-    result = _change_item(team_id, action_item_id, ActionItemUpdate(assignee_id=assignee_id))
+    result = _change_item(
+        team_id,
+        action_item_id,
+        ActionItemUpdate(assignee_id=assignee_id),
+        meeting_id=meeting_id,
+        unfinished_only=True,
+    )
     return result if isinstance(result, dict) else _acted("담당자를 바꿨습니다.", action_item_id)
 
 
 def set_action_item_due_date(
-    team_id: str, action_item_id: str, due_date: date | str | None
+    team_id: str,
+    action_item_id: str,
+    due_date: date | str | None,
+    meeting_id: str | None = None,
 ) -> dict[str, Any]:
     """Move an item's due date, or clear it with ``None``. The assignee's calendar
     event and the Notion page follow.
 
     L2 -- runs only after a person approves. ``due_date`` is ``YYYY-MM-DD``.
+    ``meeting_id`` is optional: the item's own meeting, named so that the
+    proposal is filed under that meeting and not the one whose processing woke
+    the run (#959). An item that is not that meeting's is refused. Refused for
+    an item already done or closed: it has no date left to move.
     """
     try:
         due = _as_date(due_date)
     except ValueError:
         return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
-    result = _change_item(team_id, action_item_id, ActionItemUpdate(due_date=due))
+    result = _change_item(
+        team_id,
+        action_item_id,
+        ActionItemUpdate(due_date=due),
+        meeting_id=meeting_id,
+        unfinished_only=True,
+    )
     return result if isinstance(result, dict) else _acted("기한을 바꿨습니다.", action_item_id)
 
 
@@ -1014,6 +1270,33 @@ def set_action_item_status(team_id: str, action_item_id: str, status: str) -> di
         return _refused(f"not a status: {status!r}", "todo, in_progress, done 중 하나여야 합니다.")
     result = _change_item(team_id, action_item_id, ActionItemUpdate(status=ActionStatus(status)))
     return result if isinstance(result, dict) else _acted("상태를 바꿨습니다.", action_item_id)
+
+
+def close_action_item(team_id: str, action_item_id: str) -> dict[str, Any]:
+    """Close a confirmed item that will not be finished -- dropped, overtaken, or
+    no longer needed. It leaves the open work like a finished one, and is kept
+    apart from finished work: its holder's morning DM and work report say it
+    was closed, not that they finished it, and the board marks it 닫힘.
+
+    L2 -- runs only after a person approves. For work that was done use
+    ``set_action_item_status`` with ``done``. Refused for an item still
+    waiting for confirmation, for one already done and for one already closed.
+    """
+    with session_scope() as session:
+        # Held to the commit: a second close, or an edit of the status, waits
+        # and then reads what this one left (review of #979).
+        row = session.get(ExtActionItem, action_item_id, with_for_update=True)
+        if row is None or _team_of(session, row.meeting_id) != team_id:
+            return _not_found("action item", action_item_id)
+        if row.status == ActionStatus.NEEDS_CONFIRMATION.value:
+            return _refused("not confirmed", "확정되지 않은 할 일은 닫을 수 없습니다.")
+        if row.status == ActionStatus.DONE.value and service.closed_unfinished(session, [row.id]):
+            return _refused("already closed", "이미 닫힌 할 일입니다.")
+        if not service.close_without_finishing(session, row):
+            return _refused("already done", "이미 완료된 할 일입니다.")
+    # Its copies outside follow as they follow any change of status.
+    tasks.sync_after_confirmation(action_item_id)
+    return _acted("할 일을 끝내지 않고 닫았습니다.", action_item_id)
 
 
 def add_action_item(
@@ -1066,10 +1349,15 @@ def add_action_item(
             due_date=due,
         )
         new_id = row.id
-    return _acted("액션아이템 초안을 만들었습니다 (확인 대기).", new_id)
+    return _acted("할 일 초안을 만들었습니다 (확인 필요).", new_id)
 
 
-def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None) -> dict[str, Any]:
+def add_followup_item(
+    team_id: str,
+    meeting_id: str,
+    due_date: str | None = None,
+    basis: str | None = None,
+) -> dict[str, Any]:
     """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
     after a meeting that left topics open (#561). It starts waiting for
     confirmation, so it reaches nobody until someone confirms it.
@@ -1085,6 +1373,14 @@ def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None
     longer one should not fail it, and an item born overdue would be the
     first thing its assignee is reminded about.
 
+    ``basis`` (optional) is what Follow-up took its date from -- ``confirmed``
+    or ``draft`` due dates, or the team's meeting ``cadence`` (#963, #966).
+    The approval card shows it; B has no use for it. **It is accepted and
+    nothing else**: not stored, not put in the item, not sent or logged, and
+    not checked -- any value passes, because the proposal was approved with
+    it and an argument this did not declare would be refused at the approval
+    step before the item is made. The item is the same whatever it says.
+
     L2 -- runs only after a person (the team lead, for Follow-up) approves. B
     writes the text, so the proposal carries ids only. Recorded as Follow-up's
     (``origin`` ``followup``), not a person's, so edit cost does not count it as
@@ -1097,7 +1393,7 @@ def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None
         due = _as_date(due_date)
     except ValueError:
         return _refused(f"not a date: {due_date!r}", "날짜 형식이 아닙니다 (YYYY-MM-DD).")
-    passed = due is not None and due < datetime.now(tz=KST).date()
+    passed = due is not None and due < _today()
     if passed:
         due = None
     with session_scope() as session:
@@ -1117,11 +1413,11 @@ def add_followup_item(team_id: str, meeting_id: str, due_date: str | None = None
         new_id = row.id
     if passed:
         return _acted(
-            "후속 회의 항목을 추가했습니다 (확인 대기). "
+            "후속 회의 항목을 추가했습니다 (확인 필요). "
             "추천 날짜가 이미 지나 기한은 넣지 않았습니다.",
             new_id,
         )
-    return _acted("후속 회의 항목을 추가했습니다 (확인 대기).", new_id)
+    return _acted("후속 회의 항목을 추가했습니다 (확인 필요).", new_id)
 
 
 def review_decision(team_id: str, decision_id: str, verdict: str) -> dict[str, Any]:
@@ -1152,6 +1448,7 @@ ACTIONS = [
     reassign_action_item,
     set_action_item_due_date,
     set_action_item_status,
+    close_action_item,
     add_action_item,
     add_followup_item,
     review_decision,

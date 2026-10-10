@@ -21,6 +21,7 @@ from autune_agent.subagents.report.graph import (
     REVIEW_TOOL,
     TRIGGERS,
 )
+from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK, OTHER_TEAMS_TOOL
 from autune_agent.testing import mock_tool
 
 TEAM = "team_a"
@@ -149,19 +150,80 @@ def test_request_post_in_a_meeting_proposes_the_stored_draft(monkeypatch) -> Non
     assert "요청했습니다" in out.result.summary
 
 
-def test_request_post_in_the_team_view_proposes_nothing_and_points_to_the_meeting(
-    monkeypatch,
-) -> None:
-    tools = _tools()
+def test_request_post_in_the_team_view_names_the_meeting_it_posts(monkeypatch) -> None:
+    """#896 keys a team-view L2 on the meeting its arguments name."""
+    out = _run(
+        "결제 회의 리포트 올려줘",
+        Script([call("request_post", meeting_id=MEETING)]),
+        _tools(),
+        meeting=None,
+        monkeypatch=monkeypatch,
+    )
+    (post,) = out.proposed
+    assert (post.tool, post.level) == (PUBLISH_ACTION, "L2")
+    assert post.arguments == {"meeting_id": MEETING, "draft_id": "rdr_a"}
+    assert "요청했습니다" in out.result.summary
+
+
+def test_request_post_in_the_team_view_without_a_meeting_asks_which(monkeypatch) -> None:
+    """Not a part that failed: the model may find the meeting and call again."""
     out = _run(
         "리포트 올려줘",
-        Script([call("request_post", meeting_id=MEETING)]),
-        tools,
+        Script([call("request_post")]),
+        _tools(),
         meeting=None,
         monkeypatch=monkeypatch,
     )
     assert out.proposed == []
-    assert "회의 화면에서" in out.result.summary
+    assert "어느 회의의 리포트를" in out.result.summary
+    assert "가져오지 못한" not in out.result.summary
+
+
+def test_request_post_in_the_team_view_retried_with_the_meeting_posts_once(monkeypatch) -> None:
+    model = Script([call("request_post")], [call("request_post", meeting_id=MEETING)])
+    out = _run("리포트 올려줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    (post,) = out.proposed
+    assert post.arguments["meeting_id"] == MEETING
+    assert "어느 회의의 리포트를" not in out.result.summary
+
+
+def test_a_correction_from_the_team_view_names_its_meeting(monkeypatch) -> None:
+    awaiting = {
+        "ok": True,
+        "summary": "",
+        "items": [
+            {
+                "title": "리포트 수정본",
+                "kind": "correction",
+                "correction_id": "rcr_1",
+                "id": MEETING,
+            }
+        ],
+    }
+    out = _run(
+        "정정 올려줘",
+        Script([call("request_post", meeting_id=MEETING)]),
+        _tools(body=_body(status="posted"), awaiting=awaiting),
+        meeting=None,
+        monkeypatch=monkeypatch,
+    )
+    (post,) = out.proposed
+    assert (post.tool, post.arguments) == (
+        CORRECTION_ACTION,
+        {"meeting_id": MEETING, "correction_id": "rcr_1"},
+    )
+
+
+def test_a_meeting_page_naming_another_meeting_points_to_that_page(monkeypatch) -> None:
+    """Its approvals are keyed on its own meeting, so the post is not proposed here."""
+    out = _run(
+        "다른 회의 리포트 올려줘",
+        Script([call("request_post", meeting_id="mtg_zz99")]),
+        _tools(),
+        monkeypatch=monkeypatch,
+    )
+    assert out.proposed == []
+    assert "그 회의 화면에서" in out.result.summary
 
 
 def test_request_post_with_a_waiting_correction_proposes_the_correction(monkeypatch) -> None:
@@ -237,6 +299,39 @@ def test_a_schedule_change_is_proposed_at_l1_without_a_person_or_team(monkeypatc
     assert all("user_id" not in str(d) and "team_id" not in str(d) for d in chat.declarations())
 
 
+def _other_teams(answer: bool) -> dict[str, Any]:
+    title = "다른 팀에도 속해 있습니다." if answer else "이 팀에만 속해 있습니다."
+    return {"ok": True, "summary": title, "items": [{"title": title, "other_teams": answer}]}
+
+
+def test_a_schedule_change_points_to_the_card_for_other_teams(monkeypatch) -> None:
+    """The chat changes one team (#449) and cannot ask a follow-up; the reply
+    says where the person's other teams are changed instead."""
+    tools = {**_tools(), OTHER_TEAMS_TOOL: mock_tool(OTHER_TEAMS_TOOL, _other_teams(True))}
+    model = Script([call("set_schedule", weekday=4, hour=18)])
+    out = _run("금요일 6시로 바꿔줘", model, tools, meeting=None, monkeypatch=monkeypatch)
+    assert chat.OTHER_TEAMS in out.result.summary
+    assert "내 모든 팀" in chat.OTHER_TEAMS and "팀 골라서" in chat.OTHER_TEAMS
+
+
+@pytest.mark.parametrize("known", [False, None], ids=["one-team", "unknown"])
+def test_a_person_in_one_team_is_not_pointed_to_other_teams(monkeypatch, known) -> None:
+    """The card offers other teams only to a person in several (#1156 review);
+    not knowing counts as one team -- the line is only a hint."""
+    tools = _tools()
+    if known is not None:
+        tools[OTHER_TEAMS_TOOL] = mock_tool(OTHER_TEAMS_TOOL, _other_teams(known))
+    model = Script([call("set_schedule", weekday=4, hour=18)])
+    out = _run("금요일 6시로 바꿔줘", model, tools, meeting=None, monkeypatch=monkeypatch)
+    assert out.proposed and chat.OTHER_TEAMS not in out.result.summary
+
+
+def test_no_schedule_change_says_nothing_about_other_teams(monkeypatch) -> None:
+    model = Script([call("set_schedule", weekday=7, hour=25)])
+    out = _run("이상한 시각으로 바꿔줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    assert out.proposed == [] and chat.OTHER_TEAMS not in out.result.summary
+
+
 def test_a_schedule_change_names_send_empty_only_when_asked(monkeypatch) -> None:
     model = Script([call("set_schedule", weekday=0, hour=9.0, send_empty=True)])
     out = _run("빈 주도 월요일 9시에 보내줘", model, _tools(), monkeypatch=monkeypatch)
@@ -301,21 +396,38 @@ def test_a_model_that_calls_nothing_or_an_unknown_tool_still_answers(monkeypatch
     assert seen == [TEAM] and "C등급" in out.result.summary
 
 
-def test_redraft_in_the_team_view_proposes_the_draft_and_no_post(monkeypatch) -> None:
+def test_redraft_in_the_team_view_proposes_the_draft_and_its_post(monkeypatch) -> None:
+    """Both name the meeting, so the post's approval is keyed and run there (#896)."""
     out = _run(
-        "다시 써줘",
+        "결제 회의 다시 써줘",
         Script([call("redraft", meeting_id=MEETING)]),
         _tools(),
         meeting=None,
         monkeypatch=monkeypatch,
     )
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
+    assert all(p.arguments.get("meeting_id") == MEETING for p in out.proposed)
+
+
+def test_a_meeting_page_redrafting_another_meeting_proposes_no_post(monkeypatch) -> None:
+    out = _run(
+        "다른 회의 다시 써줘",
+        Script([call("redraft", meeting_id="mtg_zz99")]),
+        _tools(),
+        monkeypatch=monkeypatch,
+    )
     assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
 
 
+@pytest.mark.parametrize("meeting", [MEETING, None])
 @pytest.mark.parametrize("action", ["redraft", "request_post"])
-def test_another_teams_meeting_proposes_nothing(monkeypatch, action) -> None:
+def test_another_teams_meeting_proposes_nothing(monkeypatch, action, meeting) -> None:
     out = _run(
-        "해줘", Script([call(action, meeting_id="mtg_other1")]), _tools(), monkeypatch=monkeypatch
+        "해줘",
+        Script([call(action, meeting_id="mtg_other1")]),
+        _tools(),
+        meeting=meeting,
+        monkeypatch=monkeypatch,
     )
     assert out.proposed == []
 
@@ -347,6 +459,51 @@ def test_request_post_then_redraft_replaces_the_earlier_post(monkeypatch) -> Non
     (post,) = _posts(out)
     (draft,) = [p for p in out.proposed if p.tool == DRAFT_ACTION]
     assert post.arguments["draft_id"] == draft.arguments["draft_id"] != "rdr_a"
+
+
+def _no_slack(tools: dict[str, Any]) -> dict[str, Any]:
+    """E says the team has no Slack channel: a post would be refused at approval."""
+    title = "Slack이 연결되어 있지 않습니다."
+    unconnected = {"ok": True, "summary": title, "items": [{"title": title, "connected": False}]}
+    return {**tools, CHANNEL_TOOL: mock_tool(CHANNEL_TOOL, unconnected)}
+
+
+def test_request_post_without_slack_says_so_and_proposes_nothing(monkeypatch) -> None:
+    out = _run(
+        "리포트 올려줘",
+        Script([call("request_post")]),
+        _no_slack(_tools()),
+        monkeypatch=monkeypatch,
+    )
+    assert out.proposed == [] and NO_SLACK in out.result.summary
+    assert "승인 대기로 요청했습니다" not in out.result.summary
+
+
+def test_a_correction_without_slack_is_not_proposed(monkeypatch) -> None:
+    awaiting = {
+        "ok": True,
+        "summary": "",
+        "items": [{"title": "리포트 수정본", "kind": "correction", "correction_id": "rcr_1"}],
+    }
+    out = _run(
+        "정정 올려줘",
+        Script([call("request_post")]),
+        _no_slack(_tools(body=_body(status="posted"), awaiting=awaiting)),
+        monkeypatch=monkeypatch,
+    )
+    assert out.proposed == [] and NO_SLACK in out.result.summary
+
+
+@pytest.mark.parametrize("order", [("redraft", "request_post"), ("request_post", "redraft")])
+def test_redraft_and_post_without_slack_draft_only_and_say_it_once(monkeypatch, order) -> None:
+    out = _run(
+        "다시 써서 올려줘",
+        Script([call(name) for name in order]),
+        _no_slack(_tools()),
+        monkeypatch=monkeypatch,
+    )
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
+    assert out.result.summary.count(NO_SLACK) == 1
 
 
 def test_each_action_runs_once_per_run(monkeypatch) -> None:
@@ -437,7 +594,8 @@ def test_a_failed_redraft_leaves_the_retry_open_in_the_team_view(monkeypatch) ->
     """The refusal asks for ``meeting_id``; the model's retry with it must go through."""
     model = Script([call("redraft")], [call("redraft", meeting_id=MEETING)])
     out = _run("다시 써줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
-    assert [p.tool for p in out.proposed] == [DRAFT_ACTION]
+    # The named meeting's draft and, from the team view since #896, its post.
+    assert [p.tool for p in out.proposed] == [DRAFT_ACTION, PUBLISH_ACTION]
     assert "이미 요청했습니다" not in out.result.summary
 
 
@@ -528,6 +686,18 @@ def test_only_what_the_run_cannot_fill_is_required() -> None:
         if n not in {"intelligence__explain_metric", "set_schedule"}
     }
     assert all("required" not in d.parameters for d in rest.values())
+
+
+def test_a_question_that_assumes_a_number_reads_the_actual_one_first() -> None:
+    """A D team asking "왜 C등급이야?" was answered from the glossary alone. The
+    instructions now say to read the actual grade first, and the reads they
+    name are ones the model is given: a renamed read would leave the rule
+    pointing nowhere."""
+    assert "read the actual one first" in " ".join(chat.INSTRUCTIONS.split())
+    named = {"intelligence.team_trend", "intelligence.meeting_quality"}
+    assert named <= set(chat._SPECS)
+    for name in named:
+        assert name.split(".", 1)[1] in chat.INSTRUCTIONS
 
 
 def test_the_instructions_carry_todays_korean_date(monkeypatch) -> None:

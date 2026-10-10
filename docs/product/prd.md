@@ -143,7 +143,7 @@ reports) → VP/CTO (dashboard).
 
 A chat assistant that moves first: it tells the team what is due and what is
 stuck before anyone asks, and answers questions about any meeting the team has
-held. One **main agent** talks to people and routes; five **subagents**, one
+held. One **main agent** talks to people and routes; six **subagents**, one
 per feature and one owner each, do the work. Design and ownership:
 `../architecture/agent-layer.md` section 3.
 
@@ -155,6 +155,7 @@ per feature and one owner each, do the work. Design and ownership:
 | Follow-up | 박재경 | When progress and unresolved topics say another meeting is needed, a proposal to the team lead only |
 | Workload | 강민구 | When one person is overloaded and another is free, a redistribution proposal to the manager only; Gmail, Google Calendar and Jira integration (Jira per #82) |
 | Report | 이승환 | After a meeting, the summary minutes report |
+| Tracker ("할 일 챙김") | 강민구 | The sixth, added on #856: when a confirmed action item is past its due date, a proposal to the manager to move the date. Closing a long-carried item is accepted and not built yet |
 
 What holds for all of them:
 
@@ -210,7 +211,9 @@ applied at design time, not bolted on:
 3. **Speaking ratio is private to the speaker** — see 5.6.
 4. **Retention and deletion** — results are kept 90 days by default (adjustable
    per team) and deleted automatically afterwards. Users can delete their data
-   at any time. Leaving a team deletes that user's utterance data.
+   at any time. Leaving a team ends that user's access and deletes nothing;
+   what they said stays theirs to delete (`../architecture/privacy.md`
+   section 4).
 5. **Participant consent** — everyone is notified when recording starts, and
    there is an option to exclude a non-consenting participant's speech from
    analysis.
@@ -290,7 +293,7 @@ keep the team building real models rather than prompt chains.
 | Vector search | pgvector, inside PostgreSQL | Embedding search, topic matching, material retrieval — no separate service |
 | Slack | Bolt for Python | Bot framework |
 | External | Notion API, Jira REST API, Google Calendar API, Gmail API (proposed) | Action item, schedule and mail sync |
-| Agent (#260) | LangGraph, Gemini | Supervisor graph over five subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
+| Agent (#260) | LangGraph, Gemini | Supervisor graph over six subagents; plan-mode interrupt. `../architecture/agent-layer.md` section 3.3 |
 | Infra | Vercel (frontend); a self-hosted desktop server (RTX 3060) running Docker Compose behind Cloudflare Tunnel (backend) | STT inference on our own GPU; HTTPS and WebSocket without opening a port |
 | Desktop (Phase 2) | Electron | System audio capture |
 
@@ -329,9 +332,17 @@ automatic PII masking; immediate raw-audio deletion; action item extraction and
 tracking; Notion/Jira integration; gap detection; Slack integration; past-topic
 linking; basic decision lineage; personal speaking-ratio DM; basic dashboard.
 
+**The action item screen is an editable worksheet, and that is in the MVP**
+(ADR 0006, #61). What extraction produces is a draft a person completes: every
+item can be edited, deleted or added by hand, each shows the utterances it came
+from, and an item below the confidence threshold is shown as a candidate rather
+than dropped. Recall is ranked above precision -- a wrong item costs a click, a
+missing one costs re-reading the meeting.
+
 **Added by #260, and no larger:** the main agent with chat and the
 morning briefing; five subagents — Research, Briefing, Follow-up, Workload,
-Report (5.7); work-item state with self-scheduled checks; the L0–L3 action
+Report (5.7) — and a sixth, Tracker, added on #856 by its owner with the main
+agent owner's acceptance; work-item state with self-scheduled checks; the L0–L3 action
 permission model with approval on anything that moves a person. Explicitly
 *not* in it: a subagent per module, a subagent calling another, web search,
 sending mail, and autonomous external writes.
@@ -351,12 +362,27 @@ implementation decision.
 ### Product
 | Metric | 6 weeks | 3 months |
 | --- | --- | --- |
-| Action item extraction F1 | 0.80+ | 0.88+ |
+| Action item F1, on our own held-out Korean evaluation set | 0.43 (= 43%) — matching the best published AMI result, 43.12% (ADR 0006) | above it |
+| Classifier macro F1 over the five kinds, `none` present | not set (#221) | not set |
+| Items the user accepts with no edit (edit cost, per meeting) | the first measurement is the baseline | improve on it |
 | Speaker diarization DER | ≤ 15% | ≤ 10% |
 | Gap detection precision | 0.70+ | 0.82+ |
 | Topic linking accuracy | 0.75+ | 0.85+ |
 | PII masking recall | 0.95+ | 0.99+ |
 | Processing time | ≤ 1.5× recording length | ≤ 1× |
+
+The three extraction rows follow ADR 0006 (#61) and read the way
+`../modules/extraction.md` states them. The action item figure was `0.80+` /
+`0.88+` until then: that is above the best published result for the task,
+43.12% (about 0.43 on that scale), on a task where two trained annotators
+agree at κ 0.46 (ADR 0006 gives both sources), so it could only be read as a
+miss. **Every report of our action item F1 carries the reference number,
+43.12%, beside it.** What a
+training run can move, and what the harness scores, is the classifier's macro
+F1; it has no like-for-like figure in the literature, so no target is set for
+it (#221). Edit cost is the product measure -- how much of the list a person
+accepts as it is -- counted per meeting and never per person (ADR 0003), and
+it has no published baseline either.
 
 ### Business
 | Metric | 6 weeks | 3 months |

@@ -16,6 +16,15 @@ export type Moves = Readonly<Record<string, ActionStatus>>;
 export const CONFIRMED_NOTICE =
   "확정했습니다. 팀이 연결한 도구가 있으면 그쪽에도 반영됩니다.";
 
+/**
+ * What the detail window says after "끝내지 않고 닫기". There is no
+ * confirmation before it (the user, 2026-10-09), and the status then reads
+ * 완료 like finished work, so this is where the person learns what happened
+ * and how to take it back.
+ */
+export const CLOSED_NOTICE =
+  "끝내지 않고 닫았습니다. 상태를 다시 바꾸면 되돌릴 수 있습니다.";
+
 /** Whether moving `item` to `target` is the move that confirms it. */
 export function confirms(item: ActionItemRead, target: ActionStatus): boolean {
   return columnOf(item) === "needs_confirmation" && target !== "needs_confirmation";

@@ -19,13 +19,15 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from autune_audio import masking_rules, service
 from autune_audio.config import get_settings
-from autune_audio.live import protocol, registry
+from autune_audio.deps import SessionDep
+from autune_audio.live import protocol, registry, tickets
 from autune_audio.live.embedder import Embedder
 from autune_audio.live.segmenter import Segmenter
 from autune_audio.live.session import LiveSession, TranscribeFailed
 from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber
-from autune_core import get_logger
+from autune_audio.schemas import LiveTicket
+from autune_core import CurrentUser, get_logger
 from autune_core.auth import SESSION_COOKIE
 from autune_core.db import session_scope
 from autune_core.errors import (
@@ -81,13 +83,25 @@ def build_session() -> LiveSession:
     )
 
 
+@router.post("/live/{meeting_id}/ticket", response_model=LiveTicket)
+def live_ticket(meeting_id: str, user: CurrentUser, session: SessionDep) -> LiveTicket:
+    """A one-use ticket for ``hello``, for a socket on another host.
+
+    Asked over the page's own origin, where the session cookie goes; the
+    socket itself may be on the API's address (``NEXT_PUBLIC_LIVE_URL`` on the
+    web side), where it does not. See ``live/tickets.py``.
+    """
+    ticket = service.live_ticket(session, user=user, meeting_id=meeting_id)
+    return LiveTicket(token=ticket, expires_in=tickets.TTL_S)
+
+
 @router.websocket("/live/{meeting_id}")
 async def live(websocket: WebSocket, meeting_id: str) -> None:
     settings = get_settings()
     await websocket.accept()
 
     # --- hello: authenticate, begin, claim --------------------------------
-    # The claim (``registry.claim(meeting_id, session)``) happens right after
+    # The claim (``registry.claim(meeting_id, session, user_id=...)``) happens right after
     # the database scope has committed, with no ``await`` anywhere between
     # the "already live" check and the claim: this whole block is
     # synchronous, so no other connection's hello can interleave and see a
@@ -115,7 +129,10 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         if not token:
             raise PermissionDeniedError("no token in hello and no session cookie")
         with session_scope() as db:
-            service.authenticate_live(db, token=token, meeting_id=meeting_id)
+            if tickets.is_ticket(token):
+                user = service.authenticate_live_ticket(db, ticket=token, meeting_id=meeting_id)
+            else:
+                user = service.authenticate_live(db, token=token, meeting_id=meeting_id)
             if registry.is_open(meeting_id):
                 raise _AlreadyLiveError("a live session is already open for this meeting")
             service.begin_live(db, meeting_id=meeting_id)
@@ -125,7 +142,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
             # claim, so the atomicity comment above still holds.
             session = build_session()
             session.use_masking_rules(masking_rules.shapes_for_meeting(db, meeting_id))
-        registry.claim(meeting_id, session)
+        registry.claim(meeting_id, session, user_id=user.id)
     except service.NotATeamMemberError as exc:
         # A real user, just not one this meeting's team recognises --
         # authenticated, not let in.
@@ -231,7 +248,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
     except WebSocketDisconnect:
         reason = "disconnected"
     finally:
-        registry.release(meeting_id)
+        registry.release(meeting_id, session)
         log.info(
             "live_session_closed", meeting_id=meeting_id, rows=session.rows_sent, reason=reason
         )
@@ -256,6 +273,13 @@ async def _emit(websocket: WebSocket, session: LiveSession, data: bytes) -> None
 
 
 async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str) -> None:
+    # Released before the last segment is transcribed, not after. The claim
+    # stops an upload landing under a socket that is still streaming, and
+    # from here on no frame is read. The browser waits 15 s for ``ended`` and
+    # then uploads regardless; on the dev server's CPU the last segment took
+    # longer than that, and the upload was refused 409 while the claim was
+    # still held.
+    registry.release(meeting_id, session)
     try:
         rows = await session.stop()
     except TranscribeFailed:
@@ -263,8 +287,5 @@ async def _finish(websocket: WebSocket, session: LiveSession, *, meeting_id: str
         await websocket.send_json(protocol.error("transcribe_failed"))
     for row in rows:
         await websocket.send_json(protocol.row(row))
-    # Released before ``ended``: the browser uploads the moment it sees
-    # ``ended``, and ``start_transcription`` refuses while the claim is held.
-    registry.release(meeting_id)
     await websocket.send_json(protocol.ended())
     await websocket.close()

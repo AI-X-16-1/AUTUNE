@@ -25,7 +25,14 @@ afterEach(() => {
   put.mockReset();
 });
 
-const ALL: Setting = { on: true, sent_here: true, weekly_here: true, daily_here: true };
+const ALL: Setting = {
+  on: true,
+  sent_here: true,
+  weekly_here: true,
+  daily_here: true,
+  work_report_here: true,
+  after_meeting_here: true,
+};
 
 const box = () =>
   screen.getByRole("checkbox", { name: /마감 알림 받기/ }) as HTMLInputElement;
@@ -59,8 +66,15 @@ describe("DueReminderSetting", () => {
     expect(put).toHaveBeenCalledWith(false);
   });
 
-  it("says so when this server sends none of the three yet", async () => {
-    get.mockResolvedValue({ ...ALL, sent_here: false, weekly_here: false, daily_here: false });
+  it("says so when this server sends none of them yet", async () => {
+    get.mockResolvedValue({
+      ...ALL,
+      sent_here: false,
+      weekly_here: false,
+      daily_here: false,
+      work_report_here: false,
+      after_meeting_here: false,
+    });
     render(<DueReminderSetting />);
     expect(await screen.findByText(/이 서버는 아직 이 알림들을 보내지 않습니다/)).toBeTruthy();
   });
@@ -71,8 +85,39 @@ describe("DueReminderSetting", () => {
     get.mockResolvedValue({ ...ALL, sent_here: false });
     render(<DueReminderSetting />);
     const line = (await screen.findByText(/이 서버는 지금/)).textContent;
-    expect(line).toContain("월요일 요약, 아침 요약만 보냅니다");
+    expect(line).toContain(
+      "월요일 요약, 아침 요약, 오늘 업무 보고, 회의 직후 알림만 보냅니다",
+    );
     expect(line).toContain("아직 보내지 않는 것: 마감 알림.");
+  });
+
+  it("names the notice after a meeting among what the switch governs", async () => {
+    get.mockResolvedValue({ ...ALL, after_meeting_here: false });
+    render(<DueReminderSetting />);
+    expect((await found()).parentElement?.textContent).toContain("직후 내 담당 항목 알림");
+    expect((await screen.findByText(/이 서버는 지금/)).textContent).toContain(
+      "아직 보내지 않는 것: 회의 직후 알림.",
+    );
+  });
+
+  it("names the work report among what the switch covers, and says where it is not sent yet", async () => {
+    // A server from before the two fields existed leaves them out: not sent.
+    get.mockResolvedValue({ on: true, sent_here: true, weekly_here: true, daily_here: true });
+    render(<DueReminderSetting />);
+
+    const label = (await found()).parentElement?.textContent ?? "";
+    expect(label).toContain("오후의 오늘 업무 보고 초안");
+    const line = (await screen.findByText(/이 서버는 지금/)).textContent ?? "";
+    expect(line).toContain("마감 알림, 월요일 요약, 아침 요약만 보냅니다");
+    expect(line).toContain("아직 보내지 않는 것: 오늘 업무 보고, 회의 직후 알림.");
+  });
+
+  it("says nothing more once this server sends all five", async () => {
+    get.mockResolvedValue(ALL);
+    render(<DueReminderSetting />);
+
+    await found();
+    expect(screen.queryByText(/이 서버는/)).toBeNull();
   });
 
   it("keeps the old setting and says so when the change fails", async () => {

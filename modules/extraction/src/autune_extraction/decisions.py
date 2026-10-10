@@ -1,8 +1,10 @@
 """Step 5: group the utterances a classifier marked ``decision`` into entities.
 
-A ``Classification`` marks one utterance. A decision is an entity that usually
+A ``Classification`` marks one utterance. A decision is an entity that often
 spans several — a proposal, some back-and-forth, and the sentence that settles
 it — and module D keys a decision lineage on that entity, not on the labels.
+Two turns that each say what was decided are two decisions, however close
+(``group_decisions``).
 Without it D has nothing to attach a ``thr_`` thread to. See
 ``docs/architecture/contracts.md``, "The B -> D boundary".
 
@@ -16,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from datetime import date
 
@@ -83,6 +85,12 @@ class ClassifiedUtterance:
     ``service.resolve_decision_summaries`` in place of asking the resolver."""
     piece_summaries: tuple[str, ...] = ()
     """The same for each of ``pieces``."""
+    part: str = ""
+    """The words of this line that carry the commitment or the decision
+    (``Prediction.part``); empty when the classifier named none. Read where a
+    source is recorded, for the quotation (``excerpt.quoted``)."""
+    piece_parts: tuple[str, ...] = ()
+    """The same for each of ``pieces``."""
     part_of: str = ""
     """The id of the utterance this is a piece of, for an entry ``in_pieces``
     made; empty for an utterance itself."""
@@ -134,6 +142,12 @@ def in_pieces(classified: Sequence[ClassifiedUtterance]) -> list[ClassifiedUtter
                         else ""
                     ),
                     piece_summaries=(),
+                    part=(
+                        utterance.piece_parts[number - 1]
+                        if number <= len(utterance.piece_parts)
+                        else ""
+                    ),
+                    piece_parts=(),
                     part_of=utterance.id,
                 )
             )
@@ -166,10 +180,6 @@ class DecisionGroup:
     """``담당 박지영, 기한 2026-10-02``, or empty: what is added after the line."""
 
     substance_id: str = ""
-    from_piece: bool = False
-    """Whether the substance is a piece of a long turn (``in_pieces``): up to
-    half a request of speech, which is not a line of minutes until a model has
-    written what was decided in it (``needs_write_up``)."""
     first_position: int = 0
     last_position: int = 0
     """Where the decision's first and last utterance sit in the meeting's sequence,
@@ -212,6 +222,8 @@ def identified(
     meeting_id: str,
     groups: Sequence[DecisionGroup],
     utterances: Sequence[ClassifiedUtterance],
+    *,
+    taken: Collection[str] = (),
 ) -> list[tuple[str, DecisionGroup]]:
     """Each decision of a meeting with its ``dec_`` id, in order.
 
@@ -223,17 +235,20 @@ def identified(
     utterances -- two in one long turn -- is the later one told apart by the
     pieces it was settled in, which go into its hash instead.
 
-    ``utterances`` is the sequence ``groups`` was made from.
+    ``utterances`` is the sequence ``groups`` was made from. ``taken`` is the
+    ids that already name another decision of the meeting -- the rows a rebuild
+    keeps as a person left them (``service.build_decisions``): a decision made
+    from the rest of such a turn is told apart the same way.
     """
     real = {u.id: u.source_id for u in utterances}
-    taken: set[str] = set()
+    used = set(taken)
     out: list[tuple[str, DecisionGroup]] = []
     for group in groups:
         settled_in = list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
         id_ = decision_id(meeting_id, settled_in)
-        if id_ in taken:
+        if id_ in used:
             id_ = decision_id(meeting_id, group.source_utterance_ids)
-        taken.add(id_)
+        used.add(id_)
         out.append((id_, group))
     return out
 
@@ -243,8 +258,25 @@ def group_decisions(
     *,
     max_gap: int = DEFAULT_MAX_GAP,
     day: date | None = None,
+    held: Collection[str] = (),
 ) -> list[DecisionGroup]:
     """Group decision-labelled utterances into decisions, in meeting order.
+
+    **A turn that says something of its own is a decision of its own**
+    (``says_something``); a turn that only agrees or points -- "네 그렇게 하죠"
+    -- belongs with the one it agrees to. So a run of decision turns closes
+    where a second one with content begins. Until 2026-10-09 the whole run was
+    one decision: a wrap-up that listed three things the meeting had settled
+    came out as one row quoting the last, with a date said for the first (seen
+    on invented meetings; the owner picked this rule). The cost is on the other
+    side: one decision said twice in full sentences is two rows, and a person
+    deletes one.
+
+    ``held`` is the ids of the turns that already belong to a decision a person
+    confirmed, rejected or reworded, which a rebuild keeps as it is
+    (``service.build_decisions``). No decision is made from them again: a run
+    whose content is held is no decision, and one whose content is not is made
+    from the turns left.
 
     ``utterances`` is *every* utterance of the meeting, ordered by ``start_sec``
     — not only the decision-labelled ones. The utterances in between are what
@@ -269,12 +301,20 @@ def group_decisions(
     since_last = 0
 
     def close() -> None:
-        members = [utterances[i] for i in current]
-        region = utterances[current[0] : current[-1] + 1]
-        groups.append(_build(members, region, day=day, span=(current[0], current[-1])))
+        free = [i for i in current if utterances[i].id not in held]
+        if len(free) < len(current) and not any(says_something(utterances[i].text) for i in free):
+            return
+        members = [utterances[i] for i in free]
+        region = utterances[free[0] : free[-1] + 1]
+        groups.append(_build(members, region, day=day, span=(free[0], free[-1])))
 
     for position, utterance in enumerate(utterances):
         if utterance.kind is UtteranceKind.DECISION:
+            if says_something(utterance.text) and any(
+                says_something(utterances[i].text) for i in current
+            ):
+                close()
+                current = []
             current.append(position)
             since_last = 0
             continue
@@ -290,6 +330,27 @@ def group_decisions(
     if current:
         close()
     return groups
+
+
+def decision_of(
+    utterances: Sequence[ClassifiedUtterance],
+    members: Collection[str],
+    *,
+    day: date | None = None,
+) -> DecisionGroup | None:
+    """The decision made of exactly the turns whose ids are ``members``, read
+    as ``group_decisions`` reads a run -- for a row whose turns a person's
+    review fixed (``service.build_decisions``). ``None`` when none of them is
+    in ``utterances``."""
+    at = [position for position, utterance in enumerate(utterances) if utterance.id in members]
+    if not at:
+        return None
+    return _build(
+        [utterances[i] for i in at],
+        utterances[at[0] : at[-1] + 1],
+        day=day,
+        span=(at[0], at[-1]),
+    )
 
 
 MIN_SUBSTANCE = 12
@@ -311,24 +372,11 @@ Both halves are required. The name is at least two syllables, so "날씨가" and
 원하시니" names nobody as the owner."""
 
 
-SELF_CONTAINED = 20
-"""A substance turn this long that points at nothing ("그거", "그 방향") already says
-what was decided; writing it up again would only change its ending. See
-``needs_write_up``."""
-
-
-def needs_write_up(group: DecisionGroup) -> bool:
-    """Whether a model is worth asking about this decision.
-
-    Measured on the dummy meetings (2026-09-30): asked about every decision, the
-    model rewrote all of them and cited a line for about a quarter -- the rest it
-    only put into "~하기로 했습니다", which ``noun_form.tidy`` does without a model,
-    a request or a chance of drifting from what was said. It earns its call when
-    the turn that settles the decision does not say what was decided: it is short,
-    or it points at something said before.
-    """
-    core = group.core_text.strip()
-    return group.from_piece or len(core) < SELF_CONTAINED or bool(_POINTS_AT.search(core))
+def says_something(text: str) -> bool:
+    """Whether a turn says what was decided, or only agrees to it: at least
+    ``MIN_SUBSTANCE`` characters once the words that point elsewhere
+    (``_POINTS_AT``) are taken out."""
+    return len(_POINTS_AT.sub("", text).strip()) >= MIN_SUBSTANCE
 
 
 def _substance(members: Sequence[ClassifiedUtterance]) -> ClassifiedUtterance:
@@ -339,8 +387,7 @@ def _substance(members: Sequence[ClassifiedUtterance]) -> ClassifiedUtterance:
     longest earlier member, which is the proposal it agreed to.
     """
     settling = members[-1]
-    stripped = _POINTS_AT.sub("", settling.text)
-    if len(stripped.strip()) >= MIN_SUBSTANCE:
+    if says_something(settling.text):
         return settling
     earlier = members[:-1]
     return max(earlier, key=lambda m: len(m.text)) if earlier else settling
@@ -364,6 +411,19 @@ def _owner(region: Sequence[ClassifiedUtterance], substance: ClassifiedUtterance
             return utterance.speaker
     named = _ASKS.search(substance.text)
     return named.group(1) if named else None
+
+
+_BRACKET = re.compile(r" \((?:담당 [^()]+, 기한 [^()]+|담당 [^()]+|기한 [^()]+)\)$")
+
+
+def core_of(statement: str) -> str:
+    """A statement without the bracket ``_build`` ends it with -- "(담당 민경,
+    기한 2026-10-13)": what was settled, apart from who has it and by when.
+
+    Read back off the stored sentence because the core is not stored apart.
+    A sentence that only happens to end in brackets of another kind keeps
+    them."""
+    return _BRACKET.sub("", statement)
 
 
 def _build(
@@ -412,7 +472,7 @@ def _build(
         extras.append(f"담당 {owner}")
 
     for utterance in scope:
-        if (due := parse_due(utterance.text, day)) is not None:
+        if (due := parse_due(utterance.text, day, decided=True)) is not None:
             extras.append(f"기한 {due.date.isoformat()}" if due.date else f"기한 {due.text}")
             break
 
@@ -429,7 +489,6 @@ def _build(
         core_text=core,
         suffix=suffix,
         substance_id=substance.id,
-        from_piece=bool(substance.part_of),
         first_position=span[0],
         last_position=span[1],
     )

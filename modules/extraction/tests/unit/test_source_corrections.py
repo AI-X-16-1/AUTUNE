@@ -192,6 +192,34 @@ def test_a_persons_text_is_only_flagged(session: Session, who: str) -> None:
     assert (row.description, row.needs_recheck) == ("사람이 쓴 문장", True)
 
 
+def test_a_corrected_line_drops_the_part_recorded_on_the_line_before(session: Session) -> None:
+    """The offsets were counted on the old text; on the corrected one they would
+    cut somewhere else. The item is quoted whole until a run records them again."""
+    said = "다음 주 화요일까지 정리하겠습니다"
+    row = item(session, "act_1", resolved=True)
+    (source,) = row.sources
+    source.excerpt_start, source.excerpt_end = OLD.index(said), len(OLD)
+    session.flush()
+    assert NEW[source.excerpt_start : source.excerpt_end] != said
+
+    correct(session)
+
+    assert (source.excerpt_start, source.excerpt_end) == (None, None)
+    assert [s.excerpt for s in service.source_utterances(session, "act_1")] == [None]
+
+
+def test_a_line_that_did_not_change_keeps_its_part(session: Session) -> None:
+    said = "다음 주 화요일까지 정리하겠습니다"
+    row = item(session, "act_1", resolved=True)
+    (source,) = row.sources
+    source.excerpt_start, source.excerpt_end = OLD.index(said), len(OLD)
+    session.flush()
+
+    service.apply_source_corrections(session, meeting_id=MEETING, spoken={"utt_1": OLD})
+
+    assert OLD[source.excerpt_start : source.excerpt_end] == said
+
+
 def test_nothing_changes_when_the_line_did_not(session: Session) -> None:
     row = item(session, "act_1")
 
@@ -364,6 +392,9 @@ def test_through_the_task_on_a_meeting_a_person_edited(
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    # The run ends by publishing its result. Left real, that reaches the broker
+    # in any process where D's or E's consuming task is registered (#940).
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: [])
     for task in (
         "sync_item_copies",
         "sync_decision",
@@ -458,6 +489,9 @@ def test_through_the_task_a_rerun_that_drops_a_decision_queues_its_page_to_retir
     monkeypatch.setattr(tasks, "session_scope", scope)
     monkeypatch.setattr(tasks, "get_classifier", FakeClassifier)
     monkeypatch.setattr(tasks, "get_nli", FakeNli)
+    # The run ends by publishing its result. Left real, that reaches the broker
+    # in any process where D's or E's consuming task is registered (#940).
+    monkeypatch.setattr(tasks, "publish", lambda event, payload: [])
     for task in (
         "sync_item_copies",
         "sync_decision",

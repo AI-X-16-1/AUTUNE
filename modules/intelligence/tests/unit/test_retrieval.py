@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from autune_intelligence import glossary, retrieval, tools
 
 
@@ -23,6 +25,35 @@ def test_tokens_leave_out_words_that_match_every_passage() -> None:
 def test_a_rate_question_finds_the_rate_not_every_completion_passage() -> None:
     top = [p.key for p in _bm25().search("완료율은 어떻게 계산돼?", k=3)]
     assert "actions.confirmation_vs_completion" in top
+
+
+def test_a_question_about_a_closed_item_gets_the_answer() -> None:
+    """B leaves an item closed without being finished out of its counts (#993)."""
+    [top] = _bm25().search("끝내지 않고 닫은 항목도 완료율에 들어가?", k=1)
+    assert top.key == "actions.confirmation_vs_completion"
+    assert "닫은 항목은 확정된 항목으로 세지 않아서" in top.text
+
+
+@pytest.mark.parametrize(
+    ("question", "key", "says"),
+    [
+        ("슬랙 연결 안 하면 리포트 게시돼?", "reports.slack", "게시 카드는 만들지 않으며"),
+        ("팀원 발언 비율 볼 수 있어?", "quality.speaking_ratio", "본인에게만"),
+        ("방금 한 회의 점수는 왜 없어?", "quality.pending", "10분"),
+        ("히트맵이 왜 비어 있어?", "alignment.floor", "3명 이상이 화자로 확인된"),
+        (
+            "여러 팀 주간 리포트 시간을 한 번에 바꿀 수 있어?",
+            "reports.weekly_schedule",
+            "내 모든 팀",
+        ),
+    ],
+    ids=["slack", "speaking-ratio", "pending", "heatmap-people", "many-teams"],
+)
+def test_what_changed_lately_is_explained(question: str, key: str, says: str) -> None:
+    """Passages for #1000/#1004, privacy.md 3, the aggregation wait, #999 and #1155."""
+    [top] = _bm25().search(question, k=1)
+    assert top.key == key
+    assert says in top.text
 
 
 def test_rrf_rewards_agreement_between_rankings() -> None:

@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from structlog.testing import capture_logs
 
 from autune_contracts import TranscriptReady
 from autune_contracts.transcript import PrivacyFlags, TranscriptMetadata, TranscriptSource
@@ -41,7 +42,15 @@ from autune_extraction.models import (
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli
 from autune_extraction.pipeline import summary as summary_module
-from autune_extraction.pipeline.summary import LlmSummarizer, TooLongError, sections
+from autune_extraction.pipeline.summary import (
+    LABELS,
+    MAX_POINTS,
+    LlmSummarizer,
+    TooLongError,
+    by_kind,
+    names_someone,
+    sections,
+)
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 MEETING = "mtg_1"
@@ -85,9 +94,7 @@ LINES = [
     "제가 3시까지 릴리스 노트 정리할게요",
 ]
 FINAL = {
-    "overview": (
-        "로그인 오류 원인을 공유했고 [사람1] 님 의견대로 배포를 금요일로 미루기로 했습니다."
-    ),
+    "overview": ("로그인 오류 원인을 공유했고 배포를 금요일로 미루기로 했습니다."),
     "points": ["배포는 금요일로 미룹니다", "릴리스 노트는 3시까지 정리합니다"],
 }
 
@@ -95,7 +102,7 @@ FINAL = {
 # --- the summarizer ------------------------------------------------------------
 
 
-def test_a_short_meeting_is_one_call_and_the_names_come_back() -> None:
+def test_a_short_meeting_is_one_call_and_no_name_leaves() -> None:
     provider = Provider(FINAL)
     s = summarizer(provider)
     s.use_roster(["박재경"])
@@ -107,7 +114,7 @@ def test_a_short_meeting_is_one_call_and_the_names_come_back() -> None:
     assert "박재경" not in provider.sent and "재경" not in provider.sent
     assert "[사람1]" in provider.prompt(0)
     assert "never-in-a-body" not in provider.sent
-    assert written.overview.startswith("로그인 오류 원인을 공유했고 박재경 님 의견대로")
+    assert written.overview == "로그인 오류 원인을 공유했고 배포를 금요일로 미루기로 했습니다."
     assert written.points == ("배포는 금요일로 미룹니다", "릴리스 노트는 3시까지 정리합니다")
     assert written.model_version == "llm:first"
 
@@ -115,7 +122,8 @@ def test_a_short_meeting_is_one_call_and_the_names_come_back() -> None:
 def test_a_long_meeting_is_summarised_in_sections_inside_the_outbound_limit() -> None:
     line = "고객 인터뷰에서 나온 요청 사항을 하나씩 검토했고 박재경 님이 정리한 표를 같이 봤어요"
     lines = [f"{line} {n}번" for n in range(200)]
-    parts = sections(lines)
+    # Cut as the summarizer cuts them: with the name already replaced.
+    parts = sections([text.replace("박재경", "[사람1]") for text in lines])
     section_answer = {"points": ["[사람1] 님이 정리한 표를 검토했습니다"]}
     provider = Provider(*([section_answer] * len(parts)), FINAL)
     s = summarizer(provider)
@@ -155,10 +163,147 @@ def test_a_point_the_meeting_does_not_support_is_dropped() -> None:
     assert written.points == ("배포는 금요일로 미룹니다",)
 
 
+def test_a_number_inside_a_longer_one_was_not_said() -> None:
+    """ "20일" does not say 2: a date the answer shortened is a date nobody said."""
+    lines = ["릴리스는 10월 20일에 내기로 했습니다", "점검은 09시에 시작하죠"]
+    provider = Provider(
+        {
+            "overview": "릴리스 일정을 정한 회의입니다.",
+            "points": [
+                "결정: 릴리스는 10월 2일에 내기로 했습니다.",
+                "결정: 릴리스는 10월 20일에 내기로 했습니다.",
+                "결정: 릴리스는 1월 20일에 내기로 했습니다.",
+                "논의: 점검은 9시에 시작합니다.",
+            ],
+        }
+    )
+
+    written = summarizer(provider).summarize(lines)
+
+    assert written is not None
+    assert written.points == (
+        "결정: 릴리스는 10월 20일에 내기로 했습니다.",
+        "논의: 점검은 9시에 시작합니다.",
+    )
+
+
+def test_an_overview_with_a_number_nobody_said_is_no_summary() -> None:
+    provider = Provider(
+        {"overview": "릴리스를 10월 2일에 내기로 한 회의입니다.", "points": ["배포를 논의했습니다"]}
+    )
+
+    assert summarizer(provider).summarize(["릴리스는 10월 20일에 내기로 했습니다"]) is None
+
+
+def test_a_point_that_starts_with_a_quoted_phrase_keeps_both_marks() -> None:
+    final = {
+        "overview": '"처리 중입니다" 문구를 넣기로 한 회의입니다.',
+        "points": ['결정: "처리 중입니다" 문구를 넣기로 했습니다.', '"따옴표로 감싼 문장입니다."'],
+    }
+
+    written = summarizer(Provider(final)).summarize(LINES)
+
+    assert written is not None
+    assert written.overview == '"처리 중입니다" 문구를 넣기로 한 회의입니다.'
+    assert written.points == (
+        '결정: "처리 중입니다" 문구를 넣기로 했습니다.',
+        "따옴표로 감싼 문장입니다.",
+    )
+
+
 def test_an_unusable_overview_means_no_summary() -> None:
     provider = Provider({"overview": "", "points": ["배포는 금요일로 미룹니다"]})
 
     assert summarizer(provider).summarize(LINES) is None
+
+
+# A meeting long enough for several section calls, with no name and no number
+# a point below would have to match.
+LONG = [
+    f"고객 인터뷰에서 나온 요청 사항을 하나씩 검토했고 정리한 표를 같이 봤어요 {n}번"
+    for n in range(200)
+]
+SECTION = {"points": ["정리한 표를 검토했습니다"]}
+
+
+def test_a_point_in_a_list_of_its_own_is_read_as_the_point() -> None:
+    # 2026-10-09, an invented meeting: a section answered with every point
+    # wrapped, none was kept, and the summary was written from the other half.
+    parts = sections(LONG)
+    wrapped = {"points": [["정리한 표를 검토했습니다"], ["요청 사항을 하나씩 봤습니다"]]}
+    final = {
+        "overview": "요청 사항을 검토한 회의입니다.",
+        "points": [["결정: 표를 다시 정리하기로 했습니다"], "할 일: 요청 사항을 나눠 봅니다"],
+    }
+    provider = Provider(*([wrapped] * len(parts)), final)
+
+    written = summarizer(provider).summarize(LONG)
+
+    assert written is not None
+    last = provider.prompt(len(parts))
+    assert "정리한 표를 검토했습니다" in last and "요청 사항을 하나씩 봤습니다" in last
+    assert written.points == (
+        "결정: 표를 다시 정리하기로 했습니다",
+        "할 일: 요청 사항을 나눠 봅니다",
+    )
+
+
+def test_a_list_that_is_not_one_string_is_no_point() -> None:
+    provider = Provider(
+        {
+            "overview": FINAL["overview"],
+            "points": [
+                ["배포는 금요일로 미룹니다", "릴리스 노트는 3시까지 정리합니다"],
+                [],
+                [42],
+                [["배포는 금요일로 미룹니다"]],
+                "릴리스 노트는 3시까지 정리합니다",
+            ],
+        }
+    )
+
+    written = summarizer(provider).summarize(LINES)
+
+    assert written is not None
+    assert written.points == ("릴리스 노트는 3시까지 정리합니다",)
+
+
+def test_a_wrapped_point_that_names_someone_is_counted_like_any_other() -> None:
+    assert summary_module._named({"overview": "", "points": [["제가 정리하겠습니다"]]}) == 1
+
+
+@pytest.mark.parametrize(
+    "nothing",
+    [
+        {},
+        {"points": []},
+        {"points": "정리한 표를 검토했습니다"},
+        {"points": [42, ["정리한 표를", "검토했습니다"]]},
+        {"points": ["예산 500만 원을 쓰기로 했습니다"]},  # a number nobody said
+    ],
+)
+@pytest.mark.parametrize("failing", [0, 1])
+def test_a_section_that_gives_no_point_means_no_summary_and_no_further_call(
+    nothing: dict[str, Any], failing: int
+) -> None:
+    # Without it the last call is written from the other sections alone, and
+    # the tab shows that as the meeting.
+    parts = sections(LONG)
+    assert len(parts) > failing + 1
+    answers = [SECTION] * len(parts)
+    answers[failing] = nothing
+    provider = Provider(*answers, FINAL)
+
+    with capture_logs() as logs:
+        written = summarizer(provider).summarize(LONG)
+
+    assert written is None
+    assert len(provider.bodies) == failing + 1, "neither the next section nor the last call"
+    (event,) = [e for e in logs if e["event"].startswith("extraction_summary")]
+    assert {k: v for k, v in event.items() if k != "log_level"} == {
+        "event": "extraction_summary_section_unusable",
+        "calls": failing + 1,
+    }
 
 
 def test_nothing_to_summarise_sends_nothing() -> None:
@@ -359,7 +504,18 @@ def test_the_task_stores_a_summary_and_does_not_ask_again_for_the_same_lines(
     assert "동의 안 한 사람의 말" not in provider.sent
     assert "박재경" not in provider.sent, "the team's roster is given to the summarizer"
     row = task_session.get(ExtMeetingSummary, MEETING)
-    assert row is not None and row.overview.startswith("로그인 오류 원인을 공유했고 박재경")
+    assert row is not None and row.overview.startswith("로그인 오류 원인을 공유했고 배포를")
+
+
+def test_an_answer_that_could_not_be_used_stores_nothing_and_the_tab_has_no_written_summary(
+    task_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = summarizer(Provider({"overview": "", "points": ["배포는 금요일로 미룹니다"]}))
+    monkeypatch.setattr(tasks, "get_summarizer", lambda: s)
+
+    assert tasks.summarize_meeting(MEETING) is False
+    assert task_session.get(ExtMeetingSummary, MEETING) is None
+    assert service.meeting_summary(task_session, MEETING).generated is None
 
 
 def test_a_failed_call_leaves_the_tab_as_it_was(
@@ -611,7 +767,7 @@ def test_a_summarizer_without_a_key_does_not_fail_a_run_whose_rows_are_committed
 
 
 def test_no_example_in_a_prompt_names_a_placeholder() -> None:
-    """A ``[사람1]`` copied from an example would be put back as a real name."""
+    """A ``[사람1]`` copied from an example would cost the sentence it is in."""
     for prompt in (summary_module._SECTION_PROMPT, summary_module._FINAL_PROMPT):
         assert re.search(r"\[사람\d", prompt) is None
 
@@ -727,3 +883,370 @@ def test_the_board_holds_only_what_a_model_wrote(session: Session) -> None:
         "결정(확인 전): 배포를 금요일로 미룬다",
         "할 일(확정): 릴리스 노트 정리",
     ]
+
+
+# --- the points kept, by kind (measured 2026-10-08) ---------------------------------
+
+DECIDED = [f"결정: {what} 하기로 했습니다." for what in "가나다라마바사아자차카타"]
+TASK = "할 일: 안내문 초안을 씁니다."
+OPEN = ["남은 문제: 권한을 누가 줄지 정하지 못했습니다.", "남은 문제: 보상 기준이 남았습니다."]
+TALKED = "논의: 자동 재시도를 두고 이야기했습니다."
+
+
+def test_a_kind_the_model_wrote_last_is_not_cut_by_the_kind_it_wrote_first() -> None:
+    """Twelve decisions, then a task, two open questions and a discussion: the
+    first seven were seven decisions."""
+    kept = by_kind([*DECIDED, TASK, *OPEN, TALKED])
+
+    assert kept == [*DECIDED[:3], TASK, *OPEN, TALKED]
+
+
+def test_every_kind_has_one_before_any_has_two() -> None:
+    kept = by_kind([*DECIDED, TASK, *OPEN, TALKED], limit=4)
+
+    assert kept == [DECIDED[0], TASK, OPEN[0], TALKED]
+
+
+def test_points_inside_the_limit_are_all_kept_in_the_order_of_the_labels() -> None:
+    """The order was broken once in five summaries: a task before a decision."""
+    kept = by_kind([TASK, DECIDED[0], TALKED, OPEN[0], DECIDED[1]])
+
+    assert kept == [DECIDED[0], DECIDED[1], TASK, OPEN[0], TALKED]
+
+
+def test_points_with_no_label_are_the_first_of_them_as_before() -> None:
+    """A section's answer: nothing to tell its points apart by."""
+    plain = [f"{what} 이야기를 했습니다." for what in "가나다라마바사아자"]
+
+    assert by_kind(plain) == plain[:MAX_POINTS]
+    assert by_kind([*plain, TASK])[0] == TASK, "a labelled one is not behind nine plain ones"
+
+
+def test_a_label_is_one_only_at_the_start_and_with_its_colon() -> None:
+    odd = ["결정적인 이야기는 없었습니다.", "오늘 정한 것은 결정: 없음입니다."]
+
+    assert by_kind([*odd, TASK]) == [TASK, *odd]
+
+
+def test_no_more_than_the_limit_is_kept_whatever_the_kinds() -> None:
+    assert len(by_kind([*DECIDED, TASK, *OPEN, TALKED])) == MAX_POINTS
+    assert by_kind(DECIDED) == DECIDED[:MAX_POINTS]
+    assert by_kind([]) == []
+
+
+def test_the_summary_shows_an_open_question_the_model_wrote_after_ten_decisions() -> None:
+    lines = [*LINES, *(p.split(": ", 1)[1] for p in [*DECIDED, TASK, *OPEN])]
+    provider = Provider(
+        {"overview": "여러 가지를 정한 회의입니다.", "points": [*DECIDED, TASK, *OPEN]}
+    )
+
+    written = summarizer(provider).summarize(lines)
+
+    assert written is not None
+    assert len(written.points) == MAX_POINTS
+    assert [p.split(":")[0] for p in written.points] == ["결정"] * 4 + ["할 일"] + ["남은 문제"] * 2
+
+
+def test_the_last_prompt_names_every_label_and_says_the_limit_is_a_limit() -> None:
+    prompt = summary_module._FINAL_PROMPT.format(
+        source="녹취록", lines="", board="", max_points=MAX_POINTS
+    )
+
+    for label in LABELS:
+        assert f'"{label}: "' in prompt
+    assert f"{MAX_POINTS}개를 넘기지 마세요" in prompt
+
+
+# --- a meeting too long for a summary says so ---------------------------------------
+
+
+def _lengthen(session: Session) -> None:
+    """Enough consented speech for more sections than ``MAX_CALLS`` set to 2 allows."""
+    for n in range(30):
+        session.add(
+            StoredUtterance(
+                id=f"utt_long_{n:02d}",
+                meeting_id=MEETING,
+                participant_id="par_yes",
+                speaker_label="화자",
+                start_sec=100.0 + n,
+                end_sec=100.5 + n,
+                text="긴 발화입니다 " * 40,
+            )
+        )
+    session.flush()
+
+
+@pytest.fixture
+def too_long(task_session: Session, monkeypatch: pytest.MonkeyPatch) -> Provider:
+    """The meeting made too long, and a summarizer that would be asked about it."""
+    _lengthen(task_session)
+    monkeypatch.setattr(summary_module, "MAX_CALLS", 2)
+    provider = Provider(FINAL)
+    s = summarizer(provider)
+    monkeypatch.setattr(tasks, "get_summarizer", lambda: s)
+    return provider
+
+
+def test_a_meeting_too_long_for_a_summary_is_marked_with_no_text(
+    task_session: Session, too_long: Provider
+) -> None:
+    assert tasks.summarize_meeting(MEETING) is False
+
+    row = task_session.get(ExtMeetingSummary, MEETING)
+    assert row is not None
+    assert row.too_long is True
+    assert (row.overview, row.points) == ("", "")
+    assert row.source_digest == service.source_digest(service.summary_lines(task_session, MEETING))
+    assert too_long.bodies == []
+
+
+def test_the_tab_is_told_a_meeting_was_too_long_and_is_given_no_summary(
+    task_session: Session, too_long: Provider
+) -> None:
+    tasks.summarize_meeting(MEETING)
+
+    shown = service.meeting_summary(task_session, MEETING)
+
+    assert shown.generated is None
+    assert shown.generated_too_long is True
+
+
+def test_a_meeting_found_too_long_is_not_tried_again_for_the_same_lines(
+    task_session: Session, too_long: Provider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = tasks.get_summarizer()
+    assert s is not None
+    asked: list[int] = []
+    summarize = s.summarize
+
+    def counted(lines: Any, **kwargs: Any) -> Any:
+        asked.append(len(lines))
+        return summarize(lines, **kwargs)
+
+    monkeypatch.setattr(s, "summarize", counted)
+
+    assert tasks.summarize_meeting(MEETING) is False
+    assert tasks.summarize_meeting(MEETING) is False
+
+    assert len(asked) == 1
+
+
+def test_too_long_is_logged_by_meeting_and_a_count_and_is_not_a_failure(
+    task_session: Session, too_long: Provider
+) -> None:
+    with capture_logs() as logs:
+        tasks.summarize_meeting(MEETING)
+
+    events = [e for e in logs if e["event"].startswith("extraction_summary")]
+    assert [e["event"] for e in events] == ["extraction_summary_too_long"]
+    assert {k: v for k, v in events[0].items() if k not in ("event", "log_level")} == {
+        "meeting_id": MEETING,
+        "lines": len(LINES) + 30,
+    }
+
+
+def test_a_meeting_that_is_not_too_long_is_not_said_to_be(session: Session) -> None:
+    assert service.meeting_summary(session, MEETING).generated_too_long is False
+    _store(session)
+
+    shown = service.meeting_summary(session, MEETING)
+
+    assert shown.generated is not None
+    assert shown.generated_too_long is False
+    row = session.get(ExtMeetingSummary, MEETING)
+    assert row is not None
+    assert row.too_long is False
+
+
+def _mark(session: Session) -> ExtMeetingSummary | None:
+    return service.mark_summary_too_long(
+        session,
+        MEETING,
+        model_version="llm:first",
+        lines=service.summary_lines(session, MEETING),
+    )
+
+
+def test_too_long_is_said_only_of_the_lines_it_was_found_for(session: Session) -> None:
+    assert _mark(session) is not None
+    assert service.meeting_summary(session, MEETING).generated_too_long is True
+
+    _correct(session)
+
+    assert service.meeting_summary(session, MEETING).generated_too_long is False
+    assert service.drop_stale_summary(session, MEETING) is True
+    assert session.get(ExtMeetingSummary, MEETING) is None
+
+
+def test_deleted_speech_deletes_the_too_long_row_as_it_does_a_summary(session: Session) -> None:
+    _mark(session)
+
+    service.forget_speech(session, ["utt_2"])
+
+    assert session.get(ExtMeetingSummary, MEETING) is None
+
+
+def test_too_long_is_not_recorded_for_lines_the_meeting_no_longer_has(session: Session) -> None:
+    before = service.summary_lines(session, MEETING)
+    _store(session)
+    _correct(session)
+
+    marked = service.mark_summary_too_long(
+        session, MEETING, model_version="llm:first", lines=before
+    )
+
+    assert marked is None
+    assert session.get(ExtMeetingSummary, MEETING) is None
+
+
+def test_marking_too_long_leaves_none_of_an_earlier_summarys_text(session: Session) -> None:
+    _store(session)
+
+    _mark(session)
+
+    row = session.get(ExtMeetingSummary, MEETING)
+    assert row is not None
+    assert (row.too_long, row.overview, row.points) == (True, "", "")
+    assert service.meeting_summary(session, MEETING).generated is None
+
+
+def test_a_summary_written_later_is_shown_and_no_longer_too_long(session: Session) -> None:
+    _mark(session)
+
+    _store(session)
+
+    shown = service.meeting_summary(session, MEETING)
+    assert shown.generated is not None
+    assert shown.generated.overview == "배포를 금요일로 미루기로 했습니다."
+    assert shown.generated_too_long is False
+
+
+# --- the summary names no person (the user's choice, 2026-10-08) --------------------
+
+NAMED = {
+    "overview": (
+        "배포 일정을 논의한 회의입니다. [사람1] 님 의견대로 배포를 금요일로 미루기로 했습니다. "
+        "릴리스 노트는 정리하기로 했습니다."
+    ),
+    "points": [
+        "결정: 배포는 금요일로 미루기로 했습니다.",
+        "결정: [사람1] 님 의견대로 배포를 미루기로 했습니다.",
+        "할 일: 릴리스 노트는 제가 정리하기로 했습니다.",
+        "할 일: 릴리스 노트를 정리하기로 했습니다.",
+        "남은 문제: 로그인 오류 문제가 다시 나는지는 모릅니다.",
+    ],
+}
+
+
+def _named_summary() -> Any:
+    s = summarizer(Provider(NAMED))
+    s.use_roster(["박재경"])
+    return s.summarize(LINES)
+
+
+def test_a_point_that_names_someone_on_the_roster_is_not_shown() -> None:
+    written = _named_summary()
+
+    assert written is not None
+    assert "결정: 배포는 금요일로 미루기로 했습니다." in written.points
+    assert not any("사람1" in p or "박재경" in p for p in written.points)
+    assert len([p for p in written.points if p.startswith("결정")]) == 1
+
+
+def test_a_point_in_a_speakers_own_first_person_is_not_shown() -> None:
+    """ "제가" on the tab would mean nobody -- or whoever is reading it."""
+    written = _named_summary()
+
+    assert written is not None
+    assert [p for p in written.points if p.startswith("할 일")] == [
+        "할 일: 릴리스 노트를 정리하기로 했습니다."
+    ]
+
+
+def test_a_word_that_only_ends_like_a_first_person_is_no_person() -> None:
+    written = _named_summary()
+
+    assert written is not None
+    assert written.points[-1] == "남은 문제: 로그인 오류 문제가 다시 나는지는 모릅니다."
+
+
+@pytest.mark.parametrize(
+    ("sentence", "names"),
+    [
+        ("[사람1] 님이 맡기로 했습니다.", True),
+        ("초안은 [사람12]에게 넘기기로 했습니다.", True),
+        ("제가 보기로 했습니다.", True),
+        ("그건 저는 반대입니다.", True),
+        ("초안은 내가 쓰기로 했습니다.", True),
+        ("문제가 남았습니다.", False),
+        ("과제가 많다는 이야기가 있었습니다.", False),
+        ("안내가 늦었다는 지적이 있었습니다.", False),
+        ("[날짜]까지 하기로 했습니다.", False),
+        ("초안은 금요일까지 쓰기로 했습니다.", False),
+    ],
+)
+def test_what_counts_as_naming_someone(sentence: str, names: bool) -> None:
+    assert names_someone(sentence) is names
+
+
+def test_an_overview_loses_only_its_sentence_that_names_someone() -> None:
+    written = _named_summary()
+
+    assert written is not None
+    assert written.overview == ("배포 일정을 논의한 회의입니다. 릴리스 노트는 정리하기로 했습니다.")
+
+
+def test_an_overview_that_only_names_people_means_no_summary() -> None:
+    answer = {
+        "overview": "[사람1] 님 의견대로 배포를 미루기로 했습니다.",
+        "points": NAMED["points"],
+    }
+    s = summarizer(Provider(answer))
+    s.use_roster(["박재경"])
+
+    assert s.summarize(LINES) is None
+
+
+def test_no_name_of_the_roster_is_put_back_anywhere() -> None:
+    written = _named_summary()
+
+    assert written is not None
+    assert "박재경" not in written.overview + "".join(written.points)
+    assert "[사람" not in written.overview + "".join(written.points)
+
+
+def test_a_name_that_is_not_on_the_roster_passes_the_check() -> None:
+    """The limit the check has, said where it was decided: such a name was
+    never replaced, so nothing marks it."""
+    answer = {
+        "overview": FINAL["overview"],
+        "points": ["할 일: 릴리스 노트는 외부의 홍길동 님이 정리하기로 했습니다."],
+    }
+    s = summarizer(Provider(answer))
+    s.use_roster(["박재경"])
+
+    written = s.summarize([*LINES, "릴리스 노트는 홍길동 님이 정리하기로 했어요"])
+
+    assert written is not None
+    assert written.points == ("할 일: 릴리스 노트는 외부의 홍길동 님이 정리하기로 했습니다.",)
+
+
+def test_both_prompts_ask_for_no_person_and_show_none_in_their_examples() -> None:
+    for prompt in (summary_module._SECTION_PROMPT, summary_module._FINAL_PROMPT):
+        assert "사람을 쓰지 마세요" in prompt
+        example = prompt.split("예시(다른 회의의 답):")[1]
+        assert "담당" not in example
+        assert not names_someone(example)
+
+
+def test_how_many_sentences_named_someone_is_logged_as_a_count_only() -> None:
+    with capture_logs() as logs:
+        _named_summary()
+
+    (event,) = [e for e in logs if e["event"] == "extraction_summary_written"]
+    assert {k: v for k, v in event.items() if k not in ("event", "log_level")} == {
+        "calls": 1,
+        "lines": len(LINES),
+        "named": 3,
+    }
