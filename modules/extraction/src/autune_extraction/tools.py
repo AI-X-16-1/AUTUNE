@@ -53,6 +53,7 @@ from autune_integrations.privacy import find_unmasked
 from . import days_off, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
+from .pipeline.llm import substitute_names_mapped
 from .pipeline.registry import get_resolver
 from .schemas import ActionItemCreate, ActionItemRead, ActionItemUpdate, DecisionReviewUpdate
 from .slots import KST
@@ -1074,6 +1075,53 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
         evidence=[],
         confidence=0.0,
     )
+
+
+def names_not_sent(session: Session, meeting_id: str) -> list[str]:
+    """The display names an outbound model is not sent for this meeting (#411).
+
+    Not a tool the model calls -- it is in neither ``TOOLS`` nor ``ACTIONS`` --
+    but the roster ``hide_names`` takes, read the way B reads it for its own
+    model calls (``service.team_roster``): the members of the team that held the
+    meeting, and the accounts on the meeting's own participant rows, so a person
+    who has left the team is still hidden in a meeting they were in. Ordered by
+    ``users.id``; an unknown meeting has an empty roster. Read only.
+
+    The agent layer's live research is meant to call this rather than keep a
+    copy of the query (#1226).
+    """
+    return service.team_roster(session, meeting_id)
+
+
+def hide_names(texts: Sequence[str], roster: Sequence[str]) -> tuple[list[str], dict[str, str]]:
+    """``texts`` with every roster name as ``[사람N]``, and what each stood for.
+
+    Not a tool the model calls -- it is in neither ``TOOLS`` nor ``ACTIONS``.
+    It is B's own name hiding (#411, #530), the one every B model call goes
+    through (``pipeline.llm.substitute_names_mapped``), exposed so that a
+    caller outside B hides exactly what B hides. What it guarantees:
+
+    - Every form a roster member is called by is replaced: the name as stored,
+      a spaced Hangul name joined and swapped ("박 재경" -> "박재경", "재경박"),
+      and a Korean given name ("김민경" -> "민경"). Nothing shorter than two
+      characters. Where the split is a guess it errs toward replacing.
+    - Longest form first, so "김민경" never leaves "김[사람1]"; whatever follows a
+      name -- 님, 씨, a particle -- stays.
+    - One person is one number across all of ``texts``, numbered by first
+      appearance, so the numbers say nothing about the roster's order or size.
+      A form two members share is its own person.
+    - The map sends each ``[사람N]`` to the form first written for it, for
+      putting the name back into what the model answers. It never holds a name
+      that did not appear in ``texts``.
+    - No roster (or only blank names), no change and an empty map.
+
+    The agent layer is meant to call this instead of its copy in
+    ``autune_agent.live.names`` (#1226), so that a change to how B finds a
+    name reaches live research in the same commit. Putting names back stays
+    with the caller: what to do with a ``[사람N]`` the map does not hold is the
+    caller's rule, not B's.
+    """
+    return substitute_names_mapped(list(texts), roster)
 
 
 TOOLS = [
