@@ -14,6 +14,7 @@ import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
 import { shownDue } from "../dates";
 import { typedTextRefusal } from "../refusal";
+import { rowTitle } from "../title";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
 
@@ -36,6 +37,12 @@ import type { ActionItemRead, ActionStatus, EditHistoryEntry } from "../types";
  * are told apart by colour -- red text for the one that destroys, as
  * everywhere -- and 삭제 still only opens the confirmation, so a slip costs a
  * second click, not the item.
+ *
+ * The heading is the line the card was opened by -- the item's short title, or
+ * the sentence cut where it has none (`rowTitle`) -- and the whole sentence
+ * stands under it (the user, 2026-10-09): the window used to open on the
+ * sentence alone, under another heading than the card pressed. A sentence
+ * short enough to be its own top line is shown once.
  */
 export function ActionDetailDrawer({
   item,
@@ -57,6 +64,7 @@ export function ActionDetailDrawer({
   }) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
+  const heading = rowTitle(item.title, item.description);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // What the last change the drawer sent failed with. Both changes say so here,
@@ -161,8 +169,19 @@ export function ActionDetailDrawer({
                 fontWeight: "var(--text-title-weight)",
               }}
             >
-              {item.description}
+              {heading.shown}
             </h2>
+            {heading.cut ? (
+              <p
+                className="mt-1 text-[var(--color-ink-body)]"
+                style={{
+                  fontSize: "var(--text-rowBody)",
+                  lineHeight: "var(--text-rowBody-leading)",
+                }}
+              >
+                {item.description}
+              </p>
+            ) : null}
             <div className="mt-1 flex items-center gap-2">
               <StatusDot
                 variant={isCandidate(item) ? "attention" : "progress"}

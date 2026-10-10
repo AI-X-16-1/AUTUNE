@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 
 import { Button, StatusDot, type StatusVariant } from "@/shared/ui";
 
@@ -170,8 +170,14 @@ function DecisionRow({
   // The row's top line is twenty characters: the decision's short title
   // when it has one, else the statement cut (`rowTitle`).
   // A decision has no detail window to hold the rest, so the line itself
-  // opens: pressing it shows the whole statement, pressing again the short one.
+  // opens: pressing it shows the whole statement under it, pressing again
+  // takes that away. The top line stays what it was -- the shape of the
+  // window an action card opens (the user, 2026-10-09); it used to turn into
+  // the statement, and the line pressed was gone from under the pointer.
   const [whole, setWhole] = useState(false);
+  // Names the opened paragraph for the line that opens it (`aria-controls`),
+  // so a screen reader can go from one to the other (review of #1194).
+  const wholeId = useId();
   // The sentence as the row reads; the stored one is what `RewordForm` edits.
   const shown = shownStatement(decision.statement);
   const title = rowTitle(decision.title, shown);
@@ -224,28 +230,44 @@ function DecisionRow({
               }}
             />
           ) : (
-            <p
-              className={
-                decision.status === "rejected"
-                  ? "text-[var(--color-ink-muted)] line-through"
-                  : "text-[var(--color-ink-strong)]"
-              }
-              style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
-            >
-              {title.cut ? (
-                <button
-                  type="button"
-                  className="text-left [text-decoration:inherit]"
-                  aria-expanded={whole}
-                  title={whole ? undefined : shown}
-                  onClick={() => setWhole((now) => !now)}
+            <>
+              <p
+                className={
+                  decision.status === "rejected"
+                    ? "text-[var(--color-ink-muted)] line-through"
+                    : "text-[var(--color-ink-strong)]"
+                }
+                style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
+              >
+                {title.cut ? (
+                  <button
+                    type="button"
+                    className="text-left [text-decoration:inherit]"
+                    aria-expanded={whole}
+                    aria-controls={whole ? wholeId : undefined}
+                    title={whole ? undefined : shown}
+                    onClick={() => setWhole((now) => !now)}
+                  >
+                    {title.shown}
+                  </button>
+                ) : (
+                  shown
+                )}
+              </p>
+              {title.cut && whole ? (
+                <p
+                  id={wholeId}
+                  className={
+                    decision.status === "rejected"
+                      ? "mt-1 text-[var(--color-ink-muted)] line-through"
+                      : "mt-1 text-[var(--color-ink-body)]"
+                  }
+                  style={{ fontSize: "var(--text-body)", lineHeight: "var(--text-body-leading)" }}
                 >
-                  {whole ? shown : title.shown}
-                </button>
-              ) : (
-                shown
-              )}
-            </p>
+                  {shown}
+                </p>
+              ) : null}
+            </>
           )}
           {reworded && !editing ? (
             <p className="mt-1 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
