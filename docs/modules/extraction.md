@@ -1210,9 +1210,10 @@ A card and a decision row show twenty characters. With
 with "…" by the web (`features/actions/title.ts`). With `llm`,
 `title_meeting` asks a cloud model for a summary instead -- twenty characters
 or fewer, ended by a noun ("보고서 정리", not "보고서를 정리함") -- and stores
-it in `title` beside the sentence, never instead of it: `description` and
-`statement` are made as before and remain what Jira, Notion, Slack, a
-calendar, the minutes, the agent's tools and module D are given.
+it in `title` beside the sentence: `description` and `statement` are made
+as before and remain what the agent's tools and module D are given. Since
+2026-10-09 the title leads the copies that leave -- Jira, Notion, a
+calendar, a Slack line, a project's minutes (the last bullet below).
 
 - **Only a sentence the pipeline wrote is titled.** Not a row a person
   typed, an item whose description a person edited, or a decision a person
@@ -1225,11 +1226,16 @@ calendar, the minutes, the agent's tools and module D are given.
   no number and no date its sentence does not say; no person; no date at all
   on an item, which has a due date of its own; no word that only points
   (이거, 그거, 저거, 이것, 그것, 저것, with or without a particle, and 이건, 그걸,
-  그게 and the like); words that are the sentence's. A decision's title may carry a date that is in the statement
+  그게 and the like); words that are the sentence's, all but one
+  (`_own_words`: one word may be the model's -- "미루기로" said, "연기"
+  written -- and each other word has to begin, in its first two characters,
+  as some part of the sentence does; no masker reads the answer). A decision's title may carry a date that is in the statement
   in the same words, since the date can be what was decided ("출시일 10월
   20일"). A refused title is dropped, not cut to fit, and the row shows the
   cut sentence.
-- **One request a meeting**, after the extraction and outside it: a failed
+- **One request for up to twenty rows** -- one for a meeting of twenty rows
+  or fewer, more when a meeting has more rows or long sentences -- after the
+  extraction and outside it: a failed
   call, a privacy refusal and a refused title all leave the rows as they
   were shown before. A decision is sent without the "(담당 …, 기한 …)" it
   ends with. Rows extracted before the switch was on get a title when the
@@ -1239,6 +1245,22 @@ calendar, the minutes, the agent's tools and module D are given.
   no real meeting has been through it. Three of the 27 were accepted and
   weak: a decision about who presents became "발표 진행", since a title
   names nobody.
+- **The title leads the copies that leave** (the user, 2026-10-09;
+  `top_line.py`). Jira's summary, the Notion page's title and the calendar
+  event's title are the kind of row ("[할 일] " or "[결정] ", added by the
+  code and outside the twenty characters) and the title, with the sentence
+  in that copy's body: the issue's description, the page's 내용 property,
+  the event's description above its fixed line. A line of a Slack message
+  (due-date reminder, Monday's and the morning DM, the work-report draft,
+  the notice after a meeting) and of a project's minutes is the title alone,
+  unmarked -- `top_line.MARKED` is the one switch a copy. A row with no
+  title goes out as its sentence, and so does a decision a person reworded.
+  A Notion database with no 내용 property keeps the sentence in the page's
+  title (`notion_setup.property_names` says which map is in force). The
+  요약 tab shows the title with the sentence under it; "회의록 복사" has the
+  title. A copy already out changes at the row's next sync; nothing goes
+  back over the old ones. The confirmation DM and the agent's tools carry
+  the sentence as before.
 
 ## Privacy notes
 

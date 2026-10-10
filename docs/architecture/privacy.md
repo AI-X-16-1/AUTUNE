@@ -529,12 +529,15 @@ the feature needs.
   utterances the classifier called ambiguous, with one fixed hypothesis. The
   titles (`AUTUNE_EXTRACTION_TITLE_IMPL`, `none` by default) send the
   sentences the pipeline itself wrote for a meeting's action items and
-  decisions, one request a meeting, to get a line of twenty characters back
-  for each: never a sentence a person typed, edited or reworded, a decision's
+  decisions, up to twenty to a request -- one request for a meeting of
+  twenty rows or fewer, more for a meeting with more rows or long sentences
+  -- to get a line of twenty characters back for each: never a sentence a person typed, edited or reworded, a decision's
   without the owner and deadline it ends with, and no id, speaker or meeting
   with them. What comes back is kept only if it names no person and says no
-  number or date its sentence does not, and it is shown on Autune's own
-  screens only -- no outside tool is sent a title. The flag checks nothing about the meeting or the key -- the code
+  number or date its sentence does not. A title that is kept is shown on
+  Autune's screens and, since 2026-10-09, leads the row's copy wherever the
+  row is sent -- Jira, Notion, a calendar, a line of a Slack message or of a
+  project's minutes ("What names a row in each copy", below). The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
   it makes sending speech out something a deployment says deliberately. Which
   meetings may go through a deployment that sets it is therefore a rule for
@@ -565,10 +568,65 @@ the feature needs.
   on the dev site, the team's own meetings only.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
+  - **What names a row in each copy (module B, 2026-10-09):** an action
+    item or a decision that a model wrote can have a short title of twenty
+    characters or fewer, stored beside its sentence
+    (`ext_action_items.title`, `ext_decisions.title`). The title is a
+    model's answer and not a cut of the sentence. The model is given the
+    meeting's stored sentences, a batch at a call -- masked, as they are
+    stored, with the team's names replaced -- and the answer is kept only
+    if a rule accepts it
+    (`pipeline/title.py::accept`): one line; no bracket; no number and no
+    date the sentence does not say; none of the names taken out of the
+    request; and every word but one beginning, in its first two
+    characters, as some part of the sentence does. So a title can hold a
+    word that the sentence does not -- one that is the model's own
+    ("미루기로" said, "연기" written), or one that only starts as a word of
+    the sentence does. No masker reads the answer. What stands between a
+    person's data and a title is that the model is shown nothing of the
+    meeting but those sentences, the rule above, and the outbound check
+    on every copy that carries it. A sentence
+    a person typed or edited has none, and a decision a person reworded
+    leads with their wording. Where a row has one, it stands at the top of
+    the row's copy in place of the sentence:
+    - *Jira, Notion, the calendar* -- the issue's summary, the page's title
+      and the event's title -- with the whole sentence in that copy's body:
+      the issue's description, the page's 내용 property, the event's
+      description above its fixed line. These three also say the kind of
+      row before the title, "[할 일] " or "[결정] ": fixed text the code
+      adds, no part of the stored title.
+    - *A line of a Slack message* (the due-date reminder, Monday's DM, the
+      morning DM, the work-report draft, the notice after a meeting) *and of
+      a project's minutes* -- which have no body, so the line is the title
+      and the sentence is not in that copy. No kind mark: the line stands
+      under words that say the kind.
+    A row with no short title is its sentence in every copy, as before,
+    behind the mark where the copy is marked. So "the item's description"
+    in the entries below reads, for a row with a short title, as that title
+    and -- where the copy has a body -- the description beneath it. What
+    is new in what leaves is the title itself, where it holds a word its
+    sentence does not; it goes to the same recipients, through the same
+    clients and the same outbound check, as the sentence did. A model's
+    wording leaving is not new: a row's sentence can itself be the
+    classifier's summary or the resolver's write-up. A Notion database
+    with no 내용 property -- one made before the property existed, until it
+    is added, or one whose team named its own properties without it -- has
+    no place for the sentence, so its pages keep the sentence in the title.
+    Adding the property is asked of Notion once per database -- a read of
+    the database and, where the name is absent, one change: the database's
+    id and the property's name, nothing of a meeting. A property of that
+    name with another type is left as it is and counts as absent. Of the
+    answer two things are kept (`ext_notion_targets`): per database,
+    whether it has the property as text, and when Notion answered -- no
+    person, no text, no page.
+    The copy on the 요약 tab's "회의록 복사" is the reader's own paste, and
+    leads each line the same way; the tab shows the sentence under it.
   - **Notion:** a page in a team's workspace belongs to that team once written.
     Deleting the item in Autune retitles its page to "삭제된 할 일"
     and then moves it to Notion's trash, where the team can restore it for
-    30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
+    30 days without the item's sentence in the title (#768) or in the
+    page's 내용 property, which the same edit empties -- for an item's page
+    and for a decision's below. Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
     the page is retitled first and trashed second, so what the trash holds
     for those 30 days is not the statement (#669). One exception: when the
@@ -585,7 +643,10 @@ the feature needs.
   - **Jira (#82):** an issue lives in the team's site. Deleting the item in
     Autune closes its issue with a note rather than deleting it, so the
     team's own comments and work on it stay. The issue carries the item's
-    description, due date and assignee's Jira account only.
+    description, due date and assignee's Jira account only. Its summary is
+    what D's pre-meeting brief reads back from Jira (`AgendaIssue.title`),
+    so the brief shows an item as the summary names it: the kind mark and
+    the short title, where the item has one.
     One read brings content back the other way: a team's screen can list
     the open issues of the project it connected (key, title, status,
     assignee's display name, due date), read from Jira when a member asks
@@ -814,7 +875,9 @@ the feature needs.
     (`user_integrations`, `ON DELETE CASCADE`). Both are best effort: an
     unreachable Google leaves the events on the calendar and the grant listed
     under the person's third-party access, and the deletion goes on. Each of those events is only the item's
-    description and date, with no attendees and nothing from the transcript.
+    description and date -- for an item with a short title, that title in
+    the event's title and the description in its body -- with no attendees
+    and nothing from the transcript.
     B writes two other kinds of event on a person's own calendar, each only
     by that person's own act and each removed by the same user hook: a
     project's minutes they chose to send (#788, `ext_minutes_events`) and
