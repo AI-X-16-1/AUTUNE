@@ -84,6 +84,10 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     setReturning(CONNECTION_RESULTS.some((key) => query.has(key)));
+    // An item pressed on the 요약 tab (#1183) opens here in its window, once
+    // the list holding it has arrived; an id not in it opens nothing.
+    const asked = query.get("item");
+    if (asked) setSelectedId(asked);
   }, []);
 
   return (

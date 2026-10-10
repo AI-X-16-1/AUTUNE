@@ -109,6 +109,23 @@ describe("MeetingSummaryScreen", () => {
     ]);
   });
 
+  it("opens each item in the 할 일 tab when it is pressed (#1183)", async () => {
+    getSummary.mockResolvedValue(MEETING);
+
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+
+    const actions = within(await document_()).getByRole("region", { name: "할 일" });
+    expect(
+      within(actions)
+        .getAllByRole("link")
+        .map((link) => [link.textContent, link.getAttribute("href")]),
+    ).toEqual([
+      ["설문 문항 다시 쓰기", "/meetings/mtg_1/actions?item=a1"],
+      ["QA 일정 확인", "/meetings/mtg_1/actions?item=a2"],
+      ["견적서 보내기", "/meetings/mtg_1/actions?item=a3"],
+    ]);
+  });
+
   it("writes a decision's deadline as the action lines write theirs", async () => {
     getSummary.mockResolvedValue({
       ...MEETING,

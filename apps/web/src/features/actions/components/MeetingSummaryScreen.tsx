@@ -43,6 +43,10 @@ const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as cons
  * items, questions left open, agreements still waiting for their speaker) with
  * the way to the 할 일 tab, and -- for a team that lists projects -- the tool
  * that sorts rows into them (`ProjectGroups`, 2026-10-04).
+ *
+ * Each item on the page opens that item in the 할 일 tab (#1183,
+ * `?item=<id>`). The line to the tab under the document stays: a decision's
+ * evidence is there too, and a meeting with no item has nothing to press.
  */
 export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
@@ -154,7 +158,15 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             <ol className="list-decimal pl-5">
               {page.actions.map((item) => (
                 <Entry key={item.id}>
-                  {item.description}
+                  {/* Pressed, the item opens in the 할 일 tab with its
+                      evidence and its fields (#1183). The copy carries the
+                      text, not the link. */}
+                  <Link
+                    href={`${actionsTab}?item=${encodeURIComponent(item.id)}` as Route}
+                    className="hover:text-[var(--color-accent-default)] hover:underline"
+                  >
+                    {item.description}
+                  </Link>
                   <span
                     className={
                       item.overdue
