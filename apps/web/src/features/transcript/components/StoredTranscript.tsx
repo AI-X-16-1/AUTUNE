@@ -9,6 +9,7 @@ import { useUtteranceAnchor } from "../hooks/useUtteranceAnchor";
 import type { SpeakerCandidate, SpeakerEntry, TeamMember, Utterance, UtteranceKind } from "../types";
 import { PiiReportModal, readSelection, ReportButton, type Selected } from "./PiiReport";
 import { AssignedSpeaker } from "./AssignedSpeaker";
+import { LoadError } from "./LoadError";
 import { TranscriptRow } from "./TranscriptRow";
 import { type PickableMember, UnidentifiedSpeaker } from "./UnidentifiedSpeaker";
 
@@ -112,11 +113,8 @@ export function StoredTranscript({
   }
 
   if (state.status === "error") {
-    return (
-      <p role="alert" style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-attention)" }}>
-        {state.message}
-      </p>
-    );
+    // Asking again is the same bump an S30 report uses to re-read (#1176).
+    return <LoadError message={state.message} onRetry={() => setVersion((n) => n + 1)} />;
   }
 
   if (state.utterances.length === 0) {
