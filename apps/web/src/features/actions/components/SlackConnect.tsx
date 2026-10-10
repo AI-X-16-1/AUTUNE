@@ -83,15 +83,21 @@ export function SlackConnect({
   if (!state.connected) {
     return (
       <div className="flex flex-wrap items-center gap-3" aria-label="Slack">
+        {/* One row per service, saying its state first (#1183): the three
+            connect links looked alike, connected or not. */}
+        <span className="text-[var(--color-ink-muted)]" style={meta}>
+          Slack · 연결 안 됨
+        </span>
         <Button
           tone="text"
           size="compact"
+          aria-label="팀 Slack 연결"
           onClick={() => {
             const here = window.location.pathname + window.location.search;
             window.location.assign(slackConnectUrl(scope, here));
           }}
         >
-          팀 Slack 연결
+          연결
         </Button>
         {status}
       </div>

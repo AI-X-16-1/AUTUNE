@@ -33,6 +33,14 @@ const last = () => screen.getByLabelText("휴가 종료일") as HTMLInputElement
 const save = () => screen.getByRole("button", { name: "저장" });
 
 describe("NotificationPauseSetting", () => {
+  it("names the two dates as one range, 시작일 ~ 종료일 (#1183)", async () => {
+    get.mockResolvedValue(NONE);
+    render(<NotificationPauseSetting />);
+
+    expect((await first()).closest("label")?.textContent).toBe("시작일");
+    expect(last().closest("label")?.textContent).toBe("종료일");
+  });
+
   it("shows no dates and no clear button when nothing is set", async () => {
     get.mockResolvedValue(NONE);
     render(<NotificationPauseSetting />);

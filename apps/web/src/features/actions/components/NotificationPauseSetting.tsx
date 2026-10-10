@@ -118,26 +118,34 @@ export function NotificationPauseSetting() {
         className="flex flex-wrap items-center gap-2 text-[var(--color-ink-body)]"
         style={meta}
       >
-        <span>
+        {/* The explanation on a line of its own, and each date named, so the
+            two fields read as one range from 시작일 to 종료일 (#1183). */}
+        <span className="basis-full">
           휴가 기간 (아침 요약, 월요일 요약, 오늘 업무 보고 초안, 회의 직후 알림을 받지
           않음. 월요일이 공휴일이라 다른 날 오는 월요일 요약도 같습니다)
         </span>
-        <input
-          type="date"
-          aria-label="휴가 시작일"
-          value={first}
-          disabled={saving}
-          onChange={(event) => setFirst(event.target.value)}
-        />
+        <label className="flex items-center gap-1.5">
+          시작일
+          <input
+            type="date"
+            aria-label="휴가 시작일"
+            value={first}
+            disabled={saving}
+            onChange={(event) => setFirst(event.target.value)}
+          />
+        </label>
         <span aria-hidden="true">~</span>
-        <input
-          type="date"
-          aria-label="휴가 종료일"
-          value={last}
-          min={first || undefined}
-          disabled={saving}
-          onChange={(event) => setLast(event.target.value)}
-        />
+        <label className="flex items-center gap-1.5">
+          종료일
+          <input
+            type="date"
+            aria-label="휴가 종료일"
+            value={last}
+            min={first || undefined}
+            disabled={saving}
+            onChange={(event) => setLast(event.target.value)}
+          />
+        </label>
         <button
           type="button"
           disabled={saving || !ready}

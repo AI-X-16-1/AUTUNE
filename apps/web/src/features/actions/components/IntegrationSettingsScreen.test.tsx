@@ -208,3 +208,19 @@ describe("IntegrationSettingsScreen, the team's 동기화 기록", () => {
     expect(screen.queryByRole("button", { name: "동기화 기록" })).toBeNull();
   });
 });
+
+describe("IntegrationSettingsScreen, three sections (#1183)", () => {
+  it("puts the connections, the notifications and the projects under headings of their own", async () => {
+    session.mockResolvedValue(me());
+    render(<IntegrationSettingsScreen />);
+    await found();
+
+    expect(
+      screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.textContent),
+    ).toEqual(["연결", "알림", "프로젝트"]);
+    // The connections' disclosures stay under 연결.
+    const connections = screen.getByRole("region", { name: "연결" });
+    expect(connections.textContent).toContain("제7조(국외 이전)");
+    expect(connections.textContent).toContain("팀의 기록으로 남습니다");
+  });
+});

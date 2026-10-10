@@ -156,40 +156,64 @@ export function CalendarConnect() {
           </Button>
         </>
       ) : (
-        <Button tone="text" size="compact" className={WRAPS} onClick={connect}>
-          내 Google 캘린더에 마감일 넣기
-        </Button>
+        <>
+          {/* Its state first, as each service's row says it (#1183). The
+              button keeps saying what connecting does. */}
+          <span
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            Google 캘린더 · 연결 안 됨
+          </span>
+          <Button tone="text" size="compact" className={WRAPS} onClick={connect}>
+            내 Google 캘린더에 마감일 넣기
+          </Button>
+        </>
       )}
-      {readsLeave ? (
+      {/* Every use of the grant, together under the button that asks for it
+          (#1183): three loose paragraphs read as fine print. None is cut. */}
+      <div
+        role="group"
+        aria-label="이 연결로 하는 일"
+        className="flex basis-full flex-col gap-1 border-l border-[var(--color-hairline)] pl-3"
+      >
         <span
-          className="basis-full text-[var(--color-ink-muted)]"
+          className="text-[var(--color-ink-body)]"
+          style={{ fontSize: "var(--text-label)", fontWeight: "var(--text-label-weight)" }}
+        >
+          이 연결로 하는 일
+        </span>
+        {readsLeave ? (
+          <span
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            {connected ? "연결되어 있는 동안" : "연결하면"} 마감일을 넣는 것 외에, 내 캘린더의
+            &lsquo;부재중&rsquo; 일정이 언제부터 언제까지인지도 읽습니다. 그 시간에는 아침
+            요약과 월요일 요약을 보내지 않기 위해서입니다. 이때는 일정의 제목이나 부재중이
+            아닌 일정은 받지 않으며, 읽은 시간은 저장하지 않습니다.
+          </span>
+        ) : null}
+        <span
+          className="text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-metaSmall)" }}
         >
-          {connected ? "연결되어 있는 동안" : "연결하면"} 마감일을 넣는 것 외에, 내 캘린더의
-          &lsquo;부재중&rsquo; 일정이 언제부터 언제까지인지도 읽습니다. 그 시간에는 아침
-          요약과 월요일 요약을 보내지 않기 위해서입니다. 이때는 일정의 제목이나 부재중이
-          아닌 일정은 받지 않으며, 읽은 시간은 저장하지 않습니다.
+          갭 화면의 &lsquo;다음 회의 잡기&rsquo;를 직접 누를 때에만, 내 캘린더의 앞으로 2주
+          일정(제목과 시간)을 읽어 고를 수 있게 보여 주고, 고른 일정의 설명과 참석자 주소를 읽어
+          그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
+          이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느
+          일정에 적었는지만 나중에 지울 수 있도록 기록합니다.
         </span>
-      ) : null}
-      <span
-        className="basis-full text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
-      >
-        갭 화면의 &lsquo;다음 회의 잡기&rsquo;를 직접 누를 때에만, 내 캘린더의 앞으로 2주
-        일정(제목과 시간)을 읽어 고를 수 있게 보여 주고, 고른 일정의 설명과 참석자 주소를 읽어
-        그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
-        이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느
-        일정에 적었는지만 나중에 지울 수 있도록 기록합니다.
-      </span>
-      <span
-        className="basis-full text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
-      >
-        &lsquo;휴가 기간&rsquo;에서 &lsquo;내 Google 캘린더에도 추가&rsquo;를 직접 체크하고
-        저장할 때에만, 그 기간을 내 캘린더에 &lsquo;휴가&rsquo;라는 비공개 종일 일정으로
-        넣습니다. 체크를 풀거나 기간을 해제하면 그 일정을 지우며, 기간이 지난 일정은 내
-        캘린더에 남습니다. 이를 위해 내 캘린더의 다른 일정을 읽지는 않습니다.
-      </span>
+        <span
+          className="text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          &lsquo;휴가 기간&rsquo;에서 &lsquo;내 Google 캘린더에도 추가&rsquo;를 직접 체크하고
+          저장할 때에만, 그 기간을 내 캘린더에 &lsquo;휴가&rsquo;라는 비공개 종일 일정으로
+          넣습니다. 체크를 풀거나 기간을 해제하면 그 일정을 지우며, 기간이 지난 일정은 내
+          캘린더에 남습니다. 이를 위해 내 캘린더의 다른 일정을 읽지는 않습니다.
+        </span>
+      </div>
       {note ? (
         <span
           role="status"

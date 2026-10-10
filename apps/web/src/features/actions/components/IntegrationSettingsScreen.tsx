@@ -33,6 +33,12 @@ type Team = SessionUser["teams"][number];
  *
  * The same components the 할 일 tab shows, given the team instead of a meeting;
  * the server checks membership either way.
+ *
+ * Three sections, 연결 · 알림 · 프로젝트 (#1183): the page had the
+ * connections, the person's notification settings and the team's projects
+ * under one heading. 연결 is a row per service, each saying whether it is
+ * connected; the team picker sits above the sections it applies to. Every
+ * disclosure stays where it was said -- beside its button, or under 연결.
  */
 export function IntegrationSettingsScreen({
   chosenTeamId = null,
@@ -95,19 +101,25 @@ export function IntegrationSettingsScreen({
         연동
       </h1>
 
-      <section aria-label="내 연결" className="flex flex-col gap-2">
+      {/* The team the 연결 and 프로젝트 sections below are about, above both. */}
+      {teams !== null && teams.length > 1 && teamId !== null ? (
+        <label className="flex items-center gap-2" style={meta}>
+          팀
+          <select value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <section aria-label="연결" className="flex flex-col gap-3">
         <h2 className="text-[var(--color-ink-strong)]" style={heading}>
-          내 연결
+          연결
         </h2>
         <CalendarConnect />
-        <DueReminderSetting />
-        <NotificationPauseSetting />
-      </section>
-
-      <section aria-label="팀 연결" className="flex flex-col gap-2">
-        <h2 className="text-[var(--color-ink-strong)]" style={heading}>
-          팀 연결
-        </h2>
         {teams === null ? (
           <p className="text-[var(--color-ink-muted)]" style={meta}>
             팀을 불러오는 중입니다.
@@ -119,21 +131,6 @@ export function IntegrationSettingsScreen({
           </p>
         ) : (
           <>
-            {teams.length > 1 ? (
-              <label className="flex items-center gap-2" style={meta}>
-                팀
-                <select
-                  value={teamId}
-                  onChange={(event) => setTeamId(event.target.value)}
-                >
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
             <SlackConnect key={`slack-${teamId}`} teamId={teamId} />
             <JiraConnect key={`jira-${teamId}`} teamId={teamId} />
             <NotionConnect key={`notion-${teamId}`} teamId={teamId} />
@@ -145,13 +142,6 @@ export function IntegrationSettingsScreen({
             {logOf === teamId ? (
               <SyncLogDrawer teamId={teamId} onClose={() => setLogOf(null)} />
             ) : null}
-            <h3
-              className="mt-4 text-[var(--color-ink-strong)]"
-              style={heading}
-            >
-              프로젝트
-            </h3>
-            <ProjectSettings key={`projects-${teamId}`} teamId={teamId} />
           </>
         )}
         <p className="text-[var(--color-ink-muted)]" style={meta}>
@@ -174,6 +164,23 @@ export function IntegrationSettingsScreen({
           제5조(제3자 제공)와 제7조(국외 이전)에서 볼 수 있습니다.
         </p>
       </section>
+
+      <section aria-label="알림" className="flex flex-col gap-3">
+        <h2 className="text-[var(--color-ink-strong)]" style={heading}>
+          알림
+        </h2>
+        <DueReminderSetting />
+        <NotificationPauseSetting />
+      </section>
+
+      {teams !== null && teamId !== null ? (
+        <section aria-label="프로젝트" className="flex flex-col gap-3">
+          <h2 className="text-[var(--color-ink-strong)]" style={heading}>
+            프로젝트
+          </h2>
+          <ProjectSettings key={`projects-${teamId}`} teamId={teamId} />
+        </section>
+      ) : null}
     </main>
   );
 }

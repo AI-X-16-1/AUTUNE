@@ -49,4 +49,14 @@ describe("SlackConnect", () => {
     await screen.findByRole("button", { name: "팀 Slack 연결" });
     expect(screen.queryByText(/DM 받기/)).toBeNull();
   });
+
+  it("says it is not connected, beside a button that says 연결 (#1183)", async () => {
+    connection.mockResolvedValue({ connected: false });
+
+    render(<SlackConnect teamId="team_1" />);
+
+    const button = await screen.findByRole("button", { name: "팀 Slack 연결" });
+    expect(button.textContent).toBe("연결");
+    expect(screen.getByText("Slack · 연결 안 됨")).toBeTruthy();
+  });
 });

@@ -124,8 +124,12 @@ export function NotionConnect({
   if (!connection.connected) {
     return (
       <div className="flex flex-wrap items-center gap-3">
-        <Button tone="text" size="compact" onClick={connect}>
-          팀 Notion 연결
+        {/* Its state first, as each service's row says it (#1183). */}
+        <span className="text-[var(--color-ink-muted)]" style={meta}>
+          Notion · 연결 안 됨
+        </span>
+        <Button tone="text" size="compact" aria-label="팀 Notion 연결" onClick={connect}>
+          연결
         </Button>
         {status}
       </div>

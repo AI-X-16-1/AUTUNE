@@ -31,6 +31,19 @@ const PICKER = /다음 회의 잡기/;
 const connectButton = () => screen.findByRole("button", { name: "내 Google 캘린더에 마감일 넣기" });
 
 describe("CalendarConnect", () => {
+  it("says it is not connected, and groups every use of the grant under the button (#1183)", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: true });
+    render(<CalendarConnect />);
+
+    await connectButton();
+    expect(screen.getByText("Google 캘린더 · 연결 안 됨")).toBeTruthy();
+    const uses = screen.getByRole("group", { name: "이 연결로 하는 일" });
+    await waitFor(() => expect(uses.textContent).toMatch(NOTICE));
+    expect(uses.textContent).toMatch(PICKER);
+    expect(uses.textContent).toContain("비공개 종일 일정");
+  });
+
   it("says nothing about out-of-office time where this server does not read it", async () => {
     connection.mockResolvedValue({ connected: false });
     pause.mockResolvedValue({ ...NONE, calendar_leave: false });
