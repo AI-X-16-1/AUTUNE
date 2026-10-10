@@ -7,6 +7,8 @@ has. Every value below is made up.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from autune_core.errors import PrivacyViolationError
@@ -177,4 +179,98 @@ def test_a_value_somebody_half_hid_by_hand_is_left_as_they_typed_it() -> None:
     """Stated, not wished for: what is left of it is not a value the detector
     knows, with its stars or without them."""
     text = "연락처 010-****-6789, 주민번호 900101-1******"
+    assert mask_document(text).text == text
+
+
+# --- a line in a document can end inside a value ----------------------------------
+
+
+def _digits_hidden(written: str) -> str:
+    return "".join(MASK_CHAR if char.isdigit() else char for char in written)
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "900101-\n1234567",
+        "900101\n-1234567",
+        "123456-\n01-\n234567",
+        "900101-\r\n1234567",
+        "900101\r\n-1234567",
+        "123456-\r\n01-\r\n234567",
+        "900101-\r1234567",
+        "900101-\n\n1234567",
+        "900101-\n    1234567",
+        "+82 10-2345-\n6789",
+        # Two cells of a table, as a reader writes them: the paragraph's end,
+        # then the cell's.
+        "900101-\n\t1234567",
+    ],
+)
+def test_a_value_a_line_break_falls_inside_is_hidden(written: str) -> None:
+    """The detector does not join these across a line break, so each was
+    stored whole (@mkkim68 on #1199). Read with its line breaks as spaces,
+    the value is found -- and the breaks themselves stay where they were."""
+    text = f"주민 {written} 입니다"
+
+    masked = mask_document(text)
+
+    assert masked.text == f"주민 {_digits_hidden(written)} 입니다"
+    assert sum(masked.counts.values()) == 1
+    assert find_unmasked(masked.text) == []
+
+
+def test_what_the_line_break_reading_finds_is_added_to_the_other_two() -> None:
+    """A value written with stars, on a line of a text that has line breaks:
+    only the star reading finds it."""
+    masked = mask_document("담당자\n010*2345*6789\n끝")
+
+    assert masked.text == "담당자\n" + MASK_CHAR * 13 + "\n끝"
+
+
+def test_line_breaks_that_are_no_part_of_a_value_are_left_as_written() -> None:
+    text = "3분기 로드맵\r\n\r\n- 검색 응답 시간 120ms\n- 2026-10-08 회의\n- 버전 1.2.3\n\n끝"
+
+    masked = mask_document(text)
+
+    assert masked.text == text
+    assert masked.counts == {}
+
+
+def test_a_long_document_is_read_in_time_and_a_value_split_deep_inside_it_is_hidden() -> None:
+    """Every line of it ends in a break, so all of it is read again with the
+    breaks as spaces."""
+    line = "10월 출시 준비 회의에서 검색 응답 시간을 다시 재기로 했습니다.\n"
+    half = line * (580_000 // len(line))
+    text = f"{half}주민 900101-\n1234567\n{half}"
+
+    started = time.monotonic()
+    masked = mask_document(text)
+    took = time.monotonic() - started
+
+    assert masked.text == f"{half}주민 ******-\n*******\n{half}"
+    assert sum(masked.counts.values()) == 1
+    assert took < 5.0
+
+
+@pytest.mark.parametrize(("line", "lines"), [("\n", 200_000), ("\r\n", 100_000), ("1\n", 100_000)])
+def test_a_long_run_of_line_breaks_is_read_in_time(line: str, lines: int) -> None:
+    """With its breaks as spaces this is a long run of spaces, which a
+    separator that nests one optional space in another reads in quadratic
+    time. The detector's separators do not (``test_outbound_privacy``); this
+    holds the document's third reading to the same."""
+    text = line * lines
+
+    started = time.monotonic()
+    masked = mask_document(text)
+    took = time.monotonic() - started
+
+    assert masked.text == text
+    assert took < 2.0
+
+
+def test_an_address_broken_across_lines_is_not_put_back_together() -> None:
+    """Stated, not wished for: a space is no part of an address, so no
+    reading finds one that a line break cut at its ``@``."""
+    text = "문의 minsu.kim@\nexample.com 으로"
     assert mask_document(text).text == text

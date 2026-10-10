@@ -32,6 +32,16 @@ tells a mask from a typed star, so this module does not offer to say whether
 a text "holds a mask"; whether anything was hidden is
 ``MaskedDocument.counts``, known when the text is masked and not afterwards.
 
+**A line in a document can end inside a value.** An utterance has no line
+breaks; text taken out of a PDF or a ``.docx`` breaks where the page or the
+cell did. The detector joins the parts of most values across spaces and not
+across a line break, so ``900101-`` at the end of one line and ``1234567`` at
+the start of the next were stored whole (@mkkim68 on #1199). So a document is
+read a third time, with every line break (CR, LF) taken for a space. Being a
+document's masker, this hides too much before too little. Known limit: an
+e-mail address broken across lines is not put back together -- a space is no
+part of an address -- so at most the half that still reads as one is hidden.
+
 The unmasked string is a parameter and a local here and nothing else: it is
 not returned, logged, cached or put in an exception.
 
@@ -73,12 +83,18 @@ def _merged(spans: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
 
 
 def _spans(text: str) -> list[tuple[int, int, str]]:
-    """What the detector reads in ``text`` as it stands, and what it reads
-    with every ``*`` taken for a space. The second text is the same length,
-    so its spans are positions in ``text`` too."""
+    """What the detector reads in ``text`` as it stands, what it reads with
+    every ``*`` taken for a space, and what it reads with every line break
+    taken for a space. Each other text is the same length, so its spans are
+    positions in ``text`` too."""
     spans = find_pii(text)
     if MASK_CHAR in text:
         spans = spans + find_pii(text.replace(MASK_CHAR, " "))
+    # CR and LF only: every other character that breaks a line is a space to
+    # the detector already (``privacy._HSPACE``).
+    unbroken = text.replace("\r", " ").replace("\n", " ")
+    if unbroken != text:
+        spans = spans + find_pii(unbroken)
     return spans
 
 
