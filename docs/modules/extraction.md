@@ -1240,6 +1240,97 @@ calendar, the minutes, the agent's tools and module D are given.
   weak: a decision about who presents became "발표 진행", since a title
   names nobody.
 
+## Team materials: an uploaded file (#817)
+
+The rule is `docs/architecture/privacy.md`, "Uploaded documents are masked
+before storage, and the original is not kept". This section holds the two
+lists that rule points here for: what is read of each format, and where and
+for which words a confidentiality marking is looked for.
+
+**Status, 2026-10-09: the rule is written first.** Nothing in this section is
+on `main` yet -- no reader, no `material_marking.py`, no upload route. The
+code follows in its own change, off by default, and this paragraph goes with
+it.
+
+### How long it is kept
+
+**Until the team deletes it** (`privacy.md` section 4; module B's owner on
+#817, 2026-10-10). An uploaded material is a reference document the team keeps,
+not an analysis result of a meeting, so the team's retention window does not
+apply and no task deletes it by age. Any member deletes one from the 자료
+screen, at any time; the `ext_materials` row and its `ext_material_chunks`
+rows -- masked text and vectors -- go in one transaction, and nothing else holds
+a copy of either. Deleting the team deletes every material it has. Only masked
+text is ever kept; the original file is not.
+
+### What is read, per format
+
+Ten megabytes a file. **A file whose text cannot be read is refused** --
+unread text can be neither checked for a marking nor masked.
+
+| Format | Read and kept (masked) | Read for the marking check only, not kept | Not read (reported per file where it can be told) | Refused |
+| --- | --- | --- | --- | --- |
+| `.txt` `.md` `.csv` | all of it (UTF-8 or CP949) | -- | -- | another encoding |
+| `.docx` | body, tables, headers, footers, footnotes, endnotes, comments, tracked deletions, text boxes | title, subject, keywords, category, description, custom properties (a sensitivity label) | pictures, charts, embedded files | password-protected |
+| `.xlsx` | every sheet's name and cells -- hidden sheets, rows and columns too; a cell's value, not its formula; a number as its digits; cell comments; text boxes | print header and footer; properties as above | pictures, charts, embedded files | password-protected |
+| `.pptx` | every slide -- hidden ones too -- speaker notes, comments, SmartArt | slide masters and layouts (where a "Confidential" footer is stamped); properties | pictures, charts, embedded files | password-protected |
+| `.pdf` | each page's text layer, notes stuck on a page, form field values (the last is not tested) | title, subject, keywords | pictures beside text; attached files | **any page that is only a picture, or a picture with under 20 characters beside it** (a scan, one scanned page among written ones, a scan that carries its page number); a password to open; over 300 pages |
+| `.xls` | every sheet's name and cells, hidden ones too; numbers as digits; cell notes | -- | text boxes, pictures, charts (not detected, so not reported) | password-protected |
+| `.ppt` | every text record of the deck: slides, notes, comment text. Text deleted from a slide can linger in an old file and is read with the rest | master slides | pictures, embedded files | password-protected |
+| `.doc`, `.hwp`, images, anything else | -- | -- | -- | always |
+
+Never read, in any format: who wrote it -- author, last editor, comment
+authors, company.
+
+**The gap no reader closes:** a marking or a phone number that exists only as
+a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not
+seen. No OCR is done. A PDF with a page that is only a picture is refused
+whole, and so is one with a page that has a picture and almost no text
+beside it (both decided on #817, 2026-10-08: refuse): under 20
+characters, spaces not counted -- "- 3 -" and "Page 3 of 12" are under, a
+one-line caption of twenty characters is not. A short page with no picture
+is just a short page. A file with a picture *beside* real text is taken and
+the answer says what was not read.
+
+### Where a marking is looked for
+
+A marked file stops the upload, stores nothing and alarms the team's
+approvers. The words are looked for in **the file's name, the document's
+head, its page footers and the file's own label -- not in its body.** The
+head is the header the format has, and the first five lines of what the file
+opens on; lines that say nothing are not counted.
+
+| Format | The head | The foot | Neither: not looked at |
+| --- | --- | --- | --- |
+| `.txt` `.md` `.csv` | the first five lines | -- | line six on |
+| `.docx` | its page headers; the first five lines of the body | its page footers | the rest of the body, footnotes, comments |
+| `.xlsx` `.xls` | the first five rows of the first sheet that has any; an `.xlsx` print header | an `.xlsx` print footer | lower rows, later sheets, sheet names, cell comments |
+| `.pptx` `.ppt` | the first five lines of the first slide that has any; slide masters and layouts | a `.pptx` slide's footer box | later slides' body, speaker notes, comments |
+| `.pdf` | the first five lines of the first page that has any | the last two lines of every page | the lines between, on every page |
+
+**The file's own label** -- its properties: title, subject, keywords, a
+sensitivity label -- is looked at in every Office format and in a PDF.
+
+**The words** -- this is the whole list, as `material_marking.py` has it.
+Korean: 대외비, 사외비, 극비, 기밀, 보안문서, 비밀문서, 1급·2급·3급 비밀 (the
+numeral also as Ⅰ, Ⅱ, Ⅲ) -- each with a space allowed between its parts
+("대 외 비", "보안 문서", "2 급 비밀") -- and 사내 한정 (or 사내한정), 내부용. English, in any
+case: Confidential, Strictly Confidential, Top Secret, Do Not Distribute,
+Company Secret, **Internal Use Only, Internal Only, For Internal Use** --
+the bare word Internal is not one (it stopped `Internal API design.md`).
+Not markings on purpose: 비밀, secret, 내부, internal alone.
+
+What still passes: a marking that sits only in the body, on a later sheet,
+or as a sheet tab's name. What a PDF can get wrong: it has no footer of its
+own, so the last two lines of a page are taken for one -- a body sentence
+that ends a page with 기밀 in it stops the file.
+
+Small print: `.xlsx` sheets are taken in the order of their part names, which
+is nearly always the tab order; an old `.ppt` keeps its text in its own order,
+so its "first five lines" can reach into a second slide or a note; an `.xls`
+print footer and an old `.ppt`'s slide footers are not read by these readers;
+in a file name `_` separates words as a space does (`plan_confidential.pdf`).
+
 ## Privacy notes
 
 - A team's materials (`ext_materials`, #817) are a title and a Drive file id,

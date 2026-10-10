@@ -142,6 +142,124 @@ This replaces the earlier rule that a report deletes the whole utterance:
 masking removes exactly what was reported and keeps the evidence an action
 item quotes readable around it.
 
+### Uploaded documents are masked before storage, and the original is not kept (#817)
+
+**Status, 2026-10-09: the rule is written first.** On `main` today
+`ext_materials` exists for Drive links only (#1016: team, title, the file's
+id and kind, the time), and nothing of a file is read. What this subsection
+adds is not there yet: the column that marks an uploaded row,
+`ext_material_chunks`, `ext_material_alarms`, the upload route, the delete
+of an uploaded material and the task that deletes old alarm rows. They
+arrive in the changes listed on #817 -- the document masker in
+`packages/integrations`, module B's storage, the approvers' alert
+in the agent layer, search -- each built to this text and off by default,
+and none of them merges before this rule is approved. The legal notice
+(`apps/web/src/app/legal/content.ts`) speaks of voice only today -- what is
+collected, how long it is kept, what the terms of use call content -- and it
+is changed before upload is switched on anywhere: while the notice does not
+say what is read of an uploaded file and what is kept of it, the switch
+stays off. The storage change removes this paragraph, and that sentence
+stays until the notice has changed.
+
+A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
+`.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.
+
+**What is read.** The file's text: body, tables, notes, comments, and hidden
+sheets and slides with the rest. Its properties (title, subject, keywords, a
+sensitivity label) are read only to look for a confidentiality marking and
+are not kept. A header or footer is kept or not as the table for its format
+says (`docs/modules/extraction.md`, "What is read, per format"): a `.docx`
+file's page headers and footers, and whatever a PDF prints at the top and
+the bottom of a page, are text of the file -- masked and kept with the rest;
+an `.xlsx` sheet's print header and footer, and a deck's masters and
+layouts, are read only to look for a marking and are not kept. Who wrote the
+file is never read: not the author, the last editor, a comment's author or
+the company. A file
+whose text cannot be read -- protected by a password, damaged, or a PDF with
+a page that is only a picture -- is refused whole, because text that was not
+read can be neither checked nor masked. There is no OCR: text that exists
+only as a picture is not read and not stored.
+
+**The original is not kept.** The uploaded bytes belong to the upload
+request and end with it, on every path out: accepted, refused, or failed.
+They are never written to a table, a disk, object storage, a queue, a log or
+a Celery payload, and Autune writes nothing to anybody's Google Drive. This
+is section 1's rule for raw audio applied to a file. There is no column or
+folder an original could be in, so Autune cannot show one again; a member
+who wants the original keeps it, or registers its Drive link, of which
+nothing is read (#1016).
+
+**The bytes stay in memory.** The route that takes an upload reads the
+request's body itself, into the memory of the process that serves it, and
+stops reading once the body passes the size cap -- as it arrives, whatever
+length the request declared. No temporary file is made at any size: a form
+reader that spools a large part to disk is not used. No path and no bytes are
+handed to a task; the file is read, checked, masked and stored inside the one
+request, and the answer to that request says whether it was kept. Nothing of
+the body is read before the caller is known to be a member of the team. This
+is the rule the route is built to and tested against (decided on #817,
+2026-10-09: "in the request, in memory only"); the cost is that a large file
+makes a slow request.
+
+**What is kept is masked text, in module B's tables.** `ext_materials` holds
+the team, the title a member typed and the time. `ext_material_chunks` holds
+the masked text cut into pieces, and a vector for each piece. The whole text
+is masked before it is cut, so a value that straddles a cut is masked too,
+and every piece passes `assert_masked` before it is written. A vector is
+computed from masked text only, by KURE-v1 on our own inference server (as
+module D's embeddings are), and stored in PostgreSQL with pgvector (ADR
+0004) -- no text goes to an outside embedding service.
+
+**Masked is not anonymous.** What decides which characters are hidden is
+the detector transcripts use (`autune_integrations.privacy.find_pii`,
+recall-first; #817 10(a)); the function that applies it to a whole document
+is an addition to `packages/integrations`, a change of its own. It hides
+patterned values -- a phone number, an e-mail address, a resident
+registration number, a card or account number. It does not hide a name
+written in a sentence, or content that identifies somebody by what it
+describes (ADR 0007, accepted cost). That is why this text has a deletion
+path any member can run (section 4) and is read by the team alone.
+
+**No row names a person.** Not who uploaded a file, not who deleted one, not
+who was stopped. The title is typed by a member and can hold a name; it is
+kept out of logs and error messages and is screened before it leaves Autune.
+
+**Who reads it.** Members of the team: masked excerpts on the 자료 screen.
+Every excerpt is screened again on the way out. **No language model is
+given a material's text under this rule.** The masked text goes to one model
+only, the embedder on our own inference server that makes the vectors, and to
+nothing outside Autune's own servers. A tool that hands excerpts to the
+chatbot's model is a later change to this section, approved on its own. One
+thing about that tool is decided already (#817 10(b), 2026-10-08): it is
+given the words of the question, and uses them to search and for nothing
+else. They are not returned in its result, not written to `agent_runs` or to
+a row that waits for approval -- both keep a tool's name and ids, as now --
+and not logged, and the change that builds the tool holds each of the three
+with a test.
+Live transcript text is not searched against materials; that boundary is a
+separate decision (#817 point 6).
+
+**A file marked confidential is refused, and the team's approvers are
+told.** Before masking, the file's name, the head of the document, its page
+footers and its properties are checked for a confidentiality marking (the
+words and the places are listed in `docs/modules/extraction.md`). A marked
+file is not stored in any form. One row is written, `ext_material_alarms`:
+the team, the time and the kind of marking -- not the file's name or title,
+nothing of its text, and not who brought it, which would make the row a
+record about a person (#817 point 9).
+
+The team's approvers (`agent_approvers`, #592 -- a team has no administrator
+role) each get one Slack DM from the team's bot: how many such files were
+stopped and a link, as for waiting proposals (#632). The page behind the
+link is for approvers only and shows the time and the kind of marking. An
+approver's acknowledgement deletes the row, and who acknowledged is not
+recorded. In a small team the time of an attempt can point at one person,
+which is why the row is short-lived: unacknowledged, it is deleted 30 days
+after it was written, by an hourly task of module B's.
+
+The check reads words, not meaning, and only in those places: a marking
+that exists only in the body, or only as a picture, is not seen.
+
 ## 3. Speaking ratio is private to the speaker
 
 Each participant may see their own share of a meeting. Nobody else may see it —
@@ -243,6 +361,8 @@ person's, those counts are that person's completion record. So:
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
+  A team's uploaded materials are not analysis results and are kept until the
+  team deletes them (#817, below).
 - A scheduled sweep deletes expired results: `autune.audio.periodic.expire_meetings`,
   hourly (#206). Module A deletes every meeting past `meetings.expires_at` and
   everything cascades from it. The window starts when the meeting is held —
@@ -385,12 +505,76 @@ person's, those counts are that person's completion record. So:
     not the team's. The hourly sweep deletes it once no remaining meeting
     names its owner, as it does after an expiry.
 
+- **A team's materials (#817) belong to the team, not to a meeting or a
+  person.** Any member of the team may delete one at any time: the row, its
+  masked text and its vectors go in one transaction. There is no trash.
+  All of a team's materials go with the team (`ON DELETE CASCADE` from
+  `teams`), the last member's deletion of it included (#1007). A person's
+  own deletion (`DELETE /api/audio/me`, `/me/speech`) reaches no material:
+  no row names a person, and a document is not speech.
+- **An uploaded material is kept until the team deletes it** (decided by
+  module B's owner on #817, 2026-10-10, for the other four owners'
+  approval). It has no window: the upload sets no expiry, the team's
+  `retention_days` does not apply to it, and no task deletes it by age. This
+  is an exception to the 90-day default, made for one reason: **a material
+  is not an analysis result.** The window is for what Autune derives from a
+  meeting -- a transcript and what is drawn from it -- and it is counted from
+  when the meeting was held. A material is a reference document the team
+  chose to put on its 자료 screen: no meeting produced it, and it stays
+  because the team still wants it there. Expiring it would delete a document
+  the team never asked to lose and Autune cannot give back, since no
+  original is kept. The exception covers the material only; nothing Autune
+  derives from a meeting loses its window because a material was involved.
+  A link-only row (#1016) holds a title and a Drive file id, no text, and
+  has no window either, as before.
+  - **How a team deletes one.** Any member of the team, at any time, from
+    the team's 자료 screen; nobody's approval is asked and there is no trash.
+    One transaction deletes the `ext_materials` row and every
+    `ext_material_chunks` row under it: the masked text and the vector of
+    each piece. Those rows are the whole of what Autune keeps of a material.
+    Search reads the vectors where they are stored, and no other index,
+    cache, queue message or copy of a material's text or vectors is kept
+    anywhere; a change that adds one deletes it in the same delete, or does
+    not merge. After the delete nothing of the material is left in Autune
+    and search cannot find it. The original was never kept (section 2).
+    What a member already read on their own screen is outside Autune's
+    reach. An alarm row (section 2) is not part of a material -- a refused
+    file is not stored -- and keeps its own 30 days.
+  - **Deleting the team deletes its materials.** `ext_materials` cascades
+    from `teams`, so the last member's deletion of the team (#1007) takes
+    every material with it, masked text and vectors included. Autune has no
+    workspace or organisation above a team (`data-model.md`: a team is "an
+    organization or squad"), so deleting the team is deleting the workspace,
+    and there is no level at which a material outlives its team.
+  - **Only masked text is kept** (section 2). The original file is never
+    written anywhere, so keeping a material longer keeps no more of it.
+  - **Open (#817): a team nobody is on.** A last member who deletes their own
+    account (`DELETE /api/audio/me`) instead of the team leaves the team
+    with no member, and nothing deletes such a team today. Its materials
+    would then have nobody who can delete them and no window to end them.
+    Module B's proposal: the last member's account deletion deletes the
+    team with it, after a confirmation that names the team, so nothing is
+    left that nobody can reach. That is module A's code and module A's
+    decision. Upload stays off until that case has an answer.
+  - **What a meeting makes from a material is the meeting's.** An agenda
+    draft built from a material for a meeting (#1147) is an analysis result
+    of that meeting: it has the meeting's window and goes with the meeting.
+    Deleting the material does not reach a draft already made from it.
+  - **No expiry a team can switch on.** A material has no window, and none
+    can be set per team; a team that wants one gone deletes it.
+- Somebody whose data sits in a document's unmasked prose, and who is not on
+  the team, has no route of their own in Autune: the route is a team
+  member's delete. The same is true of a third party named in a meeting.
+
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
   The exception is a team-scoped row that holds no meeting content and is
-  deleted with its team -- a weekly report, `intel_action_progress`'s
-  snapshot time -- while any per-meeting rows under it cascade from
-  `meetings` (#619 review).
+  deleted with its team -- a weekly report, `intel_action_progress`'s snapshot
+  time, and a team's materials (`ext_materials` and what cascades from it) --
+  while any per-meeting rows under it cascade from `meetings` (#619 review). A
+  material holds a document's masked text, so unlike the other two it also has
+  a delete any member can run. It has no window: it is kept until a member
+  deletes it or the team is deleted.
 - Each module registers a deletion hook in `autune_core`'s deletion registry.
   Rows reachable by `ON DELETE CASCADE` from `meetings` are covered
   automatically — embeddings and topic graphs included, since both are
@@ -563,6 +747,9 @@ the feature needs.
   number read in two rows is refused. Queued work expires after 120 seconds.
   Its only switch is the agent's key, and #392's rule holds for it as for B:
   on the dev site, the team's own meetings only.
+- **A stopped upload's alert (#817).** On Slack, the approvers' DM about a
+  stopped file carries a count and a link. No file name, no time, no kind of
+  marking, no person.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
@@ -1088,6 +1275,11 @@ Reject a pull request that does any of the following:
       three meetings
 - [ ] Uses a soft delete for content
 - [ ] Sends more data to a third party than the feature requires
+- [ ] Writes an uploaded file's bytes anywhere that outlives the request, or
+      stores document text before masking
+- [ ] Records who uploaded, deleted or was stopped uploading a material
+- [ ] Keeps any of a material's text or vectors where a member's delete of
+      that material does not reach
 
 ## 8. When a rule blocks you
 
