@@ -103,4 +103,46 @@ describe("StoredMeetingScreen", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("회의 전사");
     expect(screen.queryByRole("button", { name: "이름 변경" })).toBeNull();
   });
+
+  it("offers to delete a meeting that has been read, and sends its id (#1161)", async () => {
+    vi.spyOn(api, "listLiveResearch").mockResolvedValue([]);
+    const remove = vi.spyOn(api, "deleteMeeting").mockReturnValue(new Promise(() => {}));
+    state = { status: "ready", meeting: meeting("complete") };
+    render(<StoredMeetingScreen meetingId="mtg_1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "회의 삭제" }));
+    fireEvent.change(screen.getByLabelText("삭제하려면 이 회의의 이름을 입력해 주세요."), {
+      target: { value: "주간 회의" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "이 회의 삭제" }));
+
+    expect(remove.mock.calls).toEqual([["mtg_1", "주간 회의"]]);
+  });
+
+  it("does not leave a title typed to delete one meeting in front of another", () => {
+    vi.spyOn(api, "listLiveResearch").mockResolvedValue([]);
+    state = { status: "ready", meeting: meeting("complete") };
+    const view = render(<StoredMeetingScreen meetingId="mtg_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "회의 삭제" }));
+    fireEvent.change(screen.getByLabelText("삭제하려면 이 회의의 이름을 입력해 주세요."), {
+      target: { value: "주간 회의" },
+    });
+
+    state = {
+      status: "ready",
+      meeting: { ...meeting("complete"), meeting_id: "mtg_2", title: "주간 회의" },
+    };
+    view.rerender(<StoredMeetingScreen meetingId="mtg_2" />);
+
+    expect(screen.queryByRole("form", { name: "회의 삭제" })).toBeNull();
+    expect(screen.getByRole("button", { name: "회의 삭제" })).toBeTruthy();
+  });
+
+  it("offers no deletion before the meeting has been read", () => {
+    state = { status: "loading" };
+
+    render(<StoredMeetingScreen meetingId="mtg_1" />);
+
+    expect(screen.queryByRole("button", { name: "회의 삭제" })).toBeNull();
+  });
 });
