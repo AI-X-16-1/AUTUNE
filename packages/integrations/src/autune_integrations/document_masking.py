@@ -41,9 +41,21 @@ read a third time, with every line break (CR, LF) taken for a space. A star
 can sit at a line's end as well (``900101*`` and then ``1234567``), where
 each of those two readings sees half a value, so a text that has both is read
 once more with both taken for spaces. Being a document's masker, this hides
-too much before too little. Known limit: an e-mail address broken across
-lines is not put back together -- a space is no part of an address -- so at
-most the half that still reads as one is hidden.
+too much before too little.
+
+**What no reading puts back together.** Each of these is still stored with
+some or all of it readable:
+
+- a line that ends inside a group of digits and not between two groups
+  (``010-23`` and then ``45-6789``): with the break a space, the group is two
+  short numbers;
+- a break that left a hyphen on both lines (``900101-`` and then
+  ``-1234567``);
+- a value that runs across the edge of a PDF page: the page's own lines -- a
+  page number, a running header -- stand between its halves in the text a
+  reader takes out, and no reading here takes a line away;
+- an e-mail address broken across lines: a space is no part of an address, so
+  at most the half that still reads as one is hidden.
 
 The unmasked string is a parameter and a local here and nothing else: it is
 not returned, logged, cached or put in an exception.

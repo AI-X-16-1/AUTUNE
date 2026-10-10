@@ -284,6 +284,25 @@ def test_a_long_run_of_line_breaks_is_read_in_time(line: str, lines: int) -> Non
     assert took < 2.0
 
 
+@pytest.mark.parametrize(
+    "written",
+    [
+        # The line ends inside a group of digits.
+        "010-23\n45-6789",
+        # The break left a hyphen on both lines.
+        "900101-\n-1234567",
+        # The edge of a PDF page, with the page's number between the halves.
+        "900101-\n- 3 -\n1234567",
+    ],
+)
+def test_a_value_no_reading_puts_back_together_is_left_as_written(written: str) -> None:
+    """Stated, not wished for: the limits the module's docstring names. A
+    case that starts failing here has been closed, and the docstring is then
+    what to change."""
+    text = f"주민 {written} 입니다"
+    assert mask_document(text).text == text
+
+
 def test_an_address_broken_across_lines_is_not_put_back_together() -> None:
     """Stated, not wished for: a space is no part of an address, so no
     reading finds one that a line break cut at its ``@``."""
