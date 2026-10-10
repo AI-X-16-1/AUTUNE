@@ -18,6 +18,10 @@ dependencies = [
     # days_off.py: Korea's public holidays, lunar and substitute days included,
     # for the days Google's holiday calendar has not been read (MIT, no network).
     "holidays>=0.58",
+    # material_upload.py: an uploaded file's form, parsed as the body arrives
+    # into memory -- never UploadFile, which spools to disk (#817). Already in
+    # the lock through module A and Starlette; declared here because B imports it.
+    "python-multipart>=0.0.20",
 ]
 
 [project.optional-dependencies]

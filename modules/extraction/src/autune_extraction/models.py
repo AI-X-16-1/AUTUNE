@@ -105,25 +105,45 @@ class ExtProject(Base):
 MATERIAL = "mat"
 """The id prefix of ``ext_materials`` rows -- B's own, not a shared entity's."""
 
+MATERIAL_ALARM = "mal"
+"""The id prefix of ``ext_material_alarms`` rows."""
+
 DRIVE_KINDS = ("file", "document", "presentation", "spreadsheets")
 """Which Google preview a Drive file has: a plain file, or one of the three
 editors. The same four ``apps/web/src/shared/drive/driveLink.ts`` tells apart."""
 
 
+MATERIAL_SOURCES = ("drive_link", "upload")
+"""How a material came to the shelf: a pasted Drive link (#1016), of which
+nothing is read, or a file a member uploaded, of which only masked text is
+kept (#817)."""
+
+MATERIAL_MARKINGS = ("korean_marking", "english_marking")
+"""The kind of confidentiality marking that stopped an upload -- which list
+the word was on, never the word, where it was or the file it was in."""
+
+
 class ExtMaterial(Base):
-    """A Google Drive file a team keeps on its 자료 screen (#817; the user,
-    2026-10-08): a title a member typed and which file it is.
+    """One row of a team's 자료 screen (#817): a title a member typed, and
+    either which Drive file it is or the masked text of a file a member
+    uploaded.
 
-    **Not the file, and not the link as pasted.** ``drive_file_id`` and
-    ``drive_kind`` are what ``materials.parse_drive_link`` took from the pasted
-    link; the screen builds Google's own address from them, so nothing a
-    person typed is ever used as an address. Autune reads no byte of the file
-    and holds no Drive permission -- the preview is Google's page under the
-    viewer's own sign-in.
+    **A Drive link** (``source='drive_link'``, #1016; the user, 2026-10-08):
+    ``drive_file_id`` and ``drive_kind`` are what ``materials.parse_drive_link``
+    took from the pasted link; the screen builds Google's own address from
+    them, so nothing a person typed is ever used as an address. Autune reads no
+    byte of the file and holds no Drive permission -- the preview is Google's
+    page under the viewer's own sign-in.
 
-    **Nothing here names a person**: no registrant, no reader. The row says
-    that this team keeps this file under this title. ``title`` is typed, not
-    derived from speech, and stored as typed -- like a meeting's title or a
+    **An upload** (``source='upload'``): no Drive columns. The file's text,
+    masked before anything was written, is in ``ext_material_chunks``; the
+    file itself was never written anywhere (``materials.store_upload``).
+    Kept until a member deletes it or the team goes (the owner, 2026-10-10):
+    there is no retention window on it.
+
+    **Nothing here names a person**: no uploader, registrant or reader. The
+    row says that this team keeps this under this title. ``title`` is typed,
+    not derived from speech, and stored as typed -- like a meeting's title or a
     project's name it can hold a name. A file id opens the file for anyone the
     file is shared with by link, so neither it nor the title is logged.
 
@@ -137,6 +157,11 @@ class ExtMaterial(Base):
             "drive_kind IN ('file','document','presentation','spreadsheets')",
             name="ck_ext_materials_drive_kind",
         ),
+        CheckConstraint(
+            "(source = 'drive_link' AND drive_file_id IS NOT NULL AND drive_kind IS NOT NULL)"
+            " OR (source = 'upload' AND drive_file_id IS NULL AND drive_kind IS NULL)",
+            name="ck_ext_materials_source",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(MATERIAL))
@@ -144,10 +169,69 @@ class ExtMaterial(Base):
         String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String(120), nullable=False)
-    drive_file_id: Mapped[str] = mapped_column(String(200), nullable=False)
-    drive_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="drive_link", server_default="drive_link"
+    )
+    drive_file_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    drive_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
+class ExtMaterialChunk(Base):
+    """A piece of an uploaded material's masked text (#817).
+
+    The whole text was masked (``autune_integrations.document_masking``)
+    before it was cut, so a value across a cut is masked too, and every piece
+    passed ``assert_masked`` before it was written. No unmasked character of
+    the file is in any row. ``position`` orders the pieces from 0.
+
+    No vector yet: search, and the embedding it needs, is a later change.
+    Goes with its material (``ON DELETE CASCADE``), and so with the team.
+    """
+
+    __tablename__ = "ext_material_chunks"
+
+    material_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("ext_materials.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ExtMaterialAlarm(Base):
+    """An upload stopped for a confidentiality marking (#817 point 9, #1201).
+
+    One row per stopped file: the team, the time and the kind of marking.
+    Not the file's name or title, nothing of its text, and not who brought it
+    -- that would make the row a record about a person. Nothing of the file
+    itself is kept anywhere.
+
+    The team's approvers are told by the agent layer (#1201), which reads this
+    through ``materials.pending_alarms`` and deletes a row through
+    ``materials.acknowledge_alarm``; who acknowledged is not recorded.
+    Unacknowledged, a row is deleted 30 days after it was written
+    (``tasks.forget_old_material_alarms``). Goes with the team.
+    """
+
+    __tablename__ = "ext_material_alarms"
+    __table_args__ = (
+        CheckConstraint(
+            "marking IN ('korean_marking','english_marking')",
+            name="ck_ext_material_alarms_marking",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: new_id(MATERIAL_ALARM)
+    )
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    marking: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
     )
 
 

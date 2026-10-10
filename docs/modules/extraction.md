@@ -422,7 +422,9 @@ confirmation DM's quotation is #586's second part.
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
-| `ext_materials` | The Google Drive files a team keeps on its 자료 screen (#817): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`). Not the file and not the link as pasted -- Autune reads nothing of the file, holds no Drive permission, and builds Google's address from the id where it is shown. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 a team -- registrations at once included: the count and the insert run under a per-team advisory lock (`materials.lock_shelf`); any member deletes one; goes with the team |
+| `ext_materials` | One row of a team's 자료 screen (#817), told apart by `source`. A Drive link (`drive_link`, #1016): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`) -- not the file and not the link as pasted; Autune reads nothing of it, holds no Drive permission, and builds Google's address from the id where it is shown. An upload (`upload`): a title over the masked text in `ext_material_chunks`, no Drive columns, and nothing of the file itself. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 rows a team, links and uploads together -- at once included: the count and the insert run under a per-team advisory lock (`materials.lock_shelf`); any member deletes one; no retention window -- kept until a member deletes it (the owner, 2026-10-10); goes with the team |
+| `ext_material_chunks` | An uploaded material's text in pieces of at most 500 characters (`materials.store_upload`, #817). The whole text is masked (`autune_integrations.document_masking.mask_document`, #1199) before it is cut, and every piece passes `assert_masked` before it is written: no unmasked character of the file is in any row. No vector yet -- search is a later change. Goes with its material, in the same transaction as a member's delete, and with the team |
+| `ext_material_alarms` | An upload stopped for a confidentiality marking (#817 point 9): the team, the time and the kind of marking (`korean_marking` or `english_marking`). Not the file's name or title, nothing of its text, not who brought it. Read and acknowledged (deleted) by the agent layer's approvers' alert (#1201) through `materials.pending_alarms` and `materials.acknowledge_alarm`; who acknowledged is not recorded. Unacknowledged, deleted 30 days after it was written (`autune.extraction.periodic.forget_old_material_alarms`, hourly). Goes with the team |
 | `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
 | `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
@@ -818,9 +820,11 @@ other module's tables.
 | DELETE | `/action-items/{id}` | Delete an item the model got wrong |
 | POST | `/results/{meeting_id}/sync` | Re-sync to Notion and Jira — not built; confirming an item syncs it |
 | GET | `/sync-log?team_id=` | S28's 동기화 기록, for a member of the team (anybody else gets the 404 an unknown team gets). Two lists about the team's action items, newest first, thirty of each: the copies that failed and still stand (`ext_sync_failures`: the item, its meeting, the system, the kind, the time) and the latest copies that were made (the Notion page or Jira issue with its link, from `ext_external_refs`; the reader's own calendar events, from `ext_calendar_events`, with no link). Not a log of every attempt: a failure leaves once a later copy goes through, and a copy's time is when it was first made. A claim with no page, issue or event yet is not listed. Decisions' pages and project minutes are not in it. A meeting past retention shows nothing |
-| GET | `/materials?team_id=` | The Drive files the team keeps on its 자료 screen, the newest first (#817). Members of the team only |
+| GET | `/materials?team_id=` | The team's 자료 rows, links and uploads, the newest first (#817). Members of the team only. An upload's text is never in it |
 | POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
-| DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf. Any member; the Drive file is not touched |
+| GET | `/materials/upload-rules?team_id=` | What this server takes as an upload: `enabled` (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`, off by default), `max_bytes` (ten megabytes), `suffixes` (`.txt`, `.md`, `.csv` today), `max_title_chars`, `max_materials`. Members of the team only |
+| POST | `/materials/upload?team_id=` | Keep the masked text of a file (#817): a form of exactly two parts, `title` and `file`. Any member. The body is read by the route into memory after the membership check -- no `UploadFile`, no temporary file -- and the cap holds as it arrives (413 past it); read, checked for a confidentiality marking, masked and stored in this request, and the buffers wiped in a `finally`. A marked file: 422 `confidential_file` and one `ext_material_alarms` row. An unreadable one: 422 with `details.reason`. Off: the bare 404 of a route that does not exist |
+| DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf, at once. Any member. An upload's masked text goes in the same transaction; a Drive file is not touched |
 | GET | `/reviews/{meeting_id}` | What needs a person before anything is sent: decisions with their verdict, weak assents with their DM state, items still `needs_confirmation` or below the candidate line (S15, #246). A confirmed decision carries `held_back` (#1133): true when its statement holds something that looks like personal data -- a phone number, an address, an id number -- so the clients' check would refuse its copy to Notion and Jira. A boolean worked out when the row is read, by the same pattern check as the row below, with neither the value nor its category; S15 says on that row that it was not sent and that rewording sends it, and it clears with the rewording that removes the value. Not a record of a send that failed: it is true of a team with no tool connected too. A typed text is checked for patterns only, so a name does not set it |
 | POST | `/decisions` | Add a decision the model missed. Confirmed, and kept through reruns |
 | GET | `/decisions/{id}` | One decision and the text of the utterances it was settled in, in spoken order, each with the same `excerpt` (S15 shows them beneath the statement), plus the same `context` |
@@ -1243,8 +1247,8 @@ calendar, the minutes, the agent's tools and module D are given.
 ## Privacy notes
 
 - A team's materials (`ext_materials`, #817) are a title and a Drive file id,
-  by the decision on #817 to stop at the link and the preview: no text of a
-  file is read, stored, embedded or sent to a model, no Drive permission is
+  or a title over an uploaded file's masked text. Of a Drive link no text is
+  read, stored, embedded or sent to a model, no Drive permission is
   asked for, and no agent tool reads the table. The preview is Google's page
   under the viewer's own sign-in, so registering a file shows its title to the
   team and the file to nobody Google would not show it to. A row names no
@@ -1254,6 +1258,16 @@ calendar, the minutes, the agent's tools and module D are given.
   and error messages, and neither goes to any outside service.
   The rows are not an analysis result and have no retention window: a member
   deletes one at any time, and they go with the team.
+- An uploaded file (`materials.store_upload`, #817) is read in the upload
+  request's memory and nowhere else: no table, disk, queue, log or Celery
+  payload holds a byte of it, and its name is read for its ending and the
+  marking check and dropped. Only its masked text is kept, until a member
+  deletes it or the team goes (the owner, 2026-10-10). Masked is not
+  anonymous: a name in a sentence stays. A file marked confidential is
+  refused and leaves one alarm row that names no person. No model, search
+  or agent tool reads the text yet; the upload stays off
+  (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) until the approvers' alert (#1201)
+  and the legal notice's sentences are in.
 - Text a person types is screened when it is saved and refused if it
   reads as personal data (`typed_text.refuse_personal_data`; decided on
   #1130, `privacy.md` section 6). Ten checks behind eight routes: an action

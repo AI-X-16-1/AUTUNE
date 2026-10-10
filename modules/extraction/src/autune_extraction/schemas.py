@@ -442,16 +442,42 @@ class MaterialWrite(BaseModel):
 
 
 class MaterialRead(BaseModel):
-    """One of a team's materials (``ext_materials``): a title and which Drive
-    file it is. No address -- the screen builds Google's from the id and the
-    kind -- and no person."""
+    """One row of a team's 자료 screen (``ext_materials``), told apart by
+    ``source``:
+
+    - ``drive_link``: a title and which Drive file it is. No address -- the
+      screen builds Google's from the id and the kind.
+    - ``upload``: a title over the masked text of a file a member sent. The
+      text is not in this answer, and there is no original to open.
+
+    No person. ``expires_at`` is always null: an upload is kept until a member
+    deletes it or the team goes (the owner, 2026-10-10), and a link keeps no
+    text. ``not_read`` is what a file held that was not read, said only in the
+    answer to the upload; the plain-text formats read today have nothing
+    unread, so it is empty.
+    """
 
     id: str
     team_id: str
     title: str
-    drive_file_id: str
-    drive_kind: Literal["file", "document", "presentation", "spreadsheets"]
+    source: Literal["drive_link", "upload"]
+    drive_file_id: str | None
+    drive_kind: Literal["file", "document", "presentation", "spreadsheets"] | None
     created_at: datetime
+    expires_at: datetime | None = None
+    not_read: list[Literal["pictures", "charts", "embedded_files"]] = Field(default_factory=list)
+
+
+class MaterialUploadRules(BaseModel):
+    """What the server takes as an upload, in its own numbers, and whether it
+    takes one at all (``AUTUNE_EXTRACTION_MATERIAL_UPLOAD``). No search yet,
+    so ``search`` is not sent and the screen draws no search box."""
+
+    enabled: bool
+    max_bytes: int
+    suffixes: list[str]
+    max_title_chars: int
+    max_materials: int
 
 
 class ProjectPlacement(BaseModel):

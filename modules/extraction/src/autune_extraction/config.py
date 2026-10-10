@@ -415,6 +415,18 @@ class ExtractionSettings(BaseSettings):
     not serve an unauthenticated route that stores any team's Notion token
     (lsh2217, review of #402). Off unless someone asks for it by name."""
 
+    material_upload: bool = False
+    """Take a file uploaded to a team's 자료 and keep its masked text (#817,
+    ``materials.store_upload``).
+
+    **Off by default, and stays off until the rest has landed.** Off, the
+    upload route answers the framework's bare 404, as a route that does not
+    exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
+    screen draws no control. The order agreed on #817: it is not switched on
+    anywhere before the approvers' alert (#1201) and the legal notice's
+    sentences are in, because without the alert a stopped file is told to
+    nobody but the member who sent it."""
+
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod
     def _blank_similarity_means_unset(cls, value: object) -> object:

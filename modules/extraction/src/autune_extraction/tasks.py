@@ -68,6 +68,7 @@ from . import (
     days_off,
     jira_sync,
     leave_calendar,
+    materials,
     meeting_notice,
     notion_backfill,
     notion_setup,
@@ -127,6 +128,9 @@ PAUSE_FORGET_EVERY = timedelta(hours=1)
 
 HOLIDAY_REFRESH_EVERY = timedelta(hours=12)
 """``refresh_public_holidays``."""
+
+MATERIAL_ALARM_FORGET_EVERY = timedelta(hours=1)
+"""``forget_old_material_alarms``."""
 
 # Before anything of module B is served or run: a configuration B refuses
 # (an unacknowledged cloud model, #392) stops the process that imports this,
@@ -1825,6 +1829,20 @@ def forget_ended_notification_pauses() -> int:
         )
     if gone:
         log.info("extraction_notification_pauses_forgotten", count=gone)
+    return gone
+
+
+@shared_task(name="autune.extraction.periodic.forget_old_material_alarms")
+@periodic(MATERIAL_ALARM_FORGET_EVERY)
+def forget_old_material_alarms() -> int:
+    """Delete the stopped-upload alarm rows nobody acknowledged in 30 days
+    (``materials.forget_old_alarms``, #817). An uploaded material itself has
+    no window -- the team deletes it -- so this touches alarm rows only.
+    Returns how many went; counts only in the log."""
+    with session_scope() as session:
+        gone = materials.forget_old_alarms(session, now=datetime.now(tz=UTC))
+    if gone:
+        log.info("extraction_material_alarms_forgotten", count=gone)
     return gone
 
 

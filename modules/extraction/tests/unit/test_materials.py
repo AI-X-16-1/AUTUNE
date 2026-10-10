@@ -96,7 +96,9 @@ def session() -> Iterator[Session]:
     )
     shared = {m.__tablename__ for m in (User, Team, TeamMember)}
     tables = [
-        t for name, t in Base.metadata.tables.items() if name in shared or name == "ext_materials"
+        t
+        for name, t in Base.metadata.tables.items()
+        if name in shared or name in ("ext_materials", "ext_material_chunks")
     ]
     Base.metadata.create_all(engine, tables=tables)
     with Session(engine) as s:
@@ -122,6 +124,7 @@ def test_a_row_names_no_person() -> None:
         "id",
         "team_id",
         "title",
+        "source",
         "drive_file_id",
         "drive_kind",
         "created_at",
@@ -228,8 +231,23 @@ def test_a_member_registers_lists_and_deletes(client: TestClient) -> None:
     )
     assert (first.status_code, second.status_code) == (201, 201)
     body = second.json()
-    assert set(body) == {"id", "team_id", "title", "drive_file_id", "drive_kind", "created_at"}
-    assert (body["drive_file_id"], body["drive_kind"]) == (DOC_ID, "spreadsheets")
+    assert set(body) == {
+        "id",
+        "team_id",
+        "title",
+        "source",
+        "drive_file_id",
+        "drive_kind",
+        "created_at",
+        "expires_at",
+        "not_read",
+    }
+    assert (body["source"], body["drive_file_id"], body["drive_kind"]) == (
+        "drive_link",
+        DOC_ID,
+        "spreadsheets",
+    )
+    assert (body["expires_at"], body["not_read"]) == (None, [])
     assert body["id"].startswith("mat_")
 
     listed = client.get(f"{PREFIX}/materials?team_id={TEAM}").json()
