@@ -181,12 +181,13 @@ def _sync_one_action_item(
             return
         already_had_a_page = session.get(ExtExternalRef, (action_item_id, "notion")) is not None
         outcomes: list[service.PageOutcome] = []
+        notion_setup.ensure_content(session, meeting.team_id, config)
         ref = service.sync_action_item_to_notion(
             session,
             clients.get(meeting.team_id, config.secret),
             action_item_id=action_item_id,
             database_id=database_id,
-            property_names=config.config.get("action_properties"),
+            property_names=notion_setup.property_names(session, meeting.team_id, config, "action"),
             on_page=outcomes.append,
         )
         if ref is not None:
@@ -230,12 +231,15 @@ def _sync_one_decision(
             return
         already_had_a_page = session.get(ExtDecisionRef, (decision_id, "notion")) is not None
         outcomes: list[service.PageOutcome] = []
+        notion_setup.ensure_content(session, meeting.team_id, config)
         ref = service.sync_decision_to_notion(
             session,
             clients.get(meeting.team_id, config.secret),
             decision_id=decision_id,
             database_id=database_id,
-            property_names=config.config.get("decision_properties"),
+            property_names=notion_setup.property_names(
+                session, meeting.team_id, config, "decision"
+            ),
             on_page=outcomes.append,
         )
         if ref is not None:

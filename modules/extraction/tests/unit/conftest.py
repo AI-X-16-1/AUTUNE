@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from autune_core import TeamMember, User
 from autune_core.auth import current_user
-from autune_extraction import tasks
+from autune_extraction import notion_setup, tasks
 
 READER = "user_reader"
 """The signed-in caller of router tests: a member of ``team_1``, where every
@@ -51,6 +51,19 @@ def _no_calendar_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tasks, "_sync_failed", lambda _id, _system, _exc: None)
     monkeypatch.setattr(tasks, "_sync_went", lambda _id, _system: None)
     monkeypatch.setattr(tasks, "_record_failure", lambda _id, _system, _kind: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_notion_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sync of a team with an ``ext_notion_targets`` row asks Notion once
+    about its databases (``notion_setup.ensure_content``), through this client.
+    A test that gets there without a stand-in of its own fails here rather
+    than calling api.notion.com."""
+
+    def refuse(_token: str) -> None:
+        raise AssertionError("a unit test reached Notion's setup API without a stand-in")
+
+    monkeypatch.setattr(notion_setup, "notion_client", refuse)
 
 
 @pytest.fixture(autouse=True)
