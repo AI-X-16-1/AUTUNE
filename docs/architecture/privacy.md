@@ -529,12 +529,15 @@ the feature needs.
   utterances the classifier called ambiguous, with one fixed hypothesis. The
   titles (`AUTUNE_EXTRACTION_TITLE_IMPL`, `none` by default) send the
   sentences the pipeline itself wrote for a meeting's action items and
-  decisions, one request a meeting, to get a line of twenty characters back
-  for each: never a sentence a person typed, edited or reworded, a decision's
+  decisions, up to twenty to a request -- one request for a meeting of
+  twenty rows or fewer, more for a meeting with more rows or long sentences
+  -- to get a line of twenty characters back for each: never a sentence a person typed, edited or reworded, a decision's
   without the owner and deadline it ends with, and no id, speaker or meeting
   with them. What comes back is kept only if it names no person and says no
-  number or date its sentence does not, and it is shown on Autune's own
-  screens only -- no outside tool is sent a title. The flag checks nothing about the meeting or the key -- the code
+  number or date its sentence does not. A title that is kept is shown on
+  Autune's screens and, since 2026-10-09, leads the row's copy wherever the
+  row is sent -- Jira, Notion, a calendar, a line of a Slack message or of a
+  project's minutes ("What names a row in each copy", below). The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
   it makes sending speech out something a deployment says deliberately. Which
   meetings may go through a deployment that sets it is therefore a rule for

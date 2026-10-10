@@ -1233,7 +1233,9 @@ calendar, a Slack line, a project's minutes (the last bullet below).
   in the same words, since the date can be what was decided ("출시일 10월
   20일"). A refused title is dropped, not cut to fit, and the row shows the
   cut sentence.
-- **One request a meeting**, after the extraction and outside it: a failed
+- **One request for up to twenty rows** -- one for a meeting of twenty rows
+  or fewer, more when a meeting has more rows or long sentences -- after the
+  extraction and outside it: a failed
   call, a privacy refusal and a refused title all leave the rows as they
   were shown before. A decision is sent without the "(담당 …, 기한 …)" it
   ends with. Rows extracted before the switch was on get a title when the
