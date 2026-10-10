@@ -1272,3 +1272,10 @@ export const LEGAL_DOCUMENTS: readonly LegalDocument[] = [
   TERMS,
   SECURITY,
 ];
+
+/** The document the consent page opens for one required consent. */
+export function legalDocument(id: LegalDocument["id"]): LegalDocument {
+  const found = LEGAL_DOCUMENTS.find((doc) => doc.id === id);
+  if (found === undefined) throw new Error(`no legal document "${id}"`);
+  return found;
+}
