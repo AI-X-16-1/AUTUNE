@@ -233,6 +233,18 @@ def test_a_word_that_is_not_the_line_marker_stays(written: str) -> None:
     assert usable_summary(written, {}, "") == written
 
 
+def test_the_line_marker_is_looked_for_in_what_the_model_wrote_not_in_a_name_put_back() -> None:
+    """The one input that tells the two places apart, and nobody is named this:
+    a name on the roster that reads as the marker. The model wrote a numbered
+    mark and no marker; checked after the name is back, its sentence was
+    dropped for a word it never wrote."""
+    line = "[대상] 님 자료는 제가 금요일까지 정리할게요"
+
+    kept = usable_summary("[사람1] 님 자료를 금요일까지 정리", {"[사람1]": "[대상]"}, line)
+
+    assert kept == "[대상] 님 자료를 금요일까지 정리"
+
+
 @pytest.mark.parametrize(
     "written",
     [

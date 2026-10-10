@@ -743,8 +743,12 @@ def usable_summary(written: str, surface: dict[str, str], window: str) -> str:
         return ""
     if any(marked not in surface for marked in _PLACEHOLDER.findall(text)):
         return ""
+    # On what the model wrote, before any name is put back: the marker is the
+    # request's, and a name is not the model's writing (review of #1207).
+    if _LINE_MARKER_LEFT.search(text):
+        return ""
     restored = _PLACEHOLDER.sub(lambda m: surface[m.group(0)], text)
-    if _MARK_LEFT.search(restored) or _LINE_MARKER_LEFT.search(restored):
+    if _MARK_LEFT.search(restored):
         return ""
     if says_a_pointing_word(restored):
         return ""
