@@ -400,7 +400,9 @@ def title_meeting(meeting_id: str) -> int:
     Its own task, after the run that built the rows: the rows are already
     there and already announced, and a title is a way of showing them. Reads,
     then calls the model with no session open, then writes -- only onto a row
-    that still says the sentence its title is of. A failed call, a refused
+    that still says the sentence its title is of, and onto none when a row of
+    the request was deleted or lost its line to a speech deletion meanwhile
+    (``service.store_titles``). A failed call, a refused
     title and a privacy refusal all leave the row without one, and the screen
     shows the sentence cut as it did before; logged by meeting id and counts,
     never the text.
