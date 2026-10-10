@@ -50,7 +50,7 @@ from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, TeamMember
 from autune_integrations import SlackApi
 
-from . import days_off, reminders, service
+from . import days_off, reminders, service, top_line
 from .models import ExtActionItem, ExtDueReminderOptOut, ExtMeetingNotice
 from .service import _insert_if_absent_into
 from .slots import KST
@@ -212,7 +212,13 @@ def notice_content(session: Session, owed: NoticeOwed, *, now: datetime) -> Meet
         if item.status == _WAITING:
             waiting += 1
         else:
-            confirmed.append(reminders.DigestLine(item.description, item.due_date, None))
+            confirmed.append(
+                reminders.DigestLine(
+                    top_line.outbound_line("notice", "item", item.title, item.description),
+                    item.due_date,
+                    None,
+                )
+            )
     notice = MeetingNotice(meeting_title=meeting.title, waiting=waiting, confirmed=confirmed)
     return None if notice.empty else notice
 

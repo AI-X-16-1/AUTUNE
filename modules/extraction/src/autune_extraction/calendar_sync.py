@@ -15,7 +15,10 @@ Autune's own events in it: every event Autune makes carries a private tag
 rest of the calendar never comes back.
 
 **What leaves** is the item's description (masked, as for Notion) in the title
-and a fixed line saying where it came from. Not the transcript, the source
+and a fixed line saying where it came from -- or, for an item with a short
+title (the owner, 2026-10-09; ``top_line``), that title in the event's title
+and the description above the fixed line in the event's body. Either way the
+title says it is something to do ("[할 일] "). Not the transcript, the source
 utterances, the meeting title or anyone else's name -- it is the person's own
 calendar, so it does not name them either. No attendees, so nobody is invited.
 
@@ -60,7 +63,7 @@ from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, TeamMember, get_logger
 from autune_integrations import CalendarEvent, IntegrationError
 
-from . import service
+from . import service, top_line
 from .models import ExtActionItem, ExtCalendarCleanup, ExtCalendarEvent, ExtCalendarPoll
 from .schemas import ActionItemUpdate
 from .service import _insert_if_absent_into
@@ -112,9 +115,18 @@ connected one. Built by the task from ``user_integrations``."""
 def event_summary(item: ExtActionItem, *, closed: bool = False) -> str:
     """The event's title. ``closed`` is ``service.closed_unfinished``'s answer
     for the item: done, and not finished."""
+    line = top_line.outbound_line("calendar", "item", item.title, item.description)
     if item.status != ActionStatus.DONE.value:
-        return f"[마감] {item.description}"
-    return f"{'[닫힘]' if closed else '[완료]'} {item.description}"
+        return f"[마감] {line}"
+    return f"{'[닫힘]' if closed else '[완료]'} {line}"
+
+
+def event_description(item: ExtActionItem) -> str:
+    """The event's body: the fixed line, under the item's sentence when the
+    short title took the sentence's place in the event's title."""
+    if top_line.titled(item.title, item.description):
+        return f"{item.description}\n\n{EVENT_DESCRIPTION}"
+    return EVENT_DESCRIPTION
 
 
 def _calendar_owner(session: Session, item: ExtActionItem | None) -> str | None:
@@ -285,7 +297,7 @@ def sync_due_date_to_calendar(
         and item.id in service.closed_unfinished(session, [item.id]),
     )
     if row.event_id and client.update_all_day_event(
-        calendar_id, row.event_id, summary, item.due_date, description=EVENT_DESCRIPTION
+        calendar_id, row.event_id, summary, item.due_date, description=event_description(item)
     ):
         row.synced_due_date = item.due_date
         log.info("extraction_calendar_updated", action_item_id=item.id)
@@ -295,7 +307,7 @@ def sync_due_date_to_calendar(
         calendar_id,
         summary,
         item.due_date,
-        description=EVENT_DESCRIPTION,
+        description=event_description(item),
         private={TAG[0]: TAG[1], ITEM_KEY: item.id},
     )
     row.synced_due_date = item.due_date

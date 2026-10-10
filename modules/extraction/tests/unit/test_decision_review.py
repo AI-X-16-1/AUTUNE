@@ -1189,7 +1189,7 @@ def test_the_page_carries_the_confirmed_wording_and_no_quotation(session: Sessio
     database, properties = notion.pages[0]
     assert database == "db_decisions"
     assert properties["결정"] == {
-        "title": [{"type": "text", "text": {"content": "출시는 금요일로 확정"}}]
+        "title": [{"type": "text", "text": {"content": "[결정] 출시는 금요일로 확정"}}]
     }
     assert properties["근거 발화 수"] == {"number": len(first.sources)}
     assert set(properties) == {"결정", "신뢰도", "근거 발화 수", "회의"}
@@ -1299,7 +1299,9 @@ def test_a_decision_sync_holding_the_ref_lock_sends_the_reword_committed_after_i
     assert notion_a.pages == [], "A finds B's claim already there -- it updates, not creates"
     assert len(notion_a.updates) == 1
     sent_title = notion_a.updates[0][1]["결정"]["title"][0]["text"]["content"]
-    assert sent_title == "최신 문구 (B가 커밋)", "A must re-read, not send its own stale copy"
+    assert sent_title == "[결정] 최신 문구 (B가 커밋)", (
+        "A must re-read, not send its own stale copy"
+    )
 
 
 def test_a_decision_claim_that_lands_mid_flight_gets_an_update_not_a_dropped_edit(
@@ -1408,7 +1410,7 @@ def test_confirming_again_after_the_page_was_retired_makes_a_new_page(session: S
     assert ref is not None and ref.external_id == "page_2"
     assert ref.url == service.notion_url("page_2")
     assert notion.pages[1][1]["결정"] == {
-        "title": [{"type": "text", "text": {"content": "출시는 금요일로 확정"}}]
+        "title": [{"type": "text", "text": {"content": "[결정] 출시는 금요일로 확정"}}]
     }
 
 
@@ -1600,3 +1602,70 @@ def test_a_property_map_with_no_title_trashes_the_page_as_it_is(session: Session
 
     assert notion.updates == [] and notion.archived == {"page_1"}
     assert ref is not None and ref.external_id is None
+
+
+def test_a_short_title_heads_a_decisions_page_until_a_person_rewords_it(session: Session) -> None:
+    """Module B's owner, 2026-10-09. The page's title is "[결정] " and the
+    short title, with the statement in 내용; a rewording leads as the person
+    wrote it; and a page put back keeps the statement in neither place."""
+    names = {**service.DECISION_NOTION_PROPERTIES, "content": "내용"}
+
+    def title(text: str) -> dict[str, object]:
+        return {"title": [{"type": "text", "text": {"content": text}}]}
+
+    def rich(text: str) -> dict[str, object]:
+        return {"rich_text": [{"type": "text", "text": {"content": text}}]}
+
+    def send() -> None:
+        service.sync_decision_to_notion(
+            session, notion, decision_id=first.id, database_id="db", property_names=names
+        )
+
+    first, _second = two_decisions(session)
+    first.title = "출시 금요일"
+    session.flush()
+    said = first.statement
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    notion = FakeNotion()
+
+    send()
+
+    _, made = notion.pages[0]
+    assert made["결정"] == title("[결정] 출시 금요일")
+    assert made["내용"] == rich(said)
+
+    service.review_decision(
+        session, first, DecisionReviewUpdate(statement="출시는 다음 주로 미룬다")
+    )
+    send()
+
+    _, reworded = notion.updates[-1]
+    assert reworded["결정"] == title("[결정] 출시는 다음 주로 미룬다")
+    assert reworded["내용"] == rich("출시는 다음 주로 미룬다")
+
+    service.review_decision(session, first, DecisionReviewUpdate(status="pending"))
+    send()
+
+    assert notion.updates[-1] == (
+        "page_1",
+        {"결정": title(service.DECISION_PUT_BACK_TEXT), "내용": {"rich_text": []}},
+    )
+    assert notion.archived == {"page_1"}
+
+
+def test_a_decisions_page_with_no_place_for_the_statement_keeps_it_in_the_title(
+    session: Session,
+) -> None:
+    first, _second = two_decisions(session)
+    first.title = "출시 금요일"
+    session.flush()
+    service.review_decision(session, first, DecisionReviewUpdate(status="confirmed"))
+    notion = FakeNotion()
+
+    service.sync_decision_to_notion(session, notion, decision_id=first.id, database_id="db")
+
+    _, made = notion.pages[0]
+    assert made["결정"] == {
+        "title": [{"type": "text", "text": {"content": f"[결정] {first.statement}"}}]
+    }
+    assert "내용" not in made

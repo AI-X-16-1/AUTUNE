@@ -194,3 +194,25 @@ def test_another_teams_meeting_is_not_found(client: TestClient) -> None:
     assert client.get(f"{PREFIX}/summary/mtg_other").status_code == 404
     response = client.put(f"{PREFIX}/summary/mtg_other/note", json={"body": "남의 회의"})
     assert response.status_code == 404
+
+
+def test_the_summary_gives_a_decisions_short_title_and_none_for_a_reworded_one(
+    session: Session,
+) -> None:
+    """The page of minutes leads a row with it (module B's owner, 2026-10-09).
+    The title is of the model's sentence, so a decision a person reworded has
+    none to lead with."""
+    decision(session, "dec_a", "배포는 금요일로 하기로 했습니다", "confirmed")
+    decision(session, "dec_b", "검색은 인기순으로 하기로 했습니다", "confirmed")
+    for row_id, title in (("dec_a", "배포 금요일"), ("dec_b", "검색 인기순")):
+        row = session.get(ExtDecision, row_id)
+        assert row is not None
+        row.title = title
+    reworded = session.get(ExtDecisionReview, "dec_b")
+    assert reworded is not None
+    reworded.statement = "사람이 고친 문장"
+    session.flush()
+
+    listed = {d.id: d.title for d in service.meeting_summary(session, MEETING).decisions}
+
+    assert listed == {"dec_a": "배포 금요일", "dec_b": None}

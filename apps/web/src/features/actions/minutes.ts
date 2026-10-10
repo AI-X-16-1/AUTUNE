@@ -33,6 +33,14 @@ import type { ActionItemRead, MeetingSummary } from "./types";
  * wrote one (#392), and says a model wrote it** -- on the screen and in the
  * copy alike, so the label goes wherever the paragraph is pasted.
  *
+ * **A row leads with its short title** where it has one (the user,
+ * 2026-10-09: the title in every copy that leaves, "회의록까지 전부"), as the
+ * minutes Autune sends to a project do. The copy has the title alone; the tab
+ * has it with the whole sentence under it ("탭도 제목 + 아래에 문장"), the
+ * shape of the window a card opens. So the screen and the paste share their
+ * top line, and the screen is where the rest is read. A row without a title
+ * is its sentence in both, as before.
+ *
  * Built in the browser from what the summary tab already holds. Nothing is
  * sent anywhere: copying is the reader's act, and so is where it is pasted.
  */
@@ -45,7 +53,13 @@ export interface Minutes {
   /** The day the meeting began, as the reader's own calendar has it. */
   day: string | null;
   overview: { text: string; points: string[] } | null;
-  decisions: { id: string; statement: string; unconfirmed: boolean }[];
+  decisions: {
+    id: string;
+    statement: string;
+    /** The model's short title; none for a decision a person reworded. */
+    title: string | null;
+    unconfirmed: boolean;
+  }[];
   actions: MinutesAction[];
   /** Items the page leaves out because the model was not sure of them. */
   candidates: number;
@@ -55,6 +69,8 @@ export interface Minutes {
 export interface MinutesAction {
   id: string;
   description: string;
+  /** The item's short title; none where the sentence is a person's own. */
+  title: string | null;
   who: string;
   /** The day it is due, written as the page's date line writes a day. */
   due: string | null;
@@ -76,6 +92,7 @@ export function minutesOf(summary: MeetingSummary, title?: string | null): Minut
       id: decision.id,
       // Its deadline as the action lines below write theirs.
       statement: shownStatement(decision.statement, began ? began.getFullYear() : null),
+      title: decision.title?.trim() || null,
       unconfirmed: decision.status === "pending",
     })),
     actions: items.map((item) => action(item, began)),
@@ -98,14 +115,14 @@ export function minutesText(summary: MeetingSummary, title?: string | null): str
   if (page.decisions.length === 0) lines.push("없음");
   page.decisions.forEach((decision, n) => {
     lines.push(
-      `${n + 1}. ${decision.statement}${decision.unconfirmed ? ` (${UNCONFIRMED_DECISION})` : ""}`,
+      `${n + 1}. ${decision.title ?? decision.statement}${decision.unconfirmed ? ` (${UNCONFIRMED_DECISION})` : ""}`,
     );
   });
 
   lines.push("", "할 일");
   if (page.actions.length === 0) lines.push("없음");
   page.actions.forEach((item, n) => {
-    lines.push(`${n + 1}. ${item.description} — ${actionMeta(item)}`);
+    lines.push(`${n + 1}. ${item.title ?? item.description} — ${actionMeta(item)}`);
   });
 
   if (page.note) lines.push("", "메모", page.note);
@@ -133,6 +150,7 @@ function action(item: ActionItemRead, began: Date | null): MinutesAction {
   return {
     id: item.id,
     description: item.description,
+    title: item.title?.trim() || null,
     who: item.needs_reassignment
       ? "재배정 필요"
       : (item.assignee_name ?? item.assignee_label ?? "담당 미지정"),

@@ -136,10 +136,11 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             <ol className="list-decimal pl-5">
               {page.decisions.map((decision) => (
                 <Entry key={decision.id}>
-                  {decision.statement}
+                  {decision.title ?? decision.statement}
                   {decision.unconfirmed ? (
                     <Meta> ({UNCONFIRMED_DECISION})</Meta>
                   ) : null}
+                  {decision.title ? <Under>{decision.statement}</Under> : null}
                 </Entry>
               ))}
             </ol>
@@ -154,7 +155,7 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             <ol className="list-decimal pl-5">
               {page.actions.map((item) => (
                 <Entry key={item.id}>
-                  {item.description}
+                  {item.title ?? item.description}
                   <span
                     className={
                       item.overdue
@@ -167,6 +168,7 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
                     {actionMeta(item)}
                     {item.overdue ? " · 기한 지남" : null}
                   </span>
+                  {item.title ? <Under>{item.description}</Under> : null}
                 </Entry>
               ))}
             </ol>
@@ -304,6 +306,25 @@ function Entry({ children }: { children: React.ReactNode }) {
     >
       {children}
     </li>
+  );
+}
+
+/**
+ * The whole sentence of a row that leads with its short title (the user,
+ * 2026-10-09): under the title, as in the window a card opens. The copied
+ * minutes carry the title alone.
+ */
+function Under({ children }: { children: string }) {
+  return (
+    <span
+      className="block text-[var(--color-ink-body)]"
+      style={{
+        fontSize: "var(--text-rowBody)",
+        lineHeight: "var(--text-rowBody-leading)",
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
