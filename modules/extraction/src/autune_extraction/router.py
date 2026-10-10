@@ -35,6 +35,7 @@ from . import (
     jira_issues,
     leave_calendar,
     material_reading,
+    material_search,
     material_upload,
     materials,
     notion_connect,
@@ -64,6 +65,9 @@ from .schemas import (
     DueReminderSettingIn,
     ExtractionState,
     JiraProjectIssues,
+    MaterialAnswer,
+    MaterialHit,
+    MaterialQuestion,
     MaterialRead,
     MaterialUploadRules,
     MaterialWrite,
@@ -659,6 +663,39 @@ def material_upload_rules(
         suffixes=list(material_reading.SUFFIXES),
         max_title_chars=materials.MAX_TITLE_CHARS,
         max_materials=materials.MAX_MATERIALS,
+        search=get_settings().material_upload,
+        max_question_chars=material_search.MAX_QUESTION_CHARS,
+    )
+
+
+@router.post("/materials/search", response_model=MaterialAnswer)
+def search_materials(
+    payload: MaterialQuestion, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialAnswer:
+    """The team's uploaded materials nearest a question, best first: a title
+    and a screened excerpt of masked text for each, five at most (#817).
+    Members of the team only; anyone else gets the 404 an unknown team gets.
+
+    The question travels in the body, is masked before it is embedded, and is
+    written nowhere -- not to a table, not to a log line -- and not returned.
+    Off with uploads (``AUTUNE_EXTRACTION_MATERIAL_UPLOAD``): the bare 404 of
+    a route that does not exist."""
+    if not get_settings().material_upload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    team = _member_team(session, reader, None, team_id)
+    found = material_search.search_materials(session, team, payload.question)
+    return MaterialAnswer(
+        hits=[
+            MaterialHit(
+                material_id=hit.material_id,
+                title=hit.title,
+                excerpt=hit.excerpt,
+                position=hit.position,
+            )
+            for hit in found.hits
+        ],
+        notice=found.notice,
+        more=found.more,
     )
 
 

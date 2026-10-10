@@ -127,6 +127,7 @@ def test_a_row_names_no_person() -> None:
         "source",
         "drive_file_id",
         "drive_kind",
+        "embedding_model",
         "created_at",
     }
 

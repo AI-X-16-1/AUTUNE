@@ -470,14 +470,50 @@ class MaterialRead(BaseModel):
 
 class MaterialUploadRules(BaseModel):
     """What the server takes as an upload, in its own numbers, and whether it
-    takes one at all (``AUTUNE_EXTRACTION_MATERIAL_UPLOAD``). No search yet,
-    so ``search`` is not sent and the screen draws no search box."""
+    takes one at all (``AUTUNE_EXTRACTION_MATERIAL_UPLOAD``). ``search`` says
+    whether ``POST /materials/search`` answers -- it does exactly when uploads
+    are on -- and ``max_question_chars`` the longest question it takes."""
 
     enabled: bool
     max_bytes: int
     suffixes: list[str]
     max_title_chars: int
     max_materials: int
+    search: bool = False
+    max_question_chars: int = 0
+
+
+class MaterialQuestion(BaseModel):
+    """A question for the team's uploaded materials (#817). In the body, not
+    the address: it is a person's words, and an address is logged by what it
+    passes through. No length in the schema -- the framework's refusal would
+    repeat the value -- so ``material_search.checked_question`` refuses it
+    by the rule alone."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    question: str
+
+
+class MaterialHit(BaseModel):
+    """One uploaded material that answers a question: its title, and an
+    excerpt of the masked text that was kept, screened on the way out. A
+    Drive link is never one. No original behind it to open."""
+
+    material_id: str
+    title: str
+    excerpt: str
+    position: int
+    """Which stored piece of the material the excerpt is from, from 0."""
+
+
+class MaterialAnswer(BaseModel):
+    """At most five materials, best first. ``notice`` is a sentence of the
+    server's own, never the question; ``more`` says more materials answered."""
+
+    hits: list[MaterialHit]
+    notice: str | None
+    more: bool
 
 
 class ProjectPlacement(BaseModel):

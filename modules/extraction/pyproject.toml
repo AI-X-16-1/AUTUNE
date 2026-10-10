@@ -22,6 +22,10 @@ dependencies = [
     # into memory -- never UploadFile, which spools to disk (#817). Already in
     # the lock through module A and Starlette; declared here because B imports it.
     "python-multipart>=0.0.20",
+    # ext_material_chunks.embedding and the search over it (#817): pgvector's
+    # column type and cosine operator. Already in the lock through module D;
+    # declared here because B imports it.
+    "pgvector>=0.3",
 ]
 
 [project.optional-dependencies]

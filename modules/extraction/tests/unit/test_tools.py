@@ -179,6 +179,7 @@ ARGS = {
     tools.open_followup_item: (TEAM,),
     tools.open_item_owners: (TEAM,),
     tools.public_holidays: ("2026-10-01", "2026-10-31"),
+    tools.find_materials: (TEAM, "출시 일정"),
 }
 
 

@@ -276,6 +276,7 @@ def test_an_alarm_row_names_no_person_and_no_file() -> None:
         "material_id",
         "position",
         "text",
+        "embedding",
     }
 
 
@@ -528,6 +529,8 @@ def test_the_rules_are_the_servers_own_numbers(client: TestClient) -> None:
         "suffixes": [".txt", ".md", ".csv"],
         "max_title_chars": materials.MAX_TITLE_CHARS,
         "max_materials": materials.MAX_MATERIALS,
+        "search": True,
+        "max_question_chars": 300,
     }
     assert client.get(f"{PREFIX}/materials/upload-rules?team_id=team_2").status_code == 404
 

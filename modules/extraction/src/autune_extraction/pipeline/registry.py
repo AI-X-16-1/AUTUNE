@@ -10,6 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from autune_extraction.config import get_settings
+from autune_extraction.models import MATERIAL_EMBEDDING_DIM
 
 from .base import Classifier, Embedder, NliModel, ReferenceResolver
 from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, LocalDeberta
@@ -283,4 +284,27 @@ def get_embedder() -> Embedder:
 
     raise ValueError(
         f"unknown AUTUNE_EXTRACTION_EMBEDDER_IMPL={impl!r}; known: {sorted(_EMBEDDERS)}"
+    )
+
+
+@lru_cache
+def get_material_embedder() -> Embedder:
+    """The embedder for uploaded materials and the questions asked of them
+    (#817, ``material_search``). Same two implementations as ``get_embedder``;
+    the fake is as wide as the stored column. A vector of another width is
+    refused where it is used, not here: ``LocalKureEmbedder`` knows its width
+    only once it has loaded."""
+    settings = get_settings()
+    impl = settings.material_embedder_impl
+    if impl == "local":
+        if not settings.embedder_checkpoint:
+            raise ValueError(
+                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local needs "
+                "AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT"
+            )
+        return LocalKureEmbedder(settings.embedder_checkpoint, device=settings.embedder_device)
+    if impl == "fake":
+        return FakeEmbedder(dim=MATERIAL_EMBEDDING_DIM)
+    raise ValueError(
+        f"unknown AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL={impl!r}; known: {sorted(_EMBEDDERS)}"
     )

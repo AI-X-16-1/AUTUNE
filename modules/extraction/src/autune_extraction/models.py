@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
     Date,
@@ -118,6 +119,12 @@ MATERIAL_SOURCES = ("drive_link", "upload")
 nothing is read, or a file a member uploaded, of which only masked text is
 kept (#817)."""
 
+MATERIAL_EMBEDDING_DIM = 1024
+"""The width of ``ext_material_chunks.embedding``: KURE-v1's, as module D's
+``ctx_embeddings`` (a value kept in step by hand -- B cannot import D). Fixed
+by the migration; an embedder of another width is a new migration, not a
+setting, and ``material_search`` refuses a vector of the wrong width."""
+
 MATERIAL_MARKINGS = ("korean_marking", "english_marking")
 """The kind of confidentiality marking that stopped an upload -- which list
 the word was on, never the word, where it was or the file it was in."""
@@ -174,6 +181,11 @@ class ExtMaterial(Base):
     )
     drive_file_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     drive_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    """The embedder that made this upload's vectors (its ``model_version``).
+    A search compares a question only with vectors from the embedder it asks
+    with; vectors of two models are not comparable. Null for a link, and for
+    an upload stored before vectors existed."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -187,7 +199,11 @@ class ExtMaterialChunk(Base):
     passed ``assert_masked`` before it was written. No unmasked character of
     the file is in any row. ``position`` orders the pieces from 0.
 
-    No vector yet: search, and the embedding it needs, is a later change.
+    ``embedding`` is the piece's vector, computed from this masked text and
+    nothing else, in the upload request (``materials.store_upload``); the
+    search reads it here and nowhere else -- no other index or copy -- so a
+    member's delete takes the text and the vector at once. Null only for a
+    piece stored before vectors existed, which no search finds.
     Goes with its material (``ON DELETE CASCADE``), and so with the team.
     """
 
@@ -198,6 +214,9 @@ class ExtMaterialChunk(Base):
     )
     position: Mapped[int] = mapped_column(Integer, primary_key=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(MATERIAL_EMBEDDING_DIM), nullable=True
+    )
 
 
 class ExtMaterialAlarm(Base):

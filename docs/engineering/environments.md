@@ -339,6 +339,8 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_RESOLVER_MIN_SIMILARITY` | B | Below this cosine similarity to its own context window, a resolved sentence is ungrounded. **Blank by default** — no embedding model has been run against a labelled set yet, and blank skips the check entirely |
 | `AUTUNE_EXTRACTION_DEV_ROUTES` | B | `true` mounts the unauthenticated page for connecting Notion by hand, and only when `AUTUNE_ENV=local` too. Default `false`. Deleted with S28 (#401) |
 | `AUTUNE_EXTRACTION_MATERIAL_UPLOAD` | B | `true` takes a file uploaded to a team's 자료 and keeps its masked text (#817). Default `false`: off, the upload route answers a bare 404. Not switched on anywhere before the approvers' alert (#1201) and the legal notice's sentences are in |
+| `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` | B | `local` · `fake`. Default `fake`. Makes an uploaded material's vectors and a search question's vector, in this process (#817); `local` is KURE-v1 with `AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT` and `_DEVICE`. `fake` finds by shared characters, not meaning. A search reads only vectors of the embedder it asks with |
+| `AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL` | B | `true` lets the assistant's `extraction.find_materials` answer with masked excerpts (#817). Default `false`: off, it searches nothing. Not switched on before `privacy.md` lets a language model be given a material's text |
 | `AUTUNE_GAP_RISK_THRESHOLD` | C | Default `0.7`. At or above is `high`, the only severity surfaced |
 | `AUTUNE_GAP_MEDIUM_THRESHOLD` | C | Default `0.5`. Down to here is `medium`, below it `low` |
 | `AUTUNE_GAP_DEFAULT_TEMPLATE` | C | Default `general`. Which domain template a meeting nobody chose one for is held to |

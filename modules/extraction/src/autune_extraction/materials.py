@@ -37,8 +37,11 @@ storage, and the original is not kept":
 
 **For both: a row names no person.** Any member of the team registers,
 uploads and deletes, as with the team's projects; there is no admin role
-(#592). Nothing goes out: no Slack, Notion, Jira or model sees a title, a file
-id or a piece of text, and no agent tool reads these tables yet.
+(#592). Nothing goes out: no Slack, Notion, Jira or outside model sees a title,
+a file id or a piece of text. An upload's masked pieces are embedded in this
+process (``pipeline.registry.get_material_embedder``) and searched by
+``material_search``, whose excerpts are screened on the way out; the
+assistant's tool over it is off by default (``tools.find_materials``).
 
 The title, the file id, a file's name and its text are never logged: a title
 is typed by a person and can hold a name, a file id opens a file shared by
@@ -64,7 +67,15 @@ from autune_integrations.privacy import assert_masked
 
 from .material_marking import Marking, file_marking
 from .material_reading import read_text
-from .models import DRIVE_KINDS, ExtMaterial, ExtMaterialAlarm, ExtMaterialChunk
+from .models import (
+    DRIVE_KINDS,
+    MATERIAL_EMBEDDING_DIM,
+    ExtMaterial,
+    ExtMaterialAlarm,
+    ExtMaterialChunk,
+)
+from .pipeline.base import Embedder
+from .pipeline.registry import get_material_embedder
 from .schemas import MaterialRead
 from .typed_text import refuse_personal_data
 
@@ -260,6 +271,22 @@ def cut(masked: str, size: int = CHUNK_CHARS) -> list[str]:
     return pieces
 
 
+def embedded(embedder: Embedder, texts: list[str]) -> list[list[float]]:
+    """One vector per masked text, each as wide as the stored column. An
+    embedder that answers with another count or width is refused: a vector
+    of the wrong width cannot be stored, and one model's vectors are not
+    compared with another's. The message carries numbers, never the text."""
+    if not texts:
+        return []
+    vectors = embedder.embed(texts)
+    if len(vectors) != len(texts) or any(len(v) != MATERIAL_EMBEDDING_DIM for v in vectors):
+        raise RuntimeError(
+            f"the material embedder must answer {len(texts)} vector(s) of width "
+            f"{MATERIAL_EMBEDDING_DIM}; check AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL"
+        )
+    return [[float(x) for x in vector] for vector in vectors]
+
+
 def _stop(session: Session, team_id: str, marking: Marking) -> None:
     session.add(ExtMaterialAlarm(team_id=team_id, marking=marking))
     session.flush()
@@ -292,12 +319,18 @@ def store_upload(
     pieces = cut(masked)
     for piece in pieces:
         assert_masked(piece, destination="ext_material_chunks")
-    row = ExtMaterial(team_id=team_id, title=clean, source="upload")
+    # Vectors from the masked pieces and nothing else, in this request: no
+    # text or path goes to a task (#817).
+    embedder = get_material_embedder()
+    vectors = embedded(embedder, pieces)
+    row = ExtMaterial(
+        team_id=team_id, title=clean, source="upload", embedding_model=embedder.model_version
+    )
     session.add(row)
     session.flush()
     session.add_all(
-        ExtMaterialChunk(material_id=row.id, position=position, text=piece)
-        for position, piece in enumerate(pieces)
+        ExtMaterialChunk(material_id=row.id, position=position, text=piece, embedding=vector)
+        for position, (piece, vector) in enumerate(zip(pieces, vectors, strict=True))
     )
     session.flush()
     log.info(
@@ -307,8 +340,8 @@ def store_upload(
 
 
 def material_text(session: Session, material_id: str) -> list[str]:
-    """An upload's stored pieces of masked text, in order -- for the search
-    that comes later and for tests. No route returns it."""
+    """An upload's stored pieces of masked text, in order -- for tests. No
+    route returns it; a search returns excerpts (``material_search``)."""
     return list(
         session.scalars(
             select(ExtMaterialChunk.text)

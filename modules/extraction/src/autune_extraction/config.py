@@ -427,6 +427,32 @@ class ExtractionSettings(BaseSettings):
     sentences are in, because without the alert a stopped file is told to
     nobody but the member who sent it."""
 
+    material_embedder_impl: str = "fake"
+    """Which embedder makes an uploaded material's vectors and a search
+    question's vector (#817): ``local`` (KURE-v1 in this process; checkpoint
+    and device from ``embedder_checkpoint`` and ``embedder_device``) or
+    ``fake``. Its own switch, apart from ``embedder_impl``: the resolver's
+    fake makes 64-wide vectors it only compares with each other, and a
+    material's are stored in a ``vector(1024)`` column
+    (``models.MATERIAL_EMBEDDING_DIM``).
+
+    ``fake`` by default, which finds by shared characters rather than meaning
+    -- enough for tests and a dev stack, not for a team. No ``hosted`` yet: the
+    rule (``privacy.md``) names KURE-v1 on our own inference server, and B has
+    no client for it. Nothing here sends a material's text or a question out
+    of this process. A search finds only pieces embedded by the embedder it
+    asks with, so switching this leaves earlier uploads unfound until they
+    are uploaded again (``material_search``)."""
+
+    material_search_tool: bool = False
+    """Let the assistant's ``extraction.find_materials`` tool answer (#817).
+
+    **Off by default.** Off, the tool searches nothing and says it is off. On,
+    it hands masked excerpts to whatever model the agent layer runs, and
+    ``privacy.md`` ("Uploaded documents are masked before storage") says no
+    language model is given a material's text until a change to that section
+    is approved on its own. Switch it on only after that change."""
+
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod
     def _blank_similarity_means_unset(cls, value: object) -> object:

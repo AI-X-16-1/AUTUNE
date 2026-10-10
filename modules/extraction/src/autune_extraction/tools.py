@@ -1,6 +1,6 @@
 """Module B as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Nine read tools (``TOOLS``) over B's existing reads, and seven writes
+Read tools (``TOOLS``) over B's existing reads, and seven writes
 (``ACTIONS``) over B's existing service calls, so that everything a person does
 with B on the board -- read items and decisions, confirm, reassign, re-date,
 close, add, review a decision -- can also be asked for in words. No new tables,
@@ -19,7 +19,8 @@ until then these are callable and tested on their own.
 Rules from section 4 that are enforced here rather than trusted to the caller:
 
 - ``items`` holds at most ``MAX_ITEMS``; ``truncated`` says when more existed.
-- ``evidence`` holds utterance ids only, never text.
+- ``evidence`` holds ids only, never text: utterance ids, and a material's id
+  for ``find_materials``.
 - An expected failure (unknown meeting) is ``ok=False`` with a reason, not an
   exception.
 - Synchronous, safe to call twice: every tool only reads. The writes are
@@ -48,9 +49,11 @@ from sqlalchemy.orm import Session
 
 from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
+from autune_core.errors import ValidationError
 from autune_integrations.privacy import find_unmasked
 
-from . import days_off, service, tasks
+from . import days_off, material_search, service, tasks
+from .config import get_settings
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
@@ -1076,7 +1079,77 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
     )
 
 
+def find_materials(session: Session, team_id: str, question: str) -> dict[str, Any]:
+    """Use this when asked what the team's uploaded documents (자료) say about
+    something -- a plan, a figure, a schedule written in a file the team put on
+    its 자료 screen. Do not use it for what was said in a meeting; that is the
+    meeting tools.
+
+    Returns at most five of the team's uploaded materials nearest the
+    question, best first: each a title and one short excerpt of the masked
+    text Autune kept (never a whole document), with the material's id as
+    evidence. A value hidden as personal data reads as ``*`` and cannot be
+    recovered. ``question`` is the words to look for, 300 characters at most.
+    """
+    # #817 10(b), 2026-10-08: the question is used to search and for nothing
+    # else -- not in the result, not in a log line, and (as for every tool)
+    # not in agent_runs or a waiting row, which keep the tool's name and ids.
+    # So no reason, summary or item below repeats it.
+    if not get_settings().material_search_tool:
+        return _result(
+            ok=False,
+            reason="material search is off for the assistant on this server",
+            summary="이 서버에서는 비서가 올린 자료를 찾지 않습니다.",
+            items=[],
+            evidence=[],
+            confidence=0.0,
+        )
+    if not isinstance(question, str):
+        return _bad_question()
+    try:
+        found = material_search.search_materials(session, team_id, question, limit=MAX_ITEMS)
+    except ValidationError:
+        return _bad_question()
+    if not found.hits:
+        summary = "올린 자료에서 찾은 내용이 없습니다."
+    else:
+        summary = f"올린 자료 {len(found.hits)}건에서 찾았습니다."
+        if found.more:
+            summary += " 더 있으니 질문을 좁혀 다시 찾을 수 있습니다."
+    if found.notice:
+        summary += " " + found.notice
+    return _result(
+        summary=summary,
+        items=[
+            {
+                "title": hit.title,
+                "body": hit.excerpt,
+                "score": hit.score,
+                "id": hit.material_id,
+                "position": hit.position,
+            }
+            for hit in found.hits
+        ],
+        evidence=[hit.material_id for hit in found.hits],
+        confidence=max([0.0, *(min(1.0, hit.score) for hit in found.hits)]),
+    )
+
+
+def _bad_question() -> dict[str, Any]:
+    """The refusal of a question that is blank, too long or not text. Names
+    the rule, never the value: the value is the person's words."""
+    return _result(
+        ok=False,
+        reason=f"question must be 1 to {material_search.MAX_QUESTION_CHARS} characters of text",
+        summary=f"질문은 1자에서 {material_search.MAX_QUESTION_CHARS}자까지입니다.",
+        items=[],
+        evidence=[],
+        confidence=0.0,
+    )
+
+
 TOOLS = [
+    find_materials,
     meeting_action_items,
     meeting_due_dates,
     open_action_items,
