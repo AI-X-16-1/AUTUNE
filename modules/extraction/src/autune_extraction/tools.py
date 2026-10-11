@@ -1079,10 +1079,13 @@ def _not_found(kind: str, ident: str) -> dict[str, Any]:
 def may_notify_now(session: Session, user_id: str, *, now: datetime | None = None) -> bool:
     """Whether Autune may send this person a DM about work right now (#1046).
 
-    Not a tool the model calls -- it is not in ``TOOLS`` -- but the one place
-    the agent layer asks B before Follow-up's approval DMs a meeting's
-    attendees. It answers yes or no and never why, so a caller cannot learn
-    that somebody turned their reminders off or is on leave.
+    Not a tool the model calls -- it is not in ``TOOLS`` -- but the read the
+    agent layer was to ask B before a DM about work to a meeting's attendees
+    (#1046). Since 2026-10-09 Follow-up's approval schedules the meeting
+    through C's ``schedule_followup_meeting`` and DMs nobody, so nothing calls
+    this yet; it waits for a caller. It answers yes or no and never why, so a
+    caller cannot learn that somebody turned their reminders off or is on
+    leave.
 
     No when the person turned "마감 알림 받기" off (``ext_due_reminder_optouts``),
     when today is inside their own 휴가 기간 (``ext_notification_pauses``), or
@@ -1383,11 +1386,7 @@ def add_followup_item(
 ) -> dict[str, Any]:
     """Add "후속 회의 잡기" to a meeting -- what the Follow-up subagent proposes
     after a meeting that left topics open (#561). It starts waiting for
-    confirmation on the board. Approving the proposal also tells the
-    meeting's attendees, by Slack DM, the day it recommends -- each one only
-    when ``may_notify_now`` says yes for them (#1046); that DM is the agent
-    layer's, not B's. The item itself reaches no calendar and reminds nobody
-    until someone confirms it.
+    confirmation, so it reaches nobody until someone confirms it.
 
     ``due_date`` (``YYYY-MM-DD``, optional) is the day Follow-up recommends
     for that meeting, which the team lead saw on the card they approved
