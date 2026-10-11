@@ -17,7 +17,7 @@ import {
   listMaskingRules,
   setTeamRetention,
 } from "../api";
-import type { MaskingRule, MyData, RetentionDays } from "../types";
+import type { MaskingRule, MyData, RetentionDays, SoleTeam } from "../types";
 import { TeamScope } from "./TeamScope";
 
 /**
@@ -33,6 +33,13 @@ import { TeamScope } from "./TeamScope";
  * deletion: leaving a team is on the members screen and deletes nothing
  * (privacy.md section 4), so the row here would promise a deletion nothing
  * performs.
+ *
+ * **Account deletion asks again for a team I am the last member of** (#817).
+ * The server refuses the first request with 409 `last_member_of_teams` and
+ * the list of those teams -- mine, shown only to me -- and the same modal
+ * then asks for each team's name, typed as the members screen asks for one
+ * team's deletion (#1007). The second request carries them, and the teams go
+ * with the account.
  *
  * Everything under "내 데이터" is the caller's own and is computed with
  * `user_id == caller` on the server. No speaking ratio appears: it goes to the
@@ -278,6 +285,9 @@ function MyDataSection() {
   const [data, setData] = useState<MyData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<Pending | null>(null);
+  // Teams I am the last member of, once the server has said so (#817).
+  const [soleTeams, setSoleTeams] = useState<SoleTeam[] | null>(null);
+  const [typedNames, setTypedNames] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -303,27 +313,49 @@ function MyDataSection() {
     }
   };
 
+  const close = () => {
+    setConfirming(null);
+    setSoleTeams(null);
+    setTypedNames({});
+  };
+
   const confirm = async () => {
     if (!confirming) return;
     setBusy(true);
     setError(null);
     try {
       if (confirming === "account") {
-        await deleteAccount();
+        await deleteAccount(
+          (soleTeams ?? []).map((team) => ({
+            team_id: team.team_id,
+            name: typedNames[team.team_id] ?? "",
+          })),
+        );
         router.replace("/login");
         return;
       }
       if (confirming === "speech") await deleteMySpeech();
       else await deleteVoiceProfile();
-      setConfirming(null);
+      close();
       load();
     } catch (caught) {
-      setError(deletionError(caught));
-      setConfirming(null);
+      const teams = confirming === "account" ? soleTeamsIn(caught) : [];
+      if (teams.length > 0) {
+        // Nothing was deleted: the modal stays, and asks for each name.
+        setSoleTeams(teams);
+        setTypedNames({});
+      } else {
+        setError(deletionError(caught));
+        close();
+      }
     } finally {
       setBusy(false);
     }
   };
+
+  const namesTyped =
+    soleTeams === null ||
+    soleTeams.every((team) => sameName(typedNames[team.team_id] ?? "", team.name));
 
   const meetings = data?.meetings_with_my_speech ?? 0;
 
@@ -373,12 +405,35 @@ function MyDataSection() {
 
       {confirming && (
         <ConfirmModal
-          title={TITLES[confirming]}
-          body={bodyFor(confirming, meetings)}
+          title={confirming === "account" && soleTeams ? SOLE_TEAMS_TITLE : TITLES[confirming]}
+          body={confirming === "account" && soleTeams ? SOLE_TEAMS_BODY : bodyFor(confirming, meetings)}
           pending={busy}
-          onCancel={() => setConfirming(null)}
+          confirmDisabled={!namesTyped}
+          onCancel={close}
           onConfirm={() => void confirm()}
-        />
+        >
+          {confirming === "account" && soleTeams && (
+            <div className="mt-3 flex flex-col gap-3">
+              {soleTeams.map((team) => (
+                <label key={team.team_id} className="block" style={META}>
+                  <span className="text-[var(--color-ink-body)]">
+                    &lsquo;{team.name}&rsquo; 팀의 이름을 입력해 주세요
+                  </span>
+                  <input
+                    className={INPUT}
+                    style={INPUT_STYLE}
+                    value={typedNames[team.team_id] ?? ""}
+                    autoComplete="off"
+                    disabled={busy}
+                    onChange={(event) =>
+                      setTypedNames((typed) => ({ ...typed, [team.team_id]: event.target.value }))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+        </ConfirmModal>
       )}
     </div>
   );
@@ -395,12 +450,48 @@ function MyDataSection() {
  * account and the words are still there, and trying again later is right.
  */
 function deletionError(caught: unknown): string {
+  if (caught instanceof ApiError && caught.code === "team_name_mismatch")
+    return "입력한 이름이 팀 이름과 다릅니다. 띄어쓰기와 대소문자까지 그대로 입력해 주세요. 아무것도 삭제되지 않았습니다.";
+  if (caught instanceof ApiError && caught.code === "team_meeting_in_progress")
+    return "함께 삭제될 팀에 전사 중이거나 실시간으로 진행 중인 회의가 있어 지금은 계정을 삭제할 수 없습니다. 끝난 뒤에 다시 시도해 주세요.";
   if (caught instanceof ApiError && caught.status === 409)
     return "회의 하나가 다시 처리되는 중이라 지금은 지울 수 없습니다. 처리가 끝난 뒤 다시 시도해 주세요.";
   if (caught instanceof ApiError && caught.status >= 500)
     return "삭제를 끝내지 못했습니다. 잠시 후 다시 시도해 주세요.";
   return caught instanceof Error ? caught.message : "삭제하지 못했습니다.";
 }
+
+/** The teams a 409 `last_member_of_teams` lists, or none (#817). */
+function soleTeamsIn(caught: unknown): SoleTeam[] {
+  if (!(caught instanceof ApiError) || caught.code !== "last_member_of_teams") return [];
+  const teams = caught.details.teams;
+  if (!Array.isArray(teams)) return [];
+  return teams.filter(
+    (team): team is SoleTeam =>
+      typeof team === "object" &&
+      team !== null &&
+      typeof (team as SoleTeam).team_id === "string" &&
+      typeof (team as SoleTeam).name === "string",
+  );
+}
+
+/** As the server compares them (`team_deletion._same_name`): surrounding space
+ * and how a keyboard composed the Hangul do not count; case does. */
+function sameName(typed: string, name: string): boolean {
+  return typed.normalize("NFC").trim() === name.normalize("NFC").trim();
+}
+
+const INPUT =
+  "mt-1 w-full rounded-[var(--radius)] bg-[var(--color-surface-panel)] px-3 text-[var(--color-ink-strong)] focus-visible:outline-none focus-visible:ring-[1.5px] focus-visible:ring-[var(--color-accent-default)]";
+const INPUT_STYLE = {
+  height: "var(--control-h-default)",
+  fontSize: "var(--text-rowBody)",
+  border: "1px solid var(--color-hairline)",
+} as const;
+
+const SOLE_TEAMS_TITLE = "팀도 함께 삭제할까요?";
+const SOLE_TEAMS_BODY =
+  "내가 마지막 구성원인 팀이 있습니다. 계정을 삭제하면 아래 팀과 그 팀의 모든 회의, 전사, 할 일·결정, 연동이 함께 삭제됩니다. 팀이 Notion·Jira·Slack으로 보낸 내용은 팀의 도구에 남고, Autune에서는 더 이상 지울 수 없습니다. 다른 구성원이 있는 팀은 삭제되지 않고 나가기만 합니다. 계속하려면 각 팀의 이름을 그대로 입력해 주세요.";
 
 const TITLES: Record<Pending, string> = {
   voice: "음성 임베딩을 삭제할까요?",
@@ -439,14 +530,18 @@ function ConfirmModal({
   title,
   body,
   pending,
+  confirmDisabled = false,
   onCancel,
   onConfirm,
+  children,
 }: {
   title: string;
   body: string;
   pending: boolean;
+  confirmDisabled?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
+  children?: ReactNode;
 }) {
   return (
     <div
@@ -479,11 +574,12 @@ function ConfirmModal({
         >
           {body}
         </p>
+        {children}
         <div className="mt-4 flex justify-end gap-2">
           <Button tone="quiet" onClick={onCancel} disabled={pending}>
             취소
           </Button>
-          <Button tone="primary" onClick={onConfirm} loading={pending}>
+          <Button tone="primary" onClick={onConfirm} loading={pending} disabled={confirmDisabled}>
             삭제
           </Button>
         </div>

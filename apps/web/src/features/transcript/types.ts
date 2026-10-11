@@ -165,6 +165,12 @@ export type MyData = {
 };
 export type SpeechDeleted = { utterances: number; voice_rows: number };
 export type AccountDeleted = { utterances: number };
+/**
+ * A team I am the last member of, confirmed by its name as I typed it, in an
+ * account deletion (`schemas.TeamNameConfirmation`, #817). The same pair is
+ * what a 409 `last_member_of_teams` lists in `details.teams`.
+ */
+export type SoleTeam = { team_id: string; name: string };
 
 /** S30's body and answer — `schemas.PiiReport` / `PiiReported`. */
 export type PiiCategory = "name" | "internal_id" | "contact" | "other";

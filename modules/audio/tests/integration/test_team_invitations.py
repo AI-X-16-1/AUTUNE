@@ -386,7 +386,11 @@ def test_deleting_my_account_removes_the_invitations_addressed_to_me(
     invite(client_for, inviter, team)
     invite(client_for, inviter, team, "someone-else@example.com")
 
-    account.delete_account(db_session, user=invitee)
+    # Alone on a team of their own, which goes with the account once named (#817).
+    own = db_session.scalars(
+        sa.select(TeamMember.team_id).where(TeamMember.user_id == invitee.id)
+    ).one()
+    account.delete_account(db_session, user=invitee, team_names={own: "Zebra Solo"})
 
     assert [row.email for row in rows(db_session, team)] == ["someone-else@example.com"]
 

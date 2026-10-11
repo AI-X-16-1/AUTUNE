@@ -19,6 +19,7 @@ import type {
   PiiReported,
   ResearchDocument,
   RetentionDays,
+  SoleTeam,
   SpeakerEntry,
   SpeechDeleted,
   TeamMember,
@@ -481,8 +482,16 @@ export async function deleteVoiceProfile(): Promise<void> {
 export const deleteMySpeech = () =>
   api.audio<SpeechDeleted>("/me/speech", { method: "DELETE" });
 
-/** Account deletion (#358). The server clears the session cookie in the same response. */
-export const deleteAccount = () => api.audio<AccountDeleted>("/me", { method: "DELETE" });
+/**
+ * Account deletion (#358). The server clears the session cookie in the same
+ * response. A team I am the last member of goes with the account, and each
+ * must be in `teams` with its name as I typed it (#817); one that is not
+ * refuses the whole request with 409 `last_member_of_teams`, whose
+ * `details.teams` lists them. Also refused: 422 `team_name_mismatch`, 409
+ * `team_meeting_in_progress`.
+ */
+export const deleteAccount = (teams: SoleTeam[] = []) =>
+  api.audio<AccountDeleted>("/me", { method: "DELETE", body: JSON.stringify({ teams }) });
 
 /** S29's retention row, for one team. */
 export const getTeamPrivacy = (teamId: string) =>

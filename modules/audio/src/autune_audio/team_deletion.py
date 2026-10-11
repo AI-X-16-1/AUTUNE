@@ -24,7 +24,7 @@ before the name is typed.
 from __future__ import annotations
 
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import sqlalchemy as sa
@@ -166,17 +166,8 @@ def delete_team(session: Session, *, team_id: str, member: User, name: str) -> T
             .with_for_update(key_share=True)
         )
     )
-    jobs = list(
-        session.execute(
-            sa.select(TranscriptionJob.id, TranscriptionJob.status).where(
-                TranscriptionJob.meeting_id.in_(
-                    sa.select(Meeting.id).where(Meeting.team_id == team_id)
-                )
-            )
-        )
-    )
-    transcribing = sum(1 for _, status in jobs if status in ("queued", "running"))
-    live = sum(1 for meeting_id in meeting_ids if live_registry.is_open(meeting_id))
+    jobs = _jobs(session, team_id)
+    transcribing, live = _in_progress(jobs, meeting_ids)
     if transcribing or live:
         log.info(
             "team_deletion_refused",
@@ -204,6 +195,127 @@ def delete_team(session: Session, *, team_id: str, member: User, name: str) -> T
         recordings=recordings,
     )
     return TeamDeleted(meetings=len(meeting_ids), recordings=recordings)
+
+
+def _jobs(session: Session, team_id: str) -> list[tuple[str, str]]:
+    """Every transcription attempt of the team's meetings, as (id, status)."""
+    return [
+        (job_id, status)
+        for job_id, status in session.execute(
+            sa.select(TranscriptionJob.id, TranscriptionJob.status).where(
+                TranscriptionJob.meeting_id.in_(
+                    sa.select(Meeting.id).where(Meeting.team_id == team_id)
+                )
+            )
+        )
+    ]
+
+
+def _in_progress(jobs: Sequence[tuple[str, str]], meeting_ids: Sequence[str]) -> tuple[int, int]:
+    """How many jobs are queued or running, and how many live sessions are open."""
+    transcribing = sum(1 for _, status in jobs if status in ("queued", "running"))
+    live = sum(1 for meeting_id in meeting_ids if live_registry.is_open(meeting_id))
+    return transcribing, live
+
+
+# --- with the account of its last member (#817) -------------------------------
+
+
+class LastMemberOfTeamsError(ConflictError):
+    """The account is the only member of one or more teams, and the request
+    did not confirm each of them by its name. ``details["teams"]`` lists them
+    -- the caller's own teams, to the caller only."""
+
+    code = "last_member_of_teams"
+
+
+@dataclass(frozen=True)
+class SoleTeam:
+    team_id: str
+    name: str
+
+
+def teams_left_alone_on(session: Session, *, user_id: str) -> list[SoleTeam]:
+    """The teams ``user_id`` is the only member of, by name.
+
+    Read without a lock: ``delete_team`` counts again under its own, and
+    ``delete_with_account`` says what happens when the count has changed.
+    """
+    mine = sa.select(TeamMember.team_id).where(TeamMember.user_id == user_id)
+    alone = sa.select(TeamMember.team_id).group_by(TeamMember.team_id).having(sa.func.count() == 1)
+    rows = session.execute(
+        sa.select(Team.id, Team.name)
+        .where(Team.id.in_(mine), Team.id.in_(alone))
+        .order_by(Team.name, Team.id)
+    )
+    return [SoleTeam(team_id=team_id, name=name) for team_id, name in rows]
+
+
+def check_account_confirmation(
+    session: Session, *, user_id: str, teams: Sequence[SoleTeam], typed: Mapping[str, str]
+) -> None:
+    """Refuse an account deletion that would delete a team not confirmed.
+
+    Run before anything of the account deletion happens -- its hooks commit
+    in their own sessions -- so that what ``delete_team`` would refuse anyway
+    is refused while nothing has been deleted yet:
+
+    - a team ``typed`` does not name: 409 ``last_member_of_teams``, listing
+      every team the deletion would take, ids and names. They are the
+      caller's own teams and go only to the caller; they are not logged.
+    - a name that is not the team's: 422 ``team_name_mismatch``, with the
+      team's id and neither name, as ``delete_team`` says it.
+    - a meeting of one of them still being processed: 409
+      ``team_meeting_in_progress``, as ``delete_team`` says it.
+    """
+    missing = [team for team in teams if team.team_id not in typed]
+    if missing:
+        log.info("account_deletion_needs_team_confirmation", user_id=user_id, teams=len(teams))
+        raise LastMemberOfTeamsError(
+            "this account is the last member of teams that would be deleted with it; "
+            "confirm each one by its name",
+            teams=[{"team_id": team.team_id, "name": team.name} for team in teams],
+        )
+    for team in teams:
+        if not _same_name(typed[team.team_id], team.name):
+            raise TeamNameMismatchError("the name does not match the team's name")
+    for team in teams:
+        meeting_ids = list(
+            session.scalars(sa.select(Meeting.id).where(Meeting.team_id == team.team_id))
+        )
+        transcribing, live = _in_progress(_jobs(session, team.team_id), meeting_ids)
+        if transcribing or live:
+            log.info(
+                "team_deletion_refused",
+                team_id=team.team_id,
+                user_id=user_id,
+                transcribing=transcribing,
+                live=live,
+            )
+            raise TeamMeetingInProgressError(
+                "a meeting of a team this account is the last member of is still being "
+                "processed; delete the account once it has finished"
+            )
+
+
+def delete_with_account(session: Session, *, team_id: str, member: User, name: str) -> bool:
+    """``delete_team`` for a team whose last member is deleting their account.
+
+    The same function, so the same locks, refusals and hooks, in the same
+    order. One difference: if somebody joined the team since
+    ``teams_left_alone_on`` read it, the team is no longer theirs alone to
+    delete, and the person leaves it with their account like any team with
+    other members on it -- ``delete_team`` deleted the team's pending
+    invitations before counting again, so its work is undone to a savepoint
+    first. Answers whether the team was deleted.
+    """
+    try:
+        with session.begin_nested():
+            delete_team(session, team_id=team_id, member=member, name=name)
+    except TeamHasOtherMembersError:
+        log.info("team_kept_somebody_joined", team_id=team_id, user_id=member.id)
+        return False
+    return True
 
 
 def forget_recordings(job_ids: Sequence[str], *, settings: AudioSettings | None = None) -> int:

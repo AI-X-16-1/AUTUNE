@@ -22,11 +22,15 @@ Two deletions, matching S29's two buttons:
   it keeps as the team's record is its own rule (privacy.md section 4).
 - **Account deletion** -- all of the above, every module's user hook, then
   the ``users`` row, whose foreign keys take sessions, memberships and
-  integrations with it and clear ``participants.user_id``.
+  integrations with it and clear ``participants.user_id``. A team the person
+  is the last member of goes with the account, once they have confirmed it
+  by its name (#817): left behind with nobody on it, it could never be
+  deleted.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import sqlalchemy as sa
@@ -36,7 +40,7 @@ from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance,
 from autune_core.deletion import run_speech_hooks, run_user_hooks
 from autune_core.errors import ConflictError, NotFoundError
 
-from . import invitations
+from . import invitations, team_deletion
 from .models import AudConsentAttestation, AudSpeakerEmbedding
 from .schemas import AccountDeleted, MyData, SpeechDeleted, TeamPrivacy
 from .service import delete_voice_profile, require_team_member
@@ -243,7 +247,9 @@ def delete_my_speech(session: Session, *, user: User) -> SpeechDeleted:
     return SpeechDeleted(utterances=utterances, voice_rows=voice_rows)
 
 
-def delete_account(session: Session, *, user: User) -> AccountDeleted:
+def delete_account(
+    session: Session, *, user: User, team_names: Mapping[str, str] | None = None
+) -> AccountDeleted:
     """Delete ``user`` and everything that is theirs (#358).
 
     **The hooks run first, and a hook that raises stops the deletion.** A
@@ -274,20 +280,54 @@ def delete_account(session: Session, *, user: User) -> AccountDeleted:
     afterwards, it would find nothing and leave every word they said behind.
     A plain ``SELECT`` takes no lock, so reading first does not reopen the
     wait described above.
+
+    **A team they are the last member of is deleted with them** (#817).
+    Without that it would be left with nobody on it, and nobody could ever
+    delete it or what it holds. ``team_names`` maps each such team's id to
+    its name as the person typed it -- the confirmation the last member's
+    own team deletion asks for (#1007), once per team. A team it does not
+    confirm refuses the whole request, before anything is deleted, with the
+    list of teams that would go (``team_deletion.check_account_confirmation``).
+    A team anybody else is on is not touched: the membership goes with the
+    ``users`` row, which is leaving it.
+
+    The teams go through ``team_deletion.delete_team`` itself, so every
+    meeting's ``on_meeting_deleted`` hooks run before any row of it, and
+    every refusal of that path holds here too. **They go after the user
+    hooks, not before**: ``delete_team`` deletes meetings, participants and
+    utterances in this transaction, and a user hook that updates one of
+    those rows in its own session -- A's own clears ``participants.user_id``
+    -- would wait on this request while it waits on the hook. What
+    ``delete_team`` would refuse is checked before the hooks for that
+    reason, so a refusal finds the account and its teams as they were.
     """
     user_id = user.id
+    alone = team_deletion.teams_left_alone_on(session, user_id=user_id)
+    typed = dict(team_names or {})
+    team_deletion.check_account_confirmation(session, user_id=user_id, teams=alone, typed=typed)
     participant_ids = list(session.scalars(_my_participant_ids(user_id)))
     # Their words first, while every module can still find them by utterance
     # id (#587); then everything keyed on the person.
     _tell_modules(session, user_id, participant_ids)
     run_user_hooks(user_id)
+    teams_deleted = sum(
+        team_deletion.delete_with_account(
+            session, team_id=team.team_id, member=user, name=typed[team.team_id]
+        )
+        for team in alone
+    )
     utterances = _delete_utterances(session, participant_ids)
     # Invitations addressed to them hold their address and nothing else finds
     # those rows by it; the ones they sent cascade with the row below (#552).
     invitations.forget_address(session, email=user.email)
     session.execute(sa.delete(User).where(User.id == user_id))
     session.flush()
-    log.info("audio_account_deleted", user_id=user_id, utterances=utterances)
+    log.info(
+        "audio_account_deleted",
+        user_id=user_id,
+        utterances=utterances,
+        teams_deleted=teams_deleted,
+    )
     return AccountDeleted(utterances=utterances)
 
 

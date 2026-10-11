@@ -326,6 +326,20 @@ class TeamDeletion(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class TeamNameConfirmation(TeamDeletion):
+    """One team confirmed by its name, in an account deletion (#817)."""
+
+    team_id: str = Field(min_length=1, max_length=64)
+
+
+class AccountDeletion(BaseModel):
+    """The optional body of ``DELETE /me`` (#817): each team the account is
+    the last member of, with its name typed, as ``TeamDeletion`` asks for one
+    team. Empty, or no body, for an account that is alone on no team."""
+
+    teams: list[TeamNameConfirmation] = Field(default_factory=list, max_length=100)
+
+
 class TeamSummary(BaseModel):
     """A team the caller may open a meeting for. Id and name; nothing else a
     browser needs to fill ``MeetingCreate.team_id``."""

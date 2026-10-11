@@ -264,6 +264,15 @@ person's, those counts are that person's completion record. So:
   deletion** and leaves the account in place to retry (#358): a module's
   per-person rows are found by `user_id`, and deleting the user first would
   leave them unreachable. Every hook must therefore be safe to run twice.
+  **A team the person is the last member of is deleted with the account**
+  (#817): left with nobody on it, it could never be deleted. The request
+  names each such team with its name typed, as the last member's own team
+  deletion asks (below); without that it is refused (409
+  `last_member_of_teams`, listing those teams to the person only) and
+  nothing is deleted. The teams go by that same deletion -- every meeting's
+  `on_meeting_deleted` hooks first, the same refusals, the same list of what
+  stays outside Autune -- after the user hooks and before the `users` row. A
+  team anybody else is on is left, as by leaving it.
 - A user can delete their own data at any time. **The scope of "their own data"
   is under review — see ADR 0007, decision 5**, which would keep action items,
   decisions and lineage derived from a person's speech after that person's
@@ -311,7 +320,8 @@ person's, those counts are that person's completion record. So:
   A member leaves only by their own act
   (`DELETE /api/audio/teams/{team_id}/members/me`), and the last member of a
   team cannot leave it: a team with nobody on it could be neither read nor
-  deleted. What the last member can do is delete the team (the next rule).
+  deleted. What the last member can do is delete the team (the next rule),
+  which their account deletion also does, once confirmed (#817, above).
   This is ADR 0007's ownership rule -- the record belongs to the meeting, and
   leaving is an access change rather than a data change -- **without that
   ADR's mechanism**, which clears `participants.user_id` on departure and

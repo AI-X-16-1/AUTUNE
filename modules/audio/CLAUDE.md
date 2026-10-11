@@ -60,7 +60,10 @@ Contract: `/docs/architecture/contracts.md`.
   Refused while a job of the team is queued or running or a live session is
   open, and for a team anybody else is on. Do not let it run for a team of
   two, do not delete a row before its hooks, and do not catch what
-  `storage.delete_orphan` raises there (`privacy.md` section 4).
+  `storage.delete_orphan` raises there (`privacy.md` section 4). Account
+  deletion runs the same function for each team the person is alone on,
+  once the request names each one, after the user hooks
+  (`account.delete_account`, #817).
 - `aud_speaker_names` — a name typed for a speaker with no account on the
   team, for that one meeting. No user id and no voice; it never reaches the
   published transcript. Cascades with the meeting.

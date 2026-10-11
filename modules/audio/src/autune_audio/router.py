@@ -39,6 +39,7 @@ from .live.routes import router as live_router
 from .persistence import transcript_payload
 from .schemas import (
     AccountDeleted,
+    AccountDeletion,
     ConsentAttestation,
     ConsentState,
     InvitationAccept,
@@ -598,13 +599,25 @@ def delete_my_speech(user: CurrentUser, session: SessionDep) -> SpeechDeleted:
 
 
 @router.delete("/me", response_model=AccountDeleted)
-def delete_account(user: CurrentUser, response: Response, session: SessionDep) -> AccountDeleted:
+def delete_account(
+    user: CurrentUser,
+    response: Response,
+    session: SessionDep,
+    body: AccountDeletion | None = None,
+) -> AccountDeleted:
     """Delete the caller's account and everything that is theirs (#358).
+
+    A team the caller is the last member of goes with it, confirmed in the
+    body by its typed name (#817). Refused with 409 ``last_member_of_teams``
+    (listing those teams) when one is not confirmed, 422
+    ``team_name_mismatch`` and 409 ``team_meeting_in_progress``; see
+    ``account.delete_account``.
 
     The session cookie is cleared in the same response: the token it carries
     names a user who no longer exists, and would answer 401 on every request.
     """
-    deleted = account.delete_account(session, user=user)
+    team_names = {team.team_id: team.name for team in body.teams} if body else {}
+    deleted = account.delete_account(session, user=user, team_names=team_names)
     clear_session_cookie(response)
     return deleted
 
