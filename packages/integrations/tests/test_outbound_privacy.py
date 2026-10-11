@@ -791,3 +791,114 @@ def test_a_long_run_of_line_breaks_after_a_digit_is_scanned_quickly(tail: str) -
     started = time.monotonic()
     find_pii("900101" + tail + "x")
     assert time.monotonic() - started < 2.0
+
+
+# --- A star between two digits (#1200) ------------------------------------------
+#
+# Invented values. `find_pii` lets go of any match holding a star, so text a
+# person typed with a star inside a value passed `find_unmasked`,
+# `assert_masked` and `check_outbound` whole. The guard now also reads one star
+# with a digit directly on each side as a space. `find_pii`, which module A
+# masks by, is unchanged, and a line break is left to `find_pii` (#1223).
+
+STARRED = [
+    pytest.param("010*1234*5678", "phone", id="phone, stars between all groups"),
+    pytest.param("010-1234*5678", "phone", id="phone, one star"),
+    pytest.param("4111*1111*1111*1111", "card", id="card"),
+    pytest.param("900101*1234567", "rrn", id="rrn"),
+    pytest.param("123456*01*234567", "account", id="account"),
+    pytest.param("연락은 010*1234*5678로 주세요", "phone", id="inside a sentence"),
+    pytest.param("010*1234-\n5678", "phone", id="a star, and a break beside a hyphen"),
+]
+
+
+@pytest.mark.parametrize(("text", "category"), STARRED)
+def test_a_value_typed_with_a_star_between_its_digits_is_refused(text: str, category: str) -> None:
+    """Each of these passed the guard (#1200). The detector still reads none of
+    them, which is what keeps module A's masking as it was."""
+    assert find_pii(text) == [], "the detector is unchanged"
+    assert category in find_unmasked(text)
+    with pytest.raises(PrivacyViolationError) as caught:
+        assert_masked(text, destination="slack")
+    for digits in ("1234", "5678", "234567", "1111"):
+        assert digits not in str(caught.value)
+    with pytest.raises(PrivacyViolationError):
+        check_outbound({"blocks": [{"text": text}]}, destination="slack")
+
+
+def test_a_client_refuses_a_starred_value_before_sending() -> None:
+    slack = FakeSlack()
+    with pytest.raises(PrivacyViolationError):
+        slack.post_message("#general", "담당자 010*1234*5678")
+    assert slack.sent == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "1920*1080 해상도",
+        "3*4=12",
+        "2*3*4 = 24",
+        "**굵게** 쓴 문장",
+        "* 첫째 항목\n* 둘째 항목",
+        # Masks module A writes never leave one star alone between two digits.
+        "연락은 010-****-5678 로 주세요",
+        "주민번호 900101-1****** 입니다",
+        "******-1******",
+        "제 번호 010****5432이에요",
+        "카드 ****-****-****-3456 로 결제",
+    ],
+)
+def test_a_star_that_is_not_inside_a_typed_value_is_still_passed(text: str) -> None:
+    assert find_unmasked(text) == []
+    assert_masked(text, destination="slack")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # #1232's decision: a dash and a space at a line's start is a bullet.
+        "- 매출 300000\n- 1200000",
+        "150000\n\n200000",
+        "150000\r\n200000",
+    ],
+)
+def test_the_guard_does_not_read_a_line_break_that_the_detector_lets_go(text: str) -> None:
+    """The guard adds no line-break reading of its own: where a break
+    separates a value is `find_pii`'s call (#1223), so a Markdown list of
+    figures or two figures a blank line apart are still passed."""
+    assert find_pii(text) == []
+    assert find_unmasked(text) == []
+    assert_masked(text, destination="slack")
+
+
+def test_what_the_star_reading_refuses_that_is_nobodys_number() -> None:
+    """The cost, written down. `1024 768 1080` was already refused for the same
+    reason; a sentence the detector reads wrongly cannot be sent or saved
+    (privacy.md, #1130)."""
+    text = "1024*768*1080"
+    assert find_pii(text) == [], "passed until now"
+    assert "account" in find_unmasked(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("010**1234**5678", id="two stars"),
+        pytest.param("010 * 1234 * 5678", id="spaces around the star"),
+        pytest.param("010-1234-*5678", id="a star with a digit on one side only"),
+        pytest.param("**02** 123 4567", id="each group marked on its own"),
+        pytest.param("900101*\n1234567", id="a star at the end of a line"),
+        pytest.param("010-****-5678", id="a value half hidden by hand"),
+    ],
+)
+def test_what_the_star_reading_still_does_not_catch(text: str) -> None:
+    """Known misses, pinned so that a change to any of them is seen. A wider
+    star reading finds numbers in text module A already masked (#1200)."""
+    assert find_unmasked(text) == []
+
+
+def test_the_guard_reports_one_ordered_list_whichever_reading_found_what() -> None:
+    """Ordered as `PII_PATTERNS` is, as before, whatever reading found what."""
+    text = "메일 hong@example.com, 번호 010*1234*5678, 주민 900101-1234567"
+    assert find_unmasked(text) == ["rrn", "phone", "email"]

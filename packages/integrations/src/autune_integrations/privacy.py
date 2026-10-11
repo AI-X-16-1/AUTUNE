@@ -390,13 +390,59 @@ MAX_OUTBOUND_CHARS: Final = 4000
 is never what a feature needs."""
 
 
+# One star with a digit directly on each side, and nothing wider. See
+# ``_guard_readings`` for why the width is exactly this.
+_STAR_BETWEEN_DIGITS: Final = re.compile(rf"(?<=\d){re.escape(MASK_CHAR)}(?=\d)")
+
+
+def _guard_readings(text: str) -> list[str]:
+    """``text`` as written, plus the one reading the guard adds for text a
+    person typed (#1200). Every reading is ``text``'s length, so a position in
+    one is a position in the other.
+
+    **A star between two digits, read as a space.** ``find_pii`` lets go of
+    any match holding ``*``, so that text module A already masked is not read
+    as a value again. A person typing ``010*1234*5678`` or ``900101*1234567``
+    gets the same pass, and every guard that reads this function -- the save
+    checks of B and C, E's report checks, the agent's, ``check_outbound`` --
+    let it through. So one ``*`` with a digit directly on each side is read as
+    a space, and only that. The digits module A's masker keeps
+    (``masking._digits_to_keep``: a mobile prefix and a tail with two or more
+    stars between them, or a resident number's one marker digit with stars on
+    both sides) never leave one star alone between two digits, so this reading
+    is not known to see anything new in masked text; the measurement on #1200
+    found no masked sentence it newly refused. Reading every star as a space
+    (what the document masker of #1199 does, for a document) finds numbers in
+    masked transcripts that are not there, which is why the guard, which also
+    reads masked text, stays this narrow.
+
+    ``find_pii`` is not changed, so what module A masks is not changed. A line
+    break is not read here: ``find_pii`` decides where a break beside a dash
+    separates a value (#1223), and the guard reads what it reads.
+
+    The reading as written always stays: the extra reading can only add to
+    what is refused, whatever the patterns become.
+    """
+    starless = _STAR_BETWEEN_DIGITS.sub(" ", text)
+    return [text] if starless == text else [text, starless]
+
+
 def find_unmasked(text: str) -> list[str]:
     """The categories of personal data still present in ``text``, without repeats.
 
     Ordered as ``PII_PATTERNS`` is, so the same text always reports the same
     list — an exception message and a test both read this.
+
+    Reads ``text`` as written and with a star between two digits taken for a
+    space (``_guard_readings``), and reports what either reading finds. This
+    is the guard's reading only: ``find_pii``, which module A masks by, reads
+    the text as written.
     """
-    found = {category for _, _, category in _most_specific(find_pii(text))}
+    found = {
+        category
+        for reading in _guard_readings(text)
+        for _, _, category in _most_specific(find_pii(reading))
+    }
     ordered: list[str] = []
     for category, _ in PII_PATTERNS:
         if category in found and category not in ordered:
