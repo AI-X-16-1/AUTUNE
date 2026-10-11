@@ -1275,11 +1275,16 @@ calendar, the minutes, the agent's tools and module D are given.
   further, and neither form of it is stored, logged or returned -- the log
   line has the team and counts. An answer is at most five materials, one
   excerpt each of at most 200 characters of one masked piece, never a whole
-  document; every excerpt and title passes `screen_output` on its way out,
-  and a hit the screen still refuses is dropped. A question that asks for a
-  kind of value the masker hides (전화번호, 이메일, ...) gets a notice that it
-  cannot be shown. There is no similarity floor yet: nothing has been
-  measured to set one.
+  document; the excerpt is the window of its piece around the line or
+  sentence that shares most with the masked question. Every excerpt and
+  title passes `screen_output` on its way out, and a hit the screen still
+  refuses is dropped. A question that asks for a kind of value the masker
+  hides (전화번호, 이메일, ...) gets a notice that it cannot be shown, and the
+  note that stars are hidden values comes only with an excerpt that shows a
+  run the masker made. A material whose nearest piece is under
+  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY` (cosine, 0.4 by default)
+  is not a hit; with none left the answer is empty and says nothing close
+  enough was found. 0.4 is a starting point for KURE-v1, not a measurement.
 - The assistant's tool (`tools.find_materials`, in `TOOLS`) reads through the
   same search, for the run's team only; the question is its one argument
   besides the team, and it is not in the result, a log line, `agent_runs` or

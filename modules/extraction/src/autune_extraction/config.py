@@ -450,6 +450,24 @@ class ExtractionSettings(BaseSettings):
     material_embedder_endpoint: str = ""
     """Our own inference server, required when ``material_embedder_impl=hosted``."""
 
+    material_search_min_similarity: float = Field(default=0.4, ge=-1, le=1)
+    """Below this cosine similarity to the masked question, an uploaded
+    material's nearest piece is not a hit (#817, ``material_search``). A
+    search with nothing at or above it answers no materials and says nothing
+    close enough was found, rather than the nearest unrelated ones.
+
+    **0.4 by default, a starting point and not a measurement.** It is set
+    for the embedder a team would run, KURE-v1 (``local`` or ``hosted``), a
+    fine-tune of bge-m3: in that family unrelated Korean text still lands around 0.2 to
+    0.4 -- the vectors share a direction, so the scale does not start at 0 --
+    while a question and the passage that answers it usually land at 0.5 or
+    above. 0.4 cuts the clearly unrelated band and leaves a margin under the
+    related one, so a weak but real hit is kept rather than lost. Nobody has
+    run it on a team's materials yet: tune it on real questions with known
+    answers before trusting it, and raise it if unrelated materials still
+    come back. The ``fake`` embedder counts shared characters, so its scores
+    mean nothing on this scale; its tests set this explicitly."""
+
     material_search_tool: bool = False
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
 
