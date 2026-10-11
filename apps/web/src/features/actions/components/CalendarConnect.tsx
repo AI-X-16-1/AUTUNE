@@ -55,6 +55,20 @@ import { getNotificationPause } from "../api";
  * signed in to, which is where a connected person's due dates were put. */
 const GOOGLE_CALENDAR = "https://calendar.google.com/calendar/";
 
+/**
+ * The connect button's label is the longest on 설정 > 연동, and a button's label
+ * is one line at a fixed height by the shared rule. In a column narrower than
+ * the label it pushed the whole page sideways (9 px on a 390 px screen, where
+ * the sidebar leaves the column 134 px). Here it may take a second line
+ * instead, broken between words; where it fits, the minimum height keeps it
+ * the size it was.
+ *
+ * `!`: the height is an inline style of the shared button, and only an
+ * important rule is read over one.
+ */
+const WRAPS =
+  "h-auto! min-h-[var(--control-h-compact)] max-w-full whitespace-normal! break-keep text-left";
+
 export function CalendarConnect() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -142,7 +156,7 @@ export function CalendarConnect() {
           </Button>
         </>
       ) : (
-        <Button tone="text" size="compact" onClick={connect}>
+        <Button tone="text" size="compact" className={WRAPS} onClick={connect}>
           내 Google 캘린더에 마감일 넣기
         </Button>
       )}

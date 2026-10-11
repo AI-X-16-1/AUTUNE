@@ -2,17 +2,23 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "@/shared/ui/Button";
 
 import { attestConsent } from "../api";
+import { useEndingSoon } from "../hooks/useEndingSoon";
+import { useLiveResearch } from "../hooks/useLiveResearch";
 import { useLiveSession, type LivePhase } from "../hooks/useLiveSession";
+import { useMeetingTeam } from "../hooks/useMeetingTeam";
 import { useMeetingTitle } from "../hooks/useMeetingTitle";
 import { useMicrophone, type Microphone } from "../hooks/useMicrophone";
+import { forgetPlannedEnd } from "../plannedEnd";
 import type { RecordingState } from "../types";
+import { LiveResearchPanel } from "./LiveResearchPanel";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
+import { Spinner } from "./Spinner";
 import { UploadFailed } from "./UploadFailed";
 
 /** The phases in which closing the tab loses audio that is not yet uploaded. */
@@ -51,13 +57,41 @@ const LEAVING_LOSES_AUDIO = new Set<LivePhase>([
  * prompt during a recording — see its own docstring for why (no `Participant`
  * row exists until the meeting is processed) — so this screen does not need
  * the meeting's `team_id` and does not poll for it.
+ *
+ * **Five minutes before the planned end** (S14's small cut, #1147) the screen
+ * draws what the page put in `endingSoon`, above the transcript. This screen
+ * owns only the *when*: the end this tab was told on the new-meeting screen
+ * (`plannedEnd`) and one timer to five minutes before it (`useEndingSoon`),
+ * counted only while the recording is under way. What is drawn is another
+ * module's, so the page supplies it and is handed the meeting's team — read
+ * once, at that moment, and never for a meeting with no planned end. With no
+ * planned end, or nothing in the slot, the screen is as it was.
  */
-export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
+export function LiveMeetingScreen({
+  meetingId,
+  notice,
+  endingSoon,
+}: {
+  meetingId: string;
+  /** Drawn above the gate's consent row. The page fills it; see its file. */
+  notice?: ReactNode;
+  /** Drawn above the transcript from five minutes before the planned end. */
+  endingSoon?: (teamId: string) => ReactNode;
+}) {
   const router = useRouter();
   const microphone = useMicrophone();
   const title = useMeetingTitle(meetingId);
   const live = useLiveSession(meetingId, microphone.stream);
+  const [stopping, setStopping] = useState(false);
   const [consented, setConsented] = useState(false);
+  // Live research is covered by the consent attested at the gate: a recording
+  // started with the box unticked is stored, not analysed, so no row is sent
+  // and no line can be looked up (the agent's routes refuse it too, #1162).
+  const liveResearch = useLiveResearch(
+    meetingId,
+    live.rows,
+    live.phase === "recording" && consented,
+  );
   const [consentPending, setConsentPending] = useState(false);
   const [consentError, setConsentError] = useState<string | null>(null);
 
@@ -109,8 +143,19 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
 
   // Navigation is a side effect, not something to run during render.
   useEffect(() => {
-    if (live.phase === "done") router.push(`/meetings/${meetingId}`);
+    if (live.phase !== "done") return;
+    // The recording is in; the end this tab was told has nothing left to time.
+    forgetPlannedEnd(meetingId);
+    router.push(`/meetings/${meetingId}`);
   }, [live.phase, meetingId, router]);
+
+  // S14's small cut. Timed only while the recording is under way, and the
+  // team is read only once the moment has come and there is a slot to fill.
+  const ending = useEndingSoon(
+    meetingId,
+    endingSoon !== undefined && (livePhase === "recording" || livePhase === "paused"),
+  );
+  const endingTeamId = useMeetingTeam(meetingId, ending);
 
   const onConsent = async (checked: boolean) => {
     setConsented(false);
@@ -133,13 +178,14 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
   };
 
   const onStop = async () => {
-    await live.stop();
+    setStopping(true);
+    try {
+      await live.stop();
+    } finally {
+      setStopping(false);
+    }
     microphone.stop();
   };
-
-  if (live.phase === "done") {
-    return null;
-  }
 
   const recording: RecordingState | null =
     live.phase === "recording" || live.phase === "connecting"
@@ -184,6 +230,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           <InputDevice microphone={microphone} />
         </section>
 
+        {notice}
         <label className="mt-6 flex items-start gap-3" style={{ fontSize: "var(--text-body)" }}>
           <input
             type="checkbox"
@@ -193,7 +240,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           <span>
             이 회의 참석자 전원이 녹음과 분석에 동의했습니다.
             <span className="block text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
-              체크하지 않으면 녹음은 되지만 액션 아이템과 갭은 분석되지 않습니다.
+              체크하지 않으면 녹음은 되지만 할 일과 갭은 분석되지 않습니다.
             </span>
           </span>
         </label>
@@ -244,11 +291,22 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
     );
   }
 
-  if (live.phase === "uploading" || live.phase === "upload_failed") {
+  // "done" waits for the router to load the meeting page; an empty screen
+  // there read as the app having stopped.
+  if (live.phase === "uploading" || live.phase === "upload_failed" || live.phase === "done") {
     return frame(
       <main className="max-w-[776px] px-[var(--space-page)] py-[var(--space-24)]">
-        <p style={{ fontSize: "var(--text-body)" }}>
-          {live.phase === "uploading" ? "녹음을 올리는 중입니다…" : "업로드에 실패했습니다."}
+        <p
+          role="status"
+          className="flex items-center"
+          style={{ gap: "var(--space-8)", fontSize: "var(--text-body)" }}
+        >
+          {live.phase === "upload_failed" ? null : <Spinner />}
+          {live.phase === "uploading"
+            ? "녹음을 올리는 중입니다…"
+            : live.phase === "done"
+              ? "회의 페이지로 이동하는 중입니다…"
+              : "업로드에 실패했습니다."}
         </p>
         {live.phase === "upload_failed" && (
           <UploadFailed
@@ -284,6 +342,7 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
           라이브 전사가 끊겼습니다. 녹음은 계속되고, 정지하면 전체 녹음이 올라갑니다.
         </p>
       )}
+      {ending && endingTeamId !== null ? endingSoon?.(endingTeamId) : null}
       <LiveTranscript
         state={state}
         rows={live.rows}
@@ -293,6 +352,9 @@ export function LiveMeetingScreen({ meetingId }: { meetingId: string }) {
         onPause={live.pause}
         onResume={live.resume}
         onStop={() => void onStop()}
+        stopping={stopping}
+        onResearch={consented ? (index) => void liveResearch.research(index) : undefined}
+        research={consented ? <LiveResearchPanel docs={liveResearch.docs} /> : undefined}
       />
     </>,
   );

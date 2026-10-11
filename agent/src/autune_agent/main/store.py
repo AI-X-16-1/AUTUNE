@@ -37,7 +37,7 @@ from .actions import Action, ActionPrivacyViolationError, collect_actions, execu
 from .graph import MainState, run
 from .notify import tell_approvers
 from .own_tools import collect_own_actions
-from .pending import queue_l2
+from .pending import queue_l2, retire_team_wide
 from .registry import BudgetExceededError, CallBudget, RunScope, Tool
 from .router import Router
 from .subagents import Subagent, collect_subagents
@@ -136,8 +136,9 @@ def run_and_record(
     if row.outcome == "answered":
         session.flush()  # row.id for the queue
         outcome = state.get("outcome")
+        woken = subagents.get(row.route or "")
+        team_wide = woken is not None and woken.proposals_per == "team"
         if outcome is not None and outcome.proposed:
-            woken = subagents.get(row.route or "")
             row.actions = [
                 *row.actions,
                 *queue_l2(
@@ -145,9 +146,15 @@ def run_and_record(
                     run=row,
                     proposed=outcome.proposed,
                     actions=declared,
-                    team_wide=woken is not None and woken.proposals_per == "team",
+                    team_wide=team_wide,
                 ),
             ]
+        elif team_wide and outcome is not None and outcome.result.ok:
+            # Nothing to queue, so ``queue_l2`` would never retire the last
+            # run's cards; a judgment of the team that proposes nothing
+            # replaces them all the same (#1096). Not when the subagent's read
+            # failed: that run saw nothing, and says nothing about the cards.
+            retire_team_wide(session, run=row)
     session.commit()
     if notify and row.outcome == "answered":
         tell_approvers(session, team_id=team_id, run_ids=[row.id], asked_by=requested_by)

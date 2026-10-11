@@ -123,6 +123,25 @@ def stalled_from(result: ToolResult) -> list[Stalled]:
     return found
 
 
+def late_not_shown(result: ToolResult) -> int:
+    """How many late confirmed items the tool counted beyond the rows it gave.
+
+    The tool keeps five rows and gives the longest late first; each confirmed
+    row says how many are late in all (``overdue_in_all``). A number and
+    nothing more -- which items those are, and whose, stays in module B. ``0``
+    when no row carries the count.
+    """
+    in_all = shown = 0
+    for row in result.items:
+        extra = _extra(row)
+        ways = extra.get("stalled")
+        shown += isinstance(ways, list) and "overdue" in ways
+        counted = extra.get("overdue_in_all")
+        if isinstance(counted, int) and not isinstance(counted, bool):
+            in_all = max(in_all, counted)
+    return max(0, in_all - shown)
+
+
 def new_due_date(today: date) -> date:
     """``MOVE_BY_DAYS`` after ``today``, and the Monday after when that is a
     weekend. Public holidays are not looked at: the table of them is module
@@ -135,7 +154,7 @@ def new_due_date(today: date) -> date:
 
 def plan_moves(items: list[Stalled], *, today: date) -> list[Move]:
     """A move for each late item, ``MAX_PROPOSALS`` at most, in the tool's
-    order -- late and long carried first. One proposal an item."""
+    order -- the longest late first. One proposal an item."""
     late = [item for item in items if item.overdue]
     return [Move(item=item, due_date=new_due_date(today)) for item in late[:MAX_PROPOSALS]]
 

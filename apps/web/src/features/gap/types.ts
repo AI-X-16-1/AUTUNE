@@ -149,6 +149,18 @@ export interface GapAsk {
   slack: SlackOutcome;
 }
 
+/**
+ * What "질문 카드 Slack 전송" did — `POST /api/gap/reports/{meeting_id}/slack`
+ * (`GapCardsSent`, #824): how many open high gaps the meeting has, how many
+ * went to the team's Slack channel as question cards, and what the channel did.
+ */
+export interface GapCardsSent {
+  meeting_id: string;
+  high: number;
+  sent: number;
+  slack: SlackOutcome;
+}
+
 /** One event on the caller's own calendar (`GapCalendarEvent`). */
 export interface GapCalendarEvent {
   id: string;

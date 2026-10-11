@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createDecision, deleteDecision, getReview, reviewDecision } from "../api";
+import { withTitles } from "../titleReads";
 import type { DecisionStatus, MeetingReview, ReviewDecision } from "../types";
 
 /** What the last settled request for one meeting left behind. */
@@ -63,6 +64,27 @@ export function useDecisionReview(meetingId: string) {
     void reload();
   }, [reload]);
 
+  /**
+   * Take the titles written since the review was read, and nothing else
+   * (`titleReads`): a decision confirmed or reworded while this read was in
+   * flight stays as the person left it. A read that fails says nothing --
+   * the rows are as they were, each showing its sentence cut.
+   */
+  const readTitles = useCallback(async () => {
+    try {
+      const read = await getReview(meetingId);
+      setState((previous) => {
+        if (previous.meetingId !== meetingId || previous.review === null) return previous;
+        const decisions = withTitles(previous.review.decisions, read.decisions, (d) => d.statement);
+        return decisions === previous.review.decisions
+          ? previous
+          : { ...previous, review: { ...previous.review, decisions } };
+      });
+    } catch {
+      // Nothing to say: no row changed, and the next read asks again.
+    }
+  }, [meetingId]);
+
   /** Put one decision the server returned in place of the local one. */
   const replace = useCallback(
     (decision: ReviewDecision, append = false) =>
@@ -111,7 +133,17 @@ export function useDecisionReview(meetingId: string) {
   );
 
   if (state.meetingId !== meetingId) {
-    return { review: null, loading: true, error: null, reload, setStatus, reword, add, remove };
+    return {
+      review: null,
+      loading: true,
+      error: null,
+      reload,
+      readTitles,
+      setStatus,
+      reword,
+      add,
+      remove,
+    };
   }
-  return { ...state, reload, setStatus, reword, add, remove };
+  return { ...state, reload, readTitles, setStatus, reword, add, remove };
 }

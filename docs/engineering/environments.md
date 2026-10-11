@@ -324,7 +324,10 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_EXTRACTION_NLI_FALLBACK_MODEL` | B | Asked when `NLI_MODEL` stays unavailable. **Blank by default**: no second model answers step 4 unless one is named |
 | `AUTUNE_EXTRACTION_CANDIDATE_CONFIDENCE` | B | Below this, an item is a candidate rather than asserted. **Blank by default** — the number comes from the evaluation set (#10), and blank means nothing is a candidate |
 | `AUTUNE_EXTRACTION_RESOLVER_IMPL` | B | `local` · `hosted` · `llm` · `fake` (#175). **Default `fake`** — unlike the classifier, since the model candidate is not yet confirmed. `llm` is the Gemini API through the same `AUTUNE_EXTRACTION_LLM_*` settings as `CLASSIFIER_IMPL=llm`: opt-in, needs `LLM_API_KEY` and no checkpoint, sends the commitment and the lines around it with the team's names replaced, and a free-tier key is for dummy meetings only. **No `external`**, same reason as the classifier |
-| `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392` | B | `true` · `false`. Default `false`. Required, as `true`, for `CLASSIFIER_IMPL=llm` / `llm_checked`, `RESOLVER_IMPL=llm`, `SUMMARY_IMPL=llm` or `NLI_IMPL=llm`: without it B's settings refuse to load (#392). Turns nothing on by itself — see below |
+| `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392` | B | `true` · `false`. Default `false`. Required, as `true`, for `CLASSIFIER_IMPL=llm` / `llm_checked`, `RESOLVER_IMPL=llm`, `SUMMARY_IMPL=llm`, `TITLE_IMPL=llm` or `NLI_IMPL=llm`: without it B's settings refuse to load (#392). Turns nothing on by itself — see below |
+| `AUTUNE_EXTRACTION_TITLE_IMPL` | B | `none` · `llm`. **Default `none`**: a card and a decision row then show the sentence cut at twenty characters, as before. `llm` asks the Gemini API, through the same `AUTUNE_EXTRACTION_LLM_*` settings, for a title of twenty characters or fewer for each action item and decision an extraction wrote — one request a meeting, after the extraction. Opt-in like every cloud step: needs `LLM_API_KEY` and `LLM_ACKNOWLEDGED_392`, and a free-tier key is for dummy meetings only. It sends only sentences the pipeline wrote (never one a person typed, edited or reworded), masked, with the team's names replaced and a decision's owner and deadline left off; a title that fails the rules in `pipeline/title.py` is dropped. Titles are shown on Autune's screens only; nothing sent to Jira, Notion, Slack or a calendar changes |
+| `AUTUNE_EXTRACTION_TITLE_MODEL` | B | The model `TITLE_IMPL=llm` asks first. Default `gemini-3.5-flash-lite` |
+| `AUTUNE_EXTRACTION_TITLE_FALLBACK_MODEL` | B | Answers when `TITLE_MODEL` stays unavailable. Default `gemini-3.8-flash`. Blank disables the fallback |
 | `AUTUNE_EXTRACTION_RESOLVER_CHECKPOINT` | B | Local model path/hub id, or the hosted model's recorded version. Required for `local`/`hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_ENDPOINT` | B | Our own inference server. Required when `RESOLVER_IMPL=hosted` |
 | `AUTUNE_EXTRACTION_RESOLVER_MODEL` | B | The model `RESOLVER_IMPL=llm` asks first. Default `gemini-3.5-flash-lite`. Its own setting, apart from `LLM_MODEL` (the classifier's) |
@@ -423,24 +426,41 @@ Module B classifies every utterance in a meeting, so an external implementation
 sends the whole meeting's text to somebody else's model — which section 6 of
 `../architecture/privacy.md` makes a design conversation rather than a value you
 can set. Module B added `llm` as an opt-in after the 2026-09-23 mentoring, and
-the conversation is #392. Until #392 is settled:
+the conversation is #392. It has settled how the team's dev site -- the
+deployment built from the `dev` branch -- runs it, and not yet whether a real
+service may:
 
 - `llm` is never the default, and nothing selects it for you.
 - **It has to be switched on twice.** With `AUTUNE_EXTRACTION_CLASSIFIER_IMPL`
   set to `llm` or `llm_checked`, or `AUTUNE_EXTRACTION_RESOLVER_IMPL`,
-  `AUTUNE_EXTRACTION_SUMMARY_IMPL` or `AUTUNE_EXTRACTION_NLI_IMPL` set to
-  `llm`, module B's settings refuse to load unless
+  `AUTUNE_EXTRACTION_SUMMARY_IMPL`, `AUTUNE_EXTRACTION_TITLE_IMPL` or
+  `AUTUNE_EXTRACTION_NLI_IMPL` set to `llm`, module B's settings refuse to
+  load unless
   `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well — the worker and
   the API do not start (the API with every other module, since it imports each
   router), and the error names the variable.
-  "Dummy meetings only" and "a paid key" are rules the code cannot check; the
-  flag makes sending speech to a provider something a deployment says twice.
+  Which meetings go through and whether the key is a paid one are rules the
+  code cannot check; the flag makes sending speech to a provider something a
+  deployment says twice.
   It turns nothing on by itself, and deleting it is the migration once #392 is
   decided. It is not keyed on `AUTUNE_ENV`: `.env.example` ships
   `AUTUNE_ENV=local`, so a deployment made from that file would be the one let
   through.
-- Use it on dummy meetings only. A free-tier key may let the provider keep what
-  it is sent; a real meeting needs a paid key and #392's answer.
+- **On a free-tier key, dummy meetings only.** A free-tier key may let the
+  provider keep what it is sent.
+- **On the dev site, the team's own meetings only** (#392, 2026-10-05, out of
+  the review of #818; the four other owners approved #818 and #748 under it).
+  Its keys are paid. A meeting with a participant from outside the team is not
+  uploaded there: a name that is not on the team's roster is not replaced
+  (below) and leaves as it was spoken, and that is accepted for the team's own
+  people only. Nothing in the code knows who was in the room, so this binds
+  whoever uploads, and the upload form and the live gate say it above their
+  consent row on any server that sets a cloud implementation
+  (`../modules/extraction.md`, `GET /cloud-model`). The owners agreed to it
+  for the 10-09 gate and the 10-12 demo; whether the dev site keeps `llm`
+  after the demo is #392's to say.
+- **A real service: not decided.** Anybody else's meeting needs #392's answer,
+  and with it an answer to the overseas-transfer question it put on #92.
 
 What it sends is utterance text as module A masked it and a fixed instruction —
 no speaker, no id, no meeting title — in windows under the 4,000-character

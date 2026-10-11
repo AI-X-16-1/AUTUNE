@@ -76,6 +76,24 @@ def _needs_approval(proposal: ProposedAction, actions: Mapping[str, Action]) -> 
     return action is not None and action.level == "L2"
 
 
+def _waiting_before(run: AgentRun, subagent: str) -> tuple[Any, ...]:
+    """The rows a run of ``subagent`` may replace: its team's, that subagent's,
+    still ``pending``, and not this run's own.
+
+    One condition for ``queue_l2`` and ``retire_team_wide``, so a run that
+    proposes and a run that proposes nothing cannot come to disagree about
+    which cards are the earlier ones (#1096).
+    """
+    return (
+        AgentPendingAction.team_id == run.team_id,
+        AgentPendingAction.subagent == subagent,
+        AgentPendingAction.status == "pending",
+        # One run's proposals never supersede each other; a row whose run was
+        # deleted (run_id NULL) is older than any run.
+        or_(AgentPendingAction.run_id.is_(None), AgentPendingAction.run_id != run.id),
+    )
+
+
 def queue_l2(
     session: Session,
     *,
@@ -112,6 +130,10 @@ def queue_l2(
     whose processing woke them is not what a move is about -- the item's
     meeting is, and the approval card names the row's meeting (#854). A run
     about its own meeting keeps it, as before, whatever its proposal names.
+
+    A row is retired here only as another is queued. A team-wide run that
+    proposes nothing never comes here; ``retire_team_wide`` is that half
+    (#1096).
     """
     refused: list[dict[str, Any]] = []
     subagent = run.route or ""
@@ -163,15 +185,7 @@ def queue_l2(
                     )
             session.execute(
                 update(AgentPendingAction)
-                .where(
-                    AgentPendingAction.team_id == run.team_id,
-                    *narrower,
-                    AgentPendingAction.subagent == subagent,
-                    AgentPendingAction.status == "pending",
-                    # One run's proposals never supersede each other; a row whose
-                    # run was deleted (run_id NULL) is older than any run.
-                    or_(AgentPendingAction.run_id.is_(None), AgentPendingAction.run_id != run.id),
-                )
+                .where(*_waiting_before(run, subagent), *narrower)
                 .values(status="superseded")
             )
         session.add(
@@ -189,6 +203,27 @@ def queue_l2(
         )
         session.flush()
     return refused
+
+
+def retire_team_wide(session: Session, *, run: AgentRun) -> None:
+    """Supersede what the team-wide subagent of ``run`` left waiting, when
+    ``run`` judged the team again and proposed nothing (#1096).
+
+    ``queue_l2`` retires the earlier rows as it queues a new one, so a run
+    with no proposal never reached that and its subagent's old cards stayed.
+    Proposing nothing is a judgment too -- "nothing needs doing now" -- and an
+    approver who pressed an old card ran a change the later run had found no
+    reason for: a date a person had set by hand since was moved back.
+
+    The caller decides when: a team-wide subagent, a run that answered, and a
+    result that is ``ok``. A run whose read failed proposed nothing because it
+    saw nothing, and its subagent's cards are left as they are.
+    """
+    session.execute(
+        update(AgentPendingAction)
+        .where(*_waiting_before(run, run.route or ""))
+        .values(status="superseded")
+    )
 
 
 class PendingNotFoundError(NotFoundError):

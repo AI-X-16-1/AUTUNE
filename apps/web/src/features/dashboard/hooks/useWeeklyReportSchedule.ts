@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
+import { onAgentActed } from "@/shared/lib/agentActed";
 
 import { getWeeklyReportSchedule, setWeeklyReportSchedule } from "../api";
 import type { WeeklyReportSchedule } from "../types";
@@ -12,10 +13,15 @@ type Choice = Pick<WeeklyReportSchedule, "weekday" | "hour" | "send_empty">;
 /**
  * When the team's weekly report goes out, and a member's change to it (#227).
  * Loaded on its own, so a failure here leaves the rest of the dashboard standing.
+ * Read again when the assistant changed something (#1055): a schedule asked for
+ * in chat is saved on the server, and the card showed the old one until a reload.
  */
 export function useWeeklyReportSchedule(teamId: string) {
   const [schedule, setSchedule] = useState<WeeklyReportSchedule | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [acted, setActed] = useState(0);
+
+  useEffect(() => onAgentActed(() => setActed((n) => n + 1)), []);
 
   useEffect(() => {
     let live = true;
@@ -32,7 +38,7 @@ export function useWeeklyReportSchedule(teamId: string) {
     return () => {
       live = false;
     };
-  }, [teamId]);
+  }, [teamId, acted]);
 
   /** Saves a change; resolves to an error message, or null when it was saved. */
   const save = useCallback(

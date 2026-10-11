@@ -90,6 +90,23 @@ def test_compose_sends_the_summary_and_titles_and_falls_back_to_the_summary() ->
     assert "API 문서" in text
 
 
+def test_compose_answers_as_the_assistant_not_about_its_findings() -> None:
+    """A reply began "제공된 요약에 따르면" (2026-10-09): the model echoed the label
+    it was handed. The findings carry no label to echo, and the instructions say
+    to answer directly, with what was checked and the next step when empty."""
+    from autune_agent.main.gemini import COMPOSE_INSTRUCTIONS
+
+    sent: list[dict[str, Any]] = []
+    outcome = SubagentResult(result=ToolResult(ok=True, summary="마감 1건."))
+
+    _router("답변", sent).compose("마감 뭐 있어?", outcome)
+
+    text = sent[0]["body"]["contents"][0]["parts"][0]["text"]
+    assert "요약:" not in text
+    assert "제공된" in COMPOSE_INSTRUCTIONS
+    assert "next step" in COMPOSE_INSTRUCTIONS
+
+
 def test_compose_keeps_a_title_that_ends_in_a_colon() -> None:
     sent: list[dict[str, Any]] = []
     result = ToolResult(
@@ -254,9 +271,9 @@ def _limited_router(sent: list[dict[str, Any]]) -> GeminiRouter:
 
 def test_compose_falls_back_to_the_summary_when_the_model_is_out_of_quota() -> None:
     # The tools already answered; a 429 on the last call must not turn that into a 500.
-    outcome = SubagentResult(result=ToolResult(ok=True, summary="열린 액션 2건."))
+    outcome = SubagentResult(result=ToolResult(ok=True, summary="열린 할 일 2건."))
 
-    assert _limited_router([]).compose("열린 거?", outcome) == "열린 액션 2건."
+    assert _limited_router([]).compose("열린 거?", outcome) == "열린 할 일 2건."
 
 
 def test_compose_trims_its_findings_to_fit_the_outbound_limit() -> None:

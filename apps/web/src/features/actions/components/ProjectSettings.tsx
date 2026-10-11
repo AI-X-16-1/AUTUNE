@@ -11,6 +11,7 @@ import {
   listProjects,
   updateProject,
 } from "../api";
+import { typedTextRefusal } from "../refusal";
 import type { Project } from "../types";
 import { NameSuggestions } from "./NameSuggestions";
 
@@ -43,12 +44,15 @@ export function ProjectSettings({ teamId }: { teamId: string }) {
     ) : null;
   }
 
-  const refused = (cause: unknown) =>
+  // Says why, and answers the row that nothing was saved.
+  const refused = (cause: unknown) => {
     setNote(
       cause instanceof ApiError && cause.status === 409
         ? "같은 이름의 프로젝트가 이미 있습니다."
-        : "저장하지 못했습니다. 이름과 Jira 키를 확인해 주세요.",
+        : (typedTextRefusal(cause) ?? "저장하지 못했습니다. 이름과 Jira 키를 확인해 주세요."),
     );
+    return false;
+  };
 
   return (
     <div className="flex flex-col gap-2" aria-label="프로젝트">
@@ -68,6 +72,7 @@ export function ProjectSettings({ teamId }: { teamId: string }) {
                     (list ?? []).map((p) => (p.id === saved.id ? saved : p)),
                   );
                   setNote("저장했습니다.");
+                  return true;
                 })
                 .catch(refused)
             }
@@ -92,6 +97,7 @@ export function ProjectSettings({ teamId }: { teamId: string }) {
             .then((saved) => {
               setProjects((list) => [...(list ?? []), saved]);
               setNote("프로젝트를 추가했습니다.");
+              return true;
             })
             .catch(refused)
         }
@@ -130,7 +136,7 @@ function ProjectRow({
     name: string;
     aliases: string[];
     jira_project_key: string | null;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
   onDelete?: () => Promise<void>;
 }) {
   const [name, setName] = useState(project?.name ?? "");
@@ -146,7 +152,7 @@ function ProjectRow({
   const save = async () => {
     setBusy(true);
     try {
-      await onSave({
+      const saved = await onSave({
         name,
         aliases: aliases
           .split(",")
@@ -154,7 +160,10 @@ function ProjectRow({
           .filter(Boolean),
         jira_project_key: jira.trim() || null,
       });
-      if (!project) {
+      // The empty row is cleared for the next project only once this one is
+      // in: a name refused -- taken, or read as personal data (#1130) -- stays
+      // to be fixed.
+      if (saved && !project) {
         setName("");
         setAliases("");
         setJira("");
@@ -169,13 +178,16 @@ function ProjectRow({
       className="flex flex-wrap items-center gap-2"
       style={{ listStyle: "none" }}
     >
+      {/* `max-w-full`: a text field is as wide as its twenty characters whatever
+          holds it, and in a column narrower than that the two here pushed the
+          page sideways (390 px screen). They stop at the row's width instead. */}
       <input
         aria-label="프로젝트 이름"
         placeholder={project ? undefined : "새 프로젝트 이름"}
         value={name}
         maxLength={100}
         onChange={(event) => setName(event.target.value)}
-        className="border border-[var(--color-hairline)]"
+        className="max-w-full border border-[var(--color-hairline)]"
         style={input}
       />
       <input
@@ -183,7 +195,7 @@ function ProjectRow({
         placeholder="별칭 (쉼표로 구분)"
         value={aliases}
         onChange={(event) => setAliases(event.target.value)}
-        className="border border-[var(--color-hairline)]"
+        className="max-w-full border border-[var(--color-hairline)]"
         style={input}
       />
       <input

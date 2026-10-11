@@ -10,6 +10,7 @@ import { Button } from "@/shared/ui";
 
 import { deleteMaterial, listMaterials, registerMaterial } from "../api";
 import { localToday } from "../dates";
+import { typedTextRefusal } from "../refusal";
 import type { Material } from "../types";
 
 type Team = SessionUser["teams"][number];
@@ -236,7 +237,7 @@ function RegisterForm({
         cause instanceof ApiError && cause.status === 409
           ? "이 팀에 이미 등록된 파일입니다."
           : cause instanceof ApiError && cause.status === 422
-            ? "등록하지 못했습니다. 제목과 링크를 확인해 주세요."
+            ? (typedTextRefusal(cause) ?? "등록하지 못했습니다. 제목과 링크를 확인해 주세요.")
             : "등록하지 못했습니다. 잠시 후 다시 시도해 주세요.",
       );
     } finally {

@@ -57,7 +57,7 @@ def test_a_quoted_line_cannot_mention_a_channel_or_disguise_a_link() -> None:
 def test_the_answer_is_a_link_to_autune_not_a_button() -> None:
     """A deployed stack has no receiver for a Slack click yet (#585): a button
     there would do nothing when pressed. The speaker answers on the meeting's
-    액션 tab instead."""
+    할 일 tab instead."""
     _, blocks = build_confirmation_dm(utterance_id=UTTERANCE, quoted_text=QUOTED, answer_url=URL)
 
     assert not [block for block in blocks if block["type"] == "actions"]

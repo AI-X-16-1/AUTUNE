@@ -5,19 +5,23 @@ way the 10/9 demo does (spec section 8, end to end), with everything below the
 event real: C detects the gaps of two meetings of one team, the second leaving a
 template item open again; ``autune.intelligence.completed`` wakes Follow-up
 through ``on_event``; its proposal waits in ``agent_pending_actions`` with ids
-only; the team lead approves it through the approvals routes; and B's
-``add_followup_item`` puts one unconfirmed "후속 회의 잡기" item on the board.
+only; the team lead approves it through the approvals routes; and C's
+``schedule_followup_meeting`` puts the meeting on the lead's own calendar, with
+nobody invited (#756). Google is the one fake: what is under test is
+that approval reaches it as the lead, once.
 
-C's detection and B's write each open their own ``session_scope`` and commit, so
-the seed is committed too and the team is deleted at the end, taking its
-meetings and ``agent_`` rows with it.
+C's detection opens its own ``session_scope`` and commits, so the seed is
+committed too and the team is deleted at the end, taking its meetings and
+``agent_`` and ``gap_`` rows with it.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -34,7 +38,7 @@ from autune_agent.main.pending import arguments_ok
 from autune_agent.main.triggers import on_event
 from autune_agent.models import AgentApprover, AgentPendingAction, AgentRun
 from autune_agent.subagents.followup import SUBAGENT
-from autune_agent.subagents.followup.graph import OPEN_ITEM, WRITE
+from autune_agent.subagents.followup.graph import OPEN_ITEM, UPCOMING, WRITE
 from autune_contracts import INTELLIGENCE_COMPLETED
 from autune_core import (
     Meeting,
@@ -50,8 +54,15 @@ from autune_core.errors import AutuneError
 from autune_extraction import service as extraction_service
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.models import ExtActionItem
+from autune_gap import calendar_writes
 from autune_gap import service as gap_service
-from autune_gap.models import GapGap, GapParticipation, GapTopic
+from autune_gap.models import (
+    GapAgendaEvent,
+    GapFollowupEvent,
+    GapGap,
+    GapParticipation,
+    GapTopic,
+)
 
 COVERS_TWO = {"핵심 지표": 1.0, "담당자": 0.9}
 """Matches ``general``'s ``success_criteria`` and ``ownership`` only, so a
@@ -74,6 +85,31 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_settings",
         lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
     )
+
+
+class FakeGoogle:
+    """The lead's calendar: every event made on it."""
+
+    def __init__(self) -> None:
+        self.made: list[dict[str, Any]] = []
+
+    def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        assert (method, path) == ("POST", "/calendars/primary/events")
+        self.made.append(kwargs["json"])
+        return {"id": f"evt_{len(self.made)}"}
+
+
+@pytest.fixture
+def google(monkeypatch: pytest.MonkeyPatch, team: dict[str, str]) -> FakeGoogle:
+    """Only the lead has a calendar connected."""
+    lead = FakeGoogle()
+
+    @contextmanager
+    def calendar_of(_session: Session, user_id: str) -> Iterator[tuple[Any, str] | None]:
+        yield (lead, "primary") if user_id == team["lead"] else None
+
+    monkeypatch.setattr(calendar_writes, "calendar_of", calendar_of)
+    return lead
 
 
 @pytest.fixture
@@ -108,13 +144,16 @@ def team(db_engine: sa.Engine) -> Iterator[dict[str, str]]:
         s.execute(delete(User).where(User.id.in_([ids["lead"], ids["member"]])))
 
 
-def analysed_meeting(team_id: str, *, started: datetime) -> str:
-    """A meeting whose topic graph C has built and detected. Returns its id."""
+def analysed_meeting(team_id: str, *, started: datetime, speaker: str | None = None) -> str:
+    """A meeting whose topic graph C has built and detected, its one speaker
+    resolved to ``speaker`` when given. Returns its id."""
     with session_scope() as s:
         row = Meeting(team_id=team_id, title="주간 회의", status="analyzing", started_at=started)
         s.add(row)
         s.flush()
-        person = Participant(meeting_id=row.id, speaker_label="화자0", consented=True)
+        person = Participant(
+            meeting_id=row.id, user_id=speaker, speaker_label="화자0", consented=True
+        )
         s.add(person)
         s.flush()
         for label, centrality in COVERS_TWO.items():
@@ -180,6 +219,13 @@ def followup_items(session: Session, team_id: str) -> list[ExtActionItem]:
     )
 
 
+def followup_events(session: Session, meeting_id: str) -> list[GapFollowupEvent]:
+    session.expire_all()
+    return list(
+        session.scalars(select(GapFollowupEvent).where(GapFollowupEvent.meeting_id == meeting_id))
+    )
+
+
 def calls(run: AgentRun) -> list[tuple[str, bool]]:
     """The run's tool calls in order, and whether each answered.
 
@@ -212,9 +258,11 @@ def test_a_first_meeting_proposes_nothing(session: Session, team: dict[str, str]
     assert pending(session, team["team"]) == []
 
 
-def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str, str]) -> None:
+def test_the_pipeline_event_to_an_approved_meeting(
+    session: Session, team: dict[str, str], google: FakeGoogle
+) -> None:
     first = analysed_meeting(team["team"], started=T0)
-    second = analysed_meeting(team["team"], started=T0 + timedelta(days=7))
+    second = analysed_meeting(team["team"], started=T0 + timedelta(days=7), speaker=team["member"])
 
     (run,) = wake(session, second, "task-2")
 
@@ -227,7 +275,8 @@ def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str
     assert cited & gap_ids(session, second)
     assert cited <= gap_ids(session, first) | gap_ids(session, second)
     assert (OPEN_ITEM, True) in calls(run), "the rule fired and no item was open"
-    assert followup_items(session, team["team"]) == [], "nothing runs before approval"
+    assert (UPCOMING, True) in calls(run), "and no follow-up meeting was ahead"
+    assert google.made == [], "nothing runs before approval"
 
     # Only the lead sees it and can approve it.
     lead = client(session, team["lead"])
@@ -235,28 +284,31 @@ def test_the_pipeline_event_to_an_approved_item(session: Session, team: dict[str
     member = client(session, team["member"])
     assert member.get("/api/agent/pending").json() == []
     assert member.post(f"/api/agent/pending/{row.id}/approve").status_code == MEMBER_APPROVE
-    assert followup_items(session, team["team"]) == []
+    assert google.made == []
 
     reply = lead.post(f"/api/agent/pending/{row.id}/approve")
 
     assert reply.status_code == 200, reply.text
     assert (reply.json()["status"], reply.json()["result_ok"]) == ("approved", True)
-    (item,) = followup_items(session, team["team"])
-    assert item.meeting_id == second
-    assert item.description == "후속 회의 잡기"
-    assert item.status == "needs_confirmation", "it reaches nobody until confirmed"
-    # No assignee: the lead picks one. The date is the one the card suggested.
-    assert item.assignee_id is None
-    assert item.due_date is not None
-    assert item.due_date.isoformat() == row.arguments["due_date"]
+    # On the lead's calendar, on the card's day. The member took part, and is
+    # still not invited: that waits for the team's decision (#756).
+    (event,) = google.made
+    assert event["start"]["dateTime"].startswith(row.arguments["due_date"])
+    assert "attendees" not in event
+    (made,) = followup_events(session, second)
+    assert (made.user_id, made.event_day.isoformat()) == (team["lead"], row.arguments["due_date"])
+    lines = session.scalars(select(GapAgendaEvent).where(GapAgendaEvent.meeting_id == second))
+    assert {line.event_id for line in lines} == {"evt_1"}
+    # No board item: the meeting is made, so there is nothing left to do to make it.
+    assert followup_items(session, team["team"]) == []
 
-    # A second approval writes nothing more.
+    # A second approval makes nothing more.
     assert lead.post(f"/api/agent/pending/{row.id}/approve").status_code == SECOND_APPROVE
-    assert len(followup_items(session, team["team"])) == 1
+    assert len(google.made) == 1
 
 
-def test_a_republished_event_proposes_nothing_while_the_item_is_open(
-    session: Session, team: dict[str, str]
+def test_a_republished_event_proposes_nothing_while_the_meeting_is_ahead(
+    session: Session, team: dict[str, str], google: FakeGoogle
 ) -> None:
     analysed_meeting(team["team"], started=T0)
     second = analysed_meeting(team["team"], started=T0 + timedelta(days=7))
@@ -264,15 +316,15 @@ def test_a_republished_event_proposes_nothing_while_the_item_is_open(
     (row,) = pending(session, team["team"])
     assert client(session, team["lead"]).post(f"/api/agent/pending/{row.id}/approve").is_success
 
-    # E republishes (a new task): Follow-up runs again and finds its item open.
+    # E republishes (a new task): Follow-up runs again and finds its meeting ahead.
     (again,) = wake(session, second, "task-4")
 
     assert again.proposed == []
-    # It got as far as B's read and stopped on the open item, not on a failed read.
-    assert calls(again)[-1] == (OPEN_ITEM, True), calls(again)
+    # It got as far as C's read and stopped on the meeting, not on a failed read.
+    assert calls(again)[-1] == (UPCOMING, True), calls(again)
     assert all(ok for _, ok in calls(again)), calls(again)
     assert [p.status for p in pending(session, team["team"])] == ["approved"]
-    assert len(followup_items(session, team["team"])) == 1
+    assert len(google.made) == 1
 
 
 def test_a_gap_dismissed_before_the_event_is_not_carried(

@@ -16,6 +16,7 @@ from autune_contracts.enums import GapSeverity
 from autune_gap.models import (
     GapAgendaCleanup,
     GapAgendaEvent,
+    GapFollowupEvent,
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
@@ -37,6 +38,7 @@ ALL_TABLES: tuple[Table, ...] = (
     GapScoring.__table__,
     GapAgendaEvent.__table__,
     GapAgendaCleanup.__table__,
+    GapFollowupEvent.__table__,
 )
 
 

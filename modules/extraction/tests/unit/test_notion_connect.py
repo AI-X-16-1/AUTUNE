@@ -47,7 +47,7 @@ def test_shared_pages_leave_out_database_rows_and_archived_pages() -> None:
             json={
                 "results": [
                     _page("p1", "팀 위키"),
-                    _page("p2", "이전 액션", parent="database_id"),
+                    _page("p2", "이전 할 일", parent="database_id"),
                     _page("p3", "버린 페이지", archived=True),
                     _page("p4", "", parent="page_id"),
                 ]

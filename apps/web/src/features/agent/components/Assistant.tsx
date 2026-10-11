@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useRef,
@@ -10,10 +11,12 @@ import {
 } from "react";
 
 import { ApiError } from "@/shared/api/client";
+import { announceAgentActed } from "@/shared/lib/agentActed";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { getMeetingLabel, listPending, sendChat } from "../api";
 import { contextFor } from "../assistantContext";
+import { findingLink } from "../reportLink";
 import type { ChatFinding, ChatReply } from "../types";
 import { ChatProposal } from "./ChatProposal";
 
@@ -30,12 +33,29 @@ import { ChatProposal } from "./ChatProposal";
  *   outlive one (agent/CLAUDE.md rule 8). A reload starts a new conversation.
  * - An action the subagent proposed is not run from here. L1 already ran on
  *   the server. A decidable L2 proposal gets 승인 / 거절 on the card; the
- *   rest keep the link to 승인 대기, where an approver decides them.
+ *   rest keep the link to 승인 대기, where an approver decides them. Either
+ *   way the screen behind is told (`announceAgentActed`), so it can read its
+ *   values again without a reload that would end this conversation (#1055).
+ * - Off a meeting page a question is about the team chosen in the sidebar
+ *   (#1055). Each question keeps the team it was asked about: a line with the
+ *   team's name goes above the first question about another team, and the
+ *   composer says which team the next one goes to. Turns are not sent back to
+ *   the server, so two teams' answers never meet in a model's context.
  */
 
 type Turn =
-  | { role: "user"; text: string }
-  | { role: "assistant"; reply: ChatReply }
+  | {
+      role: "user";
+      text: string;
+      /** The team asked about; null on a meeting page, where the meeting names it. */
+      team: { id: string; name: string } | null;
+    }
+  | {
+      role: "assistant";
+      reply: ChatReply;
+      /** The team the question was about, so a report row opens on that team. */
+      team: { id: string; name: string } | null;
+    }
   | { role: "system"; text: string };
 
 const UNROUTED =
@@ -67,12 +87,19 @@ function failure(e: unknown, onMeeting: boolean): string {
 
 export function Assistant({
   teamId,
+  teamName,
   userName,
   pathname,
+  onChooseTeam,
 }: {
   teamId: string;
+  teamName: string;
   userName: string;
   pathname: string;
+  /** Makes a team the chosen one everywhere, as the sidebar's menu does. A
+   * report row calls it with its answer's team, so the dashboard it opens
+   * shows that team's reports (#1055 follow-up). */
+  onChooseTeam?: (teamId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -147,8 +174,17 @@ export function Assistant({
     };
   }, [open, meetingId, titled?.id]);
 
-  const label =
-    meetingId && titled?.id === meetingId ? titled.title : context.label;
+  // On a meeting page the meeting names the team, which need not be the one
+  // chosen in the sidebar, so only the meeting is named there.
+  const label = meetingId
+    ? titled?.id === meetingId
+      ? titled.title
+      : context.label
+    : `${teamName} · ${context.label}`;
+  // The composer says so when the next question goes to another team than
+  // the last question about a team did.
+  const lastTeam = lastTeamAsked(turns);
+  const switched = !meetingId && lastTeam !== null && lastTeam !== teamId;
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -157,7 +193,8 @@ export function Assistant({
   const send = async (text: string) => {
     const message = text.trim();
     if (!message || waiting) return;
-    setTurns((t) => [...t, { role: "user", text: message }]);
+    const team = context.meetingId ? null : { id: teamId, name: teamName };
+    setTurns((t) => [...t, { role: "user", text: message, team }]);
     setDraft("");
     setWaiting(true);
     try {
@@ -165,7 +202,8 @@ export function Assistant({
       const reply = context.meetingId
         ? await sendChat({ meetingId: context.meetingId }, message)
         : await sendChat({ teamId }, message);
-      setTurns((t) => [...t, { role: "assistant", reply }]);
+      setTurns((t) => [...t, { role: "assistant", reply, team }]);
+      if (reply.executed > 0) announceAgentActed();
     } catch (e) {
       setTurns((t) => [
         ...t,
@@ -244,9 +282,19 @@ export function Assistant({
                 {userName}님, 무엇을 확인할까요?
               </p>
             )}
-            {turns.map((turn, i) => (
-              <TurnView key={i} turn={turn} />
-            ))}
+            {turns.map((turn, i) => {
+              const opens = newTeam(turns, i);
+              return (
+                <Fragment key={i}>
+                  {opens !== null && <TeamLine name={opens} />}
+                  <TurnView
+                    turn={turn}
+                    onDashboard={pathname === "/dashboard"}
+                    onChooseTeam={onChooseTeam}
+                  />
+                </Fragment>
+              );
+            })}
             {waiting && <Waiting />}
             <div ref={bottom} />
           </div>
@@ -255,6 +303,11 @@ export function Assistant({
             className="shrink-0 border-t border-[var(--color-hairline)]"
             style={{ padding: "12px 16px" }}
           >
+            {switched && (
+              <p role="status" style={{ ...META, marginBottom: 8 }}>
+                이제 {teamName} 기준으로 답합니다
+              </p>
+            )}
             <div className="flex flex-wrap" style={{ gap: 6, marginBottom: 8 }}>
               {context.suggestions.map((q) => (
                 <button
@@ -281,7 +334,7 @@ export function Assistant({
                 rows={1}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={onComposerKey}
-                placeholder="회의·결정·액션에 대해 물어보세요"
+                placeholder="회의·결정·할 일에 대해 물어보세요"
                 aria-label="비서에게 물어보기"
                 maxLength={1000}
                 className="flex-1 resize-none rounded-[var(--radius)] border border-[rgba(22,25,31,.2)] bg-[var(--color-surface-panel)] text-[var(--color-ink-strong)] outline-none focus:border-[var(--color-accent-default)] focus:ring-[0.5px] focus:ring-[var(--color-accent-default)]"
@@ -355,7 +408,63 @@ export function Assistant({
   );
 }
 
-function TurnView({ turn }: { turn: Turn }) {
+/** The team of the last question about a team, or null if none was asked. */
+function lastTeamAsked(turns: Turn[]): string | null {
+  for (const turn of [...turns].reverse()) {
+    if (turn.role === "user" && turn.team !== null) return turn.team.id;
+  }
+  return null;
+}
+
+/**
+ * The team a question opens: a line with its name goes above it when it is
+ * not the team of the last question about a team. Once the conversation has
+ * asked about a second team, the first team's first question gets its line
+ * too, so every group of answers is named (#1114 review). A conversation about
+ * one team draws none, and neither does a question on a meeting page.
+ * Computed from the turns, so switching teams back and forth without asking
+ * draws no line.
+ */
+function newTeam(turns: Turn[], index: number): string | null {
+  const turn = turns[index];
+  if (turn?.role !== "user" || turn.team === null) return null;
+  const before = lastTeamAsked(turns.slice(0, index));
+  if (before === null) return teamsAsked(turns) > 1 ? turn.team.name : null;
+  return before !== turn.team.id ? turn.team.name : null;
+}
+
+/** How many teams this conversation has asked about. */
+function teamsAsked(turns: Turn[]): number {
+  const ids = new Set<string>();
+  for (const turn of turns)
+    if (turn.role === "user" && turn.team !== null) ids.add(turn.team.id);
+  return ids.size;
+}
+
+function TeamLine({ name }: { name: string }) {
+  return (
+    <div
+      role="separator"
+      aria-label={`${name} 질문`}
+      className="flex items-center"
+      style={{ gap: 8, ...META }}
+    >
+      <span className="flex-1 border-t border-[var(--color-hairline)]" />
+      {name}
+      <span className="flex-1 border-t border-[var(--color-hairline)]" />
+    </div>
+  );
+}
+
+function TurnView({
+  turn,
+  onDashboard,
+  onChooseTeam,
+}: {
+  turn: Turn;
+  onDashboard: boolean;
+  onChooseTeam?: (teamId: string) => void;
+}) {
   if (turn.role === "user") {
     return (
       <div
@@ -383,10 +492,25 @@ function TurnView({ turn }: { turn: Turn }) {
       </p>
     );
   }
-  return <AssistantReply reply={turn.reply} />;
+  const team = turn.team;
+  return (
+    <AssistantReply
+      reply={turn.reply}
+      onDashboard={onDashboard}
+      openTeam={team && onChooseTeam ? () => onChooseTeam(team.id) : undefined}
+    />
+  );
 }
 
-function AssistantReply({ reply }: { reply: ChatReply }) {
+function AssistantReply({
+  reply,
+  onDashboard,
+  openTeam,
+}: {
+  reply: ChatReply;
+  onDashboard: boolean;
+  openTeam?: () => void;
+}) {
   const unrouted = reply.outcome === "unrouted";
   const decidable = reply.pending ?? [];
   // Waiting for someone else: the server's count, less the ones drawn here.
@@ -400,7 +524,13 @@ function AssistantReply({ reply }: { reply: ChatReply }) {
       >
         {unrouted ? UNROUTED : <MaskedText>{reply.answer}</MaskedText>}
       </p>
-      {!unrouted && reply.items.length > 0 && <Evidence items={reply.items} />}
+      {!unrouted && reply.items.length > 0 && (
+        <Evidence
+          items={reply.items}
+          onDashboard={onDashboard}
+          openTeam={openTeam}
+        />
+      )}
       {!unrouted &&
         decidable.map((item) => <ChatProposal key={item.id} item={item} />)}
       {!unrouted &&
@@ -456,7 +586,16 @@ function AssistantReply({ reply }: { reply: ChatReply }) {
   );
 }
 
-function Evidence({ items }: { items: ChatFinding[] }) {
+function Evidence({
+  items,
+  onDashboard,
+  openTeam,
+}: {
+  items: ChatFinding[];
+  onDashboard: boolean;
+  /** Chooses the answer's team before a report row opens the dashboard on it. */
+  openTeam?: () => void;
+}) {
   return (
     <ul className="mt-3 border-t border-[var(--color-hairline)]">
       {items.map((item, i) => {
@@ -480,21 +619,37 @@ function Evidence({ items }: { items: ChatFinding[] }) {
             </span>
           </>
         );
+        const href = findingLink(item);
+        // Already on the dashboard only the hash changes: a plain anchor fires
+        // `hashchange`, which the report card follows, and a router push would
+        // not. Anywhere else the router keeps this conversation.
+        const toReport = href !== null && href.startsWith("/dashboard#");
+        const inPage = toReport && onDashboard;
+        // The dashboard shows the chosen team: a report from another team's
+        // answer would not be on it. Choosing the answer's team first makes
+        // the dashboard switch to it (TeamScope hears the choice), and the
+        // card then opens the report from the hash.
+        const onClick = toReport ? openTeam : undefined;
         return (
           <li
             key={item.id ?? i}
             className="border-b border-[var(--color-hairline)]"
             style={{ padding: "8px 0" }}
           >
-            {item.meeting_id ? (
-              <Link
-                href={`/meetings/${encodeURIComponent(item.meeting_id)}`}
+            {href === null ? (
+              <div className="flex gap-2">{body}</div>
+            ) : inPage ? (
+              <a
+                href={href.slice("/dashboard".length)}
+                onClick={onClick}
                 className="flex gap-2"
               >
                 {body}
-              </Link>
+              </a>
             ) : (
-              <div className="flex gap-2">{body}</div>
+              <Link href={href} onClick={onClick} className="flex gap-2">
+                {body}
+              </Link>
             )}
           </li>
         );

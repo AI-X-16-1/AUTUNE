@@ -160,7 +160,7 @@ Do 3b.1 once (a token, into the browser), then:
    #92's legal review answers whether a voice embedding needs its own consent.
    Confirming a speaker still names them on the transcript.
 
-10. The tabs above the transcript are the rest of the meeting: **액션** (B),
+10. The tabs above the transcript are the rest of the meeting: **할 일** (B),
     **갭** (C), **컨텍스트** (D), each its own URL (#423). A confirmed action
     item carries its due date on the card.
 

@@ -200,7 +200,7 @@ def test_a_scheduled_meeting_gets_the_whole_brief_from_the_real_tools(db_session
     assert list(sections) == [
         "지난 회의에서 이어받는 결정",
         "팀의 열린 Jira 이슈",
-        "기한이 지났거나 다가온 액션 아이템",
+        "기한이 지났거나 다가온 할 일",
         "지난 회의에서 닫히지 않은 갭",
     ]
     assert PAST_TITLE in sections["지난 회의에서 이어받는 결정"]
@@ -219,8 +219,8 @@ def test_the_late_action_item_comes_from_b_even_when_it_became_a_jira_issue(
     body = _chat(db_session, seed, f"{seed['upcoming']} 브리프")
 
     sections = {item["title"]: item["body"] for item in body["items"]}
-    assert f"• {LATE_ITEM}" in sections["기한이 지났거나 다가온 액션 아이템"]
-    assert "기한 지남" in sections["기한이 지났거나 다가온 액션 아이템"]
+    assert f"• {LATE_ITEM}" in sections["기한이 지났거나 다가온 할 일"]
+    assert "기한 지남" in sections["기한이 지났거나 다가온 할 일"]
     assert "읽지 못한" not in body["answer"]
 
 

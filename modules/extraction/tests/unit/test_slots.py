@@ -10,7 +10,15 @@ from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
-from autune_extraction.slots import Assignee, DueDate, assignee_of, meeting_day, parse_due
+from autune_extraction.slots import (
+    Assignee,
+    DueDate,
+    assignee_of,
+    dates_named,
+    meeting_day,
+    parse_due,
+    past_form_at,
+)
 
 WEDNESDAY = date(2026, 9, 9)
 
@@ -480,3 +488,176 @@ def test_the_first_deadline_still_wins_over_what_happens_after() -> None:
     due = parse_due("다음 주 금요일까지 하고 월요일에 공유하겠습니다", date(2026, 10, 1))
 
     assert due is not None and due.date == date(2026, 10, 9)
+
+
+# --- a date that is what a decision decided (2026-10-09) ------------------------
+
+THURSDAY = date(2026, 10, 8)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "배포 요일은 화요일로 바꾸기로 했습니다",
+        "릴리스는 10월 20일로 정하기로 했습니다",
+        "점검은 다음 주로 미루기로 했습니다",
+        "정기 회의는 매주 월요일에 하기로 했습니다",
+        "정산은 매달 15일에 하기로 했습니다",
+        "회고는 격주 금요일에 하기로 했습니다",
+        "회고는 금요일마다 하기로 했습니다",
+    ],
+)
+def test_in_a_decision_a_date_chosen_or_repeating_is_not_a_deadline(text: str) -> None:
+    assert parse_due(text, THURSDAY, decided=True) is None
+    assert parse_due(text, THURSDAY) is not None, "a promise is still read as before"
+
+
+@pytest.mark.parametrize(
+    ("text", "due"),
+    [
+        ("릴리스는 10월 20일에 내기로 했습니다", date(2026, 10, 20)),
+        ("견적서는 다음 주 금요일까지 받기로 했습니다", date(2026, 10, 16)),
+        # A deadline word right after the date outranks the (으)로 behind it.
+        ("마감은 금요일까지로 하기로 했습니다", date(2026, 10, 9)),
+        # The date chosen is skipped and the deadline after it is found.
+        ("회의는 화요일로 옮기고 자료는 금요일까지 내기로 했습니다", date(2026, 10, 9)),
+    ],
+)
+def test_in_a_decision_a_date_something_is_due_by_is_still_found(text: str, due: date) -> None:
+    found = parse_due(text, THURSDAY, decided=True)
+
+    assert found is not None and found.date == due
+
+
+# --- a start, a stretch from another event, a weekday said alone (2026-10-09) ---
+#
+# The six decisions that had a date after them in one invented run: three of the
+# six dates were not a deadline of anything.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The run's three.
+        "QA는 10월 13일부터 시작하기로 하죠.",
+        "피드백 설문은 베타 시작 2주 뒤에 보내기로 하죠.",
+        "이번 분기부터 주간 보고는 월요일 오전에 하기로 합시다.",
+        # A start.
+        "다음 주 월요일부터 새 양식을 쓰기로 했습니다.",
+        "11월 1일부로 요금제를 바꾸기로 했습니다.",
+        "이번 주부터 스탠드업을 10분으로 줄이기로 했습니다.",
+        # A stretch counted from something that is not the meeting.
+        "배포 3일 후에 회고를 하기로 하죠.",
+        "계약 체결 1주 뒤에 착수하기로 했습니다.",
+        # Until 2026-10-09 this one was pinned as the Tuesday, 10-13: the day the
+        # week starts from. A week from that Tuesday is 10-20, which nothing here
+        # can work out, so no date is better than either.
+        "화요일로부터 일주일 안에 끝내기로 했습니다",
+        # A weekday said alone.
+        "회고는 금요일 오후에 하기로 합시다.",
+    ],
+)
+def test_in_a_decision_a_start_an_offset_and_a_bare_weekday_are_not_a_deadline(text: str) -> None:
+    assert parse_due(text, THURSDAY, decided=True) is None
+
+
+def test_a_single_friday_said_with_no_deadline_word_loses_its_date_too() -> None:
+    """The known cost (module B's owner, 2026-10-09): words cannot tell "금요일에
+    배포하기로" from "주간 보고는 월요일 오전에 하기로", and a wrong deadline in a
+    decision's sentence was judged worse than a missing one."""
+    assert parse_due("금요일에 배포하기로 했습니다", THURSDAY, decided=True) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "due"),
+    [
+        # The run's other three.
+        ("마감은 다음 주 금요일이에요.", date(2026, 10, 16)),
+        ("정식 출시일은 12월 1일입니다.", date(2026, 12, 1)),
+        ("최종 검토일은 10월 28일이고, 그날 오후 3시에 모이겠습니다.", date(2026, 10, 28)),
+        # A deadline word keeps a weekday, a time of day between them or not.
+        ("금요일 전에 배포하기로 했습니다.", date(2026, 10, 9)),
+        ("금요일 오후까지 배포하기로 했습니다.", date(2026, 10, 9)),
+        ("금요일 오후 3시까지 배포하기로 했습니다.", date(2026, 10, 9)),
+        # So does a week.
+        ("다음 주 수요일에 고객사 미팅을 잡기로 했습니다.", date(2026, 10, 14)),
+        ("이번 주 금요일에 배포하기로 했습니다.", date(2026, 10, 9)),
+        # A day of the month is not a weekday said alone.
+        ("워크숍은 11월 5일에 하기로 했습니다.", date(2026, 11, 5)),
+        ("보고서는 10월 30일까지 내기로 했습니다.", date(2026, 10, 30)),
+        ("이번 주 안에 견적을 받기로 하죠.", date(2026, 10, 9)),
+        # A range: the start is skipped and its end is the deadline.
+        ("10월 13일부터 10월 17일까지 테스트하기로 했습니다.", date(2026, 10, 17)),
+        # A stretch counted from the meeting is still a date.
+        ("2주 뒤에 다시 보기로 했습니다.", date(2026, 10, 22)),
+        ("결과는 2주 뒤에 공유하기로 했습니다.", date(2026, 10, 22)),
+        ("그럼 3일 후에 배포하기로 하죠.", date(2026, 10, 11)),
+        ("늦어도 일주일 뒤에 결정하기로 했습니다.", date(2026, 10, 15)),
+        ("오늘부터 일주일 안에 끝내기로 했습니다.", date(2026, 10, 15)),
+        # "within" after a bare noun is read from the meeting: the noun is as
+        # likely what is to be finished as what the stretch is counted from.
+        ("견적 검토 3일 안에 끝내기로 했습니다.", date(2026, 10, 11)),
+    ],
+)
+def test_in_a_decision_the_dates_beside_the_three_skips_are_kept(text: str, due: date) -> None:
+    found = parse_due(text, THURSDAY, decided=True)
+
+    assert found is not None and found.date == due
+
+
+@pytest.mark.parametrize(
+    ("text", "due"),
+    [
+        ("QA는 10월 13일부터 시작하겠습니다.", date(2026, 10, 13)),
+        ("피드백 설문은 베타 시작 2주 뒤에 보내겠습니다.", date(2026, 10, 22)),
+        ("주간 보고는 월요일 오전에 올리겠습니다.", date(2026, 10, 12)),
+        ("금요일에 배포하겠습니다.", date(2026, 10, 9)),
+        ("화요일로부터 일주일 안에 끝내겠습니다.", date(2026, 10, 13)),
+        ("배포 3일 후에 회고를 잡겠습니다.", date(2026, 10, 11)),
+    ],
+)
+def test_a_promise_keeps_the_date_a_decision_no_longer_takes(text: str, due: date) -> None:
+    """An action item's due date is read as before: the three skips are a
+    decision's (``decided=True``) and of nothing else."""
+    found = parse_due(text, THURSDAY)
+
+    assert found is not None and found.date == due
+
+
+# --- what the stated-date rule asks of a sentence ---------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "count"),
+    [
+        ("회의록은 제가 올리겠습니다.", 0),
+        ("마감은 10월 30일입니다.", 1),  # "10월 30일" and the "30일" in it are one date
+        ("마감은 다음 주 금요일입니다.", 1),
+        ("원래 10월 30일이던 마감을 11월 5일로 확정했습니다.", 2),
+        ("출시는 10월 20일에서 11월 3일로 미뤄졌습니다.", 2),
+    ],
+)
+def test_dates_named_counts_each_date_once(text: str, count: int) -> None:
+    assert dates_named(text) == count
+
+
+@pytest.mark.parametrize(
+    ("syllable", "past"),
+    [
+        ("했", True),
+        ("됐", True),
+        ("었", True),
+        ("던", True),
+        ("겠", False),
+        ("있", False),
+        ("없", False),
+        ("하", False),
+    ],
+)
+def test_past_form_at_reads_one_syllable(syllable: str, past: bool) -> None:
+    assert past_form_at("가" + syllable, 1) is past
+
+
+def test_past_form_at_outside_the_text_is_not_past() -> None:
+    assert past_form_at("했", -1) is False
+    assert past_form_at("했", 1) is False

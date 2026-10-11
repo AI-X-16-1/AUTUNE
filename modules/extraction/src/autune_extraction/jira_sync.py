@@ -384,7 +384,7 @@ def read_back(session: Session, jira: JiraIssues, *, item_id: str, key: str, sit
     return True
 
 
-DELETED_NOTE = "Autune에서 삭제된 액션 아이템입니다. 이슈 기록은 남기고 닫았습니다."
+DELETED_NOTE = "Autune에서 삭제된 할 일입니다. 이슈 기록은 남기고 닫았습니다."
 
 
 def close_for_deleted_item(

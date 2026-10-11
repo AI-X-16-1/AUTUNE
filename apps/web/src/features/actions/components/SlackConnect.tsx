@@ -19,7 +19,7 @@ import { SlackMeConnect } from "./SlackMeConnect";
  * so, #autune before; -2... when taken), invites whoever installed, and the
  * team's briefings and reports go there.
  *
- * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
+ * Takes the meeting the 할 일 tab shows, or the team itself on S28 settings
  * (#496); the server checks membership either way.
  *
  * The person's own Slack link (DM 받기, `SlackMeConnect`) sits right under it

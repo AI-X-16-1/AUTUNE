@@ -25,8 +25,14 @@ QUESTIONS = "extraction.unresolved_questions"
 SEARCH = "audio.search_team_meetings"
 SAVE = "agent.save_research_document"
 SHARE = "agent.share_research_document"
+LIVE = "agent.live_research_notes"
 
-TOOLS = (OVERVIEW, RECENT, QUESTIONS, SEARCH, SAVE)
+TOOLS = (OVERVIEW, RECENT, QUESTIONS, SEARCH, SAVE, LIVE)
+
+NOTHING_OPEN = (
+    "이 회의에서 열린 질문이나 우려로 분류된 발언이 없고, 회의 중 조사한 것도 없습니다. "
+    "녹음 중에는 줄 옆의 조사 버튼으로 바로 조사할 수 있습니다."
+)
 ANALYSED = ("awaiting_confirmation", "complete", "delivered")
 
 log = logging.getLogger(__name__)
@@ -82,7 +88,25 @@ def build_with(writer: Writer) -> Any:
                 return _stop(asked.reason or "questions unreadable", "질문을 읽지 못했습니다.")
             kept = [(i.body.strip(), getattr(i, "id", None)) for i in asked.items if i.body.strip()]
             if not kept:
-                return _done("이 회의에서 조사할 질문이 없습니다.")
+                # Nothing B labelled is not "nothing to say": what was looked
+                # up while the meeting ran is the answer (2026-10-09). Read only
+                # here, so the trigger path keeps its eight calls.
+                notes = toolbox.call(LIVE, meeting_id=meeting_id)
+                if notes.ok and notes.items:
+                    return {
+                        "outcome": SubagentResult(
+                            result=ToolResult(
+                                ok=True,
+                                summary=(
+                                    f"이 회의는 회의 중 조사 {len(notes.items)}건이 있습니다. "
+                                    "회의 페이지의 '회의 중 조사'에서 볼 수 있습니다."
+                                ),
+                                items=notes.items,
+                                evidence=notes.evidence,
+                            )
+                        )
+                    }
+                return _done(NOTHING_OPEN)
             return {
                 "meeting_id": meeting_id,
                 "meeting_title": overview.summary,

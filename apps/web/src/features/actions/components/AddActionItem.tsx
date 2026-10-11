@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui";
 import { AssigneeInput, assigneeFields, type AssigneeValue } from "./AssigneeInput";
 import type { ActionItemDraft } from "../api";
 import { useAssignable } from "../hooks/useAssignable";
+import { typedTextRefusal } from "../refusal";
 
 /**
  * Manual add, S17 (#64).
@@ -70,7 +71,7 @@ export function AddActionItem({
         <AddForm meetingId={meetingId} onAdd={onAdd} onClose={() => setOpen(false)} />
       ) : (
         <Button tone="text" size="compact" onClick={() => setOpen(true)}>
-          + 액션 아이템 추가
+          + 할 일 추가
         </Button>
       )}
     </div>
@@ -126,7 +127,10 @@ function AddForm({
       // The typed text stays. Clearing it on a failed request would send the
       // user back to the transcript to reconstruct what they had just written,
       // which is the cost this whole feature exists to remove.
-      setError(cause instanceof Error ? cause.message : "추가하지 못했습니다.");
+      setError(
+        typedTextRefusal(cause) ??
+          (cause instanceof Error ? cause.message : "추가하지 못했습니다."),
+      );
     } finally {
       setPending(false);
     }
@@ -138,7 +142,7 @@ function AddForm({
       onKeyDown={(event) => {
         if (event.key === "Escape" && !pending) onClose();
       }}
-      aria-label="액션 아이템 추가"
+      aria-label="할 일 추가"
       className="grid gap-3 border border-[var(--color-hairline)]"
       style={{
         background: "var(--color-surface-panel)",

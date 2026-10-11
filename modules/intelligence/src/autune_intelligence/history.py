@@ -146,7 +146,12 @@ def _parse[T: (ExtractionResult, GapReport, ContextLinks)](
 
 
 def _unvisited_meetings(
-    session: Session, rows: Sequence[Row[Any]], *, since: datetime, now: datetime
+    session: Session,
+    rows: Sequence[Row[Any]],
+    *,
+    since: datetime,
+    now: datetime,
+    horizon: timedelta,
 ) -> list[MeetingPoint]:
     """Meetings of the same teams that the labeling query above never saw.
 
@@ -178,12 +183,21 @@ def _unvisited_meetings(
     *earlier* means ``reversal_labels``' ``m.at < at <= deadline`` stops
     withholding labels for meetings that fall between the two clocks. The gap is
     one analysis delay wide and only affects meetings with no ``started_at``.
+
+    **A meeting that was never held is not a blind spot (#462).** A meeting
+    created ahead of time (a briefing's calendar meeting, a "새 회의" nobody
+    recorded) keeps ``status='scheduled'`` if nothing ever arrives, and an empty
+    calendar slot cannot contain a reversal. An upload still on its way is
+    ``scheduled`` too, so time decides: one still ``scheduled`` a horizon after
+    its time is taken as never held. A ``failed`` or stuck (``analyzing``)
+    meeting did happen, and still withholds.
     """
     teams = {team_id for _, team_id, _, _ in rows}
     if not teams:
         return []
     visited = {completion.meeting_id for completion, _, _, _ in rows}
     at_column = sa.func.coalesce(Meeting.started_at, Meeting.created_at)
+    never_held = sa.and_(Meeting.status == "scheduled", at_column < now - horizon)
     return [
         MeetingPoint(meeting_id=mid, team_id=team_id, at=at)
         for mid, team_id, at in session.execute(
@@ -191,6 +205,7 @@ def _unvisited_meetings(
                 Meeting.team_id.in_(teams),
                 at_column >= since,
                 at_column <= now,
+                sa.not_(never_held),
             )
         )
         if mid not in visited
@@ -258,7 +273,7 @@ def labeled_examples(
             )
 
     unmeasured_lineage = list(unmeasured)
-    unvisited = _unvisited_meetings(session, rows, since=since, now=now)
+    unvisited = _unvisited_meetings(session, rows, since=since, now=now, horizon=horizon)
     unmeasured.extend(unvisited)
 
     labels = reversal_labels(points, reversals, unmeasured=unmeasured, now=now, horizon=horizon)

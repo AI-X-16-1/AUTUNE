@@ -14,11 +14,13 @@ import { SlackConnect } from "./SlackConnect";
 import { NotionConnect } from "./NotionConnect";
 import { DecisionReview } from "./DecisionReview";
 import { ProjectFilter } from "./ProjectFilter";
-import { ReExtract } from "./ReExtract";
+import { notExtracted, ReExtract, type NotExtracted } from "./ReExtract";
 import { listProjects } from "../api";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import type { Project } from "../types";
 import { useActionItems } from "../hooks/useActionItems";
+import { useTitleReads } from "../hooks/useTitleReads";
+import { awaitsTitle } from "../titleReads";
 import { bulkActionItems } from "../api";
 
 /**
@@ -50,7 +52,7 @@ import { bulkActionItems } from "../api";
  * whole width and the board renders at zero. Raised in review of #292.
  */
 export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
-  const { items, settled, error, add, edit, remove, reload } = useActionItems({
+  const { items, settled, error, add, edit, close, remove, reload, readTitles } = useActionItems({
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
@@ -70,6 +72,12 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   // Bumped when a "다시 추출" has run: the decisions below read themselves, so
   // they are mounted again rather than told.
   const [extraction, setExtraction] = useState(0);
+  // The run's rows get their titles a little after it ends; the board asks
+  // for them, and the decisions below do the same for theirs.
+  useTitleReads(extraction, awaitsTitle(items), () => void readTitles());
+  // An empty list is "not yet" while the first run is going, and "not
+  // extracted" when it never came -- not "nothing" (dev, 2026-10-08).
+  const [unrun, setUnrun] = useState<NotExtracted>(null);
 
   return (
     // The tab row's gutter (see the review layout, #534): starting at the same
@@ -117,6 +125,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         <div className="mt-4">
           <ReExtract
             meetingId={meetingId}
+            onState={(read) => setUnrun(notExtracted(read))}
             onExtracted={() => {
               setExtraction((n) => n + 1);
               void reload();
@@ -133,7 +142,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         </div>
 
         <div className="mt-6">
-          <DecisionReview key={extraction} meetingId={meetingId} />
+          <DecisionReview key={extraction} run={extraction} meetingId={meetingId} unrun={unrun} />
         </div>
 
         <div className="mt-8">
@@ -141,12 +150,12 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
             className="mb-3 border-b border-[var(--color-hairline)] pb-2 text-[var(--color-ink-strong)]"
             style={{ fontSize: "var(--text-status)", fontWeight: "var(--text-status-weight)" }}
           >
-            액션 아이템
+            할 일
           </h2>
           {!settled ? (
-            <Note>액션 아이템을 불러오는 중입니다.</Note>
+            <Note>할 일을 불러오는 중입니다.</Note>
           ) : error !== null && items.length === 0 ? (
-            <Note>이 회의의 액션 아이템을 불러오지 못했습니다.</Note>
+            <Note>이 회의의 할 일을 불러오지 못했습니다.</Note>
           ) : (
             <>
               {error !== null ? (
@@ -154,7 +163,11 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
               ) : null}
               {items.length === 0 ? (
                 <Note>
-                  이 회의에서 추출된 액션 아이템이 없습니다. 놓친 항목은 직접 추가할 수 있습니다.
+                  {unrun === "in_progress"
+                    ? "이 회의의 할 일을 추출하고 있습니다. 끝나면 여기에 나타납니다."
+                    : unrun === "overdue"
+                      ? "이 회의의 할 일은 아직 추출되지 않았습니다. 놓친 항목은 직접 추가할 수 있습니다."
+                      : "이 회의에서 추출된 할 일이 없습니다. 놓친 항목은 직접 추가할 수 있습니다."}
                 </Note>
               ) : null}
               <ProjectFilter projects={projects} value={project} onChange={setProject} />
@@ -182,6 +195,9 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
           onClose={() => setSelectedId(undefined)}
           onStatusChange={async (status) => {
             await edit(selected.id, { status });
+          }}
+          onCloseUnfinished={async () => {
+            await close(selected.id);
           }}
           onAssigneeChange={async (change) => {
             await edit(selected.id, change);

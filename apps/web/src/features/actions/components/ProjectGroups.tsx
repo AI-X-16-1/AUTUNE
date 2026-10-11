@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/shared/ui";
 
 import { assignSummaryProjects, placeActionItem, placeDecision } from "../api";
+import { shownStatement } from "../statement";
 import type { MeetingSummary, Project } from "../types";
 
 import { ProjectSend } from "./ProjectSend";
@@ -127,7 +128,7 @@ export function ProjectGroups({
                 <Row
                   key={d.id}
                   kind="결정"
-                  text={d.statement}
+                  text={shownStatement(d.statement)}
                   value={key}
                   projects={projects}
                   onMove={(to) => moveDecision(d.id, to)}

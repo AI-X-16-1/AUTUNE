@@ -1,7 +1,8 @@
 """Follow-up: read, decide and propose (spec sections 3, 4 and 8).
 
 The mocks return what C's ``open_gaps`` and ``recurring_open_gaps`` (#546) and
-B's ``unresolved_questions`` and ``open_followup_item`` (#561) return.
+B's ``unresolved_questions`` and ``open_followup_item`` (#561), and C's
+``upcoming_followup``, return.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from autune_agent.main import CallBudget, RunScope, Toolbox, collect_actions, collect_subagents
 from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import Tool
-from autune_agent.subagents.followup import SUBAGENT, graph, rules
+from autune_agent.subagents.followup import SUBAGENT, explain, graph, rules
 from autune_agent.subagents.followup.graph import (
     DUE_DATES,
     HOLIDAYS,
@@ -24,6 +25,7 @@ from autune_agent.subagents.followup.graph import (
     QUESTIONS,
     RECENT,
     RECURRING,
+    UPCOMING,
     WRITE,
 )
 from autune_contracts import INTELLIGENCE_COMPLETED
@@ -36,6 +38,18 @@ MONDAY = date(2026, 10, 5)
 def _monday(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every run is on Monday 2026-10-05, so a suggested date is fixed."""
     monkeypatch.setattr(graph, "_today", lambda: MONDAY)
+
+
+class NoModel:
+    def generate(self, instructions: str, text: str, *, json_answer: bool) -> str:
+        raise RuntimeError("no model in these tests")
+
+
+@pytest.fixture(autouse=True)
+def _no_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No run here reaches a model: the reason is the step's fixed wording
+    (``test_followup_explain.py`` covers the model's)."""
+    monkeypatch.setattr(explain, "TEXT_FACTORY", NoModel)
 
 
 def gap(gid: str, severity: str = "high", key: str = "risk") -> dict[str, Any]:
@@ -82,6 +96,8 @@ def tools_for(
     recent_ok: bool = True,
     gaps_ok: bool = True,
     with_open_item: bool = True,
+    upcoming: list[dict[str, Any]] | None = None,
+    with_upcoming: bool = True,
     due: list[dict[str, Any]] | None = None,
     due_ok: bool = True,
     with_due: bool = True,
@@ -117,6 +133,10 @@ def tools_for(
         log.append((OPEN_ITEM, {}))
         return _result(open_items or [])
 
+    def upcoming_followup(session: Any, team_id: str) -> dict[str, Any]:
+        log.append((UPCOMING, {}))
+        return _result(upcoming or [])
+
     def meeting_due_dates(session: Any, team_id: str, meeting_id: str) -> dict[str, Any]:
         log.append((DUE_DATES, {"meeting_id": meeting_id}))
         rows = [{"title": "기한", "due_dates": due}] if due is not None else []
@@ -137,6 +157,10 @@ def tools_for(
     if with_open_item:
         tools[OPEN_ITEM] = Tool(
             name=OPEN_ITEM, description="Use this in tests.", fn=open_followup_item
+        )
+    if with_upcoming:
+        tools[UPCOMING] = Tool(
+            name=UPCOMING, description="Use this in tests.", fn=upcoming_followup
         )
     if with_holidays:
         tools[HOLIDAYS] = Tool(name=HOLIDAYS, description="Use this in tests.", fn=public_holidays)
@@ -178,6 +202,7 @@ def test_it_is_collected_woken_by_intelligence_completed_and_reads_only_its_list
         QUESTIONS,
         RECENT,
         OPEN_ITEM,
+        UPCOMING,
         DUE_DATES,
         HOLIDAYS,
     }
@@ -204,16 +229,28 @@ def test_a_carried_over_item_is_one_l2_proposal_on_the_trigger_meeting(session, 
     assert proposal.evidence == ["gap_now"]
     assert "다시 열린 항목 1개" in outcome.result.summary
     assert "10월 8일(목)" in outcome.result.summary
-    assert names(calls) == [OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, HOLIDAYS, DUE_DATES, RECENT]
+    assert names(calls) == [
+        OPEN_GAPS,
+        RECURRING,
+        QUESTIONS,
+        OPEN_ITEM,
+        UPCOMING,
+        HOLIDAYS,
+        DUE_DATES,
+        RECENT,
+    ]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
-def test_the_write_is_one_b_declares_l2_and_takes_the_meeting_a_date_and_a_basis() -> None:
+def test_the_write_is_one_c_declares_l2_and_takes_the_meeting_a_date_and_a_basis() -> None:
     """A proposal cannot demote a write, but an L1 one would run with no lead at all.
-    And an argument the write does not take fails the approval (``bind_scope``)."""
-    write = collect_actions(["extraction"])[WRITE]
+    And an argument the write does not take fails the approval (``bind_scope``).
+    ``user_id`` is the approver's, filled in at approval (``run_action``)."""
+    write = collect_actions(["gap"])[WRITE]
     assert write.level == "L2"
-    assert write.parameters == {"team_id", "meeting_id", "due_date", "basis"}
+    # C's write takes the run's session first, as the executor allows.
+    taken = write.parameters - {"session"}
+    assert taken == {"team_id", "meeting_id", "due_date", "basis", "user_id"}
 
 
 def test_every_proposal_passes_plan_modes_argument_rule(session, team) -> None:
@@ -293,6 +330,28 @@ def test_an_open_follow_up_item_stops_another_proposal(session, team) -> None:
     assert "이미 열린" in outcome.result.summary
 
 
+def test_a_follow_up_meeting_ahead_stops_another_proposal(session, team) -> None:
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        upcoming=[{"title": "후속 회의", "meeting_id": "mtg_before", "day": "2026-10-08"}],
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is True
+    assert outcome.proposed == []
+    assert "이미 잡힌" in outcome.result.summary
+
+
+def test_an_unknown_follow_up_meeting_proposes_nothing(session, team) -> None:
+    tools = tools_for(recurring=[carried("gap_1")], with_upcoming=False)
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.ok is False
+    assert outcome.proposed == []
+
+
 def test_an_unknown_open_item_proposes_nothing(session, team) -> None:
     # Until B ships the read (#561) the call fails; not knowing is not "none open".
     tools = tools_for(recurring=[carried("gap_1")], with_open_item=False)
@@ -337,7 +396,16 @@ def test_a_chat_run_takes_the_latest_analysed_meeting(session, team) -> None:
     assert arguments_ok(proposal.arguments)
     # The first open_gaps is refused by the scope (no meeting) before it reaches C.
     # The meeting list it read to pick M also gives the date: no second read.
-    assert names(calls) == [RECENT, OPEN_GAPS, RECURRING, QUESTIONS, OPEN_ITEM, HOLIDAYS, DUE_DATES]
+    assert names(calls) == [
+        RECENT,
+        OPEN_GAPS,
+        RECURRING,
+        QUESTIONS,
+        OPEN_ITEM,
+        UPCOMING,
+        HOLIDAYS,
+        DUE_DATES,
+    ]
     assert {args["meeting_id"] for _, args in calls if args} == {team["meeting"]}
 
 
@@ -661,15 +729,26 @@ def test_without_usable_due_dates_the_rhythm_decides(session, team, setup: dict[
 
 
 def test_nothing_about_an_owner_reaches_the_proposal_or_the_answer(session, team) -> None:
-    # Were B's row ever to carry more, only the date and the flag are read.
+    # Were B's row ever to carry more, the date, the flag and a confirmed
+    # item's title are read, and the title reaches the reason sentence only.
     entry = {"date": "2026-10-07", "confirmed": True, "assignee": "박지영", "title": "결제 QA"}
     tools = tools_for(recurring=[carried("gap_1")], due=[entry])
 
     outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
 
-    assert outcome.proposed
+    (proposal,) = outcome.proposed
     assert "박지영" not in repr(outcome)
-    assert "결제 QA" not in repr(outcome)
+    assert "결제 QA" not in repr(proposal.arguments)
+    assert "'결제 QA' 1건을 10/7까지" in proposal.rationale
+
+
+def test_a_drafts_title_never_reaches_the_answer(session, team) -> None:
+    entry = {"date": "2026-10-07", "confirmed": False, "title": "초안 제목"}
+    tools = tools_for(recurring=[carried("gap_1")], due=[entry])
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert "초안 제목" not in repr(outcome)
 
 
 # --- Public holidays (#964) -----------------------------------------------------------

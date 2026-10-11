@@ -15,7 +15,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Autune",
-  description: "회의 녹음 하나로 액션아이템 추적과 갭 탐지까지",
+  description: "회의 녹음 하나로 할 일 추적과 갭 탐지까지",
 };
 
 /**

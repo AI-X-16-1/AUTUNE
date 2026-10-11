@@ -30,11 +30,11 @@ afterEach(() => {
 describe("adding an item", () => {
   function openForm(onAdd = vi.fn(() => Promise.resolve())) {
     render(<AddActionItem meetingId="mtg_1" onAdd={onAdd} />);
-    fireEvent.click(screen.getByRole("button", { name: "+ 액션 아이템 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "+ 할 일 추가" }));
     fireEvent.change(screen.getByLabelText("할 일"), { target: { value: "배포 일정 공유" } });
     return onAdd;
   }
-  const submit = () => fireEvent.submit(screen.getByRole("form", { name: "액션 아이템 추가" }));
+  const submit = () => fireEvent.submit(screen.getByRole("form", { name: "할 일 추가" }));
 
   it("sends the account of the member who was picked, and no typed name", async () => {
     const onAdd = openForm();

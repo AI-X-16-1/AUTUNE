@@ -147,6 +147,19 @@ class GapAsk(BaseModel):
     slack: str
 
 
+class GapCardsSent(BaseModel):
+    """What "질문 카드 Slack 전송" did (``POST /reports/{meeting_id}/slack``,
+    #824): how many of the meeting's open ``high`` gaps there are, how many
+    were posted as question cards, and what the team's channel did (``slack``
+    is ``team_notice.SlackOutcome``; ``not_tried`` when there was no such
+    gap). Nothing is stored."""
+
+    meeting_id: str
+    high: int
+    sent: int
+    slack: str
+
+
 class GapAgendaRequest(BaseModel):
     """``POST /agenda/{meeting_id}``: the event on the caller's own calendar the
     gaps go onto. No event means the team's next scheduled meeting's."""

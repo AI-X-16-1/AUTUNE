@@ -320,6 +320,32 @@ def test_a_later_run_replaces_the_cards_still_waiting(
     assert len(cards(session, "user_kim", team)) == 1, "one card an item, never two"
 
 
+def test_a_later_run_with_nothing_to_propose_retires_the_cards_still_waiting(
+    session: Session, team: str, synced: list[str]
+) -> None:
+    """#1096: the holder set the dates by hand while the cards waited, the next
+    run found nothing late and proposed nothing -- and the old cards stayed, so
+    one press moved a date back to the one the first run had worked out."""
+    first = ask(session, team)
+    by_hand = TODAY + timedelta(days=21)
+    for item_id in first:
+        row_of(session, item_id).due_date = by_hand
+        session.commit()
+
+    assert ask(session, team, proposed=0) == {}
+
+    assert cards(session, "user_kim", team) == {}
+    session.expire_all()
+    left = select(AgentPendingAction.status).where(
+        AgentPendingAction.id.in_([r.id for r in first.values()])
+    )
+    assert list(session.scalars(left)) == ["superseded", "superseded"]
+    late = client(session, "user_kim").post(f"/api/agent/pending/{first['act_late'].id}/approve")
+    assert late.status_code == 409, late.text
+    assert row_of(session, "act_late").due_date == by_hand
+    assert synced == []
+
+
 def test_an_item_deleted_since_reads_as_gone_and_its_approval_changes_nothing(
     session: Session, team: str, synced: list[str]
 ) -> None:

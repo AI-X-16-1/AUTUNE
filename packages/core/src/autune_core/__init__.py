@@ -16,7 +16,15 @@ from .auth import (
     user_for_token,
 )
 from .auth_service import upsert_user_from_google
-from .db import Base, get_engine, get_session, get_sessionmaker, session_scope
+from .db import (
+    Base,
+    SessionDep,
+    committed_session,
+    get_engine,
+    get_session,
+    get_sessionmaker,
+    session_scope,
+)
 from .entities import (
     Meeting,
     Participant,
@@ -104,6 +112,8 @@ __all__ = [
     "get_engine",
     "get_sessionmaker",
     "get_session",
+    "committed_session",
+    "SessionDep",
     "session_scope",
     "AutuneError",
     "NotFoundError",

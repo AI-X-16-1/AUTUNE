@@ -29,7 +29,7 @@ from autune_intelligence import service, tasks
 from autune_intelligence.models import IntelMeetingReport
 from autune_intelligence.router import router
 
-BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
+BODY = "✅ 확정된 할 일\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
 LATER = timedelta(minutes=3)
 """Past ``ANNOUNCE_RETRY_AFTER``: the sweep's view of a change made now."""
 

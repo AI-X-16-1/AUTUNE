@@ -33,20 +33,19 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Annotated
 
 import sqlalchemy as sa
 import structlog
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from autune_audio.config import MAX_UPLOAD_BYTES
 from autune_audio.decoding import DecodeError
+from autune_audio.deps import SessionDep
 from autune_audio.pipeline import transcribe_file
 from autune_audio.storage import RecordingTooLargeError, recording_on_disk
-from autune_core import Team, TeamMember, User, get_session
+from autune_core import Team, TeamMember, User
 from autune_core.auth import issue_token
 from autune_core.entities import team_order
 from autune_core.errors import PrivacyViolationError
@@ -141,9 +140,6 @@ class TokenIssued(BaseModel):
     token: str
     user_id: str
     team_id: str
-
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @router.post("/token", response_model=TokenIssued, include_in_schema=False)

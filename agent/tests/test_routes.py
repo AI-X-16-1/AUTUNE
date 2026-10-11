@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -639,3 +640,44 @@ def test_a_chat_reply_says_what_did_not_go_through(
     assert body["unfinished"] == [
         {"title": "리포트 초안 다시 만들기", "reason": "초안이 바뀌었습니다"}
     ]
+
+
+def test_a_pending_card_names_its_meeting_and_when_it_was_held(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    """#854: the card said only "회의 보기"; it now says which meeting."""
+    meeting = session.get(Meeting, team["meeting"])
+    assert meeting is not None
+    meeting.started_at = datetime(2026, 10, 2, 1, 0, tzinfo=UTC)
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="research"))
+    _queue(session, team)
+
+    got = member.get("/api/agent/pending").json()[0]
+
+    assert got["meeting_title"] == meeting.title
+    assert datetime.fromisoformat(got["meeting_started_at"]) == datetime(
+        2026, 10, 2, 1, 0, tzinfo=UTC
+    )
+
+
+def test_a_pending_card_about_no_meeting_names_none(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    session.add(AgentApprover(team_id=team["team"], user_id=team["member"], scope="workload"))
+    session.add(
+        AgentPendingAction(
+            team_id=team["team"],
+            meeting_id=None,
+            subagent="workload",
+            tool="extraction.reassign_action_item",
+            kind="reassign",
+            arguments={"action_item_id": "act_1", "assignee_id": "user_2"},
+            evidence=["act_1"],
+            scope="workload",
+        )
+    )
+    session.commit()
+
+    got = member.get("/api/agent/pending").json()[0]
+
+    assert (got["meeting_title"], got["meeting_started_at"]) == (None, None)

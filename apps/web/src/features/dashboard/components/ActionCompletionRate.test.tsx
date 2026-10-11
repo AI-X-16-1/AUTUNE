@@ -31,7 +31,7 @@ describe("ActionCompletionRate", () => {
   it("says nothing is confirmed when the counts are current but empty", () => {
     render(<ActionCompletionRate rate={null} meetings={0} overdue={0} asOf={AS_OF} />);
 
-    expect(screen.getByText("최근 4주 회의에서 확정된 액션 아이템이 없습니다.")).toBeTruthy();
+    expect(screen.getByText("최근 4주 회의에서 확정된 할 일이 없습니다.")).toBeTruthy();
   });
 
   it("says why there is no rate when the window holds fewer than three meetings", () => {
@@ -46,7 +46,7 @@ describe("ActionCompletionRate", () => {
   it("does not blame the floor when the window holds three meetings or more", () => {
     render(<ActionCompletionRate rate={null} meetings={4} overdue={0} asOf={AS_OF} />);
 
-    expect(screen.getByText("최근 4주 회의에서 확정된 액션 아이템이 없습니다.")).toBeTruthy();
+    expect(screen.getByText("최근 4주 회의에서 확정된 할 일이 없습니다.")).toBeTruthy();
     expect(screen.queryByText(/3건 미만/)).toBeNull();
   });
 });

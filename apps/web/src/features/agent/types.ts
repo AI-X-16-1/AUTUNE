@@ -15,6 +15,9 @@ export type PendingAction = {
   body: string;
   /** Approved, but the outcome was never recorded; a person must check it. */
   needs_check: boolean;
+  /** The card's meeting, read when the list is read (#854). */
+  meeting_title?: string | null;
+  meeting_started_at?: string | null;
 };
 
 export type RejectReason =
@@ -40,6 +43,9 @@ export type ChatFinding = {
   /** Extra keys a module adds; `meeting_id` makes the row a link. */
   id?: string;
   meeting_id?: string;
+  /** Where the row opens: `"report"` is the meeting's report on the dashboard
+   * (E's report reads, #1056); anything else, or none, the meeting screen. */
+  link?: string;
 };
 
 /** One chat turn's reply (`POST /api/agent/chat`). */

@@ -1,8 +1,9 @@
 import { MaskedText, StatusDot } from "@/shared/ui";
 
 import { SYSTEM_LABEL } from "./SyncStatus";
-import { isOverdue } from "../dates";
+import { isOverdue, shownDue } from "../dates";
 import { staleLabel } from "../stale";
+import { rowTitle } from "../title";
 import { isCandidate } from "../types";
 import type { ActionItemRead, SourceUtterance } from "../types";
 
@@ -98,15 +99,18 @@ export function ActionCard({
           {item.meeting_title}
         </div>
       ) : null}
-      {/* Two lines at most, whatever came (the user, 2026-10-08): a card is a
-          line to recognise the item by, and the detail window has all of it.
-          The mark stays beside the lines so a cut never takes it. */}
+      {/* Twenty characters at most (module B's owner, 2026-10-08): a card is a
+          line to recognise the item by -- the item's own short title when
+          it has one, else the sentence cut (`rowTitle`). The sentence itself is
+          unchanged -- it is in the detail window this card opens, and in the
+          `title` on hover. Two lines stay the limit for a narrow column. The
+          mark stays beside the lines so a cut never takes it. */}
       <div
         className="flex items-start gap-1.5 text-[var(--color-ink-strong)]"
         style={{ fontSize: "var(--text-rowTitle)", fontWeight: "var(--text-rowTitle-weight)" }}
       >
         <span className="line-clamp-2 min-w-0" title={item.description}>
-          {item.description}
+          {rowTitle(item.title, item.description).shown}
         </span>
         {item.description_resolved ? (
           <span
@@ -182,11 +186,10 @@ export function ActionCard({
         {item.due_date ? (
           <span
             style={{
-              fontFamily: "var(--font-mono)",
               color: overdue ? "var(--color-signal-critical)" : "var(--color-ink-muted)",
             }}
           >
-            {item.due_date}
+            {shownDue(item.due_date)}
           </span>
         ) : null}
       </div>

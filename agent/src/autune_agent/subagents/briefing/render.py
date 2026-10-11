@@ -99,7 +99,7 @@ def actions_section(actions: ToolResult | None) -> Finding | None:
         return None
     lines = [usable.summary] if usable.summary else []
     lines += [f"• {i.title} — {i.body}" if i.body else f"• {i.title}" for i in usable.items]
-    return _section("기한이 지났거나 다가온 액션 아이템", lines, more=usable.truncated)
+    return _section("기한이 지났거나 다가온 할 일", lines, more=usable.truncated)
 
 
 def gaps_section(gaps: ToolResult | None) -> Finding | None:

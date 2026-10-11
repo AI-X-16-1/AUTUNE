@@ -1984,8 +1984,8 @@ def get_decision_lineage(
     quoted predecessor too, so this returns the set of ``previous_meeting_id``
     values that are still visible — the caller (``router.py``) blanks those two
     fields on any returned version whose predecessor isn't in it. Done at the
-    schema layer rather than by mutating these rows here: ``get_session``
-    commits every request's session on success, so writing ``None`` onto an
+    schema layer rather than by mutating these rows here: the request's
+    session (``SessionDep``) commits on success, so writing ``None`` onto an
     ORM object inside a *read* endpoint would silently persist it.
 
     Raises ``NotFoundError`` if the thread exists but every version is

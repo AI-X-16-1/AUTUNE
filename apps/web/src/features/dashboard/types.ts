@@ -89,7 +89,7 @@ export interface PredictionRead {
 
 /**
  * As `/api/intelligence/predictions/{team_id}` returns it. `prediction` is
- * `null` until the team has four weeks and three scored meetings (#27) —
+ * `null` until the team has three scored meetings (#27) —
  * the server withholds it; the client never decides the gate.
  */
 export interface PredictionsRead {

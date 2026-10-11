@@ -21,7 +21,7 @@ from autune_agent.subagents.report.graph import (
     REVIEW_TOOL,
     TRIGGERS,
 )
-from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK
+from autune_agent.subagents.report.template import CHANNEL_TOOL, NO_SLACK, OTHER_TEAMS_TOOL
 from autune_agent.testing import mock_tool
 
 TEAM = "team_a"
@@ -297,6 +297,39 @@ def test_a_schedule_change_is_proposed_at_l1_without_a_person_or_team(monkeypatc
     assert change.arguments == {"weekday": 4, "hour": 18}
     assert "매주 금요일 오후 6시" in out.result.summary and "요청했습니다" in out.result.summary
     assert all("user_id" not in str(d) and "team_id" not in str(d) for d in chat.declarations())
+
+
+def _other_teams(answer: bool) -> dict[str, Any]:
+    title = "다른 팀에도 속해 있습니다." if answer else "이 팀에만 속해 있습니다."
+    return {"ok": True, "summary": title, "items": [{"title": title, "other_teams": answer}]}
+
+
+def test_a_schedule_change_points_to_the_card_for_other_teams(monkeypatch) -> None:
+    """The chat changes one team (#449) and cannot ask a follow-up; the reply
+    says where the person's other teams are changed instead."""
+    tools = {**_tools(), OTHER_TEAMS_TOOL: mock_tool(OTHER_TEAMS_TOOL, _other_teams(True))}
+    model = Script([call("set_schedule", weekday=4, hour=18)])
+    out = _run("금요일 6시로 바꿔줘", model, tools, meeting=None, monkeypatch=monkeypatch)
+    assert chat.OTHER_TEAMS in out.result.summary
+    assert "내 모든 팀" in chat.OTHER_TEAMS and "팀 골라서" in chat.OTHER_TEAMS
+
+
+@pytest.mark.parametrize("known", [False, None], ids=["one-team", "unknown"])
+def test_a_person_in_one_team_is_not_pointed_to_other_teams(monkeypatch, known) -> None:
+    """The card offers other teams only to a person in several (#1156 review);
+    not knowing counts as one team -- the line is only a hint."""
+    tools = _tools()
+    if known is not None:
+        tools[OTHER_TEAMS_TOOL] = mock_tool(OTHER_TEAMS_TOOL, _other_teams(known))
+    model = Script([call("set_schedule", weekday=4, hour=18)])
+    out = _run("금요일 6시로 바꿔줘", model, tools, meeting=None, monkeypatch=monkeypatch)
+    assert out.proposed and chat.OTHER_TEAMS not in out.result.summary
+
+
+def test_no_schedule_change_says_nothing_about_other_teams(monkeypatch) -> None:
+    model = Script([call("set_schedule", weekday=7, hour=25)])
+    out = _run("이상한 시각으로 바꿔줘", model, _tools(), meeting=None, monkeypatch=monkeypatch)
+    assert out.proposed == [] and chat.OTHER_TEAMS not in out.result.summary
 
 
 def test_a_schedule_change_names_send_empty_only_when_asked(monkeypatch) -> None:
@@ -653,6 +686,18 @@ def test_only_what_the_run_cannot_fill_is_required() -> None:
         if n not in {"intelligence__explain_metric", "set_schedule"}
     }
     assert all("required" not in d.parameters for d in rest.values())
+
+
+def test_a_question_that_assumes_a_number_reads_the_actual_one_first() -> None:
+    """A D team asking "왜 C등급이야?" was answered from the glossary alone. The
+    instructions now say to read the actual grade first, and the reads they
+    name are ones the model is given: a renamed read would leave the rule
+    pointing nowhere."""
+    assert "read the actual one first" in " ".join(chat.INSTRUCTIONS.split())
+    named = {"intelligence.team_trend", "intelligence.meeting_quality"}
+    assert named <= set(chat._SPECS)
+    for name in named:
+        assert name.split(".", 1)[1] in chat.INSTRUCTIONS
 
 
 def test_the_instructions_carry_todays_korean_date(monkeypatch) -> None:

@@ -469,7 +469,134 @@ _PHRASES: tuple[tuple[re.Pattern[str], Resolver], ...] = (
 )
 
 
-def parse_due(text: str, day: date | None) -> DueDate | None:
+_CHOSEN = re.compile(r"\s*(?:으로|로)(?![가-힣])")
+"""(으)로 right after a date: the date is what was chosen -- "화요일로
+바꾸기로", "10월 20일로 정했습니다" -- not when something is due. Not 로부터 or
+로서, which are other words."""
+_EVERY_BEFORE = re.compile(r"(?:매주|매달|매월|매일|매년|격주|격월)\s*$")
+_EVERY_AFTER = re.compile(r"\s*마다")
+"""A day that comes round -- "매주 월요일에", "금요일마다" -- is a schedule."""
+
+
+_STARTS = re.compile(r"\s*(?:부터|부로)")
+"""부터 or 부로 right after a date: when something begins -- "QA는 10월
+13일부터 시작하기로", "11월 1일부로 요금제를 바꾸기로". Nothing is due that
+day. A range still has its deadline: in "13일부터 17일까지" the 17th is read."""
+
+_STRETCH = r"(?:\d{1,2}\s*[일주]|일주일|이틀)\s*"
+_OFFSET = re.compile(_STRETCH + r"(?:후|뒤)")
+"""A stretch of time counted from something: "2주 뒤", "3일 후"."""
+_WITHIN = re.compile(_STRETCH + r"(?:후|뒤|안에|이내|내로|내에)")
+"""The same, or a stretch something is due within: "일주일 안에"."""
+_WORD_BEFORE = re.compile(r"([가-힣A-Za-z]+)\s+$")
+_PARTICLE_ENDS = tuple("은는이가을를도에서로만와과께터")
+_NOT_AN_EVENT = frozenset(
+    {"그럼", "그러면", "그리고", "그래서", "다시", "한", "약", "대략", "딱", "아마"}
+    | {"일단", "우선", "지금", "오늘", "내일", "이제", "늦어도", "적어도"}
+    | {"최소", "최대", "정확히", "대충", "거의"}
+)
+_FROM_THE_MEETING = frozenset({"지금부터", "오늘부터", "이제부터"})
+"""A start that is the meeting itself: "오늘부터 일주일 안에" is counted from
+the meeting's day, which is what ``parse_due`` counts from."""
+"""Words that can stand right before "2주 뒤" without being what it is counted
+from: the stretch is then counted from the meeting, as it is resolved."""
+
+_BARE_WEEKDAY = re.compile(r"[월화수목금토일]요일")
+_BY_AFTER_TIME = re.compile(
+    rf"\s*(?:(?:오전|오후|아침|점심|저녁|밤|퇴근)\s*(?:\d{{1,2}}\s*시)?\s*)?(?:{_BY})"
+)
+"""A deadline word after a weekday, a time of day allowed in between: "금요일
+오후까지"."""
+
+
+def _counted_from_something_else(text: str, start: int, end: int) -> bool:
+    """Whether the stretch at ``text[start:end]`` is counted from an event named
+    right before it -- "베타 시작 2주 뒤에", "배포 3일 후에" -- and not from the
+    meeting. ``parse_due`` can only count from the meeting's day, so the date it
+    would give is another day altogether.
+
+    The event is taken to be a word with no particle on it standing right
+    before the stretch. A word that ends like a particle ("평가 2주 뒤") is
+    not seen as one, and the stretch is then read as before.
+
+    Also a stretch counted from a day that is named: "화요일로부터 일주일
+    안에" is a week from Tuesday, and that Tuesday -- a start, skipped like any
+    other -- is not the meeting's day."""
+    before = _WORD_BEFORE.search(text, 0, start)
+    if before is None:
+        return False
+    word = before.group(1)
+    if word.endswith("부터"):
+        return word not in _FROM_THE_MEETING and bool(_WITHIN.fullmatch(text, start, end))
+    if not _OFFSET.fullmatch(text, start, end):
+        return False
+    return word not in _NOT_AN_EVENT and not word.endswith(_PARTICLE_ENDS)
+
+
+def _what_was_decided(text: str, start: int, end: int) -> bool:
+    """Whether the date phrase at ``text[start:end]`` is the content of a
+    decision and not its deadline. Each sign is looked for right at the phrase,
+    so a deadline word in between -- "금요일까지로" -- leaves it a deadline.
+
+    - The date chosen (``_CHOSEN``) or a day that repeats (매주, 마다).
+    - The day something starts (``_STARTS``).
+    - A stretch counted from another event (``_counted_from_something_else``):
+      the date would be wrong, not only the word for it.
+    - A weekday said alone, with no week and no deadline word: "주간 보고는
+      월요일 오전에 하기로" is a standing arrangement, and words cannot tell
+      it from a single Friday. So "금요일에 배포하기로 했습니다" loses its
+      date too; "금요일까지", "금요일 오후까지" and "다음 주 금요일" keep
+      theirs.
+
+    The last three since 2026-10-09 (module B's owner): of six decisions with a
+    date after them in one invented run, three had a start, a stretch counted
+    from the beta's start, and a weekly report's weekday as their deadline."""
+    return bool(
+        _CHOSEN.match(text, end)
+        or _EVERY_AFTER.match(text, end)
+        or _EVERY_BEFORE.search(text, 0, start)
+        or _STARTS.match(text, end)
+        or _counted_from_something_else(text, start, end)
+        or (_BARE_WEEKDAY.fullmatch(text, start, end) and not _BY_AFTER_TIME.match(text, end))
+    )
+
+
+def past_form_at(text: str, index: int) -> bool:
+    """Whether the syllable at ``index`` of ``text`` carries the past tense, as
+    ``_said_of_the_past`` reads one: a final ㅆ other than 겠, 있 and 없, or 던."""
+    return 0 <= index < len(text) and _past_syllable(text[index])
+
+
+def dates_named(text: str) -> int:
+    """How many dates ``text`` names. Two readings of the same words -- "10월
+    17일" and the "17일" in it -- are one date."""
+    spans = sorted(
+        (match.start(), match.end()) for pattern, _ in _PHRASES for match in pattern.finditer(text)
+    )
+    count, reach = 0, -1
+    for start, end in spans:
+        if start >= reach:
+            count += 1
+        reach = max(reach, end)
+    return count
+
+
+def names_chosen_date(text: str) -> bool:
+    """Whether ``text`` has a date phrase with (으)로 right after it: the date
+    something was set to -- "10월 20일로 확정됐습니다", "금요일로 미뤘습니다".
+
+    Apart from ``parse_due`` because the tense means the opposite here. A past
+    verb after a deadline reports what happened; a past verb after "N일로"
+    reports the choosing, and the date chosen is still ahead. Nothing is
+    resolved: this says a date was named as a choice, not which day it is."""
+    return any(
+        _CHOSEN.match(text, match.end())
+        for pattern, _ in _PHRASES
+        for match in pattern.finditer(text)
+    )
+
+
+def parse_due(text: str, day: date | None, *, decided: bool = False) -> DueDate | None:
     """The first date phrase in ``text`` that is a deadline, not the past.
 
     ``None`` when the utterance names no such date. When it names more than
@@ -502,6 +629,14 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
 
     A phrase with no resolvable day (no meeting day, or "2월 30일") cannot be
     judged past or not, and is returned with its words and no date.
+
+    ``decided`` is for the lines of a decision (``decisions._build``): there a
+    date can be the thing decided -- "배포 요일은 화요일로 바꾸기로 했습니다",
+    "정기 회의는 매주 월요일에 하기로 했습니다" -- and such a phrase is skipped
+    like one said of the past (``_what_was_decided``). Until 2026-10-09 the
+    first read "(기한 2026-10-13)" on a decision that sets no deadline. A
+    promise is read without it: "화요일로 옮기겠습니다" is still a card due
+    Tuesday, for a person to correct.
     """
     found: list[tuple[int, int, re.Match[str], Resolver]] = []
     for pattern, resolve in _PHRASES:
@@ -516,6 +651,8 @@ def parse_due(text: str, day: date | None) -> DueDate | None:
         taken_until = match.end()
         stop = min((other for other, *_ in found if other >= match.end()), default=len(text))
         if _said_of_the_past(text, match.end(), stop):
+            continue
+        if decided and _what_was_decided(text, match.start(), match.end()):
             continue
         try:
             resolved = resolve(match, day)

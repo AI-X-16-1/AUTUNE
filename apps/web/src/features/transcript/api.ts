@@ -1,8 +1,8 @@
 /**
  * Calls to /api/audio. This feature calls no other module's endpoints, with one
- * exception: /api/agent/research, where the research card on the meeting screen
- * reads the agent layer's documents for this meeting (Research subagent spec,
- * section 4 ④).
+ * exception: /api/agent, where the research card on the meeting screen reads the
+ * agent layer's documents for this meeting (Research subagent spec, section 4 ④)
+ * and the live screen relays masked lines and reads live research documents.
  */
 import { api, API_BASE as SAME_ORIGIN_BASE, ApiError, authHeaders } from "@/shared/api/client";
 
@@ -10,6 +10,7 @@ export { api };
 
 import type {
   AccountDeleted,
+  LiveResearchDocument,
   MaskingRule,
   MeetingDetail,
   MeetingSummary,
@@ -155,6 +156,19 @@ export const leaveTeam = (teamId: string) =>
   });
 
 /**
+ * Delete a team, by the one person left on it (#1007). Answers with the
+ * teams they are still on. The name is the team's, typed by the person, and
+ * goes in the body: a team's name can name a client, and an address is
+ * logged. Refused: 409 `team_has_other_members`, 409
+ * `team_meeting_in_progress`, 422 `team_name_mismatch`.
+ */
+export const deleteTeam = (teamId: string, name: string) =>
+  api.audio<TeamSummary[]>(`/teams/${encodeURIComponent(teamId)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ name }),
+  });
+
+/**
  * Join the team an invitation link names, as the signed-in owner of the
  * invited address. Every refusal is the same 404; show one sentence for it.
  */
@@ -186,6 +200,20 @@ export const createMeeting = (body: {
     method: "POST",
     body: JSON.stringify(body),
   });
+
+/**
+ * Give a meeting a new title, as any member of its team (#1161). The title
+ * goes in the body: it can name a client, and an address is logged. The
+ * answer is the meeting's id and state and does not repeat the title.
+ * Refused: 422 `validation_error` on `title` -- with
+ * `details.reason: "personal_data"` when the title reads as personal data
+ * (`titleRefusal`) -- and 403 or 404 as for any read of the meeting.
+ */
+export const renameMeeting = (meetingId: string, title: string) =>
+  api.audio<{ meeting_id: string; status: string }>(
+    `/meetings/${encodeURIComponent(meetingId)}`,
+    { method: "PATCH", body: JSON.stringify({ title }) },
+  );
 
 /** The meeting's speakers and who each one is or might be (S13, S15). */
 export const getSpeakers = (meetingId: string) =>
@@ -398,6 +426,24 @@ export const getResearch = (teamId: string, meetingId: string) =>
   api.agent<ResearchDocument[]>(
     `/research?team_id=${encodeURIComponent(teamId)}&meeting_id=${encodeURIComponent(meetingId)}`,
   );
+
+type LiveLine = { start: number; text: string };
+
+/** Live research: relay masked live lines (never the speaker) to the agent layer. */
+export const detectLive = (meetingId: string, rows: LiveLine[]) =>
+  api.agent<{ queued: boolean }>(`/live/${encodeURIComponent(meetingId)}/detect`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+
+export const researchLive = (meetingId: string, row: LiveLine, context: LiveLine[]) =>
+  api.agent<{ id: string }>(`/live/${encodeURIComponent(meetingId)}/research`, {
+    method: "POST",
+    body: JSON.stringify({ row, context }),
+  });
+
+export const listLiveResearch = (meetingId: string) =>
+  api.agent<LiveResearchDocument[]>(`/live/${encodeURIComponent(meetingId)}/documents`);
 
 /** S29 "내 데이터": counts of what Autune holds about the caller. Only theirs. */
 export const getMyData = () => api.audio<MyData>("/me/data");

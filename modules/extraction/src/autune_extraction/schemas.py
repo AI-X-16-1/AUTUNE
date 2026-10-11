@@ -120,6 +120,44 @@ class SyncFailureRead(BaseModel):
     failed_at: datetime
 
 
+class SyncLogFailure(BaseModel):
+    """A copy of an item that failed and still stands, on S28's "동기화 기록".
+
+    ``SyncFailureRead`` with the item and its meeting beside it, because the
+    drawer has no card to hang the failure on. ``description`` is the item's
+    text as the board shows it."""
+
+    action_item_id: str
+    meeting_id: str
+    meeting_title: str
+    description: str
+    system: Literal["notion", "jira", "calendar"]
+    kind: Literal["privacy", "reconnect", "unreachable", "rejected"]
+    failed_at: datetime
+
+
+class SyncLogCopy(BaseModel):
+    """A copy of an item that was made: a Notion page, a Jira issue, or an
+    event on the reader's own calendar. ``copied_at`` is when it was first
+    made. ``url`` is the page or issue; a calendar event has none."""
+
+    action_item_id: str
+    meeting_id: str
+    meeting_title: str
+    description: str
+    system: Literal["notion", "jira", "calendar"]
+    url: str | None
+    copied_at: datetime
+
+
+class SyncLogRead(BaseModel):
+    """What a team's copies outside Autune did lately (``sync_log``): the
+    failures standing and the latest copies made, each newest first."""
+
+    failures: list[SyncLogFailure]
+    copies: list[SyncLogCopy]
+
+
 class CalendarState(BaseModel):
     """Whether the item is on its assignee's calendar, and if not, why not.
 
@@ -164,6 +202,10 @@ class ActionItemRead(BaseModel):
     only a meeting. The board across every meeting shows the items team by
     team with it (the user, 2026-10-06); the names are ``GET /teams/mine``."""
     description: str
+    title: str | None = None
+    """``description`` in twenty characters or fewer, for a card's top line
+    (``ExtActionItem.title``). ``None`` when the item has none; the screen
+    then cuts the description itself."""
     description_resolved: bool = False
     """Whether ``description`` is ``ReferenceResolver``'s rewrite rather than
     the source utterance verbatim (#175, #366). S18 shows this so a reviewer
@@ -337,6 +379,17 @@ class EditHistoryEntry(BaseModel):
     at: datetime
 
 
+class CloudModelUse(BaseModel):
+    """Whether this server sends meeting text to a cloud model -- one fact
+    about the deployment, the same for every caller.
+
+    It exists so a screen can say #392's operating rule where a recording is
+    put in, and only on a server the rule is about. It carries nothing else on
+    purpose: no model name, no implementation name, nothing about the key."""
+
+    in_use: bool
+
+
 class TeamRead(BaseModel):
     """One of the reader's teams, by name -- the heading over that team's items
     on the board across meetings."""
@@ -421,7 +474,14 @@ class ProjectSendResult(BaseModel):
     project_id: str
     project_name: str
     target: Literal["notion", "slack", "jira", "calendar"]
-    outcome: Literal["created", "updated", "retracted", "not_connected", "no_date", "failed"]
+    outcome: Literal[
+        "created", "updated", "retracted", "not_connected", "no_date", "failed", "held"
+    ]
+    """``held``: the outbound check refused this copy -- something that looks
+    like personal data is in what it would carry: a confirmed decision or item
+    of the project, or the team's or project's name in its title. Which of
+    them is not known here; the check names a category and no place. A kind of
+    ``failed`` that sending again does not mend; changing the text does."""
 
 
 class ProjectSendReport(BaseModel):
@@ -470,7 +530,7 @@ class ConfirmationAnswerIn(BaseModel):
 
 
 class ExtractionState(BaseModel):
-    """What a meeting's 액션 tab says about its extraction.
+    """What a meeting's 할 일 tab says about its extraction.
 
     ``failures`` is how many runs in a row raised; zero is "nothing wrong".
     ``will_retry`` says the worker tries again by itself, so the screen does
@@ -479,15 +539,41 @@ class ExtractionState(BaseModel):
     log, by the error's class -- with one distinction the screen needs:
     ``not_published`` says the last failure was passing a stored result on to
     the other modules, so the items and decisions on the board are this run's
-    and "could not extract" would be false."""
+    and "could not extract" would be false.
+
+    The last three say why a board can be empty with nothing wrong on record:
+    the first run has not finished, never came, or read nothing."""
 
     extracted_at: datetime | None
     failures: int
     failed_at: datetime | None
     will_retry: bool
     not_published: bool = False
+    partly_unread: bool = False
+    """The last run stored its rows and could not read part of the transcript
+    (``attempts.PARTLY_UNREAD``): the board's items and decisions are this
+    run's, and some may be missing. Counted in ``failures`` so that it is
+    tried again; never which part, and nothing of it."""
     requested: bool
     requested_at: datetime | None
+    in_progress: bool = False
+    """A transcript is stored and no run of it is on record yet, nor a failure:
+    the first extraction is still going. An empty board is then "not yet", not
+    "nothing" (the user, dev, 2026-10-08: no items and no decisions minutes
+    after a transcription, and both there after "다시 추출"). Ends by itself:
+    with the run, with a failure, or ``attempts.ADOPT_AFTER`` after the
+    transcript was stored, when ``overdue`` takes its place."""
+    overdue: bool = False
+    """The same, and the transcript is older than ``attempts.ADOPT_AFTER``: the
+    run did not come -- lost with a worker, or never started. The sweep counts
+    it as a failure on its next pass and tries; until then the screen says the
+    extraction has not happened, instead of "in progress" for good."""
+    read_nothing: bool = False
+    """The last run was allowed to read none of the meeting's lines: no speech
+    in it has consent on record (``service.consented_utterance_ids``). The run
+    went through and found nothing, which is not the same as nothing having
+    been said. About the meeting as a whole -- never who did or did not
+    consent, and false as soon as any line was read."""
 
 
 class DueReminderSetting(BaseModel):
@@ -589,13 +675,19 @@ class MeetingSummary(BaseModel):
     """S15's 요약 tab, v1 (#421, WBS 4.9): B's own rows in three levels, no model.
 
     The tab reads these top down -- counts, then the decisions and items
-    themselves, then (through the 액션 tab's drawer) the lines they came from.
+    themselves, then (through the 할 일 tab's drawer) the lines they came from.
     Nothing here is a verbatim quotation: descriptions and statements are the
     same fields the board already lists. A summary written by an LLM over the
     whole meeting is v2, and waits on #392.
     """
 
     meeting_id: str
+    meeting_title: str | None = None
+    meeting_started_at: datetime | None = None
+    """What the tab heads its page of minutes with (2026-10-09): the meeting's
+    own title and day, read from the shared ``meetings`` row. Before, the page
+    took its title from the first action item, and a meeting with none had no
+    title."""
     decisions: list[SummaryDecision]
     """Confirmed first, then pending, each in the order they were settled.
     A rejected one is not a decision of the meeting and is left out."""
@@ -611,6 +703,10 @@ class MeetingSummary(BaseModel):
     generated: GeneratedSummary | None = None
     """v2: a model's summary of the whole meeting, or ``None`` when none is
     written or the meeting has changed since."""
+    generated_too_long: bool = False
+    """v2: no summary was written because the meeting is too long for one, and
+    its lines have not changed since that was found. The tab says so instead of
+    showing nothing. ``generated`` is then ``None``."""
     projects: list[ProjectRead] = Field(default_factory=list)
     """The team's projects, for grouping ``decisions`` and ``action_items`` by
     their ``project_id`` -- one that is ``None`` is 미분류."""
@@ -776,6 +872,11 @@ class ReviewDecision(BaseModel):
     statement: str
     """What will be sent: the person's rewording when there is one, else the model's."""
 
+    title: str | None = None
+    """``statement`` in twenty characters or fewer, for the row's top line
+    (``ExtDecision.title``). ``None`` when there is none and whenever a person
+    reworded the decision: the title was of the model's sentence."""
+
     model_statement: str
     """What the model proposed, kept beside the rewording so the screen can show both."""
 
@@ -785,6 +886,15 @@ class ReviewDecision(BaseModel):
     """A source line was corrected since a person typed or reworded this (#586):
     B cannot correct their wording, so it asks them to look. Cleared by their
     next review."""
+    held_back: bool = False
+    """Confirmed, and not sent: something that looks like personal data is in
+    the statement -- a phone number, an address, an id number -- so the
+    outbound check refuses its copy to Notion and Jira, and the agent's tool
+    counts it without quoting it. Worked out when the row is read
+    (``find_unmasked``), not a record of a send that failed: it is true of a
+    team with no tool connected too, and it clears with the rewording that
+    removes the value. Neither the value nor its category is here. A text a
+    person typed is checked for patterns only, so a name does not set this."""
     status: Literal["pending", "confirmed", "rejected"]
     suggested: bool | None
     """Whether the screen should pre-check it: the confidence clears
@@ -793,6 +903,13 @@ class ReviewDecision(BaseModel):
     claim the numbers do not support."""
 
     source_utterance_ids: list[str]
+
+    deleted_source_count: int = 0
+    """Sources whose utterance was deleted since -- by module A's rerun of the
+    meeting or by a person deleting their own data (#400). They are not in
+    ``source_utterance_ids``; the count lets the screen say "근거 발화 삭제됨"
+    instead of showing a decision that never had a source, as
+    ``ActionItemRead.deleted_source_count`` does for an item."""
 
     sync_refs: list[ExternalRefRead]
     """One entry per system this decision has been claimed for -- today, at
@@ -839,7 +956,8 @@ class DecisionDetail(ReviewDecision):
 
     sources: list[SourceUtterance]
     """In the order they were spoken -- the proposal first, the sentence that
-    settled it last. Empty for a decision a person added, which has none."""
+    settled it last. Empty for a decision a person added without pointing at a
+    line, and for one whose every source was deleted (``deleted_source_count``)."""
 
     context: list[SourceUtterance] = Field(default_factory=list)
     """What was said just before the first source, in spoken order, so a sentence
@@ -885,11 +1003,18 @@ class OutboundBlocked(BaseModel):
 
 
 class Outbound(BaseModel):
-    """What confirm-and-send would send, and nothing else.
+    """What of a meeting would leave for Notion, Jira or Slack, and what is
+    held back: a read of that, not what lets a copy go.
 
-    The Notion, Jira and Slack sync (#30, #458) is to read this and only
-    this. A decision nobody confirmed is not in it, and neither is an item
-    still waiting for confirmation.
+    A decision nobody confirmed is not in it, and neither is an item still
+    waiting for confirmation. It was written as the one list every sender
+    would read (#30, #458), and the senders were never moved onto it: each
+    copy reads the row it sends, and what stops a text there is the client's
+    ``check_outbound`` on the request itself. Its readers are
+    ``GET /reviews/{meeting_id}/outbound`` and the agent's
+    ``meeting_action_items`` and ``meeting_decisions`` tools. When a text a
+    person typed should be checked -- as it is stored, or as it leaves -- is
+    open on #1130.
     """
 
     meeting_id: str

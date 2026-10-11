@@ -360,6 +360,57 @@ def test_the_registry_is_empty_after_stop(client: TestClient, meeting: str, memb
     assert registry.open_count() == 0
 
 
+def test_stop_releases_the_meeting_before_the_last_segment_is_transcribed(
+    client: TestClient, meeting: str, member: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The browser waits 15 s for ``ended`` and then uploads anyway. On the dev
+    server's CPU the last segment took longer than that, the claim was still
+    held, and the upload was refused 409 "has a live session open". After
+    ``stop`` no frame can arrive, so the claim has nothing left to protect."""
+    import threading
+
+    entered = threading.Event()
+    gate = threading.Event()
+
+    def slow(waveform: Waveform) -> Transcription:
+        entered.set()
+        assert gate.wait(5.0)
+        return Transcription(
+            segments=(),
+            language="ko",
+            language_probability=1.0,
+            duration=waveform.duration,
+        )
+
+    monkeypatch.setattr(
+        live_routes,
+        "build_session",
+        lambda: LiveSession(
+            segmenter=Segmenter(speech_probability=energy, min_silence_ms=700),
+            transcriber=Transcriber(transcribe=slow, warm_up=lambda: None),
+        ),
+    )
+    with connect(client, meeting) as ws:
+        hello(ws, issue_token(member.id))
+        assert ws.receive_json() == {"type": "ready"}
+        # Shorter than the silence that would close it: the segment stays
+        # open until stop flushes it, so this is the only transcription.
+        audio = tone(600)
+        for i in range(0, len(audio) - len(audio) % FRAME, FRAME):
+            ws.send_bytes(pcm(audio[i : i + FRAME]))
+        ws.send_text(json.dumps({"type": "stop"}))
+
+        assert entered.wait(5.0)
+        try:
+            assert not registry.is_open(meeting)
+        finally:
+            gate.set()
+        message = ws.receive_json()
+        while message["type"] == "row":
+            message = ws.receive_json()
+        assert message == {"type": "ended"}
+
+
 def test_a_model_that_cannot_load_is_4503_and_leaves_no_registry_entry(
     client: TestClient, meeting: str, member: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:

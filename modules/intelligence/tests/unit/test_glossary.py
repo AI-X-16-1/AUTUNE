@@ -24,7 +24,10 @@ def test_constants_print_as_people_read_them() -> None:
     assert glossary.CONSTANTS["report.correction_window"] == "5분"
     assert glossary.CONSTANTS["weekly.default_weekday"] == "월요일"
     assert glossary.CONSTANTS["prediction.horizon"] == "14일"
-    assert glossary.CONSTANTS["prediction.min_history"] == "4주"
+    assert glossary.CONSTANTS["heatmap.min_people"] == "3명"
+    assert glossary.CONSTANTS["speaking.min_people"] == "3명"
+    assert glossary.CONSTANTS["quality.aggregate_wait"] == "10분"
+    assert glossary.CONSTANTS["prediction.min_meetings"] == "3건"
 
 
 def test_the_weights_quoted_are_the_weights_in_code() -> None:

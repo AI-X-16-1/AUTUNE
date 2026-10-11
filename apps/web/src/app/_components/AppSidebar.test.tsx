@@ -67,7 +67,7 @@ describe("AppSidebar, the screens", () => {
 
     expect(entries()).toEqual([
       "홈",
-      "액션아이템",
+      "할 일",
       "갭 리포트",
       "결정 히스토리",
       "자료",
@@ -81,7 +81,7 @@ describe("AppSidebar, the screens", () => {
     ["/", "홈"],
     ["/meetings/mtg_1", "홈"],
     ["/meetings/mtg_1/actions", "홈"],
-    ["/actions", "액션아이템"],
+    ["/actions", "할 일"],
     ["/materials", "자료"],
     ["/settings/members", "설정"],
   ])("on %s the lit entry is %s", (path, label) => {

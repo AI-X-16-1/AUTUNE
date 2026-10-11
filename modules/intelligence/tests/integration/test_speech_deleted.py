@@ -150,7 +150,7 @@ def _copies(
 def _report(db_session: Session, meeting: str) -> IntelMeetingReport:
     row = db_session.get(Meeting, meeting)
     assert row is not None
-    body = f"✅ 확정된 액션 아이템\n• {LINE} — 백엔드 · 10/3\n• {SUMMARY}\n• {OTHER}"
+    body = f"✅ 확정된 할 일\n• {LINE} — 백엔드 · 10/3\n• {SUMMARY}\n• {OTHER}"
     service.save_meeting_report(
         db_session, meeting, service.meeting_report_document(row, body), draft_id="rdr_a"
     )

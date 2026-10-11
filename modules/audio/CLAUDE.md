@@ -54,6 +54,13 @@ Contract: `/docs/architecture/contracts.md`.
   one cannot. Leaving deletes that membership and the pending invitations
   they sent to the team -- a link for no address among them -- and nothing
   else: their participant rows keep their `user_id` (`privacy.md` section 4).
+  What the last one can do is delete the team (`team_deletion.delete_team`,
+  #1007), with its name typed: every meeting's `on_meeting_deleted` hooks
+  first, then the meetings and the `teams` row, and the rest by cascade.
+  Refused while a job of the team is queued or running or a live session is
+  open, and for a team anybody else is on. Do not let it run for a team of
+  two, do not delete a row before its hooks, and do not catch what
+  `storage.delete_orphan` raises there (`privacy.md` section 4).
 - `aud_speaker_names` — a name typed for a speaker with no account on the
   team, for that one meeting. No user id and no voice; it never reaches the
   published transcript. Cascades with the meeting.

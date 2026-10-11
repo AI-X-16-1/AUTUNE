@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from json import dumps as json_dumps
 from types import SimpleNamespace
 
 import pytest
@@ -41,7 +42,7 @@ from autune_core import (
     Utterance,
     get_session,
 )
-from autune_extraction import attempts, tasks
+from autune_extraction import attempts, service, tasks
 from autune_extraction.models import (
     ExtActionItem,
     ExtClassification,
@@ -50,7 +51,8 @@ from autune_extraction.models import (
     ExtExtractionAttempt,
     ExtExtractionRun,
 )
-from autune_extraction.pipeline import FakeClassifier, FakeNli
+from autune_extraction.pipeline import FakeClassifier, FakeNli, llm
+from autune_extraction.pipeline.llm import UNREADABLE_ASKS, LlmClassifier, UnreadableAnswerError
 from autune_extraction.router import router
 from autune_integrations import TransientIntegrationError
 
@@ -870,8 +872,13 @@ def test_the_state_says_whether_the_worker_will_try_again(client: TestClient) ->
         "failed_at": None,
         "will_retry": False,
         "not_published": False,
+        "partly_unread": False,
         "requested": False,
         "requested_at": None,
+        # Lines stored a moment ago and nothing of B's yet: the first run.
+        "in_progress": True,
+        "overdue": False,
+        "read_nothing": False,
     }
 
     fails()
@@ -879,3 +886,392 @@ def test_the_state_says_whether_the_worker_will_try_again(client: TestClient) ->
     state = client.get(url()).json()
     assert state["failures"] == 1 and state["will_retry"] is True
     assert state["failed_at"] is not None
+
+
+# -- an empty board with nothing wrong on record (the user, dev, 2026-10-08) --
+#
+# No items and no decisions minutes after a transcription, and both there after
+# "다시 추출": the first run was still going, and the screen had one sentence
+# for "not yet", "read nothing" and "found nothing".
+
+
+def said(session: Session, meeting_id: str = MEETING, **at: datetime) -> dict[str, bool]:
+    """The three reasons the state gives for a board that may be empty."""
+    session.expire_all()
+    state = attempts.state(session, meeting_id, **at)
+    return {
+        name: getattr(state, name)
+        for name in ("in_progress", "overdue", "read_nothing")
+        if getattr(state, name)
+    }
+
+
+def test_a_transcript_whose_first_run_is_not_in_yet_reads_as_in_progress_until_it_is(
+    client: TestClient, wired: Session
+) -> None:
+    assert said(wired) == {"in_progress": True}
+    assert client.get(url()).json()["in_progress"] is True
+
+    tasks.on_transcript_ready(event())
+
+    assert said(wired) == {}
+    assert client.get(url()).json()["extracted_at"] is not None
+
+
+def test_a_run_that_failed_is_not_in_progress(wired: Session) -> None:
+    fails()
+
+    assert said(wired) == {}
+    assert attempts.state(wired, MEETING).failures == 1
+
+
+def test_a_meeting_with_no_transcript_is_not_in_progress(wired: Session) -> None:
+    wired.add(Meeting(id="mtg_empty", team_id="team_1", title="아직 올리지 않은 회의"))
+    wired.commit()
+
+    assert said(wired, "mtg_empty") == {}
+
+
+def test_in_progress_ends_when_the_sweep_stops_leaving_the_meeting_alone(
+    wired: Session,
+) -> None:
+    """A run that never comes -- lost with a worker -- must not read as "in
+    progress" for good. The screen and ``adopt_unextracted`` use one clock, to
+    the instant: what the sweep would take is what the screen calls overdue."""
+    now = datetime.now(tz=UTC)
+    for line in wired.query(Utterance).filter_by(meeting_id=MEETING):
+        line.created_at = now - attempts.ADOPT_AFTER
+    wired.commit()
+    just_before = now - timedelta(seconds=1)
+
+    assert said(wired, now=just_before) == {"in_progress": True}
+    assert attempts.adopt_unextracted(wired, now=just_before) == []
+
+    assert said(wired, now=now) == {"overdue": True}
+    assert attempts.adopt_unextracted(wired, now=now) == [MEETING]
+    wired.commit()
+
+    # Adopted: a failure on record, and the screen's own failure line says it.
+    assert said(wired, now=now) == {}
+    assert attempts.state(wired, MEETING, now=now).will_retry is True
+
+
+def test_a_transcript_too_old_to_adopt_stays_overdue_and_not_in_progress(
+    wired: Session,
+) -> None:
+    stored_since(wired, MEETING, attempts.ADOPT_WINDOW + timedelta(hours=1))
+
+    assert tasks.retry_failed_extractions() == []
+    assert said(wired) == {"overdue": True}
+
+
+def consent(session: Session, meeting_id: str, given: bool) -> None:
+    session.get(Participant, f"par_{meeting_id}").consented = given  # type: ignore[union-attr]
+    session.commit()
+
+
+def test_a_run_that_was_allowed_to_read_no_line_says_so_and_not_that_nothing_was_found(
+    wired: Session,
+) -> None:
+    consent(wired, MEETING, False)
+
+    tasks.on_transcript_ready(event())
+
+    assert wired.query(ExtActionItem).count() == 0
+    assert said(wired) == {"read_nothing": True}
+
+    # A's attestation, and B's own sweep after it.
+    consent(wired, MEETING, True)
+    assert tasks.reextract_consent_changes() == [MEETING]
+
+    assert wired.query(ExtActionItem).count() == 1
+    assert said(wired) == {}
+
+
+def test_a_run_that_read_some_of_the_speech_does_not_say_it_read_nothing(
+    wired: Session,
+) -> None:
+    """Only part of the meeting was out: items exist, and a line about consent
+    over them would point at whoever is not on the board."""
+    wired.add(Participant(id="par_out", meeting_id=MEETING, speaker_label="B", consented=False))
+    wired.get(Utterance, f"utt_1_{MEETING}").participant_id = "par_out"  # type: ignore[union-attr]
+    wired.commit()
+
+    tasks.on_transcript_ready(event())
+
+    assert wired.query(ExtActionItem).count() == 1
+    assert wired.query(ExtDecision).count() == 0
+    assert said(wired) == {}
+
+
+def test_a_run_that_read_everything_and_found_nothing_does_not_say_it_read_nothing(
+    wired: Session,
+) -> None:
+    for line in wired.query(Utterance).filter_by(meeting_id=MEETING):
+        line.text = "오늘 날씨가 좋네요"
+    wired.commit()
+    quiet = event()
+    for line in quiet["utterances"]:
+        line["text"] = "오늘 날씨가 좋네요"
+
+    tasks.on_transcript_ready(quiet)
+
+    assert wired.query(ExtActionItem).count() == 0
+    assert said(wired) == {}
+
+
+def test_the_key_of_a_run_that_read_nothing_is_the_one_the_run_writes() -> None:
+    assert service.consent_key([]) == attempts.NOTHING_READ
+    assert service.consent_key(["utt_1"]) != attempts.NOTHING_READ
+
+
+def test_a_meeting_with_no_lines_stored_does_not_say_consent_is_why(wired: Session) -> None:
+    """A run can read nothing because nothing is there to read. That is not a
+    statement about anybody's consent."""
+    wired.add(Meeting(id="mtg_empty", team_id="team_1", title="아직 올리지 않은 회의"))
+    wired.commit()
+
+    tasks.on_transcript_ready(event("mtg_empty"))
+
+    assert wired.get(ExtExtractionRun, "mtg_empty") is not None
+    assert said(wired, "mtg_empty") == {}
+
+
+# -- a model answer that cannot be read (the user, 2026-10-08) ----------------
+#
+# A refused or broken answer used to label nothing, so the run went through
+# with no item and no decision and nothing tried again. The cloud classifier
+# itself is behind the task here; only the provider is a fake.
+
+
+class Answers:
+    """A provider that gives back the responses it was handed, in order, and
+    after them labels every line that ends a promise."""
+
+    def __init__(self, *responses: dict) -> None:
+        self.responses = list(responses)
+        self.asked = 0
+
+    def request(self, method: str, path: str, *, json: dict) -> dict:  # noqa: A002 - httpx's name
+        self.asked += 1
+        if self.responses:
+            return self.responses.pop(0)
+        labels = {}
+        for line in json["contents"][0]["parts"][0]["text"].splitlines():
+            number, mark, text = line.split(" ", 2)
+            if mark == "[대상]" and text.endswith("겠습니다"):
+                labels[number] = "commitment"
+        return answered(json_dumps({"labels": labels}))
+
+
+def answered(text: str) -> dict:
+    return {"candidates": [{"content": {"parts": [{"text": text}]}}]}
+
+
+def cloud(monkeypatch: pytest.MonkeyPatch, *responses: dict) -> Answers:
+    provider = Answers(*responses)
+    classifier = LlmClassifier(api_key="k", model="gemini-test", base_url="http://llm.invalid")
+    classifier._client = provider  # type: ignore[assignment]
+    monkeypatch.setattr(tasks, "get_classifier", lambda: classifier)
+    return provider
+
+
+REFUSED = {"promptFeedback": {"blockReason": "SAFETY"}}
+
+
+def test_an_answer_that_cannot_be_read_is_a_failed_run_and_the_sweep_extracts_the_meeting(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = cloud(monkeypatch, *[REFUSED] * UNREADABLE_ASKS)
+
+    with pytest.raises(UnreadableAnswerError):
+        tasks.on_transcript_ready(event())
+
+    # Not an extraction that went through and found nothing.
+    assert wired.get(ExtExtractionRun, MEETING) is None
+    counted = row(wired)
+    assert counted is not None and counted.failures == 1
+    assert counted.reason == "UnreadableAnswerError"
+    state = attempts.state(wired, MEETING)
+    assert state.extracted_at is None and state.will_retry is True
+
+    # The provider answers now; nobody presses anything.
+    assert tasks.retry_failed_extractions() == [MEETING]
+
+    assert wired.query(ExtActionItem).count() == 1
+    assert row(wired).failures == 0  # type: ignore[union-attr]
+    assert wired.get(ExtExtractionRun, MEETING) is not None
+    assert provider.asked == UNREADABLE_ASKS + 1
+
+
+def test_an_answer_that_stays_unreadable_is_said_after_three_runs_and_asked_no_more(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, channel: dict
+) -> None:
+    provider = cloud(monkeypatch, *[answered(f"답할 수 없습니다: {SAID}")] * 100)
+
+    with capture_logs() as logs, pytest.raises(UnreadableAnswerError):
+        tasks.on_transcript_ready(event())
+    for _ in range(attempts.MAX_ATTEMPTS):
+        tasks.retry_failed_extractions()
+
+    assert row(wired).failures == attempts.MAX_ATTEMPTS  # type: ignore[union-attr]
+    assert attempts.state(wired, MEETING).will_retry is False
+    assert provider.asked == UNREADABLE_ASKS * attempts.MAX_ATTEMPTS
+    assert wired.query(ExtActionItem).count() == 0
+    # The answer quoted a line of the meeting; no log line does.
+    assert SAID not in repr(logs)
+
+
+def test_an_answer_that_says_there_is_nothing_is_a_run_that_went_through(
+    wired: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = cloud(monkeypatch, *[answered('{"labels": {}}')] * 100)
+
+    tasks.on_transcript_ready(event())
+
+    assert wired.get(ExtExtractionRun, MEETING) is not None
+    assert row(wired) is None
+    assert wired.query(ExtActionItem).count() == 0
+    assert provider.asked == 1
+    assert tasks.retry_failed_extractions() == []
+
+
+# --- part of the transcript unread -----------------------------------------------
+
+
+@pytest.fixture
+def line_by_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every line of the meeting is a request of its own, so that one of the
+    two lines of ``LINES`` can be unread while the other is read."""
+    monkeypatch.setattr(
+        llm, "windows", lambda texts, budget: [(at, at, at + 1) for at in range(len(texts))]
+    )
+
+
+def unread_first(monkeypatch: pytest.MonkeyPatch, runs: int) -> Answers:
+    """The first line's request is refused in each of ``runs`` runs, and
+    answered after them; the second line's is always answered."""
+    provider = cloud(monkeypatch)
+    answer = provider.request
+    refused = {"left": runs * UNREADABLE_ASKS}
+
+    def request(method: str, path: str, *, json: dict) -> dict:  # noqa: A002 - httpx's name
+        read = answer(method, path, json=json)
+        first = LINES[0][2] in json["contents"][0]["parts"][0]["text"]
+        if first and refused["left"]:
+            refused["left"] -= 1
+            return REFUSED
+        return read
+
+    provider.request = request  # type: ignore[method-assign]
+    return provider
+
+
+def test_a_run_that_could_not_read_a_part_stores_the_rest_says_so_and_is_tried_again(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, line_by_line: None
+) -> None:
+    provider = unread_first(monkeypatch, runs=1)
+
+    with capture_logs() as logs:
+        tasks.on_transcript_ready(event())  # does not raise: there is a result
+
+    # What the read window held is on the board, as any run's.
+    assert wired.query(ExtActionItem).count() == 1
+    assert wired.get(ExtExtractionRun, MEETING) is not None
+    counted = row(wired)
+    assert counted is not None and (counted.failures, counted.reason) == (1, "PartlyUnread")
+    state = attempts.state(wired, MEETING)
+    assert state.partly_unread is True and state.will_retry is True
+    assert state.extracted_at is not None and state.in_progress is False
+    done = next(entry for entry in logs if entry["event"] == "extraction_classified")
+    assert done["unread_windows"] == 1
+    assert SAID not in repr(logs)
+
+    # Nobody presses anything: the sweep asks about the whole meeting again.
+    asked = provider.asked
+    assert tasks.retry_failed_extractions() == [MEETING]
+
+    assert provider.asked == asked + len(LINES)
+    assert wired.query(ExtActionItem).count() == 1
+    wired.expire_all()
+    assert row(wired).failures == 0  # type: ignore[union-attr]
+    state = attempts.state(wired, MEETING)
+    assert state.partly_unread is False and state.failures == 0
+
+
+def test_a_part_that_stays_unread_is_said_for_good_and_the_channel_is_not_told(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, line_by_line: None, channel: dict
+) -> None:
+    provider = unread_first(monkeypatch, runs=100)
+
+    tasks.on_transcript_ready(event())
+    for _ in range(attempts.MAX_ATTEMPTS):
+        tasks.retry_failed_extractions()
+
+    wired.expire_all()
+    assert row(wired).failures == attempts.MAX_ATTEMPTS  # type: ignore[union-attr]
+    state = attempts.state(wired, MEETING)
+    assert state.partly_unread is True and state.will_retry is False
+    # The first line was asked about twice a run, the second once, and no more.
+    assert provider.asked == attempts.MAX_ATTEMPTS * (UNREADABLE_ASKS + 1)
+    assert wired.query(ExtActionItem).count() == 1
+    # "Could not extract" is the channel's message, and this meeting was.
+    assert attempts.owed_notices(wired) == []
+    assert Slack.posts == []
+
+
+def test_a_meeting_that_failed_outright_three_times_is_still_owed_its_notice(
+    wired: Session,
+) -> None:
+    for _ in range(attempts.MAX_ATTEMPTS):
+        fails()
+
+    assert attempts.owed_notices(wired) == [MEETING]
+
+
+def test_a_rerun_that_fails_outright_leaves_the_meeting_partly_unread(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, line_by_line: None
+) -> None:
+    unread_first(monkeypatch, runs=1)
+    tasks.on_transcript_ready(event())
+    assert attempts.state(wired, MEETING).partly_unread is True
+
+    # No window is read this time: the run fails and stores nothing.
+    cloud(monkeypatch, *[REFUSED] * 100)
+    with pytest.raises(UnreadableAnswerError):
+        tasks.on_transcript_ready(event())
+
+    wired.expire_all()
+    counted = row(wired)
+    assert counted is not None and (counted.failures, counted.reason) == (2, "PartlyUnread")
+    assert wired.query(ExtActionItem).count() == 1  # the partial read is still the board's
+    assert attempts.state(wired, MEETING).partly_unread is True
+    # Not the stored-and-not-passed-on kind: the sweep runs the meeting, not the publish alone.
+    assert attempts.unpublished(wired, [MEETING]) == set()
+
+
+def test_a_failure_after_a_run_that_went_through_is_not_called_partly_unread(
+    wired: Session, monkeypatch: pytest.MonkeyPatch, line_by_line: None
+) -> None:
+    unread_first(monkeypatch, runs=1)
+    tasks.on_transcript_ready(event())
+    tasks.retry_failed_extractions()  # reads everything; the count is over
+    wired.expire_all()
+    assert row(wired).reason is None  # type: ignore[union-attr]
+
+    cloud(monkeypatch, *[REFUSED] * 100)
+    with pytest.raises(UnreadableAnswerError):
+        tasks.on_transcript_ready(event())
+
+    wired.expire_all()
+    assert row(wired).reason == "UnreadableAnswerError"  # type: ignore[union-attr]
+    assert attempts.state(wired, MEETING).partly_unread is False
+
+
+def test_a_classifier_with_no_windows_never_leaves_a_part_unread(wired: Session) -> None:
+    """The fake and the local model read every line or fail; nothing of theirs
+    is counted."""
+    tasks.on_transcript_ready(event())
+
+    assert row(wired) is None
+    assert attempts.state(wired, MEETING).partly_unread is False

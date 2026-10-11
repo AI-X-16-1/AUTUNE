@@ -97,7 +97,15 @@ from .models import (
     ExtProjectSendCleanup,
 )
 from .pipeline.base import give_roster
-from .pipeline.registry import get_classifier, get_nli, get_resolver, get_summarizer
+from .pipeline.registry import (
+    get_classifier,
+    get_nli,
+    get_resolver,
+    get_summarizer,
+    get_titler,
+)
+from .pipeline.summary import TooLongError
+from .pipeline.title import TitleRequest
 
 log = get_logger(__name__)
 
@@ -223,8 +231,14 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
     # A classifier that sends text out replaces these names first (#411).
     give_roster(classifier, roster)
     classified = service.classify_utterances(classifier, utterances, consented=consented)
+    # Windows of the transcript whose answer could not be read while others
+    # were (``LlmClassifier.unread_windows``): what was read is stored below as
+    # any run's, and the run is counted as one that left a part unread.
+    unread = int(getattr(classifier, "unread_windows", 0) or 0)
     # "네 알겠습니다." called ambiguous is nothing to verify or to ask about.
     classified = service.drop_bare_acknowledgements(classified)
+    # "출시는 10월 20일입니다" left unlabelled is a decision: a rule, no model.
+    classified = service.stated_dates_are_decisions(classified, day=day)
     nli = get_nli()
     # Step 4 sends text out too, when it is the ``llm`` one.
     give_roster(nli, roster)
@@ -297,8 +311,13 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         projects.assign_meeting(session, meeting_id)
         # With the rows it describes: a rollback takes both (#518).
         service.record_extraction(session, meeting_id=meeting_id, consented=consented)
-        # With the rows too: only a run that stored its result ends the count.
-        attempts.note_success(session, meeting_id)
+        # With the rows too: only a run that stored its result ends the count
+        # -- and only one that read the whole transcript. One that left a part
+        # unread adds to it, so the sweep runs the meeting again.
+        if unread:
+            attempts.note_partly_unread(session, meeting_id)
+        else:
+            attempts.note_success(session, meeting_id)
         result = service.result_for_meeting(session, meeting_id)
 
     _follow_corrections(corrections)
@@ -325,6 +344,7 @@ def _extract(meeting_id: str, utterances: Sequence[TranscriptUtterance]) -> None
         model_version=classifier.model_version,
         resolver_model_version=resolver.model_version,
         resolved_commitments=len(resolved_descriptions),
+        unread_windows=unread,
     )
     # Step 6, the DM, is ``ask_confirmations``, not this run: a speaker who is
     # identified or links Slack a little later is still asked. Step 7 waits for
@@ -359,12 +379,61 @@ def _announce(meeting_id: str, result: ExtractionResult) -> None:
             summarize_meeting.delay(meeting_id)
         except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
             log.warning("extraction_summary_not_queued", error=type(exc).__name__)
+    if get_settings().title_impl != "none":
+        try:
+            title_meeting.delay(meeting_id)
+        except Exception as exc:  # noqa: BLE001 -- queuing only; the next run asks again
+            log.warning("extraction_titles_not_queued", error=type(exc).__name__)
     # The project minutes that already went out, brought in line with what
     # this run left confirmed: a corrected line, and also a confirmed decision
     # the rebuild no longer has, which no correction names (#787 review). A
     # meeting that sent nothing costs one query; a copy that already says the
     # minutes is not written to.
     refresh_project_minutes(meeting_id)
+
+
+@shared_task(name="autune.extraction.title_meeting", acks_late=True)
+def title_meeting(meeting_id: str) -> int:
+    """A short title for each of the meeting's items and decisions that has
+    none (``title_impl``; ``pipeline.title``). Returns how many were written.
+
+    Its own task, after the run that built the rows: the rows are already
+    there and already announced, and a title is a way of showing them. Reads,
+    then calls the model with no session open, then writes -- only onto a row
+    that still says the sentence its title is of, and onto none when a row of
+    the request was deleted or lost its line to a speech deletion meanwhile
+    (``service.store_titles``). A failed call, a refused
+    title and a privacy refusal all leave the row without one, and the screen
+    shows the sentence cut as it did before; logged by meeting id and counts,
+    never the text.
+    """
+    try:
+        titler = get_titler()
+    except ValueError as exc:
+        log.error("extraction_titles_not_configured", error=type(exc).__name__)
+        return 0
+    if titler is None:
+        return 0
+    with session_scope() as session:
+        targets = service.title_targets(session, meeting_id)
+        if not targets:
+            return 0
+        roster = service.team_roster(session, meeting_id)
+    give_roster(titler, roster)
+    try:
+        titles = titler.titles([TitleRequest(t.asked, t.kind) for t in targets])
+    except PrivacyViolationError:
+        log.warning(
+            "extraction_titles_blocked_by_privacy_guard", meeting_id=meeting_id, rows=len(targets)
+        )
+        return 0
+    except Exception as exc:  # noqa: BLE001 -- the rows keep no title; logged by id, never the text
+        log.warning("extraction_titles_failed", meeting_id=meeting_id, error=type(exc).__name__)
+        return 0
+    with session_scope() as session:
+        written = service.store_titles(session, targets, [t.text for t in titles])
+    log.info("extraction_titles_stored", meeting_id=meeting_id, rows=len(targets), written=written)
+    return written
 
 
 @shared_task(name="autune.extraction.summarize_meeting", acks_late=True)
@@ -377,7 +446,10 @@ def summarize_meeting(meeting_id: str) -> bool:
     that changed no line does not ask again. Reads, then calls the model with no
     session open, then writes: a transaction is never held across a call that
     takes seconds. A failed or unusable answer leaves the tab as v1 built it and
-    is logged by meeting id; nothing about it fails the meeting.
+    is logged by meeting id; nothing about it fails the meeting. A meeting too
+    long for a summary (``TooLongError``) leaves a row that says so and no text
+    (``service.mark_summary_too_long``): the tab then says why it has none, and
+    the same lines are not asked about again.
 
     A stored summary of other lines than the meeting has now is deleted before
     the model is asked, so none of the ways this can end without a new summary
@@ -409,6 +481,16 @@ def summarize_meeting(meeting_id: str) -> bool:
         written = summarizer.summarize(lines, board=board)
     except PrivacyViolationError:
         log.warning("extraction_summary_blocked_by_privacy_guard", meeting_id=meeting_id)
+        return False
+    except TooLongError:
+        # Not a failure to retry: these lines need more calls than a meeting
+        # gets. Said in the row, so the tab can say it and the next run over
+        # the same lines does not spend the calls to find it out again.
+        with session_scope() as session:
+            service.mark_summary_too_long(
+                session, meeting_id, model_version=summarizer.model_version, lines=lines
+            )
+        log.info("extraction_summary_too_long", meeting_id=meeting_id, lines=len(lines))
         return False
     except Exception as exc:  # noqa: BLE001 -- the tab keeps v1; logged by id, never the text
         log.warning("extraction_summary_failed", meeting_id=meeting_id, error=type(exc).__name__)
@@ -572,7 +654,7 @@ def refresh_project_minutes(meeting_id: str) -> bool:
             log.warning(
                 "extraction_project_minutes_refresh_owed",
                 meeting_id=meeting_id,
-                behind=sum(1 for s in sent if s.outcome in ("failed", "not_connected")),
+                behind=sum(1 for s in sent if s.outcome in project_send.BEHIND),
             )
             return False
     except Exception as exc:  # noqa: BLE001 -- the change itself is committed
@@ -850,7 +932,7 @@ def _extract_counted(meeting_id: str, utterances: Sequence[TranscriptUtterance])
 @shared_task(name="autune.extraction.reextract_meeting", acks_late=True)
 def reextract_meeting(meeting_id: str) -> None:
     """Extract one meeting again from its stored transcript -- a failed run's
-    next try, or the 액션 tab's "다시 추출".
+    next try, or the 할 일 tab's "다시 추출".
 
     The event's own run (``_extract``): model rows are replaced, an item list
     a person has edited is kept (``service.build_action_items``), and
@@ -894,21 +976,21 @@ def _republish_counted(meeting_id: str) -> None:
 def _failure_notice(title: str, board_url: str, *, not_published: bool = False) -> str:
     if not_published:
         return (
-            f"「{title}」 회의의 액션 아이템과 결정은 추출했지만, 그 결과를 회의 연결과 "
+            f"「{title}」 회의의 할 일과 결정은 추출했지만, 그 결과를 회의 연결과 "
             f"리포트 분석에 전달하지 못했습니다. {attempts.MAX_ATTEMPTS}번 시도했고, "
-            "자동으로는 더 시도하지 않습니다. 회의의 액션 화면에서 '다시 추출'을 눌러 "
+            "자동으로는 더 시도하지 않습니다. 회의의 할 일 화면에서 '다시 추출'을 눌러 "
             f"다시 시도할 수 있습니다.\n{board_url}"
         )
     return (
-        f"「{title}」 회의에서 액션 아이템과 결정을 추출하지 못했습니다. "
+        f"「{title}」 회의에서 할 일과 결정을 추출하지 못했습니다. "
         f"{attempts.MAX_ATTEMPTS}번 시도했고, 자동으로는 더 시도하지 않습니다. "
-        f"회의의 액션 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
+        f"회의의 할 일 화면에서 '다시 추출'을 눌러 다시 시도할 수 있습니다.\n{board_url}"
     )
 
 
 def _tell_teams() -> list[str]:
     """One message to the team's Slack channel for each meeting out of tries:
-    its title, the count and a link to its 액션 tab, nothing that was said in
+    its title, the count and a link to its 할 일 tab, nothing that was said in
     it. A team with no channel
     connected is not told here; the meeting's own screen says it either way.
 
@@ -976,7 +1058,7 @@ def retry_failed_extractions() -> list[str]:
     most, and stops (the user, 2026-10-06: three in all, and after them no
     automatic attempt of any kind). A failure that repeats every time -- a refusal by the outbound
     check, a bug -- is spent in twenty minutes and then said, in the team's
-    channel and on the meeting's 액션 tab, instead of being retried for good.
+    channel and on the meeting's 할 일 tab, instead of being retried for good.
 
     **A meeting with a transcript and no extraction on record is taken for a
     failed one** (``attempts.adopt_unextracted``): a run that raised before

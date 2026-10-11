@@ -91,7 +91,7 @@ def test_body_includes_action_item_progress_when_given() -> None:
         ),
     )
 
-    assert "액션 아이템 완료율 (최근 4주 회의): 50%" in body
+    assert "할 일 완료율 (최근 4주 회의): 50%" in body
     assert "기한 지난 항목 1건 · 이월된 항목 2건" in body
     assert "9/14 09:00 기준" in body  # Korean time
 
@@ -117,7 +117,7 @@ def test_body_blames_the_floor_only_below_three_meetings() -> None:
 
     assert "3건 미만" in body(2)
     assert "3건 미만" not in body(4)
-    assert "확정된 액션 아이템이 없습니다" in body(4)
+    assert "확정된 할 일이 없습니다" in body(4)
 
 
 def test_body_omits_the_completion_line_when_not_given() -> None:

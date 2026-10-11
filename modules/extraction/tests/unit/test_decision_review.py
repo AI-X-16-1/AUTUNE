@@ -2,8 +2,9 @@
 
 SQLite in memory and the router on a bare app, as ``test_read_endpoints`` does.
 The rules under test: a decision starts pending, a verdict and a rewording are
-kept, a rebuild keeps a review only for the same decision, and the outbound list
-carries exactly what was confirmed.
+kept, a rebuild keeps a decision a person marked while its lines can be read and
+replaces one nobody marked, and the outbound list carries exactly what was
+confirmed.
 """
 
 from __future__ import annotations
@@ -20,12 +21,21 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from autune_contracts.enums import UtteranceKind
-from autune_core import AutuneError, Base, Meeting, Participant, TeamMember, Utterance, get_session
+from autune_core import (
+    AutuneError,
+    Base,
+    Meeting,
+    Participant,
+    PrivacyViolationError,
+    TeamMember,
+    Utterance,
+    get_session,
+)
 from autune_core.integrations_config import IntegrationConfig
 from autune_extraction import service, tasks
 from autune_extraction.config import ExtractionSettings
 from autune_extraction.confirmations import WEAK_ASSENT
-from autune_extraction.decisions import ClassifiedUtterance
+from autune_extraction.decisions import ClassifiedUtterance, decision_id
 from autune_extraction.models import (
     ExtActionItem,
     ExtActionItemSource,
@@ -42,6 +52,7 @@ from autune_extraction.models import (
     ExtNotionTarget,
     ExtSyncFailure,
 )
+from autune_extraction.pipeline.base import Resolution
 from autune_extraction.router import router
 from autune_extraction.schemas import DecisionReviewUpdate
 from autune_integrations.errors import TransientIntegrationError
@@ -528,23 +539,304 @@ def test_a_rebuild_over_the_same_sources_keeps_the_verdict(
     assert [d["id"] for d in outbound["decisions"]] == [first_id]
 
 
-def test_a_decision_whose_sources_changed_loses_its_verdict(
-    client: TestClient, session: Session
+def test_a_decision_nobody_marked_whose_lines_are_grouped_differently_is_replaced(
+    session: Session,
 ) -> None:
-    """A different decision. A confirmation given about the old one must not apply
-    to it, and a rewording of the old one must not outlive it."""
+    """Still a rebuild for a row no person touched: a pending row has nothing to lose."""
     first_id = two_decisions(session)[0].id
-    client.patch(
-        f"{PREFIX}/decisions/{first_id}", json={"status": "confirmed", "statement": "옛 결정"}
-    )
 
     rebuilt = service.build_decisions(
         session, meeting_id=MEETING, utterances=labelled({3: K.DECISION, 7: K.DECISION})
     )
 
     assert first_id not in {decision.id for decision in rebuilt}
-    assert session.get(ExtDecisionReview, first_id) is None
-    assert client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["decisions"] == []
+    assert session.get(ExtDecision, first_id) is None
+
+
+# --- a row a person marked is kept through a rerun (2026-10-09) ---------------------
+
+LOGIN = "로그인은 소셜 로그인만 지원하기로 했습니다"
+PRICE = "가격은 월 9900원으로 갑니다"
+SEARCH = "검색 기능은 다음 분기로 미루기로 했습니다"
+ASSENT = "네 그렇게 하죠"
+
+
+def spoken(
+    session: Session, texts: dict[int, str], kinds: dict[int, UtteranceKind]
+) -> list[ClassifiedUtterance]:
+    """The meeting's eight utterances as a run reads them, with these texts
+    stored first -- module A writes a line before B is told of it."""
+    for number, text in texts.items():
+        stored = session.get(Utterance, f"utt_{number}")
+        assert stored is not None
+        stored.text = text
+    session.flush()
+    return [
+        ClassifiedUtterance(
+            id=f"utt_{i}",
+            kind=kinds.get(i),
+            confidence=0.9,
+            text=session.get(Utterance, f"utt_{i}").text,  # type: ignore[union-attr]
+        )
+        for i in range(1, 9)
+    ]
+
+
+def run(session: Session, read: list[ClassifiedUtterance]) -> list[ExtDecision]:
+    """The two steps of a run that touch a decision, in the run's order
+    (``tasks._extract``): the rebuild, then what follows a corrected line."""
+    built = service.build_decisions(session, meeting_id=MEETING, utterances=read)
+    service.apply_source_corrections(
+        session, meeting_id=MEETING, spoken={u.id: u.text for u in read if u.text}
+    )
+    session.expire_all()
+    return built
+
+
+def welded(session: Session, *numbers: int, statement: str = "가격은 월 9900원으로 진행") -> str:
+    """A row as the grouping made it before 2026-10-09: one decision of several
+    lines that each say something, with the digest a run leaves on it."""
+    ids = [f"utt_{number}" for number in numbers]
+    row = ExtDecision(
+        id=decision_id(MEETING, ids),
+        meeting_id=MEETING,
+        statement=statement,
+        original_statement=PRICE,
+        confidence=0.9,
+        origin="model",
+    )
+    session.add(row)
+    session.add_all(
+        ExtDecisionSource(decision_id=row.id, utterance_id=utterance_id, position=position)
+        for position, utterance_id in enumerate(ids)
+    )
+    session.flush()
+    texts = {u.id: u.text for u in session.scalars(select(Utterance))}
+    service.apply_source_corrections(session, meeting_id=MEETING, spoken=texts)
+    return row.id
+
+
+WRAP_UP = {2: LOGIN, 3: PRICE, 4: ASSENT, 7: SEARCH}
+ALL_DECISIONS = dict.fromkeys(WRAP_UP, K.DECISION)
+
+
+def rows(session: Session) -> dict[str, str]:
+    return {d.id: d.statement for d in session.scalars(select(ExtDecision))}
+
+
+def test_a_welded_decision_nobody_marked_is_split_at_the_next_run(session: Session) -> None:
+    read = spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+
+    run(session, read)
+
+    assert rows(session) == {
+        decision_id(MEETING, ["utt_2"]): "로그인은 소셜 로그인만 지원하기로 함",
+        decision_id(MEETING, ["utt_3", "utt_4"]): "가격은 월 9900원으로 진행",
+        decision_id(MEETING, ["utt_7"]): "검색 기능은 다음 분기로 미루기로 함",
+    }
+    assert old not in rows(session)
+
+
+@pytest.mark.parametrize(
+    "mark",
+    [{"status": "confirmed"}, {"status": "rejected"}, {"statement": "가격은 월 9,900원"}],
+    ids=["confirmed", "rejected", "reworded"],
+)
+def test_a_decision_a_person_marked_stays_as_it_is_however_its_lines_are_grouped_now(
+    client: TestClient, session: Session, mark: dict[str, str]
+) -> None:
+    """The owner's rule (2026-10-09): what a person confirmed, rejected or
+    reworded keeps its id, its sentence and its review while the lines it was
+    made from are there. New rows are made only from lines no such row holds:
+    not from its own two, and not from the assent that followed them."""
+    read = spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    assert client.patch(f"{PREFIX}/decisions/{old}", json=mark).status_code == 200
+    review = session.get(ExtDecisionReview, old)
+    assert review is not None
+    before = (review.status, review.statement)
+
+    for _ in range(2):  # and the run after that finds the same rows
+        built = run(session, read)
+
+        assert rows(session) == {
+            old: "가격은 월 9900원으로 진행",
+            decision_id(MEETING, ["utt_7"]): "검색 기능은 다음 분기로 미루기로 함",
+        }
+        assert {decision.id for decision in built} == set(rows(session))
+        kept = session.get(ExtDecisionReview, old)
+        assert kept is not None and (kept.status, kept.statement) == before
+        sources = session.scalars(
+            select(ExtDecisionSource.utterance_id)
+            .where(ExtDecisionSource.decision_id == old)
+            .order_by(ExtDecisionSource.position)
+        )
+        assert list(sources) == ["utt_2", "utt_3"]
+
+
+def test_a_decision_put_back_to_pending_is_rebuilt_like_one_nobody_marked(
+    client: TestClient, session: Session
+) -> None:
+    """The review row is still there, saying nothing: no verdict, no rewording."""
+    read = spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "confirmed"})
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "pending"})
+    assert session.get(ExtDecisionReview, old) is not None
+
+    run(session, read)
+
+    assert old not in rows(session)
+    assert len(rows(session)) == 3
+
+
+def test_a_confirmed_sentence_is_not_written_again_by_a_later_run(
+    client: TestClient, session: Session
+) -> None:
+    """Also when the row's id is one the run would make anyway. Before, the
+    upsert put the run's sentence under the confirmation."""
+    read = spoken(session, {2: LOGIN}, {2: K.DECISION})
+    first = run(session, read)[0]
+    first.statement, first.statement_resolved = "소셜 로그인만 지원함", True
+    session.flush()
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+
+    run(session, read)
+
+    kept = session.get(ExtDecision, first.id)
+    assert kept is not None
+    assert (kept.statement, kept.statement_resolved) == ("소셜 로그인만 지원함", True)
+
+
+def test_a_kept_decision_follows_a_line_corrected_since(
+    client: TestClient, session: Session
+) -> None:
+    """#586 still holds for a kept row: the model's text is read again from the
+    row's own lines, so a word masked since is not kept in it, and a person's
+    rewording is flagged. The id and the review stay."""
+    read = spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(
+        f"{PREFIX}/decisions/{old}", json={"status": "confirmed", "statement": "가격은 월 9,900원"}
+    )
+
+    run(session, spoken(session, {3: "가격은 월 [금액]으로 갑니다"}, ALL_DECISIONS))
+
+    kept = session.get(ExtDecision, old)
+    assert kept is not None
+    assert kept.statement == "가격은 월 [금액]으로 진행"
+    assert kept.original_statement == "가격은 월 [금액]으로 갑니다"
+    assert kept.needs_recheck
+    review = session.get(ExtDecisionReview, old)
+    assert review is not None and review.status == "confirmed"
+    assert set(rows(session)) == {old, decision_id(MEETING, ["utt_7"])}
+    assert read[2].text == PRICE, "the run before had read the line as it was"
+
+
+def test_a_kept_decision_is_read_from_all_its_lines_whatever_they_are_called_now(
+    client: TestClient, session: Session
+) -> None:
+    """The run that finds the corrected line no longer calls it a decision.
+    The row is still the person's, and its sentence is still that line's."""
+    spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "confirmed"})
+
+    run(session, spoken(session, {3: "가격은 월 [금액]으로 갑니다"}, {2: K.DECISION}))
+
+    assert rows(session) == {old: "가격은 월 [금액]으로 진행"}
+
+
+def test_a_decision_confirmed_as_the_model_wrote_it_stays_confirmed_through_a_correction(
+    client: TestClient, session: Session
+) -> None:
+    """Confirmed with no rewording, then a line of it is corrected: the row is
+    still confirmed, with the sentence read again, and is not flagged for
+    another look -- #586's rule for a confirmed decision, kept for a kept row
+    (the owner, 2026-10-09). Only a person's own wording is flagged, because
+    only there can B not tell which words were the private ones. The copy
+    outside follows."""
+    spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "confirmed"})
+    read = spoken(session, {3: "가격은 월 [금액]으로 갑니다"}, ALL_DECISIONS)
+
+    service.build_decisions(session, meeting_id=MEETING, utterances=read)
+    after = service.apply_source_corrections(
+        session, meeting_id=MEETING, spoken={u.id: u.text for u in read if u.text}
+    )
+    session.expire_all()
+
+    kept = session.get(ExtDecision, old)
+    assert kept is not None and kept.statement == "가격은 월 [금액]으로 진행"
+    assert not kept.needs_recheck
+    review = session.get(ExtDecisionReview, old)
+    assert review is not None and review.status == "confirmed" and not review.statement
+    assert old in after.changed_decisions and after.flagged == 0
+
+
+def test_a_summary_written_for_a_kept_decisions_exact_lines_is_its_sentence(
+    client: TestClient, session: Session
+) -> None:
+    """A kept row whose line was corrected is given the run's write-up when the
+    run wrote one about the same lines -- here a row of one line, whose id the
+    run makes anyway."""
+    first = run(session, spoken(session, {2: LOGIN}, {2: K.DECISION}))[0].id
+    client.patch(f"{PREFIX}/decisions/{first}", json={"status": "confirmed"})
+    read = spoken(session, {2: "로그인은 [서비스] 로그인만 지원하기로 했습니다"}, {2: K.DECISION})
+
+    service.build_decisions(
+        session,
+        meeting_id=MEETING,
+        utterances=read,
+        summaries={first: Resolution("[서비스] 로그인만 지원", used=())},
+    )
+
+    assert rows(session) == {first: "[서비스] 로그인만 지원"}
+
+
+def test_a_kept_decision_goes_when_a_speaker_of_its_lines_no_longer_consents(
+    client: TestClient, session: Session
+) -> None:
+    """A turn whose speaker has not consented reaches the rebuild with no text
+    (``classify_utterances``). The row made from it is rebuilt like any other:
+    it goes, with its review, and what is left is read as a new decision."""
+    read = spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "confirmed"})
+    read[2] = ClassifiedUtterance(id="utt_3", kind=None, confidence=0.0, text="")
+
+    run(session, read)
+
+    assert old not in rows(session)
+    assert session.get(ExtDecisionReview, old) is None
+    assert set(rows(session)) == {
+        decision_id(MEETING, ["utt_2", "utt_4"]),
+        decision_id(MEETING, ["utt_7"]),
+    }
+    assert PRICE not in " ".join(rows(session).values())
+
+
+def test_a_kept_decision_goes_when_one_of_its_lines_was_deleted(
+    client: TestClient, session: Session
+) -> None:
+    """A deleted utterance leaves its link with no id (``ExtDecisionSource``)."""
+    read = spoken(session, WRAP_UP, ALL_DECISIONS)
+    old = welded(session, 2, 3)
+    client.patch(f"{PREFIX}/decisions/{old}", json={"status": "confirmed"})
+    link = session.scalars(
+        select(ExtDecisionSource).where(
+            ExtDecisionSource.decision_id == old, ExtDecisionSource.utterance_id == "utt_3"
+        )
+    ).one()
+    link.utterance_id = None
+    session.flush()
+
+    run(session, [u for u in read if u.id != "utt_3"])
+
+    assert old not in rows(session)
+    assert session.get(ExtDecisionReview, old) is None
 
 
 # --- a person adds, rewords and deletes -------------------------------------------
@@ -671,15 +963,50 @@ def test_deleting_an_unknown_decision_is_not_found(client: TestClient) -> None:
 # --- the screen on the way out ----------------------------------------------------
 
 
+WITH_A_NUMBER = "담당 연락처 010-1234-5678 로 공유"
+
+
+def as_stored_before_the_rule(session: Session, decision_id: str) -> None:
+    """Put a number into a decision's wording the way no endpoint does any more.
+
+    Typed text is screened when it is saved (#1130), so a rewording or a typed
+    decision that holds a number is one stored before that rule -- or a line
+    module A's masker missed. The outbound check is what still stands between
+    such a row and a send, and these tests are about it. The number goes on the
+    rewording of a model's decision and on the statement of one a person typed,
+    which is where each keeps a person's words."""
+    decision = session.get(ExtDecision, decision_id)
+    review = session.get(ExtDecisionReview, decision_id)
+    assert decision is not None and review is not None
+    if decision.origin == "user":
+        decision.statement = WITH_A_NUMBER
+    else:
+        review.statement = WITH_A_NUMBER
+    session.flush()
+
+
+def reworded_before_the_rule(client: TestClient, session: Session, decision_id: str) -> None:
+    """A pending decision of the model's whose rewording holds a number."""
+    client.patch(f"{PREFIX}/decisions/{decision_id}", json={"statement": "담당 연락처로 공유"})
+    as_stored_before_the_rule(session, decision_id)
+
+
+def typed_before_the_rule(client: TestClient, session: Session) -> str:
+    """A decision a person typed, confirmed as every typed one is, holding a number."""
+    typed = client.post(
+        f"{PREFIX}/decisions", json={"meeting_id": MEETING, "statement": "연락처 공유"}
+    ).json()
+    as_stored_before_the_rule(session, typed["id"])
+    return str(typed["id"])
+
+
 def test_a_confirmed_rewording_with_personal_data_is_held_back_by_category(
     client: TestClient, session: Session
 ) -> None:
     """A rewording is typed by a person and never passed module A's masker."""
     first_id, second_id = (d.id for d in two_decisions(session))
-    client.patch(
-        f"{PREFIX}/decisions/{first_id}",
-        json={"status": "confirmed", "statement": "담당 연락처 010-1234-5678 로 공유"},
-    )
+    reworded_before_the_rule(client, session, first_id)
+    client.patch(f"{PREFIX}/decisions/{first_id}", json={"status": "confirmed"})
     client.patch(f"{PREFIX}/decisions/{second_id}", json={"status": "confirmed"})
 
     response = client.get(f"{PREFIX}/reviews/{MEETING}/outbound")
@@ -688,6 +1015,99 @@ def test_a_confirmed_rewording_with_personal_data_is_held_back_by_category(
     assert [d["id"] for d in outbound["decisions"]] == [second_id]
     assert outbound["blocked"] == [{"id": first_id, "kind": "decision", "categories": ["phone"]}]
     assert "1234-5678" not in response.text
+
+
+def _rows(client: TestClient) -> dict[str, dict]:
+    return {d["id"]: d for d in client.get(f"{PREFIX}/reviews/{MEETING}").json()["decisions"]}
+
+
+def test_a_decision_the_outbound_check_refuses_says_so_on_its_row(
+    client: TestClient, session: Session
+) -> None:
+    """The copy to Notion was refused by the client's check and the person was
+    told nothing: a warning in the log, by id. The row now says it, from the
+    same check, and names neither the value nor its category."""
+    first, second = two_decisions(session)
+    reworded_before_the_rule(client, session, first.id)
+    answer = client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
+
+    # What the send does with each: the real check, on the real request body.
+    notion = FakeNotion()
+    with pytest.raises(PrivacyViolationError):
+        service.sync_decision_to_notion(
+            session, notion, decision_id=first.id, database_id="db_decisions"
+        )
+    assert notion.pages == []
+    assert (
+        service.sync_decision_to_notion(
+            session, notion, decision_id=second.id, database_id="db_decisions"
+        )
+        is not None
+    )
+
+    assert answer.json()["held_back"] is True, "said at once, in the answer to the verdict"
+    rows = _rows(client)
+    assert rows[first.id]["held_back"] is True
+    assert rows[second.id]["held_back"] is False
+    assert "categories" not in rows[first.id] and "phone" not in str(
+        {k: v for k, v in rows[first.id].items() if k != "statement"}
+    )
+
+
+def test_the_row_stops_saying_so_once_it_is_reworded_and_its_page_then_goes(
+    client: TestClient, session: Session
+) -> None:
+    first, _ = two_decisions(session)
+    reworded_before_the_rule(client, session, first.id)
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+
+    answer = client.patch(
+        f"{PREFIX}/decisions/{first.id}", json={"statement": "담당자 연락처는 따로 공유"}
+    )
+
+    assert answer.json()["held_back"] is False
+    assert _rows(client)[first.id]["held_back"] is False
+    notion = FakeNotion()
+    service.sync_decision_to_notion(
+        session, notion, decision_id=first.id, database_id="db_decisions"
+    )
+    assert len(notion.pages) == 1
+
+
+def test_only_a_confirmed_decision_is_said_to_be_held_back(
+    client: TestClient, session: Session
+) -> None:
+    """Nothing unconfirmed is sent anyway (#246): a pending or rejected row with
+    the same text was not held back by this, and does not say it was."""
+    first, second = two_decisions(session)
+    reworded_before_the_rule(client, session, first.id)
+    typed = typed_before_the_rule(client, session)
+
+    rows = _rows(client)
+    assert (rows[first.id]["status"], rows[first.id]["held_back"]) == ("pending", False)
+    assert rows[second.id]["held_back"] is False
+    assert rows[typed]["held_back"] is True, (
+        "a typed decision is confirmed from the moment it exists"
+    )
+
+    put_back = client.patch(f"{PREFIX}/decisions/{typed}", json={"status": "pending"})
+    assert put_back.json()["held_back"] is False
+
+
+def test_the_rows_that_say_so_are_the_held_back_list(client: TestClient, session: Session) -> None:
+    """One check, read two ways: the row's mark and ``blocked`` never disagree."""
+    first, second = two_decisions(session)
+    reworded_before_the_rule(client, session, first.id)
+    client.patch(f"{PREFIX}/decisions/{first.id}", json={"status": "confirmed"})
+    client.patch(f"{PREFIX}/decisions/{second.id}", json={"status": "confirmed"})
+    typed_before_the_rule(client, session)
+
+    marked = {id_ for id_, row in _rows(client).items() if row["held_back"]}
+    blocked = client.get(f"{PREFIX}/reviews/{MEETING}/outbound").json()["blocked"]
+
+    assert len(marked) == 2
+    assert marked == {b["id"] for b in blocked if b["kind"] == "decision"}
 
 
 def test_an_accepted_item_whose_description_carries_personal_data_is_held_back(
@@ -1138,14 +1558,19 @@ def test_the_task_finds_a_deleted_decisions_page_through_its_ref(
 def test_a_rerun_that_drops_a_decision_keeps_the_ref_that_names_its_page(session: Session) -> None:
     """mkkim68, review of #679: ``build_decisions`` deleted the refs of
     decisions a rerun dropped, page or not. The page then stayed live in Notion
-    with nothing left to find it by. A claim with no page still goes."""
+    with nothing left to find it by. A claim with no page still goes.
+
+    A confirmed decision is dropped only when a line it was made from can no
+    longer be read (2026-10-09); here its speaker's consent is gone."""
     notion = FakeNotion()
     first = confirmed_with_a_page(session, notion)
     second = session.scalars(select(ExtDecision).where(ExtDecision.id != first.id)).one()
     session.add(ExtDecisionRef(decision_id=second.id, system="notion", meeting_id=MEETING))
     session.flush()
 
-    service.build_decisions(session, meeting_id=MEETING, utterances=labelled({}))
+    read = labelled({})
+    read[1] = ClassifiedUtterance(id="utt_2", kind=None, confidence=0.0, text="")
+    service.build_decisions(session, meeting_id=MEETING, utterances=read)
 
     assert session.get(ExtDecision, first.id) is None, "the rerun dropped it"
     assert session.get(ExtDecisionRef, (second.id, "notion")) is None

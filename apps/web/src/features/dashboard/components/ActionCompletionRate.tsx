@@ -25,13 +25,13 @@ export function ActionCompletionRate({
 }) {
   if (asOf == null) {
     return (
-      <DashboardCard title="액션 아이템 완료율">
+      <DashboardCard title="할 일 완료율">
         <p style={metaStyle}>완료 현황을 아직 받지 못했습니다.</p>
       </DashboardCard>
     );
   }
   return (
-    <DashboardCard title="액션 아이템 완료율">
+    <DashboardCard title="할 일 완료율">
       {rate != null ? (
         <>
           <div
@@ -66,7 +66,7 @@ export function ActionCompletionRate({
         <p style={metaStyle}>
           {meetings != null && meetings > 0 && meetings < MIN_MEETINGS
             ? "확정 항목이 있는 최근 4주 회의가 3건 미만이라 완료율을 표시하지 않습니다."
-            : "최근 4주 회의에서 확정된 액션 아이템이 없습니다."}
+            : "최근 4주 회의에서 확정된 할 일이 없습니다."}
         </p>
       )}
       <p style={{ ...metaStyle, marginTop: "var(--space-8)" }}>

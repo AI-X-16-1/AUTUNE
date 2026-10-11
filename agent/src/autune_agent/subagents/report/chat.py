@@ -20,9 +20,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from itertools import zip_longest
 from typing import Any
 
-from sqlalchemy.exc import SQLAlchemyError
-
-from autune_agent.main import BudgetExceededError, SubagentState, Toolbox
+from autune_agent.main import SubagentState, Toolbox
 from autune_agent.main.gemini import ADDRESSING, gemini_tools_from_settings
 from autune_agent.main.registry import NO_MEETING
 from autune_agent.main.toolcall import (
@@ -43,8 +41,10 @@ from .template import (
     CORRECTION_ACTION,
     DRAFT_ACTION,
     NO_SLACK,
+    OTHER_TEAMS_TOOL,
     POSTED,
     PUBLISH_ACTION,
+    RAISED,
     compose_report,
     no_channel,
 )
@@ -76,6 +76,13 @@ CHAT_READS = (
 )
 CHAT_ACTIONS = ("redraft", "request_post", "set_schedule")
 SCHEDULE_ACTION = "intelligence.set_weekly_report_schedule"
+OTHER_TEAMS = (
+    "다른 팀에도 같은 시각을 쓰려면 대시보드의 주간 리포트 카드에서 "
+    "'내 모든 팀'이나 '팀 골라서'를 고르세요."
+)
+"""After a schedule change: the chat changes this team only, the card any of them.
+Said only to a person in another team too (#1156 review): the card offers
+other teams only then."""
 _WEEKDAYS = ("월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일")
 
 _BUDGET = {BODY: 1500, "intelligence.weekly_reports": 1200, "intelligence.explain_metric": 400}
@@ -89,8 +96,10 @@ not a part that could not be fetched."""
 INSTRUCTIONS = """Answer in Korean. You answer a team member's question about module E --
 meeting quality, the team's trend, gap patterns, role alignment, the prediction, action-item
 completion, meeting reports and weekly reports -- by calling the tools given. Numbers come only
-from tool results. What a number means comes only from explain_metric; if it has nothing, say
-you do not know. To redo a report before it is posted call redraft; to ask for a post call
+from tool results. When the question assumes a grade or a number ("왜 C등급이야?"), read the
+actual one first (team_trend for the team, meeting_quality for one meeting) and say plainly when
+it differs. What a number means comes only from explain_metric; if it has nothing, say you do
+not know. To redo a report before it is posted call redraft; to ask for a post call
 request_post. To change when the weekly report goes out call set_schedule (weekday 0 is Monday,
 hour 0-23 in Korean time); only to read when it goes out, call weekly_report_schedule instead.
 On a meeting's page, call redraft or request_post at once, without meeting_id: it finds that
@@ -263,7 +272,7 @@ class _Turn:
     def read(self, name: str, **args: Any) -> ToolResult:
         try:
             result = self.toolbox.call(name, **args)
-        except (PrivacyViolationError, BudgetExceededError, SQLAlchemyError):
+        except RAISED:
             raise
         except Exception as exc:  # noqa: BLE001 - one tool's failure is the model's to work around
             log.warning("e_agent_tool_failed tool=%s error=%s", name, type(exc).__name__)
@@ -279,6 +288,15 @@ class _Turn:
         body = self.read(BODY)
         return body, body.ok or body.reason != NO_MEETING
 
+    def _in_other_teams(self) -> bool:
+        """The person asking belongs to a team besides this one. Unknown (no
+        tool, a failed read, no asker) counts as no: the line is only a hint."""
+        if OTHER_TEAMS_TOOL not in self.toolbox.describe():
+            return False
+        result = self.read(OTHER_TEAMS_TOOL)
+        item = result.items[0] if result.ok and result.items else None
+        return getattr(item, "other_teams", False) is True
+
     def _no_channel(self) -> bool:
         """E says the team has no Slack channel, so a post would fail at approval."""
         if CHANNEL_TOOL not in self.toolbox.describe():
@@ -293,7 +311,7 @@ class _Turn:
     def _compose(self, meeting: dict[str, Any]) -> SubagentResult | ToolResult:
         try:
             return compose_report(self.toolbox, meeting)
-        except (PrivacyViolationError, BudgetExceededError, SQLAlchemyError):
+        except RAISED:
             raise
         except Exception as exc:  # noqa: BLE001 - see ``read``
             log.warning("e_agent_tool_failed tool=redraft error=%s", type(exc).__name__)
@@ -400,6 +418,10 @@ class _Turn:
                 else " 할 말이 없는 주에는 보내지 않습니다."
             )
         self.lines.append(line)
+        # A chat turn changes one team (#449) and remembers nothing to ask a
+        # follow-up with, so the way to the person's other teams is said here.
+        if self._in_other_teams():
+            self.lines.append(OTHER_TEAMS)
         return ToolResult(ok=True, summary=line + " (요청만 했고 아직 실행되지 않았습니다)")
 
     def request_post(self, meeting_id: str | None = None) -> ToolResult:

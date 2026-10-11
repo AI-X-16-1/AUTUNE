@@ -18,14 +18,14 @@ export function ConfirmDelete({
   onCancel,
   onConfirm,
   pending = false,
-  noun = "액션 아이템",
+  noun = "할 일",
 }: {
   description: string;
   onCancel: () => void;
   onConfirm: () => void;
   pending?: boolean;
   /** What is being deleted. Both current nouns end in a consonant, so 을. */
-  noun?: "액션 아이템" | "결정";
+  noun?: "할 일" | "결정";
 }) {
   return (
     <div

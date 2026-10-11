@@ -23,7 +23,7 @@ export interface SessionUser {
 
 /**
  * Which team a team-integration call is about: a meeting the screen shows (the
- * 액션 tab) or the team itself (S28 settings, #496). The server checks the
+ * 할 일 tab) or the team itself (S28 settings, #496). The server checks the
  * person belongs to that team either way.
  */
 export type IntegrationScope = { meetingId: string } | { teamId: string };

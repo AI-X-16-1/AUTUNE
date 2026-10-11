@@ -15,12 +15,9 @@ default -- ``tests/unit/test_route_auth.py`` fails until it does.
 
 from __future__ import annotations
 
-from typing import Annotated
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
-from autune_core import CurrentUser, get_session
+from autune_core import CurrentUser, SessionDep
 
 from . import briefs, service
 from .schemas import (
@@ -37,8 +34,6 @@ from .schemas import (
 )
 
 router = APIRouter()
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @router.get("/health")

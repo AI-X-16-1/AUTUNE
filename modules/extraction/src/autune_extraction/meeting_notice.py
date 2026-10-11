@@ -9,7 +9,7 @@ Right after a meeting almost everything this module has made is a draft a
 model wrote, waiting for a person (``needs_confirmation``), and unconfirmed
 content from B does not reach an outbound surface (#246; agent-layer.md, rule
 3). So the message carries the meeting's title, **how many** drafts wait for
-this person, and the address of that meeting's 액션 tab -- never a draft's
+this person, and the address of that meeting's 할 일 tab -- never a draft's
 text, its date, or anything else of it. An item of theirs that a person has
 already confirmed is named with its date, as the morning DM names one.
 
@@ -217,16 +217,21 @@ def notice_content(session: Session, owed: NoticeOwed, *, now: datetime) -> Meet
     return None if notice.empty else notice
 
 
-def build_meeting_notice(notice: MeetingNotice, *, actions_url: str) -> str:
+def build_meeting_notice(notice: MeetingNotice, *, actions_url: str, today: date) -> str:
     """The notice as plain text: the meeting, how many drafts wait, the items
-    already confirmed, and where to look."""
+    already confirmed, and where to look. ``today`` is the day it is read on:
+    a due date says its year only when it is another one."""
     title = reminders.slack_escape(notice.meeting_title)
     if notice.waiting:
         out = [f"'{title}'에서 내 담당으로 잡힌 일 {notice.waiting}건이 확인을 기다립니다."]
     else:
         out = [f"'{title}'에서 내 담당으로 정해진 일이 있습니다."]
     for line in notice.confirmed[: reminders.DAILY_MAX_LINES]:
-        when = f" (기한 {line.due_date.isoformat()})" if line.due_date is not None else ""
+        when = (
+            f" (기한 {reminders.written_day(line.due_date, year=today.year)})"
+            if line.due_date is not None
+            else ""
+        )
         out.append(f"• 확정: {reminders.slack_escape(line.description)}{when}")
     if len(notice.confirmed) > reminders.DAILY_MAX_LINES:
         out.append(f"• 확정 외 {len(notice.confirmed) - reminders.DAILY_MAX_LINES}개")
@@ -263,7 +268,11 @@ def send_meeting_notice(
         return False
     slack.send_dm(
         owed.user_id,
-        build_meeting_notice(content, actions_url=service.answer_url(owed.meeting_id)),
+        build_meeting_notice(
+            content,
+            actions_url=service.answer_url(owed.meeting_id),
+            today=reminders.korean_day(now),
+        ),
     )
     return True
 

@@ -37,6 +37,15 @@ export const COLUMN_LABELS: Record<ActionStatus, string> = {
 };
 
 /**
+ * What a document -- the 요약 tab, the copied minutes -- says after a decision
+ * nobody has confirmed. Where the line came from, not what it waits for: on a
+ * page of minutes "…로 결정함 (확인 대기)" read as if the decision itself were
+ * not final, or as a workflow that had stalled (the user, 2026-10-08). The
+ * review list, where a person acts, says "확인 필요" as the board does.
+ */
+export const UNCONFIRMED_DECISION = "자동 추출";
+
+/**
  * Where one item stands with one outside system — `ExternalRefRead`.
  *
  * Not the generated `ExternalRef` from `@autune/contracts`: that type is the
@@ -59,6 +68,38 @@ export interface SyncFailure {
   system: "notion" | "jira" | "calendar";
   kind: "privacy" | "reconnect" | "unreachable" | "rejected";
   failed_at: string;
+}
+
+/** A failure standing for an item, with the item and its meeting beside it. */
+export interface SyncLogFailure extends SyncFailure {
+  action_item_id: string;
+  meeting_id: string;
+  meeting_title: string;
+  description: string;
+}
+
+/**
+ * A copy of an item that was made, and when it first was. `url` is the Notion
+ * page or the Jira issue; an event on the reader's own calendar has none.
+ */
+export interface SyncLogCopy {
+  action_item_id: string;
+  meeting_id: string;
+  meeting_title: string;
+  description: string;
+  system: SyncFailure["system"];
+  url: string | null;
+  copied_at: string;
+}
+
+/**
+ * S28's "동기화 기록" for a team: the failures standing and the latest copies
+ * made, each newest first. Read from what the board already keeps -- not a
+ * log of every attempt.
+ */
+export interface SyncLog {
+  failures: SyncLogFailure[];
+  copies: SyncLogCopy[];
 }
 
 /**
@@ -157,6 +198,12 @@ export interface ActionItemRead extends ActionItem {
    * `null` until `assignee_id` resolves to an account that still exists.
    */
   assignee_name: string | null;
+  /**
+   * `description` in twenty characters or fewer, for the card's top line
+   * (`rowTitle`). `null` when the item has none -- the card then cuts the
+   * description -- and absent from a server before titles.
+   */
+  title?: string | null;
   /**
    * Whether `description` is a resolver's rewrite of the source utterance
    * rather than the utterance verbatim (#175, #366). S18 shows this so a
@@ -341,7 +388,9 @@ export interface ProjectSendReport {
       | "retracted"
       | "not_connected"
       | "no_date"
-      | "failed";
+      | "failed"
+      /** Refused by the outbound check: sending again does not mend it. */
+      | "held";
   }[];
   /** Confirmed rows with no project, left out. */
   unsorted: number;
@@ -372,6 +421,9 @@ export interface GeneratedSummary {
 
 export interface MeetingSummary {
   meeting_id: string;
+  /** What the page of minutes is headed with: the meeting's title and start. */
+  meeting_title?: string | null;
+  meeting_started_at?: string | null;
   /** Confirmed first, then pending; a rejected decision is not listed. */
   decisions: SummaryDecision[];
   /** Every item of the meeting, whatever its status. */
@@ -382,6 +434,8 @@ export interface MeetingSummary {
   note_updated_at: string | null;
   /** v2: absent or null when no current summary is written. */
   generated?: GeneratedSummary | null;
+  /** v2: none was written because the meeting is too long for one. */
+  generated_too_long?: boolean;
   /** The team's projects, to group the decisions and items by. */
   projects?: Project[];
 }
@@ -421,16 +475,36 @@ export interface ReviewDecision {
   id: string;
   /** What will be sent: the person's rewording when there is one. */
   statement: string;
+  /**
+   * `statement` in twenty characters or fewer, for the row's top line
+   * (`rowTitle`). `null` when there is none and for a decision a person
+   * reworded; absent from a server before titles.
+   */
+  title?: string | null;
   /** What the model proposed, kept so the screen can show both. */
   model_statement: string;
   confidence: number;
   origin: "model" | "user";
   /** A source line was corrected since a person typed or reworded it (#586). */
   needs_recheck: boolean;
+  /**
+   * Confirmed and not sent: the statement holds something that looks like
+   * personal data, so its copy to the team's tools is refused. The server
+   * works it out as it reads the row and says neither the value nor its
+   * kind; it clears with the rewording that removes it. Absent from a server
+   * before the mark existed.
+   */
+  held_back?: boolean;
   status: DecisionStatus;
   /** Pre-check it? `null` while the candidate line is unset. */
   suggested: boolean | null;
   source_utterance_ids: string[];
+  /**
+   * Sources whose utterance was deleted since (#400) -- by a rerun of the
+   * meeting or by a person deleting their own data. They are not in
+   * `source_utterance_ids`. Absent from a server before the count existed.
+   */
+  deleted_source_count?: number;
   /**
    * A one-line preview of the sources, distinct from `statement` (which is
    * assembled or reworded). Rule-based, not a model: the longest source

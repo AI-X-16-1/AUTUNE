@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
+from structlog.testing import capture_logs
 
 from autune_core import (
     Base,
@@ -48,8 +49,10 @@ from autune_extraction.models import (
 )
 from autune_extraction.pipeline import FakeClassifier, FakeNli
 from autune_extraction.router import router
+from autune_extraction.schemas import DecisionReviewUpdate
 from autune_integrations.errors import PermanentIntegrationError
-from autune_integrations.privacy import MAX_OUTBOUND_CHARS, strings_in
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS, check_outbound, strings_in
+from autune_integrations.slack import SlackClient
 
 from .conftest import sign_in
 
@@ -336,6 +339,73 @@ def test_one_tool_failing_never_stops_the_others(session: Session) -> None:
     assert outcomes[("Autune", "slack")] == "created"
     assert outcomes[("Autune", "jira")] == "failed"
     assert len(slack.posted) == 2
+
+
+class SlackBehindTheCheck(FakeSlack):
+    """Checks a message the way ``SlackClient`` does before it leaves: the
+    whole request body through ``check_outbound`` (``HttpClient.request``)."""
+
+    def post_message(self, channel: str, text: str) -> str:
+        check_outbound(
+            {"channel": channel, "text": text},
+            destination="slack",
+            addressing=SlackClient.addressing,
+        )
+        return super().post_message(channel, text)
+
+
+def _held_minutes(session: Session) -> tuple[list[project_send.Sent], FakeSlack, list[dict]]:
+    """Autune's confirmed decision, its rewording carrying a phone number, sent.
+
+    No save writes such a rewording any more -- typed text is screened when it
+    is stored (#1130) -- so the number is put on the row as one stored before
+    that rule holds it. The outbound check is what is left to stop it."""
+    service.review_decision(
+        session,
+        session.get(ExtDecision, "dec_ok"),  # type: ignore[arg-type]
+        DecisionReviewUpdate(statement="배포 문의는 담당자에게 한다"),
+    )
+    review = session.get(ExtDecisionReview, "dec_ok")
+    assert review is not None
+    review.statement = "배포 문의는 010-1234-5678 로 한다"
+    session.flush()
+    slack = SlackBehindTheCheck()
+    tools = project_send.Clients(slack=(slack, "C_TEAM"))
+    with capture_logs() as logs:
+        sent, _ = project_send.send(session, MEETING, ["slack"], tools)
+    return sent, slack, logs
+
+
+def test_minutes_the_outbound_check_refuses_are_held_and_say_so(session: Session) -> None:
+    """Reported as ``failed`` before, which reads as "try again" -- and trying
+    again meets the same refusal. The other project's copy still goes."""
+    sent, slack, logs = _held_minutes(session)
+
+    outcomes = {(s.project_name, s.target): s.outcome for s in sent}
+    assert outcomes == {("Autune", "slack"): "held", ("App", "slack"): "created"}
+    assert [text for _, text in slack.posted] and all(
+        "1234-5678" not in text for _, text in slack.posted
+    )
+    held = [entry for entry in logs if entry["event"].endswith("blocked_by_privacy_guard")]
+    assert held == [
+        {
+            "event": "extraction_project_send_blocked_by_privacy_guard",
+            "log_level": "warning",
+            "meeting_id": MEETING,
+            "project_id": "prj_a",
+            "target": "slack",
+        }
+    ]
+    assert "1234-5678" not in str(logs)
+
+
+def test_held_minutes_are_still_a_copy_left_behind(session: Session) -> None:
+    """As they were while they were called ``failed``: a refresh that held a
+    copy back has not brought every copy in line."""
+    sent, _, _ = _held_minutes(session)
+
+    assert not project_send.in_line(sent)
+    assert project_send.in_line([s for s in sent if s.outcome != "held"])
 
 
 def test_the_route_reports_each_copy(session: Session, monkeypatch: pytest.MonkeyPatch) -> None:

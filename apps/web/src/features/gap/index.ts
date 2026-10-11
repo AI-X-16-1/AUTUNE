@@ -12,6 +12,13 @@ export { GapReportScreen } from "./components";
 export { TeamGapList } from "./components";
 
 /**
+ * S14's small cut (#1147): the band a live recording shows five minutes before
+ * its planned end. The live screen is module A's; the route puts this in its
+ * slot.
+ */
+export { EndAlertBand } from "./components";
+
+/**
  * S20 with a fixture meeting behind it, for the temporary `/dev-gap` route.
  * Not part of the product: the route it serves 404s outside development.
  */

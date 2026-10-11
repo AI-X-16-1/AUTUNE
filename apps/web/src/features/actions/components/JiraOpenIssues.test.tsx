@@ -64,7 +64,10 @@ describe("JiraOpenIssues", () => {
     expect(link.href).toBe("https://acme.atlassian.net/browse/AUT-7");
     expect(link.rel).toBe("noopener noreferrer");
     expect(screen.getByText("배포 일정 공유")).toBeTruthy();
-    expect(screen.getByText("진행 중 · 가나다 · 2026-10-09")).toBeTruthy();
+    // Jira's own due date, written as this feature writes one (this year's: no year).
+    expect(
+      screen.getByText(`진행 중 · 가나다 · ${new Date().getFullYear() === 2026 ? "" : "2026년 "}10월 9일 금`),
+    ).toBeTruthy();
     expect(screen.getByText("Autune에서 만든 이슈")).toBeTruthy();
     expect(screen.getByText("제품팀 · AUT")).toBeTruthy();
     expect(screen.getByText(/Autune에 저장하지 않습니다/)).toBeTruthy();
@@ -84,6 +87,29 @@ describe("JiraOpenIssues", () => {
     open();
 
     expect(await screen.findByText(message)).toBeTruthy();
+  });
+
+  it("lists one team's project alone when the board shows one team", async () => {
+    const OTHER: JiraProjectIssues = {
+      ...PROJECT,
+      team_id: "team_2",
+      team_name: "디자인팀",
+      project_key: "DSN",
+    };
+    list.mockResolvedValue([PROJECT, OTHER]);
+    const view = render(<JiraOpenIssues teamId="team_2" />);
+
+    open();
+
+    expect(await screen.findByText("디자인팀 · DSN")).toBeTruthy();
+    expect(screen.queryByText("제품팀 · AUT")).toBeNull();
+
+    // Every team again, and a team with no project: nothing is read anew.
+    view.rerender(<JiraOpenIssues teamId={null} />);
+    expect(screen.getByText("제품팀 · AUT")).toBeTruthy();
+    view.rerender(<JiraOpenIssues teamId="team_3" />);
+    expect(screen.getByText(/연결한 Jira 프로젝트가 없습니다/)).toBeTruthy();
+    expect(list).toHaveBeenCalledOnce();
   });
 
   it("says so when no team has connected a project", async () => {

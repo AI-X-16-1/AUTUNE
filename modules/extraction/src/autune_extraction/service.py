@@ -69,12 +69,14 @@ from .confirmations import (
 from .decisions import (
     DEFAULT_MAX_GAP,
     ClassifiedUtterance,
+    DecisionGroup,
+    core_of,
+    decision_of,
     group_decisions,
     identified,
-    needs_write_up,
 )
 from .edit_cost import EditCost
-from .excerpt import cut, span_of
+from .excerpt import cut, joined, quoted
 from .models import (
     ExtActionItem,
     ExtActionItemRelated,
@@ -140,7 +142,17 @@ from .schemas import (
     SyncFailureRead,
     TeamRead,
 )
-from .slots import KST, Assignee, assignee_of, meeting_day, parse_due
+from .slots import (
+    KST,
+    Assignee,
+    assignee_of,
+    dates_named,
+    meeting_day,
+    names_chosen_date,
+    parse_due,
+    past_form_at,
+)
+from .typed_text import refuse_personal_data
 
 log = get_logger(__name__)
 
@@ -301,7 +313,7 @@ _ANSWER_OF = {kind.value: answer for answer, kind in WEB_ANSWERS.items()}
 
 
 def answer_url(meeting_id: str) -> str:
-    """Where a speaker answers their own open questions: the meeting's 액션 tab."""
+    """Where a speaker answers their own open questions: the meeting's 할 일 tab."""
     return f"{get_core_settings().web_base_url.rstrip('/')}/meetings/{meeting_id}/actions"
 
 
@@ -747,6 +759,17 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
       (``statement_resolved``; the user, 2026-10-06). Whether it cites a line
       has no part in it.
 
+    And every short title in the meeting goes, on the rows drawn from the
+    speech and on the rest (module B's owner, 2026-10-10). A title is a model's
+    line about one row, written in a request that carried the meeting's other
+    sentences too, and one word of it may be new to its own sentence
+    (``pipeline.title.accept``) -- so it can be a word of a row this very call
+    deletes or blanks, and no title says which request wrote it. Like the
+    written summary below, it is model output nobody accepted, and the next
+    run asks again from the sentences that are left. A title already sent in
+    a copy outside is not reached by this: only a row whose text changed is
+    queued to follow, as before.
+
     Nothing is republished here: copies C, D and E already received through
     ``ExtractionResult`` are theirs, and stay until they act on the same signal
     (#601 review).
@@ -784,6 +807,11 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         .on_conflict_do_nothing(index_elements=["utterance_id"])
     )
     session.execute(delete(ExtMeetingSummary).where(ExtMeetingSummary.meeting_id.in_(meeting_ids)))
+    # Under the same lock, for the same reason: ``store_titles`` takes it, so
+    # an answer the model was still writing is either stored before this and
+    # cleared here, or arrives after and is stored only if every sentence of
+    # its request still stands.
+    _forget_titles(session, meeting_ids)
     items = session.scalars(
         select(ExtActionItem)
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
@@ -850,6 +878,28 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
             changed_decisions.append(decision.id)
     session.flush()
     return SpeechForgotten(tuple(deleted), tuple(changed), tuple(changed_decisions))
+
+
+def _forget_titles(session: Session, meeting_ids: Collection[str]) -> None:
+    """Take the short title off every item and decision of ``meeting_ids``.
+
+    Row by row and not one ``UPDATE``: ``forget_speech`` goes on to read some
+    of these rows, and they must not come back holding the title. Read afresh,
+    for a title stored since this session first loaded the row."""
+    titled_items = session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id.in_(meeting_ids), ExtActionItem.title.is_not(None))
+        .execution_options(populate_existing=True)
+    ).all()
+    for item in titled_items:
+        item.title = None
+    titled_decisions = session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id.in_(meeting_ids), ExtDecision.title.is_not(None))
+        .execution_options(populate_existing=True)
+    ).all()
+    for decision in titled_decisions:
+        decision.title = None
 
 
 def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
@@ -948,6 +998,11 @@ def create_action_item(
         raise ValueError(f"not an origin create_action_item makes: {origin!r}")
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
+    # What a person typed is screened before it is stored (#1130).
+    refuse_personal_data(payload.description, field="description", meeting_id=payload.meeting_id)
+    refuse_personal_data(
+        payload.assignee_label, field="assignee_label", meeting_id=payload.meeting_id
+    )
     if payload.assignee_id is not None:
         require_assignable(session, payload.meeting_id, payload.assignee_id)
     wanted = set(payload.source_utterance_ids)
@@ -1167,6 +1222,7 @@ def read_model(
         meeting_title=meeting_title,
         team_id=team_id,
         description=item.description,
+        title=item.title,
         description_resolved=item.description_resolved,
         assignee_id=None if assignee_departed else item.assignee_id,
         assignee_label=item.assignee_label,
@@ -1200,6 +1256,20 @@ def live_source_ids(item: ExtActionItem) -> list[str]:
     ``ExtActionItemSource``); those are counted, never listed.
     """
     return [source.utterance_id for source in item.sources if source.utterance_id is not None]
+
+
+def live_decision_source_ids(decision: ExtDecision) -> list[str]:
+    """The decision's source utterances that still exist, in the order they
+    were spoken.
+
+    A link row outlives its utterance with ``utterance_id`` NULL (see
+    ``ExtDecisionSource``); those are counted, never listed.
+    """
+    return [
+        source.utterance_id
+        for source in sorted(decision.sources, key=lambda s: s.position)
+        if source.utterance_id is not None
+    ]
 
 
 def departed_assignees(session: Session, items: Sequence[ExtActionItem]) -> set[str]:
@@ -1609,6 +1679,13 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     Reads only what the board already shows the same team: descriptions,
     assignees and dates, never an utterance. An earlier meeting past its
     retention window carries nothing over (``within_retention``, #656).
+
+    **Late is against ``today``, and with none given that is the date in
+    Korea** (``slots.KST``), as in ``team_action_progress``: the route gives
+    none, and a server's ``date.today()`` on UTC is a day behind from 00:00 to
+    09:00 KST. In those hours the popup's "기한 지남" count left out the item
+    that had gone late at midnight, while the browser, on Korea's day, drew
+    that same row's date as late.
     """
     meeting = live_meeting(session, meeting_id)
     if meeting is None:
@@ -1629,7 +1706,7 @@ def carried_over(session: Session, meeting_id: str, *, today: date | None = None
     if not earlier:
         return CarriedOver(open=0, overdue=0, items=[])
 
-    day = today or date.today()
+    day = today or datetime.now(tz=KST).date()
     rows = list(
         session.scalars(
             select(ExtActionItem)
@@ -1932,7 +2009,7 @@ def decision_summaries(session: Session, decisions: Sequence[ExtDecision]) -> di
     literally said beside it.
     """
     texts = _summary_texts(
-        session, {source.utterance_id for decision in decisions for source in decision.sources}
+        session, {u for decision in decisions for u in live_decision_source_ids(decision)}
     )
     summaries: dict[str, str] = {}
     for decision in decisions:
@@ -1984,6 +2061,23 @@ def update_action_item(
     if not changes:
         return item
 
+    # Before anything is set: a refused edit changes nothing (#1130). A field
+    # sent back as it is stored is not being written, so an item saved before
+    # the rule can still have its date or its owner changed.
+    if "description" in changes:
+        refuse_personal_data(
+            payload.description,
+            field="description",
+            stored=item.description,
+            action_item_id=item.id,
+        )
+    if "assignee_label" in changes:
+        refuse_personal_data(
+            payload.assignee_label,
+            field="assignee_label",
+            stored=item.assignee_label,
+            action_item_id=item.id,
+        )
     if "assignee_id" in changes and payload.assignee_id is not None:
         require_assignable(session, item.meeting_id, payload.assignee_id)
 
@@ -2185,6 +2279,125 @@ def edit_cost_for_meeting(session: Session, meeting_id: str) -> EditCost:
 # --- decisions ---------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class _MarkedDecisions:
+    """The model's decisions of a meeting that a person confirmed, rejected or
+    reworded and whose source lines can all still be read -- the rows a
+    rebuild does not regroup (``build_decisions``)."""
+
+    unchanged: frozenset[str]
+    """Ids of the rows whose lines read as they did: left exactly as they are."""
+    corrected: Mapping[str, DecisionGroup]
+    """A row one of whose lines was corrected since, with the decision read
+    again from its own lines: the model's text follows the line (#586)."""
+    held: frozenset[str]
+    """Ids of the entries of the run's sequence these rows are made of."""
+
+    @property
+    def ids(self) -> frozenset[str]:
+        return self.unchanged | self.corrected.keys()
+
+
+def _held_entries(
+    source: ExtDecisionSource, lines: Sequence[ClassifiedUtterance], whole: str | None
+) -> list[ClassifiedUtterance]:
+    """Which entries of the run's sequence one stored source of a decision is:
+    the utterance, or -- for a turn now read in pieces -- the pieces inside the
+    part the row was made from. With no part recorded, or a piece that cannot
+    be found in the stored text, the whole turn."""
+    start, end = source.excerpt_start, source.excerpt_end
+    if start is None or end is None or whole is None or not any(line.part_of for line in lines):
+        return list(lines)
+    inside = [
+        line
+        for line in lines
+        if (span := quoted(whole, line.text, line.part)) is None
+        or (span[0] < end and start < span[1])
+    ]
+    return inside or list(lines)
+
+
+def _marked_decisions(
+    session: Session,
+    meeting_id: str,
+    utterances: Sequence[ClassifiedUtterance],
+    *,
+    day: date | None,
+) -> _MarkedDecisions:
+    """See ``_MarkedDecisions``. A row is in it only while every line it was
+    made from is there and readable: a deleted utterance leaves its source
+    link without an id, and a speaker who has not consented is a turn with no
+    text in ``utterances``. Such a row is rebuilt like any other, which is to
+    say it goes.
+
+    Whether its lines read as they did is the digest the last run stored
+    (``apply_source_corrections``). A row with none was never compared, so it
+    is read again rather than trusted to hold no word masked since.
+    """
+    marked = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                or_(
+                    ExtDecisionReview.status.in_(("confirmed", "rejected")),
+                    and_(
+                        ExtDecisionReview.statement.is_not(None),
+                        ExtDecisionReview.statement != "",
+                    ),
+                ),
+            )
+        )
+    )
+    if not marked:
+        return _MarkedDecisions(frozenset(), {}, frozenset())
+    rows = list(
+        session.scalars(
+            select(ExtDecision)
+            .options(selectinload(ExtDecision.sources))
+            .where(
+                ExtDecision.id.in_(marked),
+                ExtDecision.meeting_id == meeting_id,
+                ExtDecision.origin == "model",
+            )
+        )
+    )
+    entries: dict[str, list[ClassifiedUtterance]] = {}
+    for utterance in utterances:
+        entries.setdefault(utterance.source_id, []).append(utterance)
+    texts = _summary_texts(
+        session, {s.utterance_id for row in rows for s in row.sources if s.utterance_id}
+    )
+
+    unchanged: set[str] = set()
+    corrected: dict[str, DecisionGroup] = {}
+    held: set[str] = set()
+    for row in rows:
+        sources = sorted(row.sources, key=lambda s: s.position)
+        members: list[ClassifiedUtterance] = []
+        said: list[ClassifiedUtterance] = []
+        for source in sources:
+            lines = entries.get(source.utterance_id or "", [])
+            if not any(line.text for line in lines):
+                members = []
+                break
+            mine = _held_entries(source, lines, texts.get(source.utterance_id or ""))
+            members.extend(mine)
+            # Of a turn read in pieces, the pieces that are decisions. A line
+            # no longer called one is still the row's.
+            said.extend([m for m in mine if m.kind is UtteranceKind.DECISION] or mine)
+        if not members:
+            continue
+        ids = [source.utterance_id for source in sources if source.utterance_id is not None]
+        if row.source_digest is not None and row.source_digest == stored_digest(session, ids):
+            unchanged.add(row.id)
+        elif (group := decision_of(utterances, {m.id for m in said}, day=day)) is not None:
+            corrected[row.id] = group
+        else:
+            continue
+        held.update(m.id for m in members)
+    return _MarkedDecisions(frozenset(unchanged), corrected, frozenset(held))
+
+
 def build_decisions(
     session: Session,
     *,
@@ -2223,6 +2436,21 @@ def build_decisions(
     matching an old decision to a reworded new one is the same-decision
     question, and #25 gave that to D.
 
+    **A decision a person confirmed, rejected or reworded is not rebuilt**
+    (the owner, 2026-10-09; ``_marked_decisions``). While the lines it was made
+    from can all be read it keeps its id, its sentence, its sources, its review
+    and its page, however this run would group those lines; and no new row is
+    made from a line it holds (``group_decisions``'s ``held``). Before, a row
+    whose grouping changed -- one label the classifier gave differently, a
+    corrected line, a grouping rule that changed -- was deleted with its
+    review, and the person was asked again about a sentence they had
+    answered. Two things still move such a row. A line of it corrected since
+    (#586): its text is read again from its own lines, so a word masked since
+    does not stay in it, and ``apply_source_corrections`` flags a rewording
+    as before. A line of it deleted, or its speaker's consent withdrawn: it is
+    a row like any other again, and goes. A row nobody marked is rebuilt as
+    described above.
+
     Sources are only written for a row this call inserts. A surviving id
     proves its sources are the same set in the same order -- that is what
     produced the id -- so there is nothing to update there; only ``statement``
@@ -2260,10 +2488,30 @@ def build_decisions(
     meeting = session.get(Meeting, meeting_id)
     day = meeting_day(meeting.started_at if meeting is not None else None)
 
+    kept = _marked_decisions(session, meeting_id, utterances, day=day)
     fresh = dict(
-        identified(meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances)
+        identified(
+            meeting_id,
+            group_decisions(utterances, max_gap=max_gap, day=day, held=kept.held),
+            utterances,
+            taken=kept.ids,
+        )
     )
-    summaries = summaries or {}
+    summaries = dict(summaries or {})
+    if kept.corrected:
+        # A summary is found by id, and an id can outlive the lines it named
+        # (two decisions of one turn, ``identified``): a kept row is given one
+        # only if it was written about exactly the row's lines.
+        alone = dict(
+            identified(
+                meeting_id, group_decisions(utterances, max_gap=max_gap, day=day), utterances
+            )
+        )
+        for id_, group in kept.corrected.items():
+            other = alone.get(id_)
+            if other is None or other.source_utterance_ids != group.source_utterance_ids:
+                summaries.pop(id_, None)
+        fresh.update(kept.corrected)
     # ``utterances`` may be the sequence read in pieces (``in_pieces``).
     # Two decisions of one long turn are two rows (``identified``); what is
     # stored as a source or a related line is always the utterance itself.
@@ -2272,20 +2520,32 @@ def build_decisions(
         id_: list(dict.fromkeys(real.get(u, u) for u in group.source_utterance_ids))
         for id_, group in fresh.items()
     }
-    # Which part of a long turn each decision was settled in (``excerpt``): the
-    # pieces among its members, found in the turn's stored text.
+    # Which part of an utterance each decision was settled in (``excerpt``):
+    # for each of its members, the words the classifier named when they are in
+    # the stored text, else the piece of a long turn the member was; a member
+    # with neither is the whole utterance. Found in the text as it is stored.
     by_id = {u.id: u for u in utterances}
-    pieces: dict[tuple[str, str], list[str]] = {}
+    members: dict[tuple[str, str], list[ClassifiedUtterance]] = {}
     for id_, group in fresh.items():
         for member in group.source_utterance_ids:
-            piece = by_id.get(member)
-            if piece is not None and piece.part_of:
-                pieces.setdefault((id_, piece.part_of), []).append(piece.text)
-    turns = _summary_texts(session, {turn for _, turn in pieces})
+            entry = by_id.get(member)
+            if entry is not None and (entry.part_of or entry.part):
+                members.setdefault((id_, entry.source_id), []).append(entry)
+    turns = _summary_texts(session, {turn for _, turn in members})
     parts = {
-        key: part
-        for key, said in pieces.items()
-        if key[1] in turns and (part := span_of(turns[key[1]], said)) is not None
+        (id_, turn): part
+        for (id_, turn), entries in members.items()
+        if (whole := turns.get(turn)) is not None
+        and (
+            part := joined(
+                whole,
+                (
+                    quoted(whole, entry.text if entry.part_of else None, entry.part)
+                    for entry in entries
+                ),
+            )
+        )
+        is not None
     }
     shown: dict[str, str] = {}
     cited: dict[str, list[str]] = {}
@@ -2312,7 +2572,7 @@ def build_decisions(
     model_made = (ExtDecision.meeting_id == meeting_id, ExtDecision.origin == "model")
     existing_ids = set(session.scalars(select(ExtDecision.id).where(*model_made)))
 
-    gone = existing_ids - fresh.keys()
+    gone = existing_ids - fresh.keys() - kept.unchanged
     if gone:
         session.execute(delete(ExtDecisionReview).where(ExtDecisionReview.decision_id.in_(gone)))
         session.execute(
@@ -2417,7 +2677,7 @@ def build_decisions(
             select(ExtDecision).options(selectinload(ExtDecision.sources)).where(*model_made)
         )
     }
-    decisions = [rows[id_] for id_ in fresh]
+    decisions = [rows[id_] for id_ in (*fresh, *sorted(kept.unchanged)) if id_ in rows]
     session.flush()
 
     # Ids only. A statement is meeting content and a log line is a store.
@@ -2469,9 +2729,7 @@ def decisions_for_meeting(session: Session, meeting_id: str) -> list[Decision]:
         Decision(
             id=row.id,
             statement=_lineage_statement(row, reviews.get(row.id)),
-            source_utterance_ids=[
-                source.utterance_id for source in sorted(row.sources, key=lambda s: s.position)
-            ],
+            source_utterance_ids=live_decision_source_ids(row),
             confidence=row.confidence,
         )
         for row in rows
@@ -2908,6 +3166,8 @@ def classify_utterances(
             pieces=prediction.pieces,
             summary=prediction.summary,
             piece_summaries=prediction.piece_summaries,
+            part=prediction.part,
+            piece_parts=prediction.piece_parts,
         )
         if (prediction := answer.get(utterance.id)) is not None
         # No consent, so nothing of theirs is read -- not the text, and not who
@@ -2971,6 +3231,227 @@ def drop_bare_acknowledgements(
         else utterance
         for utterance in classified
     ]
+
+
+# --- a date announced for a milestone is a decision ------------------------------
+
+
+_MILESTONE = re.compile(r"출시|마감|오픈|배포|확정|론칭|런칭|릴리스|릴리즈|데드라인|납기|기한")
+"""What a settled date is the date *of*: a launch, a deadline, a thing fixed.
+Module B's owner's words were "출시 일자나 확정 날짜, 마감 같은 마지막 날짜"
+(2026-10-09); the first five are the ones the owner was shown, the rest are other
+words for the same things and are this module's reading."""
+
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
+
+_ASKS = re.compile(r"\?\s*$|(?:까요|나요|인가요|건가요|던가요)[.!~…\s]*$")
+"""A sentence that asks for the date does not announce it."""
+
+_NOT_SETTLED = re.compile(r"아직|미정")
+"""Nor does one that says the date is open: "확정된 건 아직 없고 다음 주에
+다시 얘기하죠" names a milestone word and a date and settles neither."""
+
+# What the rule leaves alone (module B's owner, 2026-10-09: "가장 좁게"). A line
+# it takes wrongly is a decision nobody made: it waits in the review list, goes
+# to D with the other pending decisions and can be read there as a change of an
+# earlier one (mminjae97 on #1145). A line it leaves is where it was before the
+# rule -- unlabelled. So every doubt below is settled towards leaving.
+
+_LOOKS_BACK_ENDING = re.compile(r"(?:죠|지요|잖아요|잖습니까|는데요?|던데요?|거든요|더라고요)")
+"""After a past form these recall or ask agreement about what was: "잡혀
+있었죠", "확정됐잖아요", "10월 30일까지였는데"."""
+
+_STATE_THAT_WAS = re.compile(r"[혀져돼어아여와]\s*있었")
+"""잡혀 있었-, 예정돼 있었-, 정해져 있었-: how things stood. Not "문제가
+있었지만", where 있었 is not a state something was left in."""
+
+_LOOKS_BACK_WORD = re.compile(
+    r"원래(?!\s*(?:계획|일정|예정)?\s*대로)|당초|애초|처음에|예전에|지난번에|이전에|기존에"
+)
+"""Not "원래 계획대로", which says the plan holds."""
+
+_STILL_OPEN = re.compile(
+    r"(?:정해|결정해|확정해|봐|확인해|논의해|얘기해|검토해|잡아)야|모르겠"
+    r"|[갈될할올날낼줄칠킬출을]지(?:는|도|가|를)?(?=[\s,.?!]|$)"
+)
+"""Still to be decided: "오늘 안에 정해야 되는데", "마감을 봐야 되는데", "될지
+모르겠네요". An obligation to finish is not that -- "금요일까지 끝내야 합니다"
+states a deadline -- so only verbs of deciding and looking are listed."""
+
+_IF_WORD = re.compile(r"([가-힣]+면)(?:은|는|요)?(?=[\s,]|$)")
+"""A word ending in -면: "늦어지면", "없으면", "금요일이라면"."""
+
+_NOT_A_CONDITION = frozenset(
+    {
+        # Openers that carry on from what was said, not a condition on the date.
+        "그러면",
+        "그렇다면",
+        "그러시면",
+        "이러면",
+        "아니면",
+        "어쩌면",
+        "말하자면",
+        "왜냐하면",
+        "왜냐면",
+        "이를테면",
+        # Openers that sum up, which is where an announcement often comes.
+        "정리하면",
+        "요약하면",
+        "말하면",
+        "말씀드리면",
+        "말씀드리자면",
+        # Nouns that end the same way.
+        "화면",
+        "측면",
+        "방면",
+        "전면",
+        "후면",
+        "정면",
+        "장면",
+        "지면",
+        "표면",
+        "수면",
+        "국면",
+        "단면",
+        "평면",
+        "내면",
+        "대면",
+        "서면",
+        "반면",
+        "라면",
+    }
+)
+"""Whole words, not endings: "끝내면" ends like 내면 and "늦어지면" like 지면,
+and both are conditions. A noun written onto the word before it ("결제화면")
+is read as a condition and the line left, which is the side to err on."""
+
+_WORRIES = re.compile(r"걱정|빡빡|촉박|불안")
+"""The four the owner was shown. "출시가 금요일인데 걱정이네요" names a
+milestone and a day and announces nothing."""
+
+
+def _recalls(sentence: str) -> bool:
+    """Whether ``sentence`` looks back at a date instead of announcing one.
+
+    Three signs, each enough: a past form with an ending that recalls or asks
+    agreement; a state that was, or a past of a past ("확정됐었습니다"); a
+    look-back word with a past form, when one date is named -- two dates are a
+    change announced with its old date ("원래 10월 30일이던 마감을 11월 5일로
+    확정했습니다"), which is news."""
+    if any(
+        past_form_at(sentence, match.start() - 1) for match in _LOOKS_BACK_ENDING.finditer(sentence)
+    ):
+        return True
+    if _STATE_THAT_WAS.search(sentence) or any(
+        past_form_at(sentence, index) and sentence[index + 1] == "었"
+        for index in range(len(sentence) - 1)
+    ):
+        return True
+    return bool(
+        _LOOKS_BACK_WORD.search(sentence)
+        and any(past_form_at(sentence, index) for index in range(len(sentence)))
+        and dates_named(sentence) <= 1
+    )
+
+
+def _hangs_on_something(sentence: str) -> bool:
+    """Whether ``sentence`` is still open: something yet to be decided, a
+    condition (-면), or a worry."""
+    if _STILL_OPEN.search(sentence) or _WORRIES.search(sentence):
+        return True
+    return any(match.group(1) not in _NOT_A_CONDITION for match in _IF_WORD.finditer(sentence))
+
+
+def _only_a_settling_named(sentence: str) -> bool:
+    """Whether 확정 is the only milestone word and no date is what was chosen.
+    "목요일에 확정해서 말씀드릴게요" names the day someone will settle a thing;
+    "11월 15일로 확정됐습니다" names what it was settled as."""
+    return set(_MILESTONE.findall(sentence)) == {"확정"} and not names_chosen_date(sentence)
+
+
+STATED_DATE_CONFIDENCE = 0.9
+"""A rule gives a label, not a probability: the constant the cloud
+classifier's labels carry (``pipeline.llm.LLM_CONFIDENCE``), which says
+"unscored"."""
+
+
+def _settled_date_sentence(text: str, day: date | None) -> str | None:
+    """The sentence of ``text`` that names a milestone and a date for it, or
+    ``None``. Both in one sentence: "출시 준비는 끝났습니다. 금요일에 뵙겠습니다."
+    has the two words and announces nothing.
+
+    The date is read the way a promise's deadline is (``slots.parse_due``), so
+    what is said of the past is no date here either: "원래 마감은 10월
+    30일이었죠" recalls a date and "지난 배포는 화요일에 했습니다" reports one.
+    The exception is a date something was set *to*
+    (``slots.names_chosen_date``): in "계약 갱신일은 11월 15일로 확정됐습니다"
+    the past verb is the settling, and that is the line this rule is for.
+
+    Left alone, since 2026-10-09: a sentence that looks back at a date
+    (``_recalls``), one that is still open (``_hangs_on_something``), and one
+    whose only milestone word is a settling still to come
+    (``_only_a_settling_named``)."""
+    for sentence in _SENTENCE_BREAK.split(text.strip()):
+        if not _MILESTONE.search(sentence):
+            continue
+        if _ASKS.search(sentence) or _NOT_SETTLED.search(sentence):
+            continue
+        if _recalls(sentence) or _hangs_on_something(sentence) or _only_a_settling_named(sentence):
+            continue
+        if parse_due(sentence, day) is not None or names_chosen_date(sentence):
+            return sentence
+    return None
+
+
+def stated_dates_are_decisions(
+    classified: Sequence[ClassifiedUtterance], *, day: date | None
+) -> list[ClassifiedUtterance]:
+    """A line the classifier left unlabelled that announces the date of a
+    milestone -- "3분기 리포트 제출 마감은 10월 30일까지입니다" -- is a
+    ``decision``.
+
+    A fixed rule after the classifier, no model (module B's owner, 2026-10-09: launch
+    dates, settled dates and deadlines are to come out as decisions). The
+    classifier's prompt defines a decision as "회의가 무엇을 하기로 정함" and
+    names no date; a date stated plainly, with no "하기로", sits between that
+    and "설명", and the cloud classifier called six of seven such lines a
+    decision and one nothing in the one run that looked (three invented
+    meetings, the same day). The prompt is not changed: every sentence added
+    to it has cost measured precision (``pipeline.llm.INSTRUCTIONS``).
+
+    **Only a line with no kind is touched.** A promise with a date in it --
+    "금요일까지 하겠습니다" -- is a commitment and stays one, so no item's due
+    date comes out a second time as a decision; a question, a concern and an
+    ambiguous agreement keep their kinds too. A line of a speaker who did not
+    consent has no text here and is never read. A long turn the classifier
+    read in pieces is left as the classifier read it.
+
+    The cost is the line that says a date and settles nothing: "출시가
+    금요일인데 걱정이네요" becomes a decision for a person to reject on the
+    review screen, where every model decision already waits.
+
+    ``part`` is set to the sentence when the line says more than it, so the
+    source quotes the announcement and not the turn.
+    """
+    out: list[ClassifiedUtterance] = []
+    for utterance in classified:
+        sentence = (
+            _settled_date_sentence(utterance.text, day)
+            if utterance.kind is None and utterance.text and not utterance.pieces
+            else None
+        )
+        if sentence is None:
+            out.append(utterance)
+            continue
+        out.append(
+            replace(
+                utterance,
+                kind=UtteranceKind.DECISION,
+                confidence=STATED_DATE_CONFIDENCE,
+                part="" if sentence == utterance.text.strip() else sentence,
+            )
+        )
+    return out
 
 
 # --- step 4: NLI verification --------------------------------------------------
@@ -3304,16 +3785,20 @@ def resolve_decision_summaries(
     decided, and whatever the resolver is: the owner asked for each decision as
     one line. The lines it took a word from are its citations
     (``related.drawn_on``). **Otherwise a resolver that can cite**
-    (``resolve_with_evidence``) writes one, and only for a decision whose
-    settling turn does not say what was decided (``decisions.needs_write_up``);
-    for any other this has no entry and the decision keeps the assembled,
-    tidied line. That limit is still the resolver's alone: asked about every
-    decision it rewrote all of them for nothing (the measurement in
-    ``needs_write_up``), which is a reason not to ask it, not a reason to hide
-    a line that came with the label at no further request. Like
-    ``resolve_commitment_summaries`` it runs before any session -- it is model
-    inference -- and reads only ``classified``: ordered, and with a non-consenting
-    speaker's turn already blank.
+    (``resolve_with_evidence``) is asked about the decision, whatever its
+    settling turn says. Until 2026-10-08 it was asked only when that turn was
+    short or pointed at something said before, since for the others it mostly
+    changed the ending (measured 2026-09-30) -- but those were then the rows
+    that stayed as they were said, or were tidied into "…할 예정" when the
+    meeting had decided. The owner asked for every row as a written sentence
+    (2026-10-08), and on twelve invented decisions with no line of the
+    classifier's, all twelve of the resolver's passed its checks and read
+    right: one meeting, one run, not a rate. The cost is a request for about
+    every six such decisions. An answer that fails a check, and a resolver
+    that cannot cite, leave the decision the assembled, tidied line as before.
+    Like ``resolve_commitment_summaries`` it runs before any session -- it is
+    model inference -- and reads only ``classified``: ordered, and with a
+    non-consenting speaker's turn already blank.
 
     What the model is given for a decision: the turn that carries its substance
     (``DecisionGroup.core_text``) as the target; the lines around the whole run of
@@ -3335,7 +3820,7 @@ def resolve_decision_summaries(
     }
     if not callable(getattr(resolver, "resolve_with_evidence", None)):
         return written
-    groups = [(id_, group) for id_, group in found if id_ not in written and needs_write_up(group)]
+    groups = [(id_, group) for id_, group in found if id_ not in written]
     if not groups:
         return written
 
@@ -3399,6 +3884,130 @@ class SourceCorrections:
     changed_items: tuple[str, ...] = ()
     changed_decisions: tuple[str, ...] = ()
     flagged: int = 0
+
+
+@dataclass(frozen=True)
+class TitleTarget:
+    """A row that may be given a title, and the sentence the title would be of."""
+
+    kind: Literal["item", "decision"]
+    id: str
+    text: str
+    """The sentence as stored, which ``store_titles`` looks for again."""
+    asked: str
+    """What the model is shown: a decision's sentence without its bracket."""
+
+
+def title_targets(session: Session, meeting_id: str) -> list[TitleTarget]:
+    """The meeting's rows with no title whose sentence the pipeline wrote.
+
+    Not a row a person typed, an item whose description a person edited, or a
+    decision a person reworded: their words are shown as they wrote them, cut
+    if long, and no model writes a line over them. A row whose title was
+    refused has none and is asked about again by the next run.
+
+    Nor a row that reads ``SPEECH_DELETED_TEXT``: its sentence was a person's
+    speech and they deleted it (``forget_speech``). What is left is a fixed
+    line that says so, there is nothing to summarise, and a title over it would
+    hide the one thing the row has to say (reviews of #1141)."""
+    items = session.scalars(
+        select(ExtActionItem)
+        .where(
+            ExtActionItem.meeting_id == meeting_id,
+            ExtActionItem.origin == "model",
+            ExtActionItem.title.is_(None),
+            ExtActionItem.description != SPEECH_DELETED_TEXT,
+        )
+        .order_by(ExtActionItem.id)
+    ).all()
+    targets = [
+        TitleTarget("item", item.id, item.description, item.description)
+        for item in items
+        if not _edited_description(session, item.id)
+    ]
+    reworded = set(
+        session.scalars(
+            select(ExtDecisionReview.decision_id).where(
+                ExtDecisionReview.meeting_id == meeting_id,
+                ExtDecisionReview.statement.is_not(None),
+            )
+        )
+    )
+    decisions = session.scalars(
+        select(ExtDecision)
+        .where(
+            ExtDecision.meeting_id == meeting_id,
+            ExtDecision.origin == "model",
+            ExtDecision.title.is_(None),
+            ExtDecision.statement != SPEECH_DELETED_TEXT,
+        )
+        .order_by(ExtDecision.id)
+    ).all()
+    targets += [
+        TitleTarget("decision", row.id, row.statement, core_of(row.statement))
+        for row in decisions
+        if row.id not in reworded
+    ]
+    return targets
+
+
+def store_titles(
+    session: Session, targets: Sequence[TitleTarget], titles: Sequence[str | None]
+) -> int:
+    """Each title onto its row, if the row still says the sentence it is of
+    -- and none at all when a sentence the request carried is gone.
+
+    The model answered with no session open: a row edited or rebuilt in that
+    time keeps what it has. A row deleted in that time, or one whose speaker
+    deleted the line it was (``SPEECH_DELETED_TEXT``), stops the whole answer:
+    the request carried that sentence beside the others, one word of any of
+    these titles may be its word, and it is no longer stored anywhere. So the
+    rows are read again here, under the lock ``forget_speech`` holds while it
+    drops the words and clears the meeting's titles; the two take turns, and
+    whichever comes second leaves no title written from a deleted sentence.
+    Returns how many were written."""
+    for meeting_id in _meetings_of(session, targets):
+        lock_summary(session, meeting_id)
+    if any(_sentence_gone(session, target) for target in targets):
+        return 0
+    written = 0
+    for target, title in zip(targets, titles, strict=True):
+        if title is None:
+            continue
+        if target.kind == "item":
+            item = session.get(ExtActionItem, target.id)
+            if item is None or item.description != target.text or item.title is not None:
+                continue
+            item.title = title
+        else:
+            decision = session.get(ExtDecision, target.id)
+            if decision is None or decision.statement != target.text or decision.title is not None:
+                continue
+            decision.title = title
+        written += 1
+    session.flush()
+    return written
+
+
+def _meetings_of(session: Session, targets: Sequence[TitleTarget]) -> list[str]:
+    """The meetings ``targets`` are rows of, in id order so two stores cannot
+    deadlock. Read as columns: the lock has to be held before a row is loaded."""
+    found: set[str] = set()
+    for model, kind in ((ExtActionItem, "item"), (ExtDecision, "decision")):
+        ids = [target.id for target in targets if target.kind == kind]
+        if ids:
+            found.update(session.scalars(select(model.meeting_id).where(model.id.in_(ids))))
+    return sorted(found)
+
+
+def _sentence_gone(session: Session, target: TitleTarget) -> bool:
+    """Whether the sentence a title request carried is stored no longer: its
+    row deleted, or reading the line that says its speech was deleted."""
+    if target.kind == "item":
+        item = session.get(ExtActionItem, target.id, populate_existing=True)
+        return item is None or item.description == SPEECH_DELETED_TEXT
+    decision = session.get(ExtDecision, target.id, populate_existing=True)
+    return decision is None or decision.statement == SPEECH_DELETED_TEXT
 
 
 def _edited_description(session: Session, action_item_id: str) -> bool:
@@ -3492,7 +4101,7 @@ def apply_source_corrections(
         .where(ExtDecision.meeting_id == meeting_id)
         .options(selectinload(ExtDecision.sources))
     ):
-        ids = [s.utterance_id for s in sorted(decision.sources, key=lambda s: s.position)]
+        ids = live_decision_source_ids(decision)
         texts = [spoken.get(u) for u in ids]
         if not ids or any(t is None for t in texts):
             continue
@@ -3613,8 +4222,9 @@ def build_action_items(
         # A piece is read by its own words: the date in another part of the
         # turn belongs to whatever was promised there.
         own = utterance.text if utterance.part_of else said.text
-        # Where that piece is in the turn, for the quotation (``excerpt``).
-        part = span_of(said.text, [own]) if utterance.part_of else None
+        # Where the promise is in the utterance, for the quotation
+        # (``excerpt``): the words the classifier named, else the piece.
+        part = quoted(said.text, own if utterance.part_of else None, utterance.part)
         assignee = assignee_of(said.speaker_id, said.speaker, known=known)
         due = parse_due(own, day)
         # ``description_resolved`` is about the resolver's rewrite alone; tidying
@@ -3894,6 +4504,7 @@ def send_due_reminder(
             due_date=reminder.due_date,
             meeting_title=reminder.meeting_title,
             board_url=answer_url(reminder.meeting_id),
+            today=reminders.korean_day(now),
         ),
     )
     return True
@@ -4515,7 +5126,9 @@ def send_daily_digest(
     slack.send_dm(
         owed.user_id,
         reminders.build_daily_digest(
-            content, board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions"
+            content,
+            board_url=f"{get_core_settings().web_base_url.rstrip('/')}/actions",
+            today=owed.day,
         ),
     )
     return True
@@ -4626,18 +5239,23 @@ def _review_decision_row(
     or a meeting's worth fetched in batches -- build the same row the same way
     without either one re-running the other's queries (#296).
     """
+    source_ids = live_decision_source_ids(decision)
+    statement = _confirmed_statement(decision, review)
+    confirmed = review is not None and review.status == "confirmed"
     return ReviewDecision(
         id=decision.id,
-        statement=_confirmed_statement(decision, review),
+        statement=statement,
         model_statement=decision.statement,
         confidence=decision.confidence,
         origin=decision.origin,  # type: ignore[arg-type]
         needs_recheck=bool(decision.needs_recheck),
+        # The question ``outbound_for_meeting`` asks of the same sentence, and
+        # the one the clients' ``check_outbound`` asks of it on the way out.
+        held_back=confirmed and bool(find_unmasked(statement)),
         status=review.status if review else "pending",  # type: ignore[arg-type]
         suggested=_suggested(decision.confidence),
-        source_utterance_ids=[
-            source.utterance_id for source in sorted(decision.sources, key=lambda s: s.position)
-        ],
+        source_utterance_ids=source_ids,
+        deleted_source_count=len(decision.sources) - len(source_ids),
         sync_refs=[
             ExternalRefRead(system=ref.system, url=ref.url, external_id=ref.external_id)  # type: ignore[arg-type]
             for ref in refs
@@ -4646,6 +5264,8 @@ def _review_decision_row(
             if ref.external_id is not None or (review is not None and review.status == "confirmed")
         ],
         summary=summary,
+        # Of the model's sentence. A rewording is the person's own line.
+        title=None if review is not None and review.statement else decision.title,
     )
 
 
@@ -4699,8 +5319,9 @@ def read_decision_detail(session: Session, decision: ExtDecision) -> DecisionDet
     """One decision with the utterances it was settled in, in spoken order.
 
     Reads ``utterances``, which module A owns and this module may only read. An
-    utterance that has been deleted takes its link row with it, so a missing
-    quotation means the speech is gone.
+    utterance that has been deleted leaves its link row with no id (#400): the
+    join skips it, and ``deleted_source_count`` says a quotation is missing
+    because the speech is gone.
     """
     row = _read_decision(session, decision)
     quoted = session.execute(
@@ -4773,6 +5394,8 @@ def meeting_summary(
     )
     return MeetingSummary(
         meeting_id=meeting_id,
+        meeting_title=meeting.title if meeting is not None else None,
+        meeting_started_at=meeting.started_at if meeting is not None else None,
         decisions=[
             SummaryDecision(
                 id=d.id,
@@ -4796,8 +5419,9 @@ def meeting_summary(
             model_version=written.model_version,
             created_at=written.created_at,
         )
-        if written is not None
+        if written is not None and not written.too_long
         else None,
+        generated_too_long=written is not None and written.too_long,
         projects=[project_read(p) for p in team_projects],
     )
 
@@ -4889,7 +5513,9 @@ def summary_board(session: Session, meeting_id: str) -> list[str]:
 
 def summary_is_current(session: Session, meeting_id: str, lines: Sequence[str]) -> bool:
     """A stored summary was written from exactly ``lines`` -- asking again would
-    spend a provider's quota on the answer already here."""
+    spend a provider's quota on the answer already here. So is a row that says
+    these lines were too long for one (``mark_summary_too_long``): asking again
+    would spend up to ``summary.MAX_CALLS`` requests to find that out twice."""
     written = session.get(ExtMeetingSummary, meeting_id)
     return written is not None and written.source_digest == source_digest(lines)
 
@@ -4898,7 +5524,9 @@ def lock_summary(session: Session, meeting_id: str) -> None:
     """Hold the meeting's summary lock for the rest of ``session``'s transaction.
 
     What makes storing a summary and forgetting speech take turns
-    (``store_meeting_summary``, ``forget_speech``). A row lock cannot: a first
+    (``store_meeting_summary``, ``forget_speech``), and storing the meeting's
+    short titles too (``store_titles``): both are a model's answer about
+    sentences the deletion may be taking away. A row lock cannot: a first
     summary has no row yet for the deletion to wait on. Keyed in B's own
     namespace, like ``notion_setup.lock_setup``. PostgreSQL only; SQLite (unit
     tests) has no such lock and runs one writer anyway."""
@@ -4957,6 +5585,50 @@ def store_meeting_summary(
     when they differ nothing is stored and whatever row there was is deleted
     (#782 review). Returns the stored row, or ``None`` when it was not stored.
     """
+    return _store_summary(
+        session,
+        meeting_id,
+        overview=overview,
+        points=points,
+        model_version=model_version,
+        lines=lines,
+        too_long=False,
+    )
+
+
+def mark_summary_too_long(
+    session: Session, meeting_id: str, *, model_version: str, lines: Sequence[str]
+) -> ExtMeetingSummary | None:
+    """Record that the meeting, as ``lines``, is too long for a written summary
+    (``summary.TooLongError``), in place of whatever summary row there was.
+
+    No text: an empty overview, no points, the digest of ``lines`` and the
+    model that would have been asked. Stored under the same check as a summary
+    -- only if the meeting's lines are still ``lines`` -- so it says nothing
+    about lines the meeting no longer has. Returns the row, or ``None`` when
+    the lines had changed.
+    """
+    return _store_summary(
+        session,
+        meeting_id,
+        overview="",
+        points=(),
+        model_version=model_version,
+        lines=lines,
+        too_long=True,
+    )
+
+
+def _store_summary(
+    session: Session,
+    meeting_id: str,
+    *,
+    overview: str,
+    points: Sequence[str],
+    model_version: str,
+    lines: Sequence[str],
+    too_long: bool,
+) -> ExtMeetingSummary | None:
     lock_summary(session, meeting_id)
     row = session.get(ExtMeetingSummary, meeting_id, populate_existing=True)
     if source_digest(summary_lines(session, meeting_id)) != source_digest(lines):
@@ -4969,6 +5641,7 @@ def store_meeting_summary(
         session.add(row)
     row.overview = overview
     row.points = "\n".join(points)
+    row.too_long = too_long
     row.model_version = model_version
     row.source_digest = source_digest(lines)
     row.created_at = datetime.now(UTC)
@@ -4984,6 +5657,9 @@ def set_meeting_note(session: Session, meeting_id: str, body: str) -> ExtMeeting
     """
     text = body.strip()
     note = session.get(ExtMeetingNote, meeting_id)
+    refuse_personal_data(
+        text, field="body", stored=None if note is None else note.body, meeting_id=meeting_id
+    )
     if not text:
         if note is not None:
             session.delete(note)
@@ -5077,6 +5753,15 @@ def review_decision(
     changes = payload.model_dump(exclude_unset=True)
     if changes:
         review = session.get(ExtDecisionReview, decision.id)
+        wording = changes.get("statement")
+        if review is None or wording != review.statement:
+            # Screened before the review row is touched, so a refused
+            # rewording leaves the verdict sent with it unrecorded too
+            # (#1130). The model's own wording sent back clears a rewording
+            # and writes nothing.
+            refuse_personal_data(
+                wording, field="statement", stored=decision.statement, decision_id=decision.id
+            )
         if review is None:
             review = ExtDecisionReview(
                 decision_id=decision.id, meeting_id=decision.meeting_id, status="pending"
@@ -5109,20 +5794,28 @@ def review_decision(
 
 
 def outbound_for_meeting(session: Session, meeting_id: str) -> Outbound:
-    """Exactly what may leave for Notion, Jira or Slack: nothing unconfirmed (#246).
+    """What of a meeting may leave Autune, and what is held back: nothing
+    unconfirmed (#246), and nothing in which personal data is found.
 
-    A decision goes only when a person confirmed it, in their wording if they gave
-    one. An action item goes only once it is past ``needs_confirmation`` -- the
-    status S17 moves it out of when somebody accepts it. The sync (#30) is to read
-    this and nothing else, so the gate is one function rather than a rule every
-    sender has to remember.
+    A decision is in it only when a person confirmed it, in their wording if
+    they gave one. An action item only once it is past ``needs_confirmation``
+    -- the status S17 moves it out of when somebody accepts it.
+
+    **Who reads it.** The route (``GET /reviews/{meeting_id}/outbound``) and the
+    agent's ``meeting_decisions`` tool. The copies to Notion, Jira, Slack and a
+    calendar do not: each reads the row it sends, and what stops a text there
+    is the client's ``check_outbound`` on the request itself. This was written
+    as the one gate every sender would read (#30) and the senders were never
+    moved onto it; it is a read of what would go, not what lets it go.
 
     **It screens as well as selects.** A rewording and an edited description are
     typed by a person and never went through module A's masker, so each text is
-    run through ``find_unmasked`` here. One that carries personal data is held back
-    in ``blocked``, by id and category, rather than failing the whole meeting: the
-    other confirmed items can still go, and the screen asks for that one to be
-    reworded. (Suggested in review of #247.)
+    run through ``find_unmasked`` here -- the check ``check_outbound`` runs on
+    every string of a request. One that carries personal data is held back in
+    ``blocked``, by id and category, rather than failing the whole meeting.
+    The decisions screen says so on that decision's row from the same check
+    (``ReviewDecision.held_back``), and asks for it to be reworded. (Suggested
+    in review of #247.)
 
     **Queries only the two lists this needs**, rather than going through
     ``review_for_meeting`` for its ``decisions`` and discarding the rest of
@@ -5170,6 +5863,7 @@ def create_decision(session: Session, payload: DecisionCreate) -> ReviewDecision
     """
     if session.get(Meeting, payload.meeting_id) is None:
         raise NotFoundError("meeting", payload.meeting_id)
+    refuse_personal_data(payload.statement, field="statement", meeting_id=payload.meeting_id)
     source_ids = list(dict.fromkeys(payload.source_utterance_ids))
     if source_ids:
         found = set(
@@ -5257,7 +5951,7 @@ none. Raised in review of #294.
 """
 
 
-ITEM_DELETED_TEXT = "삭제된 액션아이템"
+ITEM_DELETED_TEXT = "삭제된 할 일"
 """What a deleted item's page is retitled to before it goes to Notion's trash
 (#768), as a decision's is (``DECISION_PUT_BACK_TEXT``, #669): the trash keeps
 a page restorable for 30 days, and with this title the item's sentence is not
@@ -5877,12 +6571,14 @@ def decision_notion_properties(
 
     ``statement`` is the person's rewording when there is one -- what they
     confirmed -- and the model's sentence otherwise. The source utterances stay in
-    Autune; the page carries only how many there were.
+    Autune; the page carries only how many there are. One that was deleted is not
+    counted, as it was not while the link went with it (#400): what leaves Autune
+    is unchanged by the link's outliving the utterance.
     """
     fields: dict[str, Any] = {
         "title": {"title": [{"type": "text", "text": {"content": statement[:NOTION_TEXT_LIMIT]}}]},
         "confidence": {"number": round(decision.confidence, 3)},
-        "sources": {"number": len(decision.sources)},
+        "sources": {"number": len(live_decision_source_ids(decision))},
     }
     if meeting_title:
         fields["meeting"] = {

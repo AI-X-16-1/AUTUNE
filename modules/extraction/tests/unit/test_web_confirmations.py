@@ -1,7 +1,7 @@
 """The speaker answers their ambiguous agreements on the web (#585, C).
 
 A deployed stack has no receiver for a Slack click, so the DM links to the
-meeting's 액션 tab, where the speaker sees their own open questions and answers
+meeting's 할 일 tab, where the speaker sees their own open questions and answers
 them. Under test: the list holds the reader's own lines only; an answer takes
 the DM button's path (a commitment drafts at once and sends the summary job;
 another answer takes the draft back); a question never put is put by the

@@ -3,19 +3,18 @@ import { HoverPreview, PredictionMockup } from "./HoverPreview";
 import type { PredictionsRead } from "../types";
 
 /**
- * Both conditions of the server's gate, joined so neither reads as optional.
- * Four weeks run from the day E scored the team's first meeting, not from
- * when the meetings were held, so the copy says "analysed".
+ * The server's gate as it stands: three analysed meetings. #27's four weeks of
+ * history are lifted until the final presentation; restore the copy with them
+ * ("처음 회의를 분석한 날부터 4주가 지나고, 분석한 회의가 3회 이상이면 표시됩니다.").
  */
-const INSUFFICIENT_HISTORY =
-  "처음 회의를 분석한 날부터 4주가 지나고, 분석한 회의가 3회 이상이면 표시됩니다.";
+const INSUFFICIENT_HISTORY = "분석한 회의가 3회 이상이면 표시됩니다.";
 
 /**
  * The misalignment-risk prediction on S26 — probability in mono, per ui-spec.
  *
  * What it predicts: the chance a decision from the team's latest meeting is
  * reversed within `horizon_days`. Whether to show it at all is the server's
- * call (#27: four weeks and three meetings); this renders whatever
+ * call (#27: three meetings; four weeks once restored); this renders whatever
  * `/predictions` returns and never re-derives the gate.
  */
 export function PredictionCard({ predictions }: { predictions: PredictionsRead | null }) {

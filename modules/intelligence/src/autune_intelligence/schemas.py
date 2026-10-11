@@ -59,8 +59,9 @@ class PredictionRead(BaseModel):
 class PredictionsRead(BaseModel):
     """The team's latest prediction, or why there is none to show.
 
-    ``reason`` is ``"insufficient_history"`` until the team has four weeks and
-    three scored meetings (#27), and ``"no_prediction"`` if the gate is clear
+    ``reason`` is ``"insufficient_history"`` until the team has three scored
+    meetings and ``prediction.MIN_HISTORY`` of history (#27; none until the
+    final presentation), and ``"no_prediction"`` if the gate is clear
     but nothing has been predicted yet. ``None`` when ``prediction`` is set.
     """
 

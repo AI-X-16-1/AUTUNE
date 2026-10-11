@@ -202,12 +202,12 @@ def _predicted_meeting(
     return m.id
 
 
-def test_predictions_are_withheld_before_the_history_gate(
+def test_predictions_are_withheld_below_the_meeting_floor(
     client: TestClient, db_session: Session, team: str
 ) -> None:
-    now = datetime.now(UTC)
-    for _ in range(5):  # enough meetings, but all this week
-        _predicted_meeting(db_session, team, 0.4, now)
+    old = datetime.now(UTC) - timedelta(weeks=10)
+    for _ in range(2):  # history enough, meetings not
+        _predicted_meeting(db_session, team, 0.4, old)
 
     body = client.get(f"/api/intelligence/predictions/{team}").json()
 
@@ -227,6 +227,20 @@ def test_predictions_return_the_latest_once_the_gate_clears(
     assert body["prediction"]["kind"] == "misalignment_risk"
     assert body["prediction"]["horizon_days"] == 14
     assert body["prediction"]["probability"] == pytest.approx(0.2)
+
+
+def test_three_meetings_this_week_show_a_prediction_until_the_presentation(
+    client: TestClient, db_session: Session, team: str
+) -> None:
+    """#27's four weeks are lifted until the final presentation; restore with them."""
+    now = datetime.now(UTC)
+    for _ in range(3):
+        _predicted_meeting(db_session, team, 0.3, now)
+
+    body = client.get(f"/api/intelligence/predictions/{team}").json()
+
+    assert body["reason"] is None
+    assert body["prediction"]["probability"] == pytest.approx(0.3)
 
 
 def test_the_latest_prediction_is_the_newest_meeting_not_the_last_written(

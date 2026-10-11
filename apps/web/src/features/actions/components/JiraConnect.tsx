@@ -26,7 +26,7 @@ import { backfillJira } from "../api";
  * Nothing renders until the status is known, or for someone who is not on the
  * meeting's team.
  *
- * Takes the meeting the 액션 tab shows, or the team itself on S28 settings
+ * Takes the meeting the 할 일 tab shows, or the team itself on S28 settings
  * (#496); the server checks membership either way.
  */
 /** The chosen project in the team's Jira, or the site when none is chosen yet.

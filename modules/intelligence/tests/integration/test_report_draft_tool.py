@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from autune_core import Meeting, Team
 from autune_intelligence import service, tools
 
-BODY = "✅ 확정된 액션 아이템\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
+BODY = "✅ 확정된 할 일\n• 결제 API 스펙 초안 — 백엔드 · 10/2"
 
 
 def _store(db_session: Session, meeting: str, draft_id: str) -> None:

@@ -153,7 +153,7 @@ export function WorkspaceScreen() {
             팀 워크스페이스 만들기
           </h1>
           <p className="mt-1.5 text-[var(--color-ink-muted)]" style={{ fontSize: "var(--control-text-default)" }}>
-            회의·액션·결정 이력은 워크스페이스 단위로 쌓입니다.
+            회의·할 일·결정 이력은 워크스페이스 단위로 쌓입니다.
           </p>
         </div>
 

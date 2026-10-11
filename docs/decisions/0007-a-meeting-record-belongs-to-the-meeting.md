@@ -224,6 +224,28 @@ part of keeping a record needs it. It is on the `user_id` path and it goes.
 **Delete when the last member leaves, and rely on that alone.** Rejected — see
 decision 1. It is a condition that almost never occurs.
 
+**Deletion of a team by its last member (2026-10-09, #1007; written before the
+legal review, #92).** The one person left on a team may now delete it: the
+team, every meeting of it, their transcripts and everything modules A to E and
+the agent layer made from them go together, the utterances of people who left
+the team earlier among them. What goes, what is refused and what stays in the
+team's own tools is in `../architecture/privacy.md` section 4. This is not the
+alternative rejected above, on two counts:
+
+- **It is not relied on alone.** The retention window stays the bound, as
+  decision 1 says. Deleting the team is a way added beside it.
+- **It is not what leaving does.** It is an act of its own, taken by somebody
+  who is shown what goes and types the team's name. For a member who is not
+  the last, leaving is still an access change and not a data change, and
+  nobody deletes a team that has two members.
+
+One thing in it is not in this ADR's text. *The meeting owns its record; a
+participant holds access to it* -- and here the last person holding access
+deletes a record that carries other people's speech. It runs towards deletion,
+so it takes nobody's right to delete away, but it is a power this ADR gave to
+nobody. The five owners agreed to it on #1007 without waiting for #92. If that
+review objects, this paragraph and section 4 are where it changes.
+
 **Give a new member the full history by default.** Rejected — see decision 4.
 
 ## Consequences

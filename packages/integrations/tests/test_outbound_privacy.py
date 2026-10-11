@@ -110,7 +110,7 @@ def test_slack_blocks_are_checked_not_just_the_fallback_text() -> None:
     with pytest.raises(PrivacyViolationError):
         FakeSlack().post_message(
             "#squad",
-            "액션아이템이 준비되었습니다",
+            "할 일이 준비되었습니다",
             blocks=[
                 {
                     "type": "section",

@@ -171,4 +171,22 @@ describe("CalendarConnect", () => {
     await connectButton();
     expect(await screen.findByText(/휴가 기간/)).toBeTruthy();
   });
+
+  // jsdom lays nothing out, so this is the rule and not the result: the page
+  // being no wider than a 390 px screen was measured in a browser. What is
+  // held here is that the label is not put back on one line at a fixed height,
+  // which is what made the page 9 px too wide.
+  it("lets the connect button's label take a second line where the column is narrow", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue(NONE);
+    render(<CalendarConnect />);
+
+    const rules = (await connectButton()).className.split(/\s+/);
+    // Over the shared button's own `whitespace-nowrap` and inline height.
+    expect(rules).toContain("whitespace-normal!");
+    expect(rules).toContain("h-auto!");
+    expect(rules).toContain("max-w-full");
+    // And no shorter than it was where the label fits on one line.
+    expect(rules).toContain("min-h-[var(--control-h-compact)]");
+  });
 });

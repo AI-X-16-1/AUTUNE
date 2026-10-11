@@ -49,7 +49,7 @@ AGENDA = {
 }
 ACTIONS = {
     "ok": True,
-    "summary": "진행 중인 액션아이템 4건 중 기한 지남 1건.",
+    "summary": "진행 중인 할 일 4건 중 기한 지남 1건.",
     "items": [{"title": "API 스펙 작성", "body": "백엔드 · 2026-09-30 · 기한 지남 · todo"}],
     "evidence": ["utt_a1"],
 }
@@ -142,7 +142,7 @@ def test_a_meeting_becomes_four_sections_in_a_fixed_order_and_proposes_nothing()
     assert [item.title for item in outcome.result.items] == [
         "지난 회의에서 이어받는 결정",
         "팀의 열린 Jira 이슈",
-        "기한이 지났거나 다가온 액션 아이템",
+        "기한이 지났거나 다가온 할 일",
         "지난 회의에서 닫히지 않은 갭",
     ]
     assert outcome.proposed == []
@@ -161,7 +161,7 @@ def test_the_sections_read_what_each_module_returned() -> None:
     assert sections["팀의 열린 Jira 이슈"] == "• 결제 모듈 API 명세 정리 — AUT-1 · 진행 중"
     assert (
         "• API 스펙 작성 — 백엔드 · 2026-09-30 · 기한 지남 · todo"
-        in (sections["기한이 지났거나 다가온 액션 아이템"])
+        in (sections["기한이 지났거나 다가온 할 일"])
     )
     gaps = sections["지난 회의에서 닫히지 않은 갭"]
     assert "• 담당자와 기한\n  ↳ 누가 언제까지 하나요?" in gaps
@@ -226,8 +226,8 @@ def test_a_tool_that_failed_is_not_written_as_none() -> None:
 
     outcome = _run("브리프", _registry(spies), scope_meeting=MEETING)
 
-    assert "기한이 지났거나 다가온 액션 아이템" not in _sections(outcome)
-    assert "읽지 못한 부분: 액션 아이템." in outcome.result.summary
+    assert "기한이 지났거나 다가온 할 일" not in _sections(outcome)
+    assert "읽지 못한 부분: 할 일." in outcome.result.summary
 
 
 def test_a_tool_that_raises_drops_only_its_section() -> None:
@@ -240,7 +240,7 @@ def test_a_tool_that_raises_drops_only_its_section() -> None:
     outcome = _run("브리프", registry, scope_meeting=MEETING)
 
     assert outcome.result.ok
-    assert "기한이 지났거나 다가온 액션 아이템" not in _sections(outcome)
+    assert "기한이 지났거나 다가온 할 일" not in _sections(outcome)
     assert "지난 회의에서 이어받는 결정" in _sections(outcome)
 
 
@@ -285,7 +285,7 @@ def test_a_cut_section_says_there_is_more_and_the_result_says_it_was_cut() -> No
 
     outcome = _run("브리프", _registry(_spies(actions=cut)), scope_meeting=MEETING)
 
-    assert _sections(outcome)["기한이 지났거나 다가온 액션 아이템"].endswith(MORE)
+    assert _sections(outcome)["기한이 지났거나 다가온 할 일"].endswith(MORE)
     assert outcome.result.truncated is True
 
 

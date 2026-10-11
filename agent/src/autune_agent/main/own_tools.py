@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 from typing import Any
 
+from autune_agent.live.notes import live_research_notes
 from autune_agent.research_store import save_research_document, share_research_document
 
 from .actions import Action
@@ -19,7 +20,7 @@ from .registry import Tool, ToolContractError, is_personal_only
 
 PREFIX = "agent"
 
-TOOLS: list[Any] = [save_research_document]
+TOOLS: list[Any] = [save_research_document, live_research_notes]
 ACTIONS: list[Any] = [share_research_document]
 L1_ACTIONS: list[Any] = []
 

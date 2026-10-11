@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { onAgentActed } from "@/shared/lib/agentActed";
+
 import {
+  closeActionItem,
   createActionItem,
   deleteActionItem,
   listActionItems,
@@ -10,6 +13,7 @@ import {
   type ActionItemDraft,
   type ActionItemFilter,
 } from "../api";
+import { withTitles } from "../titleReads";
 import type { ActionItemRead, ActionStatus } from "../types";
 
 /** What the last settled request for one filter left behind. */
@@ -35,6 +39,13 @@ interface State {
  * mounted when only the meeting id in the URL changes, so without it the board
  * drew the previous meeting's items under the new meeting's heading, and of two
  * requests in flight the slower, older one won. Raised in review of #292.
+ *
+ * **The list is read again when the assistant changed something** (#1055). An
+ * owner or a due date approved on a chat card is written on the server while
+ * this list is on screen, and the board, the team board and the drawer -- which
+ * takes its item from this list -- went on showing the old one until a reload,
+ * which ends the conversation. The announcement says nothing about what
+ * changed, so every one is a read; the items on screen stay while it runs.
  */
 export function useActionItems(filter: ActionItemFilter = {}) {
   const key = JSON.stringify(filter);
@@ -89,6 +100,8 @@ export function useActionItems(filter: ActionItemFilter = {}) {
     void reload();
   }, [reload]);
 
+  useEffect(() => onAgentActed(() => void reload()), [reload]);
+
   /** Apply a change to the list, but only while it is still this filter's list. */
   const update = useCallback(
     (change: (items: ActionItemRead[]) => ActionItemRead[]) =>
@@ -97,6 +110,21 @@ export function useActionItems(filter: ActionItemFilter = {}) {
       ),
     [key],
   );
+
+  /**
+   * Take the titles written since the list was read, and nothing else
+   * (`titleReads`): the rows on screen stay the screen's, so a change made
+   * while this read was in flight is not undone by it. A read that fails says
+   * nothing -- the rows are as they were, each showing its sentence cut.
+   */
+  const readTitles = useCallback(async () => {
+    try {
+      const read = await listActionItems(JSON.parse(key) as ActionItemFilter);
+      update((items) => withTitles(items, read, (item) => item.description));
+    } catch {
+      // Nothing to say: no row changed, and the next read asks again.
+    }
+  }, [key, update]);
 
   const add = useCallback(
     async (draft: ActionItemDraft) => {
@@ -112,6 +140,16 @@ export function useActionItems(filter: ActionItemFilter = {}) {
       const updated = await updateActionItem(id, changes);
       update((items) => items.map((item) => (item.id === id ? updated : item)));
       return updated;
+    },
+    [update],
+  );
+
+  /** Close an item without finishing it: it moves to 완료, marked 닫힘. */
+  const close = useCallback(
+    async (id: string) => {
+      const closed = await closeActionItem(id);
+      update((items) => items.map((item) => (item.id === id ? closed : item)));
+      return closed;
     },
     [update],
   );
@@ -136,7 +174,18 @@ export function useActionItems(filter: ActionItemFilter = {}) {
   // The reset in `reload` runs in an effect, so the render that first sees a
   // new filter still holds the previous one's state. It reads as loading.
   if (state.key !== key) {
-    return { items: [], loading: true, settled: false, error: null, reload, add, edit, remove };
+    return {
+      items: [],
+      loading: true,
+      settled: false,
+      error: null,
+      reload,
+      readTitles,
+      add,
+      edit,
+      close,
+      remove,
+    };
   }
-  return { ...state, reload, add, edit, remove };
+  return { ...state, reload, readTitles, add, edit, close, remove };
 }

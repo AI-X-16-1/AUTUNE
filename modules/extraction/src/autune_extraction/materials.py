@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -37,6 +37,7 @@ from autune_core.errors import ConflictError, NotFoundError, ValidationError
 
 from .models import DRIVE_KINDS, ExtMaterial
 from .schemas import MaterialRead
+from .typed_text import refuse_personal_data
 
 log = get_logger(__name__)
 
@@ -115,6 +116,25 @@ def read(row: ExtMaterial) -> MaterialRead:
     )
 
 
+def lock_shelf(session: Session, team_id: str) -> None:
+    """Hold the team's shelf for the rest of ``session``'s transaction.
+
+    The cap is a count and then an insert. Two registrations at once both
+    count 199 and both insert, and the team keeps 201 (a review note on
+    #1016): neither sees the other's uncommitted row, so no later count in the
+    same transaction can catch it either. A transaction-scoped advisory lock
+    keyed by team makes the second wait until the first has committed, then
+    count its row. The key carries B's own namespace, as ``notion_setup``'s
+    does. PostgreSQL only; SQLite (unit tests) has no such lock and runs one
+    writer anyway."""
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"extraction.materials:{team_id}"},
+    )
+
+
 def register(session: Session, team_id: str, *, title: str, link: str) -> ExtMaterial:
     """Put a Drive file on the team's shelf under the title a member typed."""
     clean = " ".join(title.split())
@@ -122,11 +142,14 @@ def register(session: Session, team_id: str, *, title: str, link: str) -> ExtMat
         raise ValidationError("a material needs a title", field="title")
     if len(clean) > MAX_TITLE_CHARS:
         raise ValidationError(f"a title has at most {MAX_TITLE_CHARS} characters", field="title")
+    # A title is typed by a member: screened before it is stored (#1130).
+    refuse_personal_data(clean, field="title", team_id=team_id)
     file = parse_drive_link(link)
     if file is None:
         # The message names the rule and not the value: what was pasted may be
         # anything, and an error string ends up in error tracking.
         raise ValidationError("not a Google Drive file link", field="link")
+    lock_shelf(session, team_id)
     held = session.scalar(
         select(func.count()).select_from(ExtMaterial).where(ExtMaterial.team_id == team_id)
     )

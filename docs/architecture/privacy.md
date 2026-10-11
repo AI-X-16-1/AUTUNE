@@ -310,7 +310,8 @@ person's, those counts are that person's completion record. So:
   meetings to look first; the screen says both before they leave.
   A member leaves only by their own act
   (`DELETE /api/audio/teams/{team_id}/members/me`), and the last member of a
-  team cannot leave it.
+  team cannot leave it: a team with nobody on it could be neither read nor
+  deleted. What the last member can do is delete the team (the next rule).
   This is ADR 0007's ownership rule -- the record belongs to the meeting, and
   leaving is an access change rather than a data change -- **without that
   ADR's mechanism**, which clears `participants.user_id` on departure and
@@ -319,6 +320,70 @@ person's, those counts are that person's completion record. So:
   is written in the ADR, under *Not taken yet*. Until 2026-10-06 this line
   read "their utterances and everything derived from them are deleted", and
   nothing did that: there was no way to leave a team.
+- **The last member of a team may delete the team** (decided by the five
+  module owners, 2026-10-09, #1007; before the legal review of
+  ADR 0007, #92 -- that ADR carries a dated note on it).
+  `DELETE /api/audio/teams/{team_id}`, by the one person still on the team,
+  with the team's name typed on the screen and sent in the request's body.
+  A team with two or more members is as it was: nobody deletes it, and nobody
+  takes anybody else off it.
+  - **What goes.** The `teams` row and every row PostgreSQL reaches from it or
+    from its meetings by `ON DELETE CASCADE`: the membership, the team's
+    integrations with their tokens, pending invitations, masking rules, every
+    meeting with its participants and utterances, and what modules A to E and
+    the agent layer keep for the team or for its meetings. The utterances of
+    people who left the team earlier go with the rest. They are not told: no
+    new message leaves Autune for this. Until the team is deleted their own
+    deletion reaches their lines as above.
+  - **The order is the retention sweep's.** Every meeting's
+    `on_meeting_deleted` hooks run before that meeting's row goes, and all of
+    them before the `teams` row. The cascade does not run them, and they are
+    what moves B's calendar events and C's agenda lines to the clean-up
+    queues; those queues are keyed by person, so they outlive the team and are
+    worked through with each person's own Google grant. A hook that raises
+    stops the deletion and leaves the team and every meeting of it in place
+    to ask again, as a user hook stops an account deletion; clean-up a hook
+    had already queued still runs, which is why every hook is safe to repeat.
+  - **Refused while a meeting of the team is being processed** (409
+    `team_meeting_in_progress`): a transcription job that is queued or
+    running -- a job is running until its `TranscriptReady` has gone out --
+    or a live session that is open. Deleting under a queued job would leave
+    its recording in the temp directory until the orphan sweep's age limit
+    (section 1); deleting between the transcript's commit and its publish
+    would announce a meeting that is gone; and a live socket checks
+    membership once, at its hello. Also refused: when anybody else is on the
+    team (409 `team_has_other_members`), and when the name sent is not the
+    team's (422 `team_name_mismatch`).
+  - **What stays is outside Autune**, and deleting the team ends Autune's way
+    to reach it. The screen says so before the name is typed, and names the
+    first three:
+    - B's copies in the team's own tools: project minutes in Notion, Slack
+      and Jira, and the Notion pages and Jira issues of items and decisions.
+      A meeting's expiry takes the project minutes back through the team's
+      integration; a team's deletion deletes that integration and the queue
+      of copies still to take back (`ext_project_send_cleanup`) with it.
+    - C's notices in the team's Slack channel (S20). C keeps no message id
+      and takes none back at a meeting's expiry either.
+    - E's meeting reports, their corrections and the weekly reports in the
+      team's Slack channel, which E never takes back.
+    - D's messages in the team's Slack channel: the topic-link notice, the
+      decision-drift warning and the pre-meeting brief, which quotes the
+      decisions of the meeting it recaps. D keeps no message id and takes
+      none back at a meeting's expiry either.
+    - What was sent to a person's own Slack DM -- a confirmation request, a
+      reminder, a digest, a decision-drift warning, their own speaking
+      ratio -- stays in that person's DM, as at a meeting's expiry.
+    - A `TranscriptReady` message already published and not yet consumed
+      stays in the broker until a consumer takes it. It holds the masked
+      transcript, and nothing removes it earlier.
+    - What was already sent to a model provider follows that provider's
+      terms (section 6), as it does without any deletion.
+
+    What Autune put on a person's own Google Calendar does not stay: the
+    queued jobs above remove it.
+  - **A voice profile is not deleted in the request.** It is the person's,
+    not the team's. The hourly sweep deletes it once no remaining meeting
+    names its owner, as it does after an expiry.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -400,6 +465,10 @@ an account deletion does not wait on Google, so if Google does not answer an
 event can remain on that calendar, and Autune's record of it goes with the
 account anyway. Module C's agenda lines on a person's own calendar follow
 the same rule -- see "Google Calendar, S20's 다음 회의 잡기" in section 6.
+When a team is deleted by its last member (section 4, #1007), the calendar
+entries are removed the same way, and everything in the team's own tools
+stays -- B's project minutes among them, which an expiry would have taken
+back: the integration that could reach them is deleted with the team.
 
 ## 5. Consent
 
@@ -426,6 +495,17 @@ the same rule -- see "Google Calendar, S20's 다음 회의 잡기" in section 6.
   - **It is not the consent to a recording.** That is per meeting, about the
     people in the room, and module A keeps it (`aud_consent_attestations`,
     `participants.consented`). The two never stand in for each other.
+- **Live research is covered by the consent attested when the recording
+  starts** (#1162). During a live meeting nobody is identified yet, so no
+  per-person consent can be read; the one statement there is, the consent box
+  ticked at the gate (`aud_consent_attestations`), is what live research rests
+  on. A meeting recorded with the box unticked is stored, not analysed, and
+  live research does not run for it either: the live screen sends no row and
+  offers no 조사, and the agent's live routes refuse the meeting with 409
+  `live_research_needs_consent` before reading a row. The attestation covers
+  everyone in the recording at once, so a speaker who is later excluded from
+  analysis may already have been looked up live; their speech deletion still
+  takes the live documents it fed (`agent_live` speech hook).
 
 ## 6. Third-party services
 
@@ -439,23 +519,54 @@ the feature needs.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
 - A cloud model is never the default, and in module B it has to be switched on
-  twice (#392). B's classifier, resolver, meeting summary and step-4 NLI send
-  text to a provider only when their implementation is set to `llm` (or
-  `llm_checked`), and B's settings refuse to load that unless
+  twice (#392). B's classifier, resolver, meeting summary, short titles and
+  step-4 NLI send text to a provider only when their implementation is set to
+  `llm` (or `llm_checked`), and B's settings refuse to load that unless
   `AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true` is set as well. Each sends
   masked text of consenting speakers only, with the team's names replaced:
   the classifier every utterance in windows, the resolver a commitment and
   the lines around it, the summary the meeting in sections, and NLI only the
-  utterances the classifier called ambiguous, with one fixed hypothesis. The flag checks nothing about the meeting or the key -- the code
+  utterances the classifier called ambiguous, with one fixed hypothesis. The
+  titles (`AUTUNE_EXTRACTION_TITLE_IMPL`, `none` by default) send the
+  sentences the pipeline itself wrote for a meeting's action items and
+  decisions, one request a meeting, to get a line of twenty characters back
+  for each: never a sentence a person typed, edited or reworded, a decision's
+  without the owner and deadline it ends with, and no id, speaker or meeting
+  with them. What comes back is kept only if it names no person and says no
+  number or date its sentence does not, and it is shown on Autune's own
+  screens only -- no outside tool is sent a title. The flag checks nothing about the meeting or the key -- the code
   cannot tell a real meeting from a dummy one, or a paid key from a free one --
-  it makes sending speech out something a deployment says deliberately. Until
-  #392 is decided, only demo meetings go through a deployment that sets it.
+  it makes sending speech out something a deployment says deliberately. Which
+  meetings may go through a deployment that sets it is therefore a rule for
+  the people who run and use it, and #392 has answered it in part. On a
+  free-tier key, dummy meetings only: the provider may keep what it is sent.
+  The team's dev site sets it with a paid key and takes the team's own
+  meetings only, and none with a participant from outside the team -- a name
+  that is not on the team's roster is not replaced and leaves as it was
+  spoken (agreed on #392, 2026-10-05). Whether a real service sets it is not
+  decided: that is still open on #392, with the overseas-transfer question
+  behind it on #92, and until it is decided no meeting of anybody else's goes
+  through such a deployment.
   This is module B's alone: the agent's, C's and D's cloud switches are their
   owners' and have no second switch today.
+- **Live research (agent layer, #1162) sends while a meeting runs**, and only
+  for a meeting recorded with consent attested (section 5). To Gemini: windows
+  of at most twelve masked live rows with no speaker label, the questions
+  already looked up, the question, quotes of earlier meetings from consenting
+  speakers with the meeting's date and title, and the web answer. To Google
+  Search grounding: the question only. For a line a person pressed 조사 on,
+  that question is the model's rewrite of the line, with no person and no
+  personal detail; the line as said is never the search query. Every call
+  replaces the meeting's roster names with `[사람N]` as B does (the team and
+  the meeting's participants; a name not on the roster leaves as spoken), and
+  the rows are checked one by one and joined before they are queued, so a
+  number read in two rows is refused. Queued work expires after 120 seconds.
+  Its only switch is the agent's key, and #392's rule holds for it as for B:
+  on the dev site, the team's own meetings only.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **Notion:** a page in a team's workspace belongs to that team once written.
-    Deleting the item in Autune retitles its page to "삭제된 액션아이템"
+    Deleting the item in Autune retitles its page to "삭제된 할 일"
     and then moves it to Notion's trash, where the team can restore it for
     30 days without the item's sentence in the title (#768). Retention and meeting deletion do not
     reach it. A decision that stops being confirmed does not keep its page:
@@ -508,7 +619,7 @@ the feature needs.
     other analyses three times in a row (#887), in which case the message
     says that and not that nothing was extracted. Either way it carries
     the meeting's title, the number of attempts and a link to the meeting's
-    액션 tab; no utterance, no name that B adds, and not the error -- only
+    할 일 tab; no utterance, no name that B adds, and not the error -- only
     the error's class is kept, in B's own table and log. The title is a
     value a person typed and is sent as it is stored, so it can hold a
     name: "no name" is true of what B puts in the message and not of the
@@ -661,7 +772,7 @@ the feature needs.
     meeting on, on the meeting's team now. It carries the meeting's title --
     a value a person typed, sent as stored, as the reminders carry it -- **how
     many** drafts wait for that person's confirmation, and a link to the
-    meeting's 액션 tab. It carries nothing of a draft: not its text, not its
+    meeting's 할 일 tab. It carries nothing of a draft: not its text, not its
     date. A draft is a model's guess until a person confirms it, and
     unconfirmed content does not reach an outbound surface (#246; the agent
     layer's rule 3). An item of theirs that a person has already confirmed is
@@ -687,7 +798,12 @@ the feature needs.
     the kind of the latest failure and its time (`ext_sync_failures`) --
     never the outside service's message or what was being sent. It goes
     when the next copy goes through, and with the item. A failed copy to a
-    person's own calendar is shown only to that person.
+    person's own calendar is shown only to that person. S28's 동기화 기록
+    lists a team's standing failures and its latest copies from these
+    rows and the rows of the copies themselves, and keeps nothing of its
+    own: Notion and Jira rows to any member of the team, a calendar row --
+    failed or made -- only to the person whose calendar it is, and nothing
+    of a meeting past its retention window.
   - **A person's own calendar (#435):** Autune *can* remove its events — they
     carry its tag, and `delete_event` exists. Deleting an item deletes its
     event first. A meeting deleted or expired by the retention sweep does not
@@ -750,7 +866,16 @@ the feature needs.
       the meeting, the gap, whose calendar and which event -- the calendar's
       owner is also who pressed, kept because the line can only be removed
       with their grant, as B keeps an item's assignee; no screen, route or
-      tool reads it. Taking a gap back removes its line and its record. A
+      tool reads it but the one below. It also keeps the day the event
+      starts, which `gap.next_meeting_days` hands the Follow-up approval card
+      as a candidate day for the follow-up meeting, with the display name of
+      who picked it -- an act they took for the team, and the name the team
+      Slack notice below posts for the same press where a channel is
+      connected -- and nothing else of the calendar or the event. The tool
+      serves the approvals card only and is not offered to the chat model. Only
+      members still on the meeting's team are named. The event's attendees,
+      all on the team by the refusal above, already see that day on the
+      event. Taking a gap back removes its line and its record. A
       meeting deleted or expired has its records copied to
       `gap_agenda_cleanup` by C's meeting hook, and the worker takes the lines
       out with each owner's grant (`drain_agenda_cleanup`, every ten minutes,
@@ -760,15 +885,47 @@ the feature needs.
       are queued to come out the same way. All best effort, as section 4
       says: a refused grant, an unreachable Google or a description the
       outbound check refuses leaves the line on the calendar, logged.
-  - **Slack, S20's team notices (module C, #824):** two messages to the
-    channel of the team that held the meeting, each once per press, with the
-    team's connection. "담당자 지정해 질문" posts one gap's title and suggested
+  - **Google Calendar, Follow-up's approved meeting (module C):** when the
+    team lead approves Follow-up's proposal, C's `schedule_followup_meeting`
+    runs as that approver and makes one event on the approver's own calendar,
+    with their own grant: approving is their act, and the meeting is one they
+    now organise. The event is titled `후속 회의 · <meeting title>`, starts on
+    the approved day at the meeting's clock time in Korea and lasts about as
+    long as it did. Its description is one line per open gap, in the form
+    above, each recorded in `gap_agenda_events` and taken out by the same
+    hooks. **Nobody is invited**: the event has no guests and Google is asked
+    to send no notice (`sendUpdates=none`), so no member's address leaves for
+    Google and nobody is mailed from the approver's account. Inviting the
+    meeting's members waits for the team's decision after 10/12, with "다음
+    회의 잡기"'s invitations (#756); the approver can invite people from their
+    own calendar. `gap_followup_events` keeps one row per meeting -- the
+    approver, the event and the day it starts, nothing else of it -- so a
+    second approval makes no second event. The row goes with the meeting and
+    the account. The event itself is left on the approver's calendar when the
+    meeting or the account goes: it is a meeting they organised, and
+    cancelling it is theirs to do; its gap lines come out as every other line
+    does. A title or line the outbound check refuses is not sent, and is
+    logged as an error with the meeting's id (`gap_followup_refused`), apart
+    from Google not answering.
+  - **Slack, S20's team notices (module C, #824):** three kinds of message
+    to the channel of the team that held the meeting, each once per press,
+    with the team's connection, and one more when Follow-up's meeting is
+    approved -- the meeting's title, when the follow-up starts, the open
+    gaps' titles and questions and the approver's display name, once per
+    meeting. Nobody is sent a DM about it: a DM to the meeting's members is a
+    new kind of message and waits for the team's decision after 10/12
+    (#1046). "담당자 지정해 질문" posts one gap's title and suggested
     question, mentioning the member the presser picked from the meeting's
     team -- by the Slack account that member linked themselves, or by their
     display name when they linked none -- and the presser's display name.
     "다음 회의 잡기" posts, once the calendar took them, the titles and
     questions of the gaps whose line is new on the event, the meeting's
     title and the presser's display name; pressing again posts nothing.
+    "질문 카드 Slack 전송" posts the meeting's open `high` gaps, at most
+    three, one message each: the gap's title and suggested question, the
+    meeting's title and the presser's display name, mentioning nobody; when
+    there are more, one line counts them and links to the meeting's report
+    on Autune.
     Titles and C's own questions are stored masked, and a question a
     member rewrote is pattern-checked (below); every value is escaped so it
     cannot become a mention or a link, and no utterance, score or
@@ -794,12 +951,106 @@ the feature needs.
     with a 422 that names no value, and nothing changes. The check is
     pattern-based, so a name a person writes, or someone's words a person
     copies in, passes it -- the same standing as a meeting's title (#889)
-    and B's hand-edited items, and reaching only the team's own channel,
-    events whose guests are all on the team, and E. Deleting speech resets
-    an edited question only when it names a topic label that is gone
-    (#587); words copied in by hand stay, as anything a person wrote does.
-    Whether hand-written text should follow another rule is open with
-    mkkim68 for B and C alike (#872 review).
+    and the text a person types in module B (below), and reaching only the
+    team's own channel, events whose guests are all on the team, and E.
+    Deleting speech resets an edited question only when it names a topic
+    label that is gone (#587); words copied in by hand stay, as anything a
+    person wrote does.
+  - **Text a person types, in every module (#1130):** the question the
+    #872 review left open, answered by mkkim68 on #1130 (2026-10-09), with
+    mminjae97 agreeing for D. Two rules:
+    - *It is screened when it is saved, and refused.* Section 2 stops
+      personal data before a write, and text a person typed is stopped at
+      the same moment: every module refuses it the way C refuses a rewritten
+      question above, with the one detector (`find_unmasked` in
+      `autune_integrations`), so B and C refuse with the same function. The
+      refusal carries no value and says what to take out. Nothing the
+      detector reads then enters a module's store or travels on -- a
+      reworded decision used to reach D's `ctx_decision_versions` unscreened
+      -- and the contract needs no field for it. A sentence the detector
+      reads wrongly cannot be saved; that cost is accepted.
+    - *Deleting speech does not reach it.* The code cannot know whose words
+      a hand-written sentence carries, and a rule with no criterion for what
+      to delete is a rule that cannot be kept.
+
+    The first rule is every module's, and three keep it today. C refuses a
+    rewritten question (above). B refuses every field below. E refuses the
+    two texts a person types into a meeting report, an edited body and a
+    correction (`edit_meeting_report`, `correct_meeting_report`): both go
+    through `assert_masked` before anything is stored and answer with the
+    categories and never the text. A's meeting title is not screened yet;
+    A's owner (mkkim68) has said it follows with #1161, which is still open.
+
+    Module B applies the first on every field a person types into: an
+    action item's description and assignee label, a decision typed or
+    reworded, a meeting's memo, a project's name and aliases, and a
+    material's title (`autune_extraction.typed_text`). Its 422 names the
+    field and the categories the detector read (`phone`, `email`, ...) and
+    never the value; the refused text is in no log line or exception
+    message, and a refused save changes none of the fields sent with it.
+    Text sent back exactly as it is stored is not a write, so a row stored
+    before this rule keeps its date, owner and verdict editable; no stored
+    row is rewritten or deleted for it, and the outbound check at every
+    exit is still what stops such a row from leaving. No agent tool carries
+    text a person typed: the tools send ids, dates and verdicts, and the one
+    that makes an item (Follow-up's) writes B's own fixed sentence. So a
+    proposal approved later brings no typed text to these checks, and its
+    approver meets no refusal from them.
+  - **Slack, the Meeting Context Engine's messages (`autune_context`):**
+    three kinds to the channel of the team that held the meeting, and one
+    DM (`notify.py`; `docs/modules/context.md`, "Slack surface").
+    - The topic-link notice, once a meeting's topics are linked: a topic
+      label and the day of the earlier meeting that discussed it. Only
+      links the engine asserted by itself; at most
+      `AUTUNE_CONTEXT_MAX_TOPIC_LINK_NOTICES` (default 3), and one line that
+      counts the rest.
+    - The decision-drift warning, when a decision changed in a meeting a
+      key stakeholder of it was absent from: the thread's label, the new
+      statement, whether it was changed or reversed, and that meeting's
+      day. It names none of the absent and does not count them -- in a
+      small team "one was absent" is a name (#339); the statement itself
+      can name the person it assigns, as below. Each absent stakeholder
+      hears it by a DM of their own, the same statement and that they were
+      not there, sent through `assert_personal_delivery` to that person
+      only.
+    - The pre-meeting brief, `AUTUNE_CONTEXT_BRIEF_LEAD_MINUTES` (default
+      10) before a scheduled meeting: its title and start; the title and day
+      of the past meeting it follows, with at most five of its topic labels
+      and five decision statements; and at most six of the team's open Jira
+      issues as B last published them (key, title, status, link). When the
+      past meeting is only the team's latest -- nothing ties it to this
+      one -- its title and day are named and none of its topics or
+      decisions is posted.
+
+    Topic labels are masked text stored by this module. A decision
+    statement is the sentence B hands this module (`decisions_for_meeting`),
+    whether or not anyone has reviewed it yet -- only a decision a person
+    rejected is left out, and the contract's `Decision` carries no status
+    this module could filter on (#246, question 2). So a drift warning, a
+    DM or a brief can quote a statement a model drew that nobody has
+    looked at, unlike B's own draft DM above. Unless a person reworded it,
+    the statement is the turn that settled it as said and masked, with its
+    owner and deadline (B's `original_statement`), so it can name the
+    person it assigns; a person's rewording, or a decision a person typed,
+    is sent as typed, never through module A's masker, and screened only
+    by the outbound check before Slack. Issue titles are B's item
+    descriptions as stored. Meeting titles are values a person typed and
+    are sent as stored, as B's are. Apart from those statements no
+    utterance is sent, and no participation figure. Every value is escaped
+    so it cannot become a mention or a link, and clipped so the largest
+    brief stays under the outbound size limit. The one link is built on
+    purpose: a Jira issue's key links to its address (`<url|key>`,
+    `_agenda_line`), and only when the address holds no `|` or space and
+    fits its length cap; otherwise the key is sent as plain text. A
+    message the outbound check refuses is not sent and is not tried
+    again: each send runs after its claim commits
+    (`ctx_meeting_status.notified_at`, `late_drift_notified_at`, the
+    `ctx_briefs` row), and only a transient Slack failure releases the
+    claim. Those claims are times and ids; the
+    module keeps no message and no message id. A team with no channel
+    connected gets no message, and its brief is still read in the app. So a
+    message already posted stays in the channel or the DM -- when speech
+    it quoted is deleted, and when its meeting expires or is deleted.
   - **A person's Google grants themselves (#760 review):** a deleted
     account's refresh tokens are revoked at Google before its rows go, the
     calendar's and `gmail_send`'s alike (`GOOGLE_SERVICES`,

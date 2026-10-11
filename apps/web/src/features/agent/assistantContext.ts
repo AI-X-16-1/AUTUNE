@@ -23,7 +23,7 @@ const MEETING = /^\/meetings\/(mtg_[A-Za-z0-9]+)(?:\/|$)/;
 
 const TEAM_QUESTIONS = [
   "업무가 한 사람에게 몰려 있어?",
-  "액션아이템을 다시 나눠 볼까?",
+  "할 일을 다시 나눠 볼까?",
 ];
 
 export function contextFor(pathname: string): AssistantContext {
@@ -40,7 +40,7 @@ export function contextFor(pathname: string): AssistantContext {
     };
   }
   if (pathname.startsWith("/actions"))
-    return { label: "액션아이템", suggestions: TEAM_QUESTIONS };
+    return { label: "할 일", suggestions: TEAM_QUESTIONS };
   if (pathname.startsWith("/decisions"))
     return { label: "결정 히스토리", suggestions: TEAM_QUESTIONS };
   if (pathname.startsWith("/dashboard"))

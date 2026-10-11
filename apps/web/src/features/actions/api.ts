@@ -21,6 +21,7 @@ import type {
   ProjectSendReport,
   TeamName,
   SendTarget,
+  SyncLog,
 } from "./types";
 
 export { api };
@@ -109,6 +110,18 @@ export const updateActionItem = (id: string, changes: Partial<ActionItemDraft & 
   });
 
 /**
+ * Close an item that will not be finished -- dropped, overtaken, no longer
+ * needed (#856). It ends in 완료 like finished work and comes back marked
+ * `closed_unfinished`. Not a status edit: the server keeps a different event
+ * for it, which is all that tells the two apart. A 409 for an item that is not
+ * open (still waiting for confirmation, finished, or closed already).
+ */
+export const closeActionItem = (id: string) =>
+  api.extraction<ActionItemRead>(`/action-items/${encodeURIComponent(id)}/close`, {
+    method: "POST",
+  });
+
+/**
  * Remove an item the model got wrong. **The row is gone, not flagged.**
  *
  * `docs/architecture/privacy.md` allows no soft deletes and no tombstones
@@ -192,6 +205,10 @@ export const putSummaryNote = (meetingId: string, body: string) =>
 /** The team's projects, named by one of its meetings or by the team. */
 export const listProjects = (scope: IntegrationScope) =>
   api.extraction<Project[]>(`/projects?${scopeQuery(scope)}`);
+
+/** S28's "동기화 기록": the team's standing failures and its latest copies. */
+export const getSyncLog = (teamId: string) =>
+  api.extraction<SyncLog>(`/sync-log?team_id=${encodeURIComponent(teamId)}`);
 
 /** Words said often in the team's meetings that no project has yet. */
 export const listProjectSuggestions = (teamId: string) =>
@@ -332,6 +349,17 @@ export interface NotificationPauseRead extends NotificationPause {
   calendar?: LeaveCalendarOutcome | null;
 }
 
+/**
+ * Whether this server sends meeting text to a cloud model (#392). One fact
+ * about the deployment and nothing else: no model name, nothing about a key.
+ */
+export interface CloudModelUse {
+  in_use: boolean;
+}
+
+export const getCloudModelUse = () =>
+  api.extraction<CloudModelUse>("/cloud-model");
+
 export const getNotificationPause = () =>
   api.extraction<NotificationPauseRead>("/me/notification-pause");
 
@@ -386,6 +414,10 @@ export const retrySync = (id: string) =>
  * What became of a meeting's extraction: when it last went through, how many
  * runs in a row failed since, whether the server is still trying by itself,
  * and whether a "다시 추출" is waiting for the worker. Counts and times only.
+ *
+ * The last three are why a board can be empty with nothing wrong on record:
+ * the first run is not in yet, it never came, or it was allowed to read none
+ * of the meeting's lines.
  */
 export interface ExtractionState {
   extracted_at: string | null;
@@ -398,8 +430,20 @@ export interface ExtractionState {
    * would be false.
    */
   not_published: boolean;
+  /**
+   * The last run stored its rows and could not read part of the transcript:
+   * the board's rows are this run's and some may be missing. Counted in
+   * `failures`, so the worker tries again.
+   */
+  partly_unread: boolean;
   requested: boolean;
   requested_at: string | null;
+  /** A transcript is stored and its first run has left nothing yet. */
+  in_progress: boolean;
+  /** The same, half an hour on: the run did not come. */
+  overdue: boolean;
+  /** The last run read no line: no speech in the meeting has consent on record. */
+  read_nothing: boolean;
 }
 
 export const getExtractionState = (meetingId: string) =>

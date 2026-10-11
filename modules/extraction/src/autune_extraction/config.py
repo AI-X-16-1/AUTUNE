@@ -286,12 +286,17 @@ class ExtractionSettings(BaseSettings):
     """``AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392``: the second switch a cloud
     implementation needs (#392, proposed by module A's owner in review of #405).
 
-    "Demo meetings only" and "a paid key for real ones" are both rules the
-    code cannot check: nothing marks a meeting as a dummy, and nothing says
-    which tier a key is. What the code can do is make sending speech to a
-    provider something a deployment says twice. With ``classifier_impl`` set
-    to ``llm`` or ``llm_checked``, or ``resolver_impl`` or ``summary_impl``
-    set to ``llm``, and this not true, these settings refuse to load.
+    Which meetings go through and which tier the key is are both rules the
+    code cannot check: nothing marks a meeting as a dummy or says who was in
+    the room, and nothing says which tier a key is. The rules, as #392 has
+    them: on a free-tier key dummy meetings only; on the team's dev site,
+    with its paid key, the team's own meetings only and none with a
+    participant from outside the team; a real service is not decided.
+
+    What the code can do is make sending speech to a provider something a
+    deployment says twice. With ``classifier_impl`` set to ``llm`` or
+    ``llm_checked``, or ``resolver_impl`` or ``summary_impl`` set to ``llm``,
+    and this not true, these settings refuse to load.
 
     **It turns nothing on.** Set alone, it changes nothing.
 
@@ -352,6 +357,20 @@ class ExtractionSettings(BaseSettings):
 
     summary_fallback_model: str = "gemini-3.8-flash"
     """Asked instead when ``summary_model`` stays unavailable. Blank disables it."""
+
+    title_impl: str = "none"
+    """``none`` or ``llm``: whether an action item and a decision get a title
+    of twenty characters or fewer written by a cloud model (module B's owner,
+    2026-10-09; ``pipeline.title``). ``llm`` sends each row's masked sentence
+    out, the team's names replaced, so it is opt-in and needs
+    ``llm_acknowledged_392`` like every other cloud setting. ``none`` leaves
+    the screens cutting the sentence at twenty characters, as they did."""
+
+    title_model: str = "gemini-3.5-flash-lite"
+    """The model ``title_impl=llm`` asks. The cheap one: a meeting is one call."""
+
+    title_fallback_model: str = "gemini-3.8-flash"
+    """Asked instead when ``title_model`` stays unavailable. Blank disables it."""
 
     embedder_impl: str = "fake"
     """Which embedder backs the resolver's similarity check: ``local``,
@@ -427,17 +446,15 @@ class ExtractionSettings(BaseSettings):
         """
         if self.llm_acknowledged_392:
             return self
-        for name, value in (
-            ("CLASSIFIER_IMPL", self.classifier_impl),
-            ("RESOLVER_IMPL", self.resolver_impl),
-            ("SUMMARY_IMPL", self.summary_impl),
-            ("NLI_IMPL", self.nli_impl),
-        ):
+        for name, value in self._cloud_capable():
             if value in CLOUD_IMPLS:
                 raise ValueError(
                     f"AUTUNE_EXTRACTION_{name}={value} sends meeting text to a cloud "
                     "model. Set AUTUNE_EXTRACTION_LLM_ACKNOWLEDGED_392=true to confirm "
-                    "this deployment may: demo meetings only until #392 is decided."
+                    "this deployment may. Which meetings is a rule the code cannot "
+                    "check (#392): on a free-tier key, dummy meetings only; on a paid "
+                    "key, your own team's meetings only, none with a participant from "
+                    "outside the team; a real service is not decided."
                 )
         return self
 
@@ -453,6 +470,27 @@ class ExtractionSettings(BaseSettings):
             if value not in ("cpu", "cuda"):
                 raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")
         return self
+
+    def _cloud_capable(self) -> tuple[tuple[str, str], ...]:
+        """Every switch of this module that can name a cloud implementation,
+        with what it is set to. One list, so the refusal above and
+        ``sends_meeting_text_out`` cannot come to mean different things."""
+        return (
+            ("CLASSIFIER_IMPL", self.classifier_impl),
+            ("RESOLVER_IMPL", self.resolver_impl),
+            ("SUMMARY_IMPL", self.summary_impl),
+            ("TITLE_IMPL", self.title_impl),
+            ("NLI_IMPL", self.nli_impl),
+        )
+
+    @property
+    def sends_meeting_text_out(self) -> bool:
+        """Whether this deployment hands meeting text to a cloud model at all:
+        any of the switches above set to a cloud implementation.
+
+        What ``GET /cloud-model`` answers, and all it answers -- not which
+        switch, which model, or anything about the key."""
+        return any(value in CLOUD_IMPLS for _, value in self._cloud_capable())
 
 
 @lru_cache

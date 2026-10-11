@@ -40,6 +40,7 @@ from autune_gap import service, template
 from autune_gap.models import (
     GapAgendaCleanup,
     GapAgendaEvent,
+    GapFollowupEvent,
     GapGap,
     GapMeetingTemplate,
     GapParticipation,
@@ -82,6 +83,7 @@ TABLES = [
     GapMeetingTemplate.__table__,
     GapAgendaEvent.__table__,
     GapAgendaCleanup.__table__,
+    GapFollowupEvent.__table__,
 ]
 
 

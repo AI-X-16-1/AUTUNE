@@ -184,7 +184,7 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
       />
       <PolicyRow
         title="분석 결과 보관 기간"
-        description="요약 · 액션 · 갭 · 전사 텍스트. 만료 시 자동 삭제 · 이후 열리는 회의부터 적용"
+        description="요약 · 할 일 · 갭 · 전사 텍스트. 만료 시 자동 삭제 · 이후 열리는 회의부터 적용"
         control={
           retention === null && !error ? (
             <span style={META}>불러오는 중…</span>
@@ -412,8 +412,8 @@ function bodyFor(kind: Pending, meetings: number): string {
   if (kind === "voice")
     return "등록된 음성 임베딩이 모두 삭제되고, 다음 회의부터 화자 자동 인식 후보에 나오지 않습니다. 이 작업은 되돌릴 수 없습니다.";
   if (kind === "speech")
-    return `${meetings}개 회의에서 내 발화 텍스트와 음성 임베딩이 삭제됩니다. 회의에서 정리된 액션·결정은 남습니다. 이 작업은 되돌릴 수 없습니다.`;
-  return `계정과 함께 ${meetings}개 회의의 내 발화 텍스트, 음성 임베딩, 연동 계정이 삭제되고 로그아웃됩니다. 회의에서 정리된 액션·결정은 남고, 팀이 Notion·Jira로 보낸 항목은 팀의 기록으로 남습니다. 이 작업은 되돌릴 수 없습니다.`;
+    return `${meetings}개 회의에서 내 발화 텍스트와 음성 임베딩이 삭제됩니다. 회의에서 정리된 할 일·결정은 남습니다. 이 작업은 되돌릴 수 없습니다.`;
+  return `계정과 함께 ${meetings}개 회의의 내 발화 텍스트, 음성 임베딩, 연동 계정이 삭제되고 로그아웃됩니다. 회의에서 정리된 할 일·결정은 남고, 팀이 Notion·Jira로 보낸 항목은 팀의 기록으로 남습니다. 이 작업은 되돌릴 수 없습니다.`;
 }
 
 function Fact({ label, value }: { label: string; value: string }) {

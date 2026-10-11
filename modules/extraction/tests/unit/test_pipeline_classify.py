@@ -553,9 +553,38 @@ def test_the_task_drops_a_bare_acknowledgement_before_step_4(
     tasks.on_transcript_ready(transcript(lines=lines))
 
     assert _RecordingNli.seen == ["한번 볼게요"]
-    assert kinds(wired) == {"utt_3": "ambiguous"}
+    # utt_1, the news, is a date a milestone was moved to: a decision by the
+    # rule below, and nothing to do with the acknowledgement after it.
+    assert kinds(wired) == {"utt_1": "decision", "utt_3": "ambiguous"}
     assert [row.utterance_id for row in wired.scalars(select(ExtConfirmation))] == ["utt_3"]
     assert wired.query(ExtActionItem).count() == 0
+
+
+def test_the_task_makes_a_decision_of_an_announced_date_the_classifier_left_out(
+    wired: Session,
+) -> None:
+    """The fake calls utt_1 nothing -- it has no "기로 했" -- as the cloud
+    classifier did with this line (2026-10-09). The rule makes it a decision
+    row citing the line. utt_2 is a promise with a deadline: one item, due
+    that day, and no decision made of its date. utt_3 recalls a date and stays
+    out."""
+    lines = [
+        ("utt_1", 0.0, "3분기 리포트 제출 마감은 10월 30일까지입니다."),
+        ("utt_2", 4.0, "출시 자료는 제가 금요일까지 정리하겠습니다"),
+        ("utt_3", 8.0, "원래 마감은 10월 30일이었죠."),
+    ]
+    stored(wired, lines)
+
+    tasks.on_transcript_ready(transcript(lines=lines))
+
+    assert kinds(wired) == {"utt_1": "decision", "utt_2": "commitment"}
+    [decision] = wired.scalars(select(ExtDecision)).all()
+    assert decision.origin == "model"
+    assert decision.original_statement.startswith("3분기 리포트 제출 마감은 10월 30일까지입니다")
+    assert [s.utterance_id for s in wired.scalars(select(ExtDecisionSource))] == ["utt_1"]
+    [item] = wired.scalars(select(ExtActionItem)).all()
+    assert [s.utterance_id for s in wired.scalars(select(ExtActionItemSource))] == ["utt_2"]
+    assert item.due_text == "금요일"
 
 
 def test_the_task_refuses_an_unmasked_transcript_before_classifying(

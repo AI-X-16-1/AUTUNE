@@ -34,7 +34,7 @@ const ITEM: PendingAction = {
   result_ok: null,
   created_at: "2026-10-02T00:00:00Z",
   decided_at: null,
-  title: "액션아이템 재배정",
+  title: "할 일 재배정",
   body: "API 문서 → 박지영",
   needs_check: false,
 };

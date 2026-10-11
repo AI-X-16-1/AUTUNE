@@ -7,6 +7,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/shared/api/client";
+
 import { NameSuggestions } from "./NameSuggestions";
 import type { Project, ProjectDraft } from "../types";
 
@@ -72,6 +74,27 @@ describe("NameSuggestions", () => {
       aliases: [],
     });
     expect(screen.queryByLabelText("베타 넣기")).toBeNull();
+  });
+
+  it("says so when the word is refused as personal data, and keeps it offered (#1130)", async () => {
+    listProjectSuggestions.mockResolvedValue([{ word: "베타", count: 5 }]);
+    createProject.mockRejectedValue(
+      new ApiError(422, "validation_error", "this text looks like it holds personal data", {
+        field: "name",
+        reason: "personal_data",
+        categories: ["digits"],
+      }),
+    );
+    render(<NameSuggestions teamId="team_1" projects={[ALPHA]} onChanged={() => {}} />);
+
+    fireEvent.change(await screen.findByLabelText("베타 넣기"), { target: { value: "__new__" } });
+
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toBe(
+        "긴 번호로 보이는 값이 있어 저장하지 않았습니다. 그 값을 지우고 다시 저장해 주세요.",
+      ),
+    );
+    expect(screen.getByLabelText("베타 넣기")).toBeTruthy();
   });
 
   it("adds a word to an existing project's aliases, keeping its fields", async () => {

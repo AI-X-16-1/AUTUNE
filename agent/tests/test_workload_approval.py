@@ -187,6 +187,34 @@ def test_approving_moves_that_one_item_once(session: Session, team: str, synced:
     assert synced == [moved], "never run twice"
 
 
+def test_a_later_run_with_nobody_overloaded_retires_the_cards_still_waiting(
+    session: Session, team: str, synced: list[str]
+) -> None:
+    """#1096: the load evened out while the cards waited, the next run proposed
+    no move -- and the old cards stayed, each still one press from moving an
+    item nobody needed moved."""
+    first = ask(session, team)
+    finished = [f"act_park{n}" for n in range(5)]
+    for row in session.scalars(select(ExtActionItem).where(ExtActionItem.id.in_(finished))):
+        row.status = "done"
+    session.commit()
+
+    again = client(session, "user_kim").post(
+        "/api/agent/chat", json={"team_id": team, "message": ASK}
+    )
+
+    assert again.status_code == 200 and again.json()["proposed"] == 0, again.text
+    seen = client(session, "user_kim").get("/api/agent/pending", params={"team_id": team})
+    assert seen.json() == []
+    session.expire_all()
+    assert [r.status for r in session.scalars(select(AgentPendingAction))] == ["superseded"] * 2
+    moved = first[0].arguments["action_item_id"]
+    late = client(session, "user_kim").post(f"/api/agent/pending/{first[0].id}/approve")
+    assert late.status_code == 409, late.text
+    assert owner(session, moved) == "user_park"
+    assert synced == []
+
+
 def test_a_member_without_the_scope_cannot_approve(
     session: Session, team: str, synced: list[str]
 ) -> None:

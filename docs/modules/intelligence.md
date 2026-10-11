@@ -112,8 +112,9 @@ See `../architecture/async-pipeline.md`.
    heuristic until there are 50 labeled meetings with at least 5 of each
    outcome. Every prediction is stored in `intel_predictions` with its
    `model_version`; it is **shown** — in the snapshot and on `/predictions` —
-   only once the team has four weeks of history and three scored meetings
-   (#27). Prophet trend forecasting is not built; see Open questions.
+   only once the team has three scored meetings (#27). #27's four weeks of
+   history are lifted until the final presentation (`prediction.MIN_HISTORY`
+   is zero) and come back after it. Prophet trend forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
    `intel_gap_patterns` for a team over `[period_start, period_end)`, plus B's
    current action-item counts (below), into one
@@ -267,7 +268,7 @@ never stated stays without them, rather than print today's numbers as that
 week's. Weeks run from midnight KST. "Before `period_start`" goes by when a
 meeting was held, while the week's meetings are those *scored* in it, so a
 meeting held on the eve and scored the next morning counts in both. Missing or stale counts read
-"액션 아이템 완료 현황을 받지 못했습니다". A week with no scored meeting still
+"할 일 완료 현황을 받지 못했습니다". A week with no scored meeting still
 reports what earlier meetings carry. They are team totals in the team's
 channel -- never a direct message, never one meeting's counts (the contract's
 usage rule). `metrics_json` keeps the quality score's confirmation rate as
@@ -387,7 +388,7 @@ meeting record does.
 
 ## Metric glossary and explain_metric
 
-`explain_metric` answers "what does this number mean" from a glossary of 37
+`explain_metric` answers "what does this number mean" from a glossary of 40
 passages (`autune_intelligence/glossary/`, six files) and retrieves them with
 BM25 by default (`retriever_impl = bm25`). Retrieval quality is scored by
 `python -m autune_intelligence.retrieval_eval` over `glossary/questions.json`:
@@ -453,7 +454,9 @@ team inside those 14 days could not have shown a reversal — either its lineage
 was measured and came back without B's decisions (D publishes that way when B
 times out), or E never aggregated it at all, so nothing was measured. Either way
 a reversal there would have been invisible and "negative" would claim more than
-anything looked at. A meeting already seen
+anything looked at. A meeting still `scheduled` 14 days after its time is taken
+as never held (nobody recorded it) and withholds nothing; a failed or stuck one
+did happen and still does (#462). A meeting already seen
 to be reversed stays positive. Meetings held back this way are counted in the
 `intelligence_history_labels_blocked_by_blind_spot` log line, so "0 labeled
 meetings" can be told apart from short history. History is read back from E's own tables, and
@@ -571,4 +574,5 @@ exactly what a surveillance feature looks like. Read
   to mean anything. Deferred until there is enough history to evaluate it.
 
 Decided: predictions are shown after four weeks of history and three meetings
-(#27).
+(#27). The four weeks are lifted until the final presentation; the three
+meetings are not.

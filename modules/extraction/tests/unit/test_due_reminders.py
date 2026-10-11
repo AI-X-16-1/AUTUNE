@@ -179,6 +179,24 @@ def test_days_and_hours_are_koreas(utc: datetime, day: date, open_: bool) -> Non
 # --- who is told, and what -------------------------------------------------------
 
 
+def test_the_date_says_its_year_only_when_it_is_not_the_day_it_is_sent_on() -> None:
+    """The user, 2026-10-09: a due date as B's screens write one."""
+
+    def text(due: date, today: date) -> str:
+        return reminders.build_due_reminder(
+            reminders.DUE_SOON,
+            description="스펙 초안 공유",
+            due_date=due,
+            meeting_title=None,
+            board_url="u",
+            today=today,
+        )
+
+    assert "기한: 10월 3일 토" in text(date(2026, 10, 3), date(2026, 10, 2))
+    assert "기한: 2027년 1월 1일 금" in text(date(2027, 1, 1), date(2026, 12, 31))
+    assert "2026-10-03" not in text(date(2026, 10, 3), date(2026, 10, 2))
+
+
 def test_the_assignee_is_told_the_day_before_by_direct_message(
     session: Session, slack: FakeSlack
 ) -> None:
@@ -189,9 +207,9 @@ def test_the_assignee_is_told_the_day_before_by_direct_message(
     (message,) = slack.sent
     assert message.is_dm and message.channel == KIM
     assert message.text == (
-        "내일까지인 액션 아이템이 있습니다.\n"
+        "내일까지인 할 일이 있습니다.\n"
         "• 스펙 초안 공유\n"
-        "기한: 2026-10-03 · 회의: 주간 회의\n"
+        "기한: 10월 3일 토 · 회의: 주간 회의\n"
         "http://localhost:3000/meetings/mtg_1/actions"
     )
     assert reminded(session) == [("act_1", "due_soon", TOMORROW)]
@@ -205,7 +223,7 @@ def test_the_assignee_is_told_after_the_date_passed(session: Session, slack: Fak
     (message,) = slack.sent
     assert message.channel == KIM
     assert message.text.startswith(
-        "기한이 지난 액션 아이템이 있습니다.\n• 스펙 초안 공유\n기한: 2026-10-01"
+        "기한이 지난 할 일이 있습니다.\n• 스펙 초안 공유\n기한: 10월 1일 목"
     )
 
 
@@ -244,8 +262,8 @@ def test_the_day_before_and_the_day_after_are_two_reminders(
     tasks.remind_due_items()
 
     assert [m.text.splitlines()[0] for m in slack.sent] == [
-        "내일까지인 액션 아이템이 있습니다.",
-        "기한이 지난 액션 아이템이 있습니다.",
+        "내일까지인 할 일이 있습니다.",
+        "기한이 지난 할 일이 있습니다.",
     ]
 
 
@@ -465,6 +483,24 @@ def test_the_log_carries_ids_and_counts_never_the_text(session: Session, slack: 
     assert "고객사" not in written
     assert "주간 회의" not in written
     assert KIM not in written
+
+
+def test_the_year_left_out_is_koreas_at_the_moment_it_is_sent(
+    session: Session, slack: FakeSlack
+) -> None:
+    """A list read on the last day of the year whose send lands after midnight
+    in Korea: the date is in the year the reader is in by then, while UTC is
+    still in the old one."""
+    new_years_day = date(2027, 1, 1)
+    item(session, "act_1", due=new_years_day)
+    (owed,) = service.due_reminders_to_send(session, now=datetime(2026, 12, 31, 1, 0, tzinfo=UTC))
+
+    after_midnight_in_korea = datetime(2026, 12, 31, 15, 30, tzinfo=UTC)
+    assert service.send_due_reminder(session, slack, owed, now=after_midnight_in_korea) is True
+
+    (message,) = slack.sent
+    assert "기한: 1월 1일 금 " in message.text
+    assert "2027년" not in message.text
 
 
 # --- the claim -------------------------------------------------------------------

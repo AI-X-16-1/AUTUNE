@@ -108,7 +108,7 @@ def test_tools_outside_the_set_are_not_declared() -> None:
 SESSION: Any = object()
 OPEN = {
     "ok": True,
-    "summary": "열린 액션 2건.",
+    "summary": "열린 할 일 2건.",
     "items": [
         {"title": "API 문서", "body": "기한 10/9", "id": "act_1"},
         {"title": "QA", "id": "act_2"},

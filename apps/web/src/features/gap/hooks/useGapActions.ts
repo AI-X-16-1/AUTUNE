@@ -10,9 +10,16 @@ import {
   chooseTemplate,
   dismissGap,
   editQuestion,
+  sendCards,
   undoDismissGap,
 } from "../api";
-import type { AgendaOutcome, GapAsk, GapMeetingCarry, SlackOutcome } from "../types";
+import type {
+  AgendaOutcome,
+  GapAsk,
+  GapCardsSent,
+  GapMeetingCarry,
+  SlackOutcome,
+} from "../types";
 
 /** The second half of what "다음 회의 잡기" says, by what the calendar did. */
 export const AGENDA_NOTICE: Record<AgendaOutcome, string | null> = {
@@ -57,10 +64,31 @@ export const ASK_NOTICE: Record<SlackOutcome, string> = {
   not_tried: "질문을 보내지 않았습니다.",
 };
 
+/** What the screen says after "질문 카드 Slack 전송". */
+export function cardsNotice(result: GapCardsSent): string {
+  const before = result.sent > 0 ? `질문 카드 ${result.sent}건을 올린 뒤 ` : "";
+  switch (result.slack) {
+    case "posted": {
+      const rest = result.high - result.sent;
+      const more = rest > 0 ? ` 나머지 ${rest}건은 갭 리포트 링크로 안내했습니다.` : "";
+      return `팀 Slack 채널에 질문 카드 ${result.sent}건을 올렸습니다.${more}`;
+    }
+    case "not_tried":
+      return "Slack으로 보낼 high 갭이 없습니다.";
+    case "no_slack":
+      return "팀 Slack 채널이 연결되어 있지 않아 질문 카드를 보내지 못했습니다.";
+    case "refused":
+      return `${before}개인정보로 보이는 내용이 있어 팀 Slack 채널에 더 보내지 않았습니다.`;
+    case "failed":
+      return `${before}팀 Slack 채널에 질문 카드를 올리지 못했습니다. 잠시 후 다시 시도해 주세요.`;
+  }
+}
+
 /**
  * The writes S20 makes: dismissing a gap and taking that back, sending the
  * meeting's open gaps on to the next meeting and asking a member a gap's
- * question on the team's Slack channel (#824), and holding the meeting to
+ * question on the team's Slack channel or posting the open high gaps there as
+ * question cards (#824), and holding the meeting to
  * another template.
  *
  * **Every write is followed by a read, never by a local edit.** The server
@@ -144,6 +172,17 @@ export function useGapActions(reload: () => void) {
     [run],
   );
 
+  const sendToSlack = useCallback(
+    (meetingId: string) =>
+      run(
+        "slack",
+        () => sendCards(meetingId),
+        "질문 카드를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        cardsNotice,
+      ),
+    [run],
+  );
+
   /**
    * Save a rewritten question. Answers with what went wrong, or `null`, so the
    * editor can stay open on a refusal rather than lose what was typed.
@@ -187,6 +226,7 @@ export function useGapActions(reload: () => void) {
     undoDismiss,
     scheduleNext,
     ask,
+    sendToSlack,
     saveQuestion,
     choose,
   };

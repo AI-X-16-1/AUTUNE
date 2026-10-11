@@ -47,12 +47,17 @@ MISALIGNMENT_HORIZON_DAYS: Final = 14
 example. Two weeks is also roughly one sprint — long enough for a reversal to
 surface in the next planning meeting, short enough to act on."""
 
-MIN_HISTORY: Final = timedelta(weeks=4)
+MIN_HISTORY: Final = timedelta(0)
 MIN_MEETINGS: Final = 3
-"""Show a prediction only after four weeks of history **and** three meetings in
-it — decided on #27. Four weeks is half the dashboard's eight-week trend window;
-the meeting floor stops a monthly team from getting a prediction off one
-meeting just because the calendar moved. Internal constants: tune freely."""
+"""Show a prediction once the team has three scored meetings.
+
+#27 decided four weeks of history **and** three meetings: four weeks is half the
+dashboard's eight-week trend window, and the meeting floor stops a monthly team
+from getting a prediction off one meeting. **The four weeks are lifted until the
+final presentation** (2026-10-08, on #27): Autune is not in service yet, and a
+team that started this month could not show a prediction before it. Restore
+``timedelta(weeks=4)`` after the presentation; the meeting floor stays either way.
+Internal constants: tune freely."""
 
 
 @dataclass(frozen=True)
@@ -156,7 +161,7 @@ def meeting_features(
 def prediction_visible(
     first_meeting_at: datetime | None, meeting_count: int, *, now: datetime
 ) -> bool:
-    """#27's gate: four weeks of history and at least three meetings in it.
+    """#27's gate: ``MIN_HISTORY`` of history and at least three meetings in it.
 
     Predictions are computed and stored regardless — calibration needs the
     early ones too — and this gates only what a person is shown.

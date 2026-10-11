@@ -14,8 +14,9 @@ from datetime import timedelta
 from functools import cache
 from importlib import resources
 
-from autune_contracts import ACTION_PROGRESS_STALE_AFTER
+from autune_contracts import ACTION_PROGRESS_STALE_AFTER, STANCE_MIN_IDENTIFIED_PER_ROLE
 from autune_intelligence import prediction, service
+from autune_intelligence.config import IntelligenceSettings
 
 FILES = ("quality.md", "gaps.md", "alignment.md", "prediction.md", "actions.md", "reports.md")
 
@@ -48,8 +49,14 @@ CONSTANTS: dict[str, str] = {
     "quality.decision_cadence": f"{service.DECISION_CADENCE_MINUTES:g}분",
     "gap.high_ceiling": f"{service.HIGH_GAP_CEILING}건",
     "heatmap.min_meetings": f"{service.MIN_MEETINGS_PER_HEATMAP_CELL}건",
+    "heatmap.min_people": f"{STANCE_MIN_IDENTIFIED_PER_ROLE}명",
+    # The shipped default, not this process's .env: the glossary describes the
+    # product, and a passage must not change with a developer's override.
+    "quality.aggregate_wait": _span(
+        timedelta(seconds=IntelligenceSettings.model_fields["aggregate_timeout_seconds"].default)
+    ),
+    "speaking.min_people": f"{service._MIN_SPEAKERS_FOR_RATIO}명",
     "prediction.horizon": f"{prediction.MISALIGNMENT_HORIZON_DAYS}일",
-    "prediction.min_history": _span(prediction.MIN_HISTORY),
     "prediction.min_meetings": f"{prediction.MIN_MEETINGS}건",
     "action.window": _span(service.ACTION_COMPLETION_WINDOW),
     "action.min_meetings": f"{service.ACTION_PROGRESS_MIN_MEETINGS}건",

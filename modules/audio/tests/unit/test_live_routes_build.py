@@ -77,15 +77,16 @@ async def test_the_claim_is_released_before_ended_is_sent(
         async def stop(self):  # noqa: ANN202
             return []
 
-    registry.claim("m1", Session())  # type: ignore[arg-type]
+    session = Session()
+    registry.claim("m1", session, user_id="u1")  # type: ignore[arg-type]
     real_release = registry.release
 
-    def release(meeting_id: str) -> None:
+    def release(meeting_id: str, owner: object) -> None:
         order.append("release")
-        real_release(meeting_id)
+        real_release(meeting_id, owner)  # type: ignore[arg-type]
 
     monkeypatch.setattr(registry, "release", release)
-    await routes._finish(Socket(), Session(), meeting_id="m1")  # noqa: SLF001
+    await routes._finish(Socket(), session, meeting_id="m1")  # type: ignore[arg-type]  # noqa: SLF001
     assert order == ["release", "ended", "close"]
 
 

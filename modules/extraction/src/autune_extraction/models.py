@@ -24,7 +24,7 @@ from sqlalchemy import (
     false,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from autune_core import Base
 from autune_core.ids import ACTION_ITEM, DECISION, new_id
@@ -322,6 +322,26 @@ class ExtActionItem(Base, TimestampMixin):
     )
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
+    title: Mapped[str | None] = mapped_column(String(40))
+    """``description`` in twenty characters or fewer, ended by a noun, for the
+    card's top line (module B's owner, 2026-10-09). Written by a model and kept only
+    when it passed ``pipeline.title.accept``; ``NULL`` otherwise -- no titler
+    switched on, a refused title, a sentence a person typed -- and the card
+    then shows the sentence cut, as it did before. B's screens read it and
+    nothing else does: every message, Jira, Notion, a calendar and the event
+    to D and E carry ``description``.
+
+    **It is the title of one sentence.** Writing another sentence into
+    ``description`` takes the title away (``_a_new_sentence_has_no_title``),
+    whoever writes it -- a person's edit, the assistant's, a corrected source
+    line -- so no write has to remember to. Set it after ``description``."""
+
+    @validates("description")
+    def _a_new_sentence_has_no_title(self, _key: str, value: str) -> str:
+        if value != getattr(self, "description", None):
+            self.title = None
+        return value
+
     assignee_id: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="SET NULL"), index=True
     )
@@ -465,7 +485,13 @@ class ExtActionItemSource(Base):
     excerpt_end: Mapped[int | None] = mapped_column(Integer)
     """Which part of the utterance the item was made from, as two offsets into
     its stored text -- no words (``excerpt``). Both NULL for the whole utterance,
-    for a row from before these columns, and once the utterance was corrected."""
+    for a row from before these columns, and once the utterance was corrected.
+
+    Both NULL once the utterance is deleted, too (#400): a trigger on the table
+    clears them whenever the row has no ``utterance_id``, so that no path which
+    deletes an utterance has to remember to. They point into a text that is
+    gone, and their size is a trace of it. The trigger is the migration's
+    (``5d1f8b3a7c46``); a table made by ``create_all`` does not have it."""
 
     action_item: Mapped[ExtActionItem] = relationship(back_populates="sources")
 
@@ -645,6 +671,20 @@ class ExtDecision(Base, TimestampMixin):
     typed and for rows from before this column: read it as
     ``original_statement or statement``."""
 
+    title: Mapped[str | None] = mapped_column(String(40))
+    """What was settled, in twenty characters or fewer, ended by a noun, for
+    the row's top line: ``ExtActionItem.title`` for a decision. It is of the
+    statement without its "(담당 …, 기한 …)" bracket, which the whole
+    statement keeps. ``NULL`` when there is none; never sent to module D,
+    which is given ``original_statement``. A person's rewording lives in the
+    review and has no title (``service._review_decision_row``)."""
+
+    @validates("statement")
+    def _a_new_statement_has_no_title(self, _key: str, value: str) -> str:
+        if value != getattr(self, "statement", None):
+            self.title = None
+        return value
+
     statement_resolved: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=false()
     )
@@ -747,6 +787,16 @@ class ExtDecisionSource(Base):
     ``position`` keeps meeting order without a second join to ``utterances``.
     The order is the argument of the decision -- the proposal first, the sentence
     that settles it last -- and sorting by id would scramble it.
+
+    A row outlives its utterance, as ``ExtActionItemSource``'s does (#400):
+    deleting the utterance sets ``utterance_id`` to NULL instead of taking the
+    row. Module A's rerun of a meeting replaces every utterance, and a decision
+    a person added is not rebuilt, so under a cascade it was left with no trace
+    that it had ever pointed at a line; so was the model's decision whose
+    speaker deleted their own data. The words and the id go; that there was a
+    source stays. Every reader skips the NULLs for ids
+    (``service.live_decision_source_ids``) and counts them as
+    ``deleted_source_count``.
     """
 
     __tablename__ = "ext_decision_sources"
@@ -759,14 +809,21 @@ class ExtDecisionSource(Base):
     decision_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("ext_decisions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    utterance_id: Mapped[str] = mapped_column(
-        String(64), ForeignKey("utterances.id", ondelete="CASCADE"), nullable=False, index=True
+    utterance_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "utterances.id", ondelete="SET NULL", name="fk_ext_decision_sources_utterance_id"
+        ),
+        index=True,
     )
+    """NULL once the utterance is deleted. Never written NULL by this module."""
+
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
     excerpt_start: Mapped[int | None] = mapped_column(Integer)
     excerpt_end: Mapped[int | None] = mapped_column(Integer)
-    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision."""
+    """``ExtActionItemSource.excerpt_start`` and ``excerpt_end`` for a decision,
+    cleared by the same trigger once the utterance is deleted."""
 
     decision: Mapped[ExtDecision] = relationship(back_populates="sources")
 
@@ -792,7 +849,10 @@ class ExtDecisionReview(Base):
     sources are unchanged is the same row across a rebuild, so its review is
     never at risk of the foreign key; one whose sources changed is a different
     decision, and ``build_decisions`` deletes its review along with it rather
-    than diffing the whole meeting's ids against a "kept" list to find it. The
+    than diffing the whole meeting's ids against a "kept" list to find it --
+    unless the review says something. A decision a person confirmed, rejected
+    or reworded is kept with its review while its source lines can be read,
+    whatever a rerun makes of them (2026-10-09, ``build_decisions``). The
     foreign key holds anyway, as a backstop against any other path that deletes
     a decision without going through there -- SQLite does not enforce it
     without being asked, which is why the delete is not left to it alone. The
@@ -1442,7 +1502,7 @@ class ExtMeetingNote(Base):
 class ExtMeetingSummary(Base):
     """A meeting's summary written by a cloud model (#421 v2, ``summary_impl=llm``).
 
-    Model output over the meeting's consented, masked lines, names put back --
+    Model output over the meeting's consented, masked lines, naming no person --
     meeting content, shown to the team on the 요약 tab. ``source_digest`` is
     ``service.source_digest`` over the lines it was written from: a summary
     whose lines have changed since (a correction, a deletion, a change of
@@ -1456,6 +1516,8 @@ class ExtMeetingSummary(Base):
     keeps the meeting's retention.
 
     ``points`` holds one sentence per line: each was checked to be one line.
+
+    A row can also say that no summary could be written (``too_long``).
     """
 
     __tablename__ = "ext_meeting_summaries"
@@ -1467,6 +1529,16 @@ class ExtMeetingSummary(Base):
     points: Mapped[str] = mapped_column(Text, nullable=False, default="")
     source_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    too_long: Mapped[bool] = mapped_column(nullable=False, default=False, server_default=false())
+    """No summary was written because the meeting, as the lines of
+    ``source_digest``, needs more model calls than one meeting is allowed
+    (``summary.MAX_CALLS``). ``overview`` and ``points`` are then empty: the
+    row holds no text, only that this was tried. It is what lets the tab say
+    why there is no summary, and what keeps a rerun over the same lines from
+    spending the calls again to learn the same thing. It follows the rules of
+    any other row here: lines that change delete it, and so does deleted
+    speech. A later, higher limit does not revisit it -- the lines have to
+    change."""
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
     )
@@ -1539,7 +1611,7 @@ class ExtExtractionAttempt(Base):
     is not (``told_at``). ``reason`` is the class of the last error and nothing
     from it -- an exception over a meeting's rows can carry what was said.
 
-    ``requested`` is the 액션 tab's "다시 추출", waiting for the worker: the
+    ``requested`` is the 할 일 tab's "다시 추출", waiting for the worker: the
     API process has no broker to queue on, so the request is a row and
     ``tasks.run_requested_extractions`` takes it. ``requested_at`` stays after
     that, for the cooldown.

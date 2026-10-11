@@ -43,7 +43,10 @@ from autune_extraction.slots import KST
 
 TEAM, OTHER_TEAM = "team_1", "team_2"
 MEETING, OTHER_MEETING = "mtg_1", "mtg_9"
-TODAY = date.today()
+TODAY = datetime.now(tz=KST).date()
+"""Korea's day, which is the day ``tools`` reads on every call (``tools._today``),
+whatever the server's own is. Taken again before each test
+(``_the_day_the_test_runs_on``), and ``KOREA_TODAY`` with it."""
 KEYS = {"ok", "reason", "summary", "items", "evidence", "confidence", "truncated"}
 
 TABLES = [
@@ -80,6 +83,19 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         "get_settings",
         lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
     )
+
+
+@pytest.fixture(autouse=True)
+def _the_day_the_test_runs_on() -> None:
+    """A test's today is the day it runs on, not the day this file was imported.
+
+    ``tools`` asks for the day on every call. With the day taken once at
+    import, a run that began before midnight in Korea and reached these tests
+    after it built its rows around yesterday: "due today" was already late,
+    "due tomorrow" was due today.
+    """
+    global TODAY, KOREA_TODAY
+    TODAY = KOREA_TODAY = datetime.now(tz=KST).date()
 
 
 @pytest.fixture
@@ -204,7 +220,7 @@ def test_unconfirmed_items_are_counted_never_quoted(session: Session) -> None:
 
     titles = [i["title"] for i in result["items"]]
     assert titles == ["act_confirmed 할 일"]
-    assert "확인 대기 1건" in result["summary"]
+    assert "확인 필요 1건" in result["summary"]
 
 
 # --- meeting_due_dates (#966) ----------------------------------------------------------
@@ -217,11 +233,12 @@ def test_due_dates_of_an_unknown_meeting_are_ok_false_not_an_exception(session: 
     assert result["items"] == [] and result["evidence"] == []
 
 
-def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
+def test_due_dates_are_the_confirmed_unfinished_items_dates_and_titles_and_nobody(
     session: Session,
 ) -> None:
-    """One row, every date in it, earliest first, a shared day twice -- and no
-    title, assignee or text of any item."""
+    """One row, every date in it, earliest first, a shared day twice, each with
+    its item's title (#1038) -- and no assignee, and nothing of an item that is
+    undated or done."""
     item(session, "act_b", due=TODAY + timedelta(days=5))
     item(session, "act_a", due=TODAY + timedelta(days=2), status="in_progress")
     item(session, "act_c", due=TODAY + timedelta(days=5), assignee="user_gone")
@@ -236,23 +253,95 @@ def test_due_dates_are_the_confirmed_unfinished_items_dates_and_nothing_else(
     assert row == {
         "title": "기한",
         "due_dates": [
-            {"date": (TODAY - timedelta(days=3)).isoformat(), "confirmed": True},
-            {"date": (TODAY + timedelta(days=2)).isoformat(), "confirmed": True},
-            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
-            {"date": (TODAY + timedelta(days=5)).isoformat(), "confirmed": True},
+            {
+                "date": (TODAY - timedelta(days=3)).isoformat(),
+                "confirmed": True,
+                "title": "act_late 할 일",
+            },
+            {
+                "date": (TODAY + timedelta(days=2)).isoformat(),
+                "confirmed": True,
+                "title": "act_a 할 일",
+            },
+            {
+                "date": (TODAY + timedelta(days=5)).isoformat(),
+                "confirmed": True,
+                "title": "act_b 할 일",
+            },
+            {
+                "date": (TODAY + timedelta(days=5)).isoformat(),
+                "confirmed": True,
+                "title": "act_c 할 일",
+            },
         ],
         "dated_open": 4,
         "dated_confirmed": 4,
     }
     assert result["evidence"] == ["act_late", "act_a", "act_b", "act_c"]
     assert result["summary"] == (
-        "확정된 열린 액션아이템 5건 중 기한 있음 4건, 기한 없음 1건. 확인 대기 0건."
+        "확정된 열린 할 일 5건 중 기한 있음 4건, 기한 없음 1건. 확인 필요 0건."
     )
     said = str(result)
-    assert "할 일" not in said, "no item's text"
+    assert "act_undated" not in said and "act_done" not in said, "only the dated open ones"
     assert "박지영" not in said and "이건우" not in said and "user_" not in said, (
         "and nobody's name"
     )
+
+
+def test_a_typed_description_carrying_personal_data_gives_a_date_and_no_title(
+    session: Session,
+) -> None:
+    """#1038, the first condition. A person's own item is confirmed as written
+    and its text never passed module A's masker, so the title is screened: the
+    entry stays, with its date, and the text does not come out. The board's
+    own writes refuse such text now (#1130), so the rows here hold it as rows
+    stored before that rule do; the rewording that takes it out is the board's
+    write."""
+    plain = service.create_action_item(
+        session,
+        ActionItemCreate(
+            meeting_id=MEETING, description="API 연동 마무리", due_date=TODAY + timedelta(days=2)
+        ),
+    )
+    phone = service.create_action_item(
+        session,
+        ActionItemCreate(
+            meeting_id=MEETING,
+            description="거래처에 견적 요청하기",
+            due_date=TODAY + timedelta(days=3),
+        ),
+    )
+    phone.description = "거래처 010-1234-5678 로 견적 요청"
+    session.flush()
+
+    result = tools.meeting_due_dates(session, MEETING)
+
+    (row,) = result["items"]
+    assert row["due_dates"] == [
+        {
+            "date": (TODAY + timedelta(days=2)).isoformat(),
+            "confirmed": True,
+            "title": "API 연동 마무리",
+        },
+        {"date": (TODAY + timedelta(days=3)).isoformat(), "confirmed": True},
+    ]
+    assert "010-1234-5678" not in str(result) and "견적" not in str(result)
+    # Held back, not dropped: the date is counted and the item can be pointed at.
+    assert (row["dated_open"], row["dated_confirmed"]) == (2, 2)
+    assert result["evidence"] == [plain.id, phone.id]
+
+    # Another old row, and a rewording that takes the number out of the first.
+    plain.description = "담당 kim@example.com 에게 전달"
+    service.update_action_item(session, phone, ActionItemUpdate(description="거래처에 견적 요청"))
+    session.flush()
+
+    after = tools.meeting_due_dates(session, MEETING)
+
+    assert [entry.get("title") for entry in after["items"][0]["due_dates"]] == [
+        None,
+        "거래처에 견적 요청",
+    ]
+    assert "kim@example.com" not in str(after)
 
 
 def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Session) -> None:
@@ -269,8 +358,11 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
     dates = [entry["date"] for entry in result["items"][0]["due_dates"]]
     assert dates == [(TODAY + timedelta(days=4)).isoformat()]
     assert draft_day.isoformat() not in str(result)
+    # Nor its title (#1038): a confirmed item's only, and "act_draft" is in neither.
+    assert [entry["title"] for entry in result["items"][0]["due_dates"]] == ["act_confirmed 할 일"]
+    assert "act_draft" not in str(result)
     assert result["evidence"] == ["act_confirmed"], "no card can point at a draft"
-    assert "확인 대기 2건" in result["summary"]
+    assert "확인 필요 2건" in result["summary"]
     assert all(entry["confirmed"] is True for entry in result["items"][0]["due_dates"])
     # The dated draft is in the count and nowhere else; the undated one in neither.
     assert (result["items"][0]["dated_open"], result["items"][0]["dated_confirmed"]) == (2, 1)
@@ -286,7 +378,11 @@ def test_an_unconfirmed_items_date_never_comes_out_only_its_count(session: Sessi
         (TODAY + timedelta(days=4)).isoformat(),
     ]
     assert after["evidence"] == ["act_draft", "act_confirmed"]
-    assert "확인 대기 1건" in after["summary"]
+    assert [entry["title"] for entry in after["items"][0]["due_dates"]] == [
+        "act_draft 할 일",
+        "act_confirmed 할 일",
+    ]
+    assert "확인 필요 1건" in after["summary"]
     assert (after["items"][0]["dated_open"], after["items"][0]["dated_confirmed"]) == (2, 2)
 
 
@@ -308,7 +404,7 @@ def test_only_drafts_have_dates_means_a_row_of_counts_no_date_and_no_evidence(
     ]
     assert result["evidence"] == []
     assert result["summary"] == (
-        "확정된 열린 액션아이템 1건 중 기한 있음 0건, 기한 없음 1건. 확인 대기 2건."
+        "확정된 열린 할 일 1건 중 기한 있음 0건, 기한 없음 1건. 확인 필요 2건."
     )
     said = str(result)
     assert not any(day.isoformat() in said for day in draft_days), "a count, never a date"
@@ -364,13 +460,42 @@ def test_reassignment_then_overdue_come_first(session: Session) -> None:
     assert "재배정이 필요한 항목 1건" in result["summary"]
 
 
+LATE_FIRST = {
+    "meeting_action_items": lambda s: tools.meeting_action_items(s, MEETING),
+    "open_action_items": lambda s: tools.open_action_items(s, TEAM),
+    "person_action_items": lambda s: tools.person_action_items(s, TEAM, "user_in"),
+}
+
+
+@pytest.mark.parametrize("read", sorted(LATE_FIRST))
+def test_of_more_late_items_than_are_shown_the_longest_late_are_the_ones_shown(
+    session: Session, read: str
+) -> None:
+    """Every late item has the one score, so by the score alone they came out
+    as they were written down: the item a week late was left out for ones a day
+    late, and Workload, which takes the first of a person's rows, moved those."""
+    for n in range(1, 8):  # written down the least late first
+        item(session, f"act_late_{n}", due=TODAY - timedelta(days=n))
+    item(session, "act_orphan", assignee="user_gone", due=TODAY - timedelta(days=1))
+    item(session, "act_soon", due=TODAY + timedelta(days=1))
+
+    result = LATE_FIRST[read](session)
+
+    shown = [i["id"] for i in result["items"] if i["id"] != "act_orphan"]
+    assert shown[:4] == ["act_late_7", "act_late_6", "act_late_5", "act_late_4"]
+    assert {i["score"] for i in result["items"] if i["id"] in shown} == {0.9}, (
+        "the score is as it was"
+    )
+    assert result["truncated"] is True
+
+
 def test_more_than_five_are_ranked_cut_and_marked_truncated(session: Session) -> None:
     for n in range(8):
         item(session, f"act_{n}", due=TODAY + timedelta(days=n))
     result = tools.meeting_action_items(session, MEETING)
     assert len(result["items"]) == 5
     assert result["truncated"] is True
-    assert "확정된 액션아이템 8건" in result["summary"]
+    assert "확정된 할 일 8건" in result["summary"]
 
 
 def test_evidence_is_utterance_ids_only(session: Session) -> None:
@@ -529,9 +654,14 @@ def test_review_state_counts_what_waits_and_quotes_none_of_it(session: Session) 
 
     result = tools.review_state(session, MEETING)
 
-    assert "결정 확인 대기 1건" in result["summary"]
-    assert "액션아이템 확인 대기 1건" in result["summary"]
+    assert "결정 확인 필요 1건" in result["summary"]
+    assert "할 일 확인 필요 1건" in result["summary"]
     assert {i["id"] for i in result["items"]} == {"dec_1", "act_draft"}
+    # The words the board and the decision list use for a row nobody confirmed.
+    assert {i["id"]: i["title"] for i in result["items"]} == {
+        "dec_1": "결정 확인 필요",
+        "act_draft": "할 일 확인 필요",
+    }
     assert all(i["body"] == "" for i in result["items"])
     assert result["evidence"] == ["utt_d"]
 
@@ -766,7 +896,7 @@ def test_only_confirmed_decisions_are_quoted(session: Session) -> None:
     result = tools.meeting_decisions(session, MEETING)
 
     assert [i["title"] for i in result["items"]] == ["dec_ok 결정"]
-    assert "확인 대기 1건" in result["summary"]
+    assert "확인 필요 1건" in result["summary"]
     assert "dec_wait 결정" not in str(result)
     assert "dec_no 결정" not in str(result)
 
@@ -784,7 +914,7 @@ def test_one_persons_open_confirmed_items_in_this_team(session: Session) -> None
     result = tools.person_action_items(session, TEAM, "user_in")
 
     assert [i["id"] for i in result["items"]] == ["act_mine"]
-    assert result["summary"] == "박지영님의 진행 중 액션아이템 1건, 기한 지남 1건."
+    assert result["summary"] == "박지영님의 진행 중 할 일 1건, 기한 지남 1건."
 
 
 def test_someone_off_the_team_is_refused(session: Session) -> None:
@@ -821,7 +951,8 @@ def test_an_unconfirmed_item_is_reported_without_its_text(session: Session) -> N
     result = tools.action_item_status(session, TEAM, "act_draft")
 
     assert "act_draft 할 일" not in str(result)
-    assert result["items"][0]["title"] == "확인 대기"
+    assert result["items"][0]["title"] == "확인 필요"
+    assert result["summary"].startswith("확인이 필요한 할 일입니다.")
 
 
 def test_another_teams_item_is_the_same_as_an_unknown_one(session: Session) -> None:
@@ -956,6 +1087,51 @@ def test_a_write_that_names_the_items_meeting_runs_and_a_wrong_meeting_is_refuse
     assert acting["items"] == ["act_1", "act_1"]
 
 
+@pytest.mark.parametrize(
+    ("ended_by", "reason"), [("finished", "already done"), ("closed", "already closed")]
+)
+def test_an_item_ended_while_its_proposal_waited_is_neither_handed_on_nor_re_dated(
+    session: Session, acting: dict[str, list[str]], ended_by: str, reason: str
+) -> None:
+    """Workload's and Tracker's proposals wait for an approval, and the item's
+    holder can finish or close it meanwhile. Handed on then, it was counted
+    as work the new holder finished."""
+    member(session, "user_free", "최여유")
+    item(session, "act_1", due=TODAY - timedelta(days=1))
+    if ended_by == "finished":
+        assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    else:
+        assert tools.close_action_item(TEAM, "act_1")["ok"] is True
+    synced, edits = list(acting["items"]), session.query(ExtEditEvent).count()
+
+    handed_on = tools.reassign_action_item(TEAM, "act_1", "user_free", meeting_id=MEETING)
+    re_dated = tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20", meeting_id=MEETING)
+
+    assert [(r["ok"], r["reason"]) for r in (handed_on, re_dated)] == [(False, reason)] * 2
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert (row.assignee_id, row.due_date) == ("user_in", TODAY - timedelta(days=1))
+    assert acting["items"] == synced and session.query(ExtEditEvent).count() == edits
+    finished = {r["id"]: r["done"] for r in tools.workload_by_owner(session, TEAM)["items"]}
+    assert finished["user_free"] == 0, "nobody is credited with work they did not do"
+
+
+def test_an_item_reopened_after_it_was_finished_can_be_handed_on_and_re_dated(
+    session: Session, acting: dict[str, list[str]]
+) -> None:
+    member(session, "user_free", "최여유")
+    item(session, "act_1", due=TODAY)
+    assert tools.set_action_item_status(TEAM, "act_1", "done")["ok"] is True
+    assert tools.set_action_item_status(TEAM, "act_1", "in_progress")["ok"] is True
+
+    assert tools.reassign_action_item(TEAM, "act_1", "user_free")["ok"] is True
+    assert tools.set_action_item_due_date(TEAM, "act_1", "2026-10-20")["ok"] is True
+
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    assert (row.assignee_id, row.due_date) == ("user_free", date(2026, 10, 20))
+
+
 def test_a_status_outside_the_board_is_refused(
     session: Session, acting: dict[str, list[str]]
 ) -> None:
@@ -1073,8 +1249,8 @@ def test_closing_twice_says_it_is_closed_and_closing_a_finished_item_says_it_is_
     again = tools.close_action_item(TEAM, "act_closed")
     finished = tools.close_action_item(TEAM, "act_finished")
 
-    assert (again["ok"], again["summary"]) == (False, "이미 닫힌 액션아이템입니다.")
-    assert (finished["ok"], finished["summary"]) == (False, "이미 완료된 액션아이템입니다.")
+    assert (again["ok"], again["summary"]) == (False, "이미 닫힌 할 일입니다.")
+    assert (finished["ok"], finished["summary"]) == (False, "이미 완료된 할 일입니다.")
     assert [e.kind for e in session.query(ExtEditEvent)] == ["closed"]
     assert acting["items"] == ["act_closed"]
 
@@ -1137,6 +1313,7 @@ def test_a_followup_item_is_followups_fixed_text_and_waits(
         "followup",
     )
     assert acting["items"] == []  # unconfirmed: nothing leaves
+    assert result["summary"] == "후속 회의 항목을 추가했습니다 (확인 필요)."
     # Not a person finding what the model missed: edit cost gets no "created".
     assert session.query(ExtEditEvent).count() == 0
 
@@ -1162,7 +1339,7 @@ def test_a_second_followup_item_is_refused_while_one_is_open(
 
 # --- the day Follow-up recommends becomes the item's due date (#853) -------------------
 
-KOREA_TODAY = datetime.now(tz=KST).date()
+KOREA_TODAY = TODAY  # the one day every tool reads; taken again before each test
 
 
 def test_a_recommended_date_becomes_the_items_due_date_and_nothing_else(
@@ -1257,7 +1434,9 @@ def test_a_date_that_has_passed_is_left_off_and_the_item_is_still_made(
     (row,) = session.query(ExtActionItem).all()
     assert result["ok"] is True and result["items"][0]["id"] == row.id
     assert row.due_date is None
-    assert "기한은 넣지 않았습니다" in result["summary"]
+    assert result["summary"] == (
+        "후속 회의 항목을 추가했습니다 (확인 필요). 추천 날짜가 이미 지나 기한은 넣지 않았습니다."
+    )
 
 
 def test_once_confirmed_it_is_an_ordinary_item_with_a_date(
@@ -1388,6 +1567,71 @@ def test_item_rows_say_whether_they_are_late(session: Session) -> None:
     assert (row["overdue"], row["needs_reassignment"]) == (True, False)
 
 
+# --- today is Korea's day, whatever the server's is ------------------------------------
+
+
+@pytest.fixture
+def server_a_day_behind(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server whose own day is still Korea's yesterday -- a process on UTC,
+    from 00:00 to 09:00 in Korea. ``date.today()`` answers that day there."""
+
+    class _ServersDay(date):
+        @classmethod
+        def today(cls) -> date:
+            return TODAY - timedelta(days=1)
+
+    monkeypatch.setattr(tools, "date", _ServersDay)
+
+
+def _late(answer: dict[str, Any]) -> Any:
+    """What the one row of ``answer`` says: a flag for an item, a count for a person."""
+    (row,) = answer["items"]
+    return row["overdue"]
+
+
+SAYS_IT_IS_LATE = {
+    "meeting_action_items": lambda s: _late(tools.meeting_action_items(s, MEETING)),
+    "open_action_items": lambda s: _late(tools.open_action_items(s, TEAM)),
+    "stalled_action_items": lambda s: (
+        [i["id"] for i in tools.stalled_action_items(s, TEAM)["items"]] == ["act_yesterday"]
+    ),
+    "workload_by_owner": lambda s: _late(tools.workload_by_owner(s, TEAM)) == 1,
+    "open_item_owners": lambda s: _late(tools.open_item_owners(s, TEAM, meeting_id=MEETING)) == 1,
+    "person_action_items": lambda s: _late(tools.person_action_items(s, TEAM, "user_in")),
+    "action_item_status": lambda s: _late(tools.action_item_status(s, TEAM, "act_yesterday")),
+}
+"""Every read that says whether an item is late, asked about one item."""
+
+
+@pytest.mark.parametrize("read", sorted(SAYS_IT_IS_LATE))
+@pytest.mark.usefixtures("server_a_day_behind")
+def test_an_item_due_yesterday_in_korea_is_late_before_the_servers_day_turns(
+    session: Session, read: str
+) -> None:
+    # 08:30 in Korea on a UTC server: the server's day is the item's due date,
+    # and the item was read as due today -- not late -- until 09:00.
+    item(session, "act_yesterday", due=TODAY - timedelta(days=1))
+
+    assert SAYS_IT_IS_LATE[read](session) is True
+
+
+@pytest.mark.usefixtures("server_a_day_behind")
+def test_due_today_is_todays_item_in_korea_before_the_servers_day_turns(
+    session: Session,
+) -> None:
+    # On the server's day the window of "0 days" ended yesterday: today's item
+    # fell outside it, and was "due tomorrow" to whoever asked.
+    item(session, "act_today", due=TODAY)
+    item(session, "act_tomorrow", due=TODAY + timedelta(days=1))
+
+    result = tools.open_action_items(session, TEAM, within_days=0)
+
+    assert [(i["id"], i["overdue"]) for i in result["items"]] == [("act_today", False)]
+    assert result["summary"] == (
+        "진행 중인 할 일 2건 중 기한 지남 0건, 0일 안에 기한 1건, 재배정 필요 0건."
+    )
+
+
 # --- stalled_action_items (#856: what a team should be asked to look at again) ---------
 
 THEN = "mtg_then"
@@ -1440,12 +1684,62 @@ def test_work_that_stopped_moving_is_named_with_the_way_it_stopped(session: Sess
         "act_both": ["overdue", "carried"],
         "act_late": ["overdue"],
         "act_carried": ["carried"],
-    }, "both ways first, late before carried; moving and finished work is not here"
+    }, "the longer late first, late before carried; moving and finished work is not here"
     assert [i["id"] for i in result["items"]] == ["act_both", "act_late", "act_carried"]
     (carried,) = [i for i in result["items"] if i["id"] == "act_carried"]
     assert carried["carried_meetings"] == service.STALE_AFTER
     assert "기한 지남 2건" in result["summary"]
     assert f"회의 {service.STALE_AFTER}번 이상 이월 2건" in result["summary"]
+
+
+def test_of_more_late_items_than_five_the_longest_late_are_given_and_the_rest_counted(
+    session: Session,
+) -> None:
+    """Eight late: the five rows are the five longest late, whatever order they
+    were written in, and each says eight are late in all -- so the Tracker can
+    say three more are, by a number and nothing else."""
+    a_month_of_meetings(session)
+    for n in range(1, 8):  # written down the least late first
+        item(session, f"act_late_{n}", due=TODAY - timedelta(days=n))
+    # A day late and long carried: not ahead of one longer late for that.
+    item(session, "act_both", due=TODAY - timedelta(days=1), meeting=THEN)
+    item(session, "act_carried", meeting=THEN)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert [i["id"] for i in result["items"]] == [f"act_late_{n}" for n in (7, 6, 5, 4, 3)]
+    assert {i["overdue_in_all"] for i in result["items"]} == {8}
+    assert result["truncated"] is True
+    assert "기한 지남 8건" in result["summary"]
+    for left_out in ("act_late_2", "act_late_1", "act_both", "act_carried"):
+        assert left_out not in str(result), "counted, and not named"
+
+
+def test_of_two_as_late_as_each_other_the_longer_carried_comes_first(session: Session) -> None:
+    a_month_of_meetings(session)
+    item(session, "act_a_late", due=TODAY - timedelta(days=3))
+    item(session, "act_z_both", due=TODAY - timedelta(days=3), meeting=THEN)
+    item(session, "act_later", due=TODAY - timedelta(days=2), meeting=THEN)
+    item(session, "act_carried", meeting=THEN)
+
+    result = tools.stalled_action_items(session, TEAM)
+
+    assert [i["id"] for i in result["items"]] == [
+        "act_z_both",
+        "act_a_late",
+        "act_later",
+        "act_carried",
+    ]
+    assert [i["overdue_in_all"] for i in result["items"]] == [3, 3, 3, 3]
+
+
+def test_with_nothing_late_the_count_of_the_late_is_zero(session: Session) -> None:
+    a_month_of_meetings(session)
+    item(session, "act_carried", meeting=THEN)
+
+    (row,) = tools.stalled_action_items(session, TEAM)["items"]
+
+    assert row["stalled"] == ["carried"] and row["overdue_in_all"] == 0
 
 
 def test_an_item_carried_through_fewer_meetings_is_not_stalled(session: Session) -> None:
@@ -1476,8 +1770,8 @@ def test_an_item_nobody_confirmed_is_given_by_id_and_never_quoted(session: Sessi
 
     assert result["items"] == [
         {
-            "title": "액션아이템 확인 대기",
-            "body": "4일째 확인 대기",
+            "title": "할 일 확인 필요",
+            "body": "4일째 확인 필요",
             "score": 0.5,
             "id": "act_waiting",
             "meeting_id": MEETING,
@@ -1487,7 +1781,7 @@ def test_an_item_nobody_confirmed_is_given_by_id_and_never_quoted(session: Sessi
     ]
     assert "act_waiting 할 일" not in repr(result) and "박지영" not in repr(result)
     assert result["evidence"] == [], "nothing unconfirmed is sourced either"
-    assert "3일 넘게 확인 대기 1건" in result["summary"]
+    assert "3일 넘게 확인 필요 1건" in result["summary"]
 
 
 def test_how_long_unconfirmed_counts_is_the_callers_to_say(session: Session) -> None:
@@ -1582,6 +1876,7 @@ def test_it_counts_items_and_never_people(session: Session) -> None:
         "needs_reassignment",
         "stalled",
         "carried_meetings",
+        "overdue_in_all",  # of the team's items, as the summary counts them
     }
 
 
@@ -1703,9 +1998,9 @@ def test_the_owners_of_a_projects_open_items_most_items_first(session: Session) 
     teammate(session, "user_kim", "김하늘")
     project(session, "prj_pay")
     project(session, "prj_other")
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = TODAY - timedelta(days=1)
     owned(session, "act_1", "user_in", of="prj_pay", due=yesterday)
-    owned(session, "act_2", "user_in", of="prj_pay", due=date.today() + timedelta(days=3))
+    owned(session, "act_2", "user_in", of="prj_pay", due=TODAY + timedelta(days=3))
     owned(session, "act_3", "user_kim", of="prj_pay", status="in_progress")
     owned(session, "act_4", "user_kim", of="prj_other")  # another project's
     owned(session, "act_5", "user_kim", of="prj_pay", status="done")  # not open
@@ -1714,7 +2009,7 @@ def test_the_owners_of_a_projects_open_items_most_items_first(session: Session) 
     answer = tools.open_item_owners(session, TEAM, project_id="prj_pay")
 
     assert answer["ok"] is True
-    assert answer["summary"] == "진행 중인 확정 액션아이템의 담당자 2명, 담당 없는 항목 0건."
+    assert answer["summary"] == "진행 중인 확정 할 일의 담당자 2명, 담당 없는 항목 0건."
     assert [(row["id"], row["title"], row["open"], row["overdue"]) for row in answer["items"]] == [
         ("user_in", "박지영", 2, 1),
         ("user_kim", "김하늘", 1, 0),
@@ -1732,7 +2027,7 @@ def test_what_a_meeting_left_open_and_nobody_is_guessed_for_an_item_without_an_o
 
     answer = tools.open_item_owners(session, TEAM, meeting_id=MEETING)
 
-    assert answer["summary"] == "진행 중인 확정 액션아이템의 담당자 1명, 담당 없는 항목 2건."
+    assert answer["summary"] == "진행 중인 확정 할 일의 담당자 1명, 담당 없는 항목 2건."
     assert [(row["id"], row["title"], row["open"]) for row in answer["items"]] == [
         ("user_in", "박지영", 1),
         ("unowned", "담당 없음", 2),
