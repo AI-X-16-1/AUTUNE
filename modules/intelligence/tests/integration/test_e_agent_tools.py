@@ -406,3 +406,12 @@ def test_search_reports_says_so_when_nothing_matches(db_session: Session, team: 
 
     assert result["ok"] is True and result["items"] == []
     assert "찾지 못했습니다" in result["summary"]
+
+
+def test_search_reports_finds_a_loanword_kiwi_cannot_read(db_session: Session, team: str) -> None:
+    onboarding = _reported(db_session, team, "기획 회의", "• 온보딩 화면 문구 초안 — 기획 · 9/12")
+    _reported(db_session, team, "주간 회의", BODY)
+
+    (item,) = tools.search_reports(db_session, team, "온보딩")["items"]
+
+    assert item["meeting_id"] == onboarding and "온보딩" in item["body"]

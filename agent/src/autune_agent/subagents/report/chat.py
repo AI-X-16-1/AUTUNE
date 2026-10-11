@@ -275,6 +275,10 @@ class _Turn:
         """``id`` of each ``explain_metric`` result in ``results``."""
         self.nothing_found: set[int] = set()
         """``id`` of each ``meeting_reports`` search in ``results`` that found nothing."""
+        self.by_topic: set[int] = set()
+        """``id`` of each ``search_reports`` result in ``results``."""
+        self.read_whole: set[str] = set()
+        """Meetings whose report ``meeting_report_body`` read in this run."""
         self.post_from: str | None = None
         self.schedule_refused = False
         self.post_needs_meeting = False
@@ -578,6 +582,12 @@ def chat_run(toolbox: Toolbox, request: str, model: ToolModel) -> SubagentState:
                     turn.glossary.add(id(result))
                 if name in (SEARCH, FIND) and result.ok and not result.items:
                     turn.nothing_found.add(id(result))
+                if name == FIND:
+                    turn.by_topic.add(id(result))
+                if name == BODY and result.ok:
+                    turn.read_whole.update(
+                        meeting for i in result.items if (meeting := getattr(i, "id", None))
+                    )
             else:
                 # Not a tool this run has: the model is told, the reply is not.
                 result = ToolResult.failure(f"{name} is not available here")
@@ -599,8 +609,16 @@ def chat_run(toolbox: Toolbox, request: str, model: ToolModel) -> SubagentState:
     # passage cut off would leave a number unexplained.
     explained = [r for r in usable if id(r) in turn.glossary]
     others = [r for r in usable if id(r) not in turn.glossary]
+
+    def listed(r: ToolResult) -> list[Finding]:
+        # A report the run also read whole is listed once, as its text: a
+        # search hit beside it read as a second report (2026-10-11).
+        if id(r) not in turn.by_topic:
+            return list(r.items)
+        return [i for i in r.items if getattr(i, "id", None) not in turn.read_whole]
+
     items: list[Finding] = [i for r in explained for i in r.items]
-    items += [i for row in zip_longest(*(r.items for r in others)) for i in row if i is not None]
+    items += [i for row in zip_longest(*(listed(r) for r in others)) for i in row if i is not None]
     tail = [f"가져오지 못한 정보가 있습니다: {', '.join(turn.missing)}."] if turn.missing else []
     if turn.post_needs_meeting and "request_post" not in turn.done:
         turn.lines.append("어느 회의의 리포트를 올릴지 회의 제목이나 날짜로 알려 주세요.")

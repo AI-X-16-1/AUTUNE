@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from autune_intelligence.retrieval import matching_line, rank_texts
+from autune_intelligence.retrieval import matching_line, rank_texts, unread_pairs
 
 
 def test_a_team_with_one_report_finds_it_by_its_topic() -> None:
@@ -51,3 +51,26 @@ def test_a_long_line_is_cut_around_the_word_and_says_so() -> None:
 def test_without_a_matching_line_the_first_line_is_shown() -> None:
     assert matching_line("결제", "첫 줄\n둘째 줄", 160) == "첫 줄"
     assert matching_line("결제", "", 160) == ""
+
+
+def test_a_loanword_kiwi_cuts_and_drops_is_found_by_its_syllables() -> None:
+    """Kiwi reads 온보딩 as 온 / 보 / 딩 and keeps none of it in a question."""
+    texts = ["• 온보딩 화면 문구 초안 — 기획", "• 결제 API 스펙 초안"]
+    assert [i for i, _ in rank_texts("온보딩", texts)] == [0]
+    assert [i for i, _ in rank_texts("온보딩 얘기 나온 리포트 있어?", texts)] == [0]
+
+
+def test_a_word_kiwi_cuts_into_single_syllables_is_matched_whole() -> None:
+    assert [i for i, _ in rank_texts("목업", ["• 목업 리뷰 정리", "• 업무 목록 정리"])] == [0]
+
+
+def test_the_grammar_of_a_question_adds_no_pairs() -> None:
+    assert unread_pairs("결제 API 얘기한 리포트 찾아줘") == []
+    assert unread_pairs("뭐야 있어 찾아줘 그거 어때") == []
+    assert unread_pairs("온보딩 얘기") == ["온보", "보딩"]
+
+
+def test_the_line_shown_for_a_loanword_is_the_one_holding_it() -> None:
+    line = "• 온보딩 화면 문구 초안 — 기획"
+    text = f"📋 기획 회의 · 9/10\n✅ 확정된 할 일\n{line}"
+    assert matching_line("온보딩", text, 160) == line

@@ -12,6 +12,7 @@ kept here either.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from collections.abc import Sequence
 from functools import cache
@@ -66,6 +67,33 @@ def tokens(text: str) -> list[str]:
     return out
 
 
+_HANGUL_RUN = re.compile(r"[가-힣]{2,}")
+_GRAMMAR = ("V", "E", "XSV", "XSA")
+"""Verbs, adjectives, endings and the suffixes that make them: a question's
+grammar (찾아줘, 있어), never its topic."""
+
+
+def unread_pairs(question: str) -> list[str]:
+    """The syllable pairs of each word in ``question`` that Kiwi does not read
+    as a word of two syllables or more -- a loanword it lacks, such as 온보딩,
+    which it cuts into 온 / 보 / 딩 and keeps nothing of, or 목업 (목 / 업). A
+    report is matched on those pairs (온보, 보딩) as well. Kiwi can cut the same
+    word one way in a question and another in a report, so its pieces alone do
+    not match. A word whose pieces are grammar or a pronoun gets no pairs.
+    """
+    pairs: list[str] = []
+    for run in _HANGUL_RUN.findall(question):
+        if any(len(word) >= 2 for word in tokens(run)):
+            continue
+        tags = [t.tag for t in _kiwi().tokenize(run)]
+        if any(tag.startswith(_GRAMMAR) for tag in tags):
+            continue
+        if all(tag.startswith(_LEFT_OUT) for tag in tags):
+            continue
+        pairs += [run[i : i + 2] for i in range(len(run) - 1)]
+    return list(dict.fromkeys(pairs))
+
+
 BM25_K1 = 1.5
 BM25_B = 0.75
 """``rank_bm25``'s defaults, which the glossary's ``BM25Okapi`` runs with."""
@@ -73,18 +101,26 @@ BM25_B = 0.75
 
 def rank_texts(question: str, texts: Sequence[str]) -> list[tuple[int, float]]:
     """The ``texts`` sharing a content word with ``question``, best first, as
-    (index, score): BM25 over ``tokens``, ties to the earlier text.
+    (index, score): BM25 over ``tokens`` and ``unread_pairs``, ties to the
+    earlier text.
 
     Not ``BM25Okapi``: its IDF falls to zero or below for a word found in half
     the texts or more, so over a team's one or two reports it finds nothing.
     This uses Lucene's IDF, ``ln(1 + (N - n + 0.5) / (n + 0.5))``, which stays
     above zero. A text sharing no word with the question is left out.
     """
-    query = list(dict.fromkeys(tokens(question)))
+    pairs = unread_pairs(question)
+    # A pair is counted as it is written in the text. Its key starts with "\0"
+    # so it never collides with a morpheme of the same spelling.
+    query = list(dict.fromkeys(tokens(question))) + [f"\0{pair}" for pair in pairs]
     if not query or not texts:
         return []
     docs = [Counter(tokens(text)) for text in texts]
     lengths = [sum(doc.values()) for doc in docs]
+    for doc, text in zip(docs, texts, strict=True):
+        for pair in pairs:
+            if found := text.count(pair):
+                doc[f"\0{pair}"] = found
     average = sum(lengths) / len(docs) or 1.0
     idf = {
         word: math.log(1 + (len(docs) - n + 0.5) / (n + 0.5))
@@ -114,15 +150,17 @@ def matching_line(question: str, text: str, limit: int) -> str:
     if not lines:
         return ""
     query = set(tokens(question))
+    pairs = unread_pairs(question)
     best, most = lines[0], 0
     for line in lines:
-        found = len(query & set(tokens(line)))
+        found = len(query & set(tokens(line))) + sum(1 for pair in pairs if pair in line)
         if found > most:
             best, most = line, found
     if len(best) <= limit:
         return best
     room = limit - 2  # an ellipsis on each side, at most
-    at = min((p for p in (best.find(word) for word in query) if p >= 0), default=0)
+    words = [*query, *pairs]
+    at = min((p for p in (best.find(word) for word in words) if p >= 0), default=0)
     start = max(0, min(at - room // 4, len(best) - room))
     end = start + room
     return ("…" if start else "") + best[start:end] + ("…" if end < len(best) else "")

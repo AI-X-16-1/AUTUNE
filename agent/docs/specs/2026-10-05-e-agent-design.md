@@ -550,3 +550,26 @@ The sections above are left as designed; each affected one points here.
       or two reports it would find nothing.
     - A team has tens of reports. A team with many more would need a stored
       index, and section 8's conditions with it.
+    - **Checked with the real model on a synthetic team** (2026-10-11,
+      `gemini-3.5-flash-lite`, a scratch database seeded with one mock team
+      of eight meeting reports and two weekly reports):
+      - **Routing.** 24 questions were routed three times each, with Report's
+        description from main and from this change. Five search questions
+        went to Report every time with the new description. On main, two of
+        them went to the ask loop ("배포 일정 언급된 리포트 어디 있어?" three of
+        three, "결제 API 얘기한 리포트 찾아줘" one of three). The twelve E
+        questions of item 12 and #1160 went where they went before. Of the
+        seven controls, one moved: "결제 API 얘기한 회의 찾아줘" now reaches
+        Report instead of the ask loop. It is answered from the meetings'
+        reports, naming both meetings that discussed it, so this was kept. A
+        meeting without a report is not found that way.
+      - **Whole turns.** Six questions went through `run_and_record`, as the
+        chat route runs them. Two faults were found and fixed. "온보딩" found
+        nothing, because Kiwi cuts the word and drops it, and that led to the
+        syllable-pair fallback (`retrieval.unread_pairs`). "로그인 오류 다룬
+        리포트 보여줘" searched and then read the found report's text, and the
+        reply counted that one report twice. The chat now lists a report it
+        read whole once. After the fixes, all of them answered with the
+        right reports.
+      - "다시 써줘" with no object goes to the ask loop on main as well;
+        "리포트 다시 써줘" reaches Report. That is not this change.

@@ -820,3 +820,16 @@ def test_a_found_line_reaches_the_model_at_most_160_characters() -> None:
 
     long = ToolResult(ok=True, summary="", items=[{"title": "t", "body": "가" * 400}])
     assert len(chat._compact(chat.FIND, long)["items"][0]["body"]) == 160
+
+
+def test_a_report_read_whole_is_not_listed_again_as_a_search_hit(monkeypatch) -> None:
+    """Asked to show the report on a topic, the model searches and then reads
+    the found report's text. The reply counted that one report twice (real
+    model, "로그인 오류 다룬 리포트 보여줘", 2026-10-11)."""
+    other = {**_FOUND_BY_TOPIC["items"][0], "id": "mtg_zz99", "meeting_id": "mtg_zz99"}
+    found = {**_FOUND_BY_TOPIC, "items": [*_FOUND_BY_TOPIC["items"], other]}
+    tools = {**_tools(), chat.FIND: mock_tool(chat.FIND, found)}
+    model = Script([call(chat.FIND, query="결제 API")], [call("intelligence.meeting_report_body")])
+    out = _run("결제 API 리포트 보여줘", model, tools, monkeypatch=monkeypatch)
+    ids = [getattr(i, "id", None) for i in out.result.items]
+    assert ids.count(MEETING) == 1 and "mtg_zz99" in ids
