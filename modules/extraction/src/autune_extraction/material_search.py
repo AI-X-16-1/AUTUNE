@@ -38,6 +38,7 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -48,7 +49,7 @@ from autune_integrations.document_masking import mask_document, screen_output
 from autune_integrations.privacy import MASK_CHAR
 
 from .config import get_settings
-from .materials import embedded
+from .materials import embedded, upload_window
 from .models import ExtMaterial, ExtMaterialChunk
 from .pipeline.base import Embedder
 from .pipeline.registry import get_material_embedder
@@ -147,7 +148,8 @@ def _nearest(
     """The team's pieces nearest ``vector``: (material id, title, position,
     text, similarity), nearest first. PostgreSQL ranks by pgvector's cosine
     operator under its index; another database (the unit suite's SQLite)
-    ranks the team's pieces here."""
+    ranks the team's pieces here. An upload past the team's window is not
+    read, though the hourly task may not have deleted it yet."""
     base = (
         select(ExtMaterial.id, ExtMaterial.title, ExtMaterialChunk.position, ExtMaterialChunk.text)
         .join(ExtMaterial, ExtMaterial.id == ExtMaterialChunk.material_id)
@@ -158,6 +160,9 @@ def _nearest(
             ExtMaterialChunk.embedding.is_not(None),
         )
     )
+    window = upload_window(session, team_id)
+    if window is not None:
+        base = base.where(ExtMaterial.created_at > datetime.now(UTC) - window)
     if session.get_bind().dialect.name == "postgresql":
         distance = ExtMaterialChunk.embedding.cosine_distance(vector)
         rows = session.execute(
