@@ -131,9 +131,11 @@ def _read_body[Body: BaseModel](raw: dict[str, Any], model: type[Body]) -> Body:
 
     Declared as the parameter type, a missing or wrong field made FastAPI's
     default 422, whose ``input`` carries the whole body -- the token included
-    -- and ``apps/api`` has no handler that would strip it (PARKJAEKYUNG0525,
-    review of #402). Validated here instead, the refusal names each field and
-    what was wrong with it, never a value.
+    (PARKJAEKYUNG0525, review of #402). ``apps/api`` now strips it for every
+    route (#1225), but this route keeps its own check: it holds a token, and a
+    test app built without ``apps/api`` (or a change to that handler) must not
+    be what stands between a token and a response. Validated here, the refusal
+    names each field and what was wrong with it, never a value.
     """
     try:
         return model.model_validate(raw)
