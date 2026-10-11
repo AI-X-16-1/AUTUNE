@@ -1260,9 +1260,11 @@ lsh2217's review on #1198, chosen by module B's owner on 2026-10-11).
 
 - **Default.** The upload sets `ext_materials.expires_at` to now plus the
   team's `teams.retention_days` (90 by default). The hourly
-  `autune.extraction.periodic.expire_materials` deletes every material past
-  it -- the row, its masked text and its vectors -- and every alarm row older
-  than 30 days.
+  `autune.extraction.periodic.forget_expired_material_uploads` deletes every
+  material past it -- the row, its masked text and its vectors -- and search
+  leaves one out from the moment its window ends; the hourly
+  `autune.extraction.periodic.forget_old_material_alarms` deletes every alarm
+  row older than 30 days.
 - **The team's choice.** In its settings a team may choose "kept until a
   member deletes it" (`ext_material_settings`, one row a team, cascading
   from `teams`; no row is the default). Any member may change it, either

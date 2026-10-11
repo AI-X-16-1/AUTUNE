@@ -525,10 +525,12 @@ person's, those counts are that person's completion record. So:
   - **The default is the window.** The upload sets `ext_materials.expires_at`
     to now plus the team's `retention_days` (90 by default), as a meeting's
     is set when it is held. Module B's own hourly task
-    (`autune.extraction.periodic.expire_materials`) deletes every material
-    past it -- row, masked text and vectors -- except a material of a team
-    that chose to keep its materials, and every alarm row older than 30
-    days. Autune kept no original, so a team that still needs the document
+    (`autune.extraction.periodic.forget_expired_material_uploads`) deletes
+    every material past it -- row, masked text and vectors -- except a
+    material of a team that chose to keep its materials; until it runs,
+    search already leaves out a material past its window. A second hourly
+    task (`autune.extraction.periodic.forget_old_material_alarms`) deletes
+    every alarm row older than 30 days. Autune kept no original, so a team that still needs the document
     uploads the file again.
   - **A team may choose "kept until a member deletes it".** It is a setting
     of the team's, in module B's `ext_material_settings` (one row a team,
