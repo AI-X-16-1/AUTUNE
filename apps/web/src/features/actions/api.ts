@@ -1,6 +1,6 @@
 /** Calls to /api/extraction. This feature calls no other module's endpoints. */
 import { scopeQuery, type IntegrationScope } from "@/shared/api/auth";
-import { api } from "@/shared/api/client";
+import { API_BASE, ApiError, api, authHeaders } from "@/shared/api/client";
 
 import type {
   ActionItemDetail,
@@ -11,6 +11,8 @@ import type {
   DecisionStatus,
   ExtractionResult,
   Material,
+  MaterialSearchAnswer,
+  MaterialUploadRules,
   MeetingReview,
   MeetingSummary,
   ReviewDecision,
@@ -253,7 +255,94 @@ export const registerMaterial = (teamId: string, draft: { title: string; link: s
     body: JSON.stringify(draft),
   });
 
-/** Take a material off the team's shelf. The Drive file is not touched. */
+/**
+ * A failed answer as the `ApiError` the feature reads, without assuming the
+ * body's shape. Two answers of the materials routes are the framework's own
+ * and have no `error` in them: the bare 404 of a deployment with uploads
+ * off, and the 422 of a body that fails its schema. Only `error`'s own
+ * fields are taken -- that 422 repeats what was sent, and what was sent to
+ * the search is a person's question.
+ */
+async function refusedBy(response: Response): Promise<ApiError> {
+  let error: { code?: unknown; message?: unknown; details?: unknown } = {};
+  try {
+    const body = (await response.json()) as { error?: typeof error } | null;
+    error = body?.error ?? {};
+  } catch {
+    // Not JSON; the status is what there is.
+  }
+  return new ApiError(
+    response.status,
+    typeof error.code === "string" ? error.code : "unknown",
+    typeof error.message === "string" ? error.message : response.statusText,
+    error.details !== null && typeof error.details === "object"
+      ? (error.details as Record<string, unknown>)
+      : {},
+  );
+}
+
+/**
+ * Ask the team's uploaded materials a question. A POST, so that the question
+ * travels in the body: it is a person's words, and an address is logged by
+ * everything it passes through.
+ *
+ * Not through `api.extraction`, which reads every failure as our envelope:
+ * the two failures this call can meet -- uploads off, a question too long --
+ * are the framework's (`refusedBy`).
+ */
+export async function searchMaterials(
+  teamId: string,
+  question: string,
+): Promise<MaterialSearchAnswer> {
+  const response = await fetch(
+    `${API_BASE}/api/extraction/materials/search?team_id=${encodeURIComponent(teamId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ question }),
+    },
+  );
+  if (!response.ok) throw await refusedBy(response);
+  return (await response.json()) as MaterialSearchAnswer;
+}
+
+/** What the server takes as an upload, and whether it takes one at all. */
+export const getMaterialUploadRules = (teamId: string) =>
+  api.extraction<MaterialUploadRules>(
+    `/materials/upload-rules?team_id=${encodeURIComponent(teamId)}`,
+  );
+
+/**
+ * Send a file for the team's shelf: a form of exactly two parts, `title` and
+ * `file`. One request reads the file, hides personal data in its text, stores
+ * the text and answers with the row -- seconds, and no state to ask about
+ * afterwards. The file itself is kept nowhere.
+ *
+ * Not through `api.extraction`: the shared client labels every body JSON, and
+ * a form has to carry its own boundary (the reason `transcript.uploadRecording`
+ * gives, #301). So the error is read here, into the same `ApiError`
+ * (`refusedBy`).
+ */
+export async function uploadMaterial(
+  teamId: string,
+  draft: { title: string; file: File },
+): Promise<Material> {
+  const form = new FormData();
+  form.append("title", draft.title);
+  form.append("file", draft.file, draft.file.name);
+  const response = await fetch(
+    `${API_BASE}/api/extraction/materials/upload?team_id=${encodeURIComponent(teamId)}`,
+    { method: "POST", headers: authHeaders(), body: form },
+  );
+  if (!response.ok) throw await refusedBy(response);
+  return (await response.json()) as Material;
+}
+
+/**
+ * Take a material off the team's shelf. For a link the Drive file is not
+ * touched. For an upload the row, its masked text and what search keeps of it
+ * go in that call: no trash, and no original to bring it back from.
+ */
 export const deleteMaterial = (teamId: string, id: string) =>
   withoutBody(`/materials/${encodeURIComponent(id)}?team_id=${encodeURIComponent(teamId)}`);
 
