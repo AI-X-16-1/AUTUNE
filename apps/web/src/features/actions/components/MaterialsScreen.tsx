@@ -18,7 +18,7 @@ import {
 } from "../api";
 import { localToday } from "../dates";
 import { questionLimit } from "../materialSearch";
-import { deletionDay, notReadNote, shelfFull } from "../materialUpload";
+import { KEPT_UNTIL_DELETED, notReadNote, shelfFull } from "../materialUpload";
 import { typedTextRefusal } from "../refusal";
 import type { Material, MaterialUploadRules } from "../types";
 import { MaterialSearch } from "./MaterialSearch";
@@ -45,12 +45,14 @@ const KIND: Record<NonNullable<Material["drive_kind"]>, string> = {
  * lets see it. The screen says so, because a shelf of documents reads as
  * "Autune has our documents" unless told otherwise.
  *
- * **An uploaded file: its masked text, until a day, and no original.** Only
- * where the deployment takes uploads (`MaterialUploadRules.enabled`); off,
- * the screen is the link shelf it was. Such a row has nothing to preview and
- * nothing to open -- Autune kept no file -- and it shows the day its text is
- * deleted. Deleting it is real and at once, so the question before it says
- * that and not "take it off the list".
+ * **An uploaded file: its masked text, until the team deletes it, and no
+ * original.** Only where the deployment takes uploads
+ * (`MaterialUploadRules.enabled`); off, the screen is the link shelf it was.
+ * Such a row has nothing to preview and nothing to open -- Autune kept no
+ * file -- and it says its text is kept until the team deletes it: there is no
+ * retention window and no day (the owner, 2026-10-10). Deleting it is real
+ * and at once, so the question before it says that and not "take it off the
+ * list".
  *
  * Any member registers and deletes, as with the team's projects: there is no
  * admin role yet (#592). The team is the one chosen elsewhere in the app when
@@ -204,12 +206,9 @@ function TeamMaterials({ teamId }: { teamId: string }) {
             setNote(null);
             const saved = await uploadMaterial(teamId, draft);
             setMaterials((list) => [saved, ...(list ?? [])]);
-            const day = saved.expires_at ? localToday(new Date(saved.expires_at)) : null;
             setNote(
               [
-                day
-                  ? `자료를 올렸습니다. 개인정보를 가린 글을 ${day}까지 보관합니다.`
-                  : "자료를 올렸습니다.",
+                "자료를 올렸습니다. 개인정보를 가린 글을 팀이 지울 때까지 보관합니다.",
                 notReadNote(saved.not_read ?? []),
               ]
                 .filter(Boolean)
@@ -247,8 +246,8 @@ function TeamMaterials({ teamId }: { teamId: string }) {
                 try {
                   await deleteMaterial(teamId, material.id);
                 } catch (cause) {
-                  // Somebody else deleted it, or its day came: it is not
-                  // there, which is what was asked for.
+                  // Somebody else deleted it: it is not there, which is
+                  // what was asked for.
                   gone = cause instanceof ApiError && cause.status === 404;
                   if (!gone) {
                     setNote(
@@ -389,8 +388,8 @@ function RegisterForm({
 
 /**
  * One material: its title, what kind of row it is, and what can be done with
- * it. A link opens in Google's preview and in Drive; an upload shows the day
- * its text goes and can only be deleted.
+ * it. A link opens in Google's preview and in Drive; an upload says its text
+ * is kept until the team deletes it, and can only be deleted.
  */
 function MaterialRow({
   material,
@@ -411,7 +410,6 @@ function MaterialRow({
     !uploaded && material.drive_file_id !== null && material.drive_kind !== null
       ? driveOpenUrl({ id: material.drive_file_id, kind: material.drive_kind })
       : null;
-  const day = uploaded ? deletionDay(material.expires_at ?? null) : null;
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
 
   return (
@@ -433,7 +431,7 @@ function MaterialRow({
               ? KIND[material.drive_kind]
               : "Drive 파일"}{" "}
           · {localToday(new Date(material.created_at))} 등록
-          {day ? ` · ${day}` : null}
+          {uploaded ? ` · ${KEPT_UNTIL_DELETED}` : null}
         </span>
         {address ? (
           <>

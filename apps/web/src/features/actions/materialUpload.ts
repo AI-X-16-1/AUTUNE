@@ -1,6 +1,5 @@
 import { ApiError } from "@/shared/api/client";
 
-import { localToday } from "./dates";
 import { typedTextRefusal } from "./refusal";
 import type { MaterialNotRead, MaterialUploadRules } from "./types";
 
@@ -176,13 +175,9 @@ export function notReadNote(kinds: readonly string[]): string | null {
 }
 
 /**
- * The day a row's masked text is deleted, where the viewer is; null for a
- * row that keeps nothing (a link). A day already reached reads as soon, not
- * as a date in the past: the task that deletes runs hourly.
+ * How long an uploaded row's masked text stays, as its row says it: until a
+ * member of the team deletes it. There is no retention window and no day to
+ * show (the owner, 2026-10-10; `docs/architecture/privacy.md`), and the
+ * server sends `expires_at: null` for every upload.
  */
-export function deletionDay(expiresAt: string | null, now: Date = new Date()): string | null {
-  if (expiresAt === null) return null;
-  const at = new Date(expiresAt);
-  if (Number.isNaN(at.getTime())) return null;
-  return at.getTime() <= now.getTime() ? "곧 삭제" : `${localToday(at)} 삭제 예정`;
-}
+export const KEPT_UNTIL_DELETED = "팀이 지울 때까지 보관";

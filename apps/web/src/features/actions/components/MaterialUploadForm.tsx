@@ -106,8 +106,8 @@ export function MaterialUploadForm({
       </div>
       <p className="text-[var(--color-ink-muted)]" style={meta}>
         올린 파일의 원본은 보관하지 않으며 Autune에서 다시 열 수 없습니다. 보관하는
-        것은 전화번호처럼 형식이 정해진 개인정보를 가린 글이고, 목록에 적힌 날에
-        삭제됩니다. 문장 속의 이름은 가려지지 않으며, 그림으로만 들어 있는 글은
+        것은 전화번호처럼 형식이 정해진 개인정보를 가린 글이고, 팀이 지울 때까지
+        보관합니다. 문장 속의 이름은 가려지지 않으며, 그림으로만 들어 있는 글은
         읽지 않습니다. 한 파일 {megabytes(rules.max_bytes)}까지 · {rules.suffixes.join(" ")}
       </p>
       {busy ? (

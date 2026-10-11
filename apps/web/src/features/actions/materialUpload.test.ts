@@ -4,8 +4,8 @@ import { ApiError } from "@/shared/api/client";
 
 import {
   CONFIDENTIAL_REFUSAL,
+  KEPT_UNTIL_DELETED,
   UNANSWERED,
-  deletionDay,
   fileRefusal,
   mayHaveStored,
   megabytes,
@@ -199,22 +199,9 @@ describe("what a stored file held that was not read", () => {
   });
 });
 
-describe("the day a row's text is deleted", () => {
-  const now = new Date(2026, 9, 9, 12, 0, 0);
-
-  it("is the day where the viewer is", () => {
-    const at = new Date(2027, 0, 7, 0, 30, 0);
-
-    expect(deletionDay(at.toISOString(), now)).toBe("2027-01-07 삭제 예정");
-  });
-
-  it("reads as soon once the time has come, since the task runs hourly", () => {
-    expect(deletionDay(new Date(2026, 9, 9, 11, 59, 0).toISOString(), now)).toBe("곧 삭제");
-    expect(deletionDay(now.toISOString(), now)).toBe("곧 삭제");
-  });
-
-  it("is nothing for a link, which keeps no text, and for a time it cannot read", () => {
-    expect(deletionDay(null, now)).toBeNull();
-    expect(deletionDay("not a time", now)).toBeNull();
+describe("how long a row's text is kept", () => {
+  it("is until the team deletes it, with no day", () => {
+    expect(KEPT_UNTIL_DELETED).toBe("팀이 지울 때까지 보관");
+    expect(KEPT_UNTIL_DELETED).not.toMatch(/\d|삭제 예정|일 뒤/);
   });
 });
