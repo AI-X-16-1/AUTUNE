@@ -167,7 +167,23 @@ describe("MaterialsScreen, asking the uploaded materials", () => {
     expect(region.textContent).not.toContain("별표");
   });
 
-  it("says nothing was found, and still shows a notice that came with no hit", async () => {
+  it("lets the server's notice alone say nothing was found when one came with no hit", async () => {
+    await open();
+    await screen.findByRole("form", { name: "자료 검색" });
+    const notFound = "올린 자료에서 질문과 충분히 가까운 내용을 찾지 못했습니다.";
+    search.mockResolvedValue({ hits: [], notice: notFound, more: false });
+
+    ask("출시 일정");
+    fireEvent.click(find());
+
+    const region = await screen.findByRole("region", { name: "찾은 내용" });
+    expect(within(region).getByText(notFound)).toBeTruthy();
+    // The same meaning is not said twice, once in the screen's own words.
+    expect(region.textContent).not.toContain("올린 파일에서 찾은 내용이 없습니다");
+    expect(within(region).queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("shows any other notice that came with no hit as the only sentence", async () => {
     await open();
     await screen.findByRole("form", { name: "자료 검색" });
     const asked = "질문에 전화번호처럼 개인정보를 가리키는 말이 있습니다.";
@@ -177,8 +193,22 @@ describe("MaterialsScreen, asking the uploaded materials", () => {
     fireEvent.click(find());
 
     const region = await screen.findByRole("region", { name: "찾은 내용" });
-    expect(region.textContent).toContain("올린 파일에서 찾은 내용이 없습니다");
     expect(within(region).getByText(asked)).toBeTruthy();
+    expect(region.textContent).not.toContain("올린 파일에서 찾은 내용이 없습니다");
+    expect(within(region).queryAllByRole("listitem")).toHaveLength(0);
+  });
+
+  it("says nothing was found in its own words when no hit came with no notice", async () => {
+    await open();
+    await screen.findByRole("form", { name: "자료 검색" });
+    // A server from before the notice for an empty answer.
+    search.mockResolvedValue({ hits: [], notice: null, more: false });
+
+    ask("출시 일정");
+    fireEvent.click(find());
+
+    const region = await screen.findByRole("region", { name: "찾은 내용" });
+    expect(region.textContent).toContain("올린 파일에서 찾은 내용이 없습니다");
     expect(within(region).queryAllByRole("listitem")).toHaveLength(0);
   });
 
