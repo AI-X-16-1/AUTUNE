@@ -17,7 +17,8 @@ so a piece that reaches a table would also pass ``assert_masked``.
 **Masked is not anonymous.** A patterned value is hidden; a name written in a
 sentence, or content that identifies somebody by what it describes, is not
 (ADR 0007, accepted cost). That is why masked document text still has a
-deletion path and a retention window (``docs/architecture/privacy.md``).
+deletion path any member can run; it is kept until the team deletes it
+(``docs/architecture/privacy.md`` section 4).
 
 **A ``*`` in a document is a character somebody typed.** In a transcript it
 is only ever a mask Autune wrote, and the detector lets go of any match that
