@@ -30,8 +30,8 @@ export interface RequiredConsent {
 }
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "draft-1" },
-  { document: "privacy", version: "draft-1" },
+  { document: "terms", version: "2026-10-12" },
+  { document: "privacy", version: "2026-10-12" },
 ];
 
 /** The required consents this person has not given, in the page's order. */
