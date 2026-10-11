@@ -50,3 +50,17 @@ def test_the_extraction_branch_downgrades_to_nothing_and_back(db_engine: sa.Engi
 
     subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True, cwd=root)
     assert ext_tables() == before
+
+
+def test_the_material_settings_revision_comes_off_and_goes_back_on(db_engine: sa.Engine) -> None:
+    """The settings revision alone: down to the uploads revision drops only
+    ``ext_material_settings``; up again brings it back."""
+    root = repo_root()
+    before = ext_tables()
+    assert "ext_material_settings" in before
+
+    subprocess.run([*ALEMBIC, "downgrade", "5d1a7c3e9b24"], check=True, cwd=root)
+    assert ext_tables() == before - {"ext_material_settings"}
+
+    subprocess.run([*ALEMBIC, "upgrade", "heads"], check=True, cwd=root)
+    assert ext_tables() == before

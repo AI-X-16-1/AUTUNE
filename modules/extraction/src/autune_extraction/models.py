@@ -145,8 +145,11 @@ class ExtMaterial(Base):
     **An upload** (``source='upload'``): no Drive columns. The file's text,
     masked before anything was written, is in ``ext_material_chunks``; the
     file itself was never written anywhere (``materials.store_upload``).
-    Kept until a member deletes it or the team goes (the owner, 2026-10-10):
-    there is no retention window on it.
+    Kept for the team's retention window counted from ``created_at``
+    (``teams.retention_days``) and then deleted by the hourly
+    ``tasks.forget_expired_material_uploads`` -- unless the team keeps its
+    uploads until a member deletes them (``ext_material_settings``; the
+    owner, 2026-10-11). A link keeps no text and has no window.
 
     **Nothing here names a person**: no uploader, registrant or reader. The
     row says that this team keeps this under this title. ``title`` is typed,
@@ -216,6 +219,34 @@ class ExtMaterialChunk(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(MATERIAL_EMBEDDING_DIM), nullable=True
+    )
+
+
+class ExtMaterialSetting(Base):
+    """Whether a team keeps its uploaded materials until a member deletes
+    them (the owner, 2026-10-11).
+
+    No row, or ``keep_until_deleted`` false: an upload is deleted when the
+    team's retention window, counted from the upload, has passed. True: no
+    upload of the team expires. Switching back gives every existing upload its
+    window again, counted from its own upload, so the oldest go on the next
+    hourly run. Any member changes it; the row records when, never who.
+    Goes with the team.
+    """
+
+    __tablename__ = "ext_material_settings"
+
+    team_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    keep_until_deleted: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=false()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        server_default=func.now(),
+        nullable=False,
     )
 
 

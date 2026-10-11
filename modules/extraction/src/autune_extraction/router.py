@@ -69,6 +69,8 @@ from .schemas import (
     MaterialHit,
     MaterialQuestion,
     MaterialRead,
+    MaterialSettingsRead,
+    MaterialSettingsWrite,
     MaterialUploadRules,
     MaterialWrite,
     MeetingNoteUpdate,
@@ -633,7 +635,8 @@ def list_materials(team_id: str, session: SessionDep, reader: CurrentUser) -> li
     first. Members of the team only; anyone else gets the 404 an unknown team
     gets."""
     team = _member_team(session, reader, None, team_id)
-    return [materials.read(row) for row in materials.team_materials(session, team)]
+    window = materials.upload_window(session, team)
+    return [materials.read(row, window) for row in materials.team_materials(session, team)]
 
 
 @router.post("/materials", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
@@ -645,7 +648,31 @@ def register_material(
     file itself is never read."""
     team = _member_team(session, reader, None, team_id)
     row = materials.register(session, team, title=payload.title, link=payload.link)
-    response = materials.read(row)
+    response = materials.read(row)  # a link has no window
+    session.commit()
+    return response
+
+
+@router.get("/materials/settings", response_model=MaterialSettingsRead)
+def material_settings(
+    team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialSettingsRead:
+    """How the team keeps its uploads: for its retention window from the
+    upload (the default) or until a member deletes them. Members only."""
+    team = _member_team(session, reader, None, team_id)
+    return materials.settings_read(session, team)
+
+
+@router.put("/materials/settings", response_model=MaterialSettingsRead)
+def update_material_settings(
+    payload: MaterialSettingsWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialSettingsRead:
+    """Switch how the team keeps its uploads. Any member; who switched is not
+    recorded. Back to the window, every existing upload is counted from its
+    own upload."""
+    team = _member_team(session, reader, None, team_id)
+    materials.set_keep_until_deleted(session, team, payload.keep_until_deleted)
+    response = materials.settings_read(session, team)
     session.commit()
     return response
 
@@ -721,7 +748,7 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
     except materials.ConfidentialFileError:
         session.commit()
         raise
-    response = materials.read(row)
+    response = materials.read(row, materials.upload_window(session, team))
     session.commit()
     return response
 
