@@ -1,6 +1,6 @@
 """Module B as tools an agent can call (#260/#261, docs/architecture/agent-layer.md section 4).
 
-Nine read tools (``TOOLS``) over B's existing reads, and seven writes
+Read tools (``TOOLS``) over B's existing reads, and seven writes
 (``ACTIONS``) over B's existing service calls, so that everything a person does
 with B on the board -- read items and decisions, confirm, reassign, re-date,
 close, add, review a decision -- can also be asked for in words. No new tables,
@@ -31,9 +31,12 @@ Rules from section 4 that are enforced here rather than trusted to the caller:
 **Rule 3 of #261 -- B content that leaves goes through B's outbound read.** An
 item's text appears in ``items`` only once a person has confirmed it (the same
 gate as ``service.outbound_for_meeting``). What is still unconfirmed is counted,
-not quoted. The one exception is ``unresolved_questions``, whose whole point is
-utterances nobody has confirmed; its docstring says the agent may use them
-internally (L0) and must not post them anywhere without a person's review.
+not quoted. Two exceptions: ``unresolved_questions``, whose whole point is
+utterances nobody has confirmed -- its docstring says the agent may use them
+internally (L0) and must not post them anywhere without a person's review --
+and ``meeting_minutes``, which is the page the 요약 tab copies and lists a
+draft as the tab does, marked "확인 필요" or "(자동 추출)" on its own line, under
+the same instruction.
 """
 
 from __future__ import annotations
@@ -50,7 +53,7 @@ from autune_contracts.enums import ActionStatus, UtteranceKind
 from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 from autune_integrations.privacy import find_unmasked
 
-from . import days_off, service, tasks
+from . import days_off, minutes, service, tasks
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
 from .pipeline.registry import get_resolver
@@ -861,6 +864,58 @@ def meeting_decisions(session: Session, meeting_id: str) -> dict[str, Any]:
     )
 
 
+def meeting_minutes(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Use this when asked to write up a meeting's minutes -- "이 회의 회의록 써
+    줘" -- or for the page the 요약 tab's "회의록 복사" would copy. Do not use it
+    for one part of the outcome: decisions alone are ``meeting_decisions``, who
+    should do what is ``meeting_action_items``.
+
+    Returns one row whose ``body`` is the whole page as plain text, the page a
+    person copying it from the tab gets: the meeting's title and day; a model's
+    overview only where one was written, headed "요약 (AI 작성)"; the decisions,
+    one nobody confirmed marked "(자동 추출)"; the action items as "description
+    — who · due · state", where "끝내지 않고 닫힘" is an item closed without
+    being finished (not done) and "확인 필요" one nobody has confirmed yet; and
+    the team's memo. Give the page as it is, with those marks: an item marked
+    "확인 필요" or a decision marked "(자동 추출)" is a model's draft, not
+    settled, and the page must not be posted to a channel or tracker without a
+    person. Candidates are left out, and no utterance is quoted.
+
+    The other rendering of the same page is the web's
+    (``apps/web/src/features/actions/minutes.ts``); ``autune_extraction.minutes``
+    ports its rules, and the two are tested on the same strings. Unlike the
+    web's copy this text leaves B, so every line is screened with
+    ``find_unmasked``: a line carrying personal data is left off and counted in
+    ``summary``. ``evidence`` holds the ids of the decisions and items on the
+    page. A meeting of another team, or past retention, is not found.
+    """
+    if _team_of(session, meeting_id) != team_id:
+        return _not_found("meeting", meeting_id)
+    summary = service.meeting_summary(session, meeting_id)
+    page = minutes.minutes_page(summary, minutes.title_of(summary))
+    said = (
+        f"회의록: 결정 {len(page.decision_ids)}건(자동 추출 {page.unconfirmed_decisions}건), "
+        f"할 일 {len(page.action_ids)}건(확인 필요 {page.waiting_actions}건)."
+    )
+    if page.candidates:
+        said += f" 후보 {page.candidates}건은 넣지 않았습니다."
+    if page.held_back:
+        said += f" 개인정보가 남아 뺀 줄 {page.held_back}건은 요약 탭에서 확인하세요."
+    return _result(
+        summary=said,
+        items=[
+            {
+                "title": "회의록",
+                "body": page.text,
+                "score": 1.0,
+                "id": meeting_id,
+                "meeting_id": meeting_id,
+            }
+        ],
+        evidence=[*page.decision_ids, *page.action_ids],
+    )
+
+
 def person_action_items(session: Session, team_id: str, user_id: str) -> dict[str, Any]:
     """Use this when asked what one person has on their plate -- "what is left for
     박지영", "what is overdue for me". Do not use it to compare people -- that is
@@ -1086,6 +1141,7 @@ TOOLS = [
     unresolved_questions,
     review_state,
     meeting_decisions,
+    meeting_minutes,
     person_action_items,
     action_item_status,
     open_followup_item,

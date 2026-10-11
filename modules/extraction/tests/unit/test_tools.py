@@ -33,6 +33,8 @@ from autune_extraction.models import (
     ExtDecisionSource,
     ExtEditEvent,
     ExtExternalRef,
+    ExtMeetingNote,
+    ExtMeetingSummary,
     ExtNotionTarget,
     ExtProject,
     ExtPublicHoliday,
@@ -72,6 +74,9 @@ TABLES = [
     ExtProject.__table__,
     # ``public_holidays`` reads the calendar B keeps.
     ExtPublicHoliday.__table__,
+    # ``meeting_minutes`` reads the summary tab's memo and written overview.
+    ExtMeetingNote.__table__,
+    ExtMeetingSummary.__table__,
 ]
 
 
@@ -179,6 +184,7 @@ ARGS = {
     tools.open_followup_item: (TEAM,),
     tools.open_item_owners: (TEAM,),
     tools.public_holidays: ("2026-10-01", "2026-10-31"),
+    tools.meeting_minutes: (TEAM, MEETING),
 }
 
 
@@ -899,6 +905,104 @@ def test_only_confirmed_decisions_are_quoted(session: Session) -> None:
     assert "확인 필요 1건" in result["summary"]
     assert "dec_wait 결정" not in str(result)
     assert "dec_no 결정" not in str(result)
+
+
+# --- meeting_minutes ----------------------------------------------------------------
+
+
+def test_the_minutes_are_the_page_the_summary_tab_copies(session: Session) -> None:
+    """The rendering's own rules are ``test_minutes``; this is that the tool
+    reads the meeting's summary and hands the page over as one row."""
+    decision(session, "dec_ok", status="confirmed")
+    decision(session, "dec_wait", status=None)
+    decision(session, "dec_no", status="rejected")
+    item(session, "act_todo", source=utterance(session, "utt_a", "제가 할게요", 1.0))
+    item(session, "act_draft", status="needs_confirmation", assignee=None)
+    session.add(ExtMeetingNote(meeting_id=MEETING, body="다음 회의는 목요일."))
+    session.flush()
+
+    result = tools.meeting_minutes(session, TEAM, MEETING)
+
+    assert result["ok"] is True
+    [row] = result["items"]
+    assert row["title"] == "회의록" and row["meeting_id"] == MEETING
+    lines = row["body"].split("\n")
+    assert lines[:5] == [
+        "회의록 — 주간 회의",
+        "",
+        "결정 사항",
+        "1. dec_ok 결정",
+        "2. dec_wait 결정 (자동 추출)",
+    ]
+    # The items in the order the board lists them, which is the service's to say.
+    assert lines[5:7] == ["", "할 일"]
+    assert sorted(line[3:] for line in lines[7:9]) == [
+        "act_draft 할 일 — 담당 미지정 · 기한 없음 · 확인 필요",
+        "act_todo 할 일 — 박지영 · 기한 없음",
+    ]
+    assert lines[9:] == ["", "메모", "다음 회의는 목요일."]
+    # No quotation: neither the line an item came from nor its id.
+    assert "제가 할게요" not in str(result) and "utt_a" not in str(result)
+    assert result["evidence"][:2] == ["dec_ok", "dec_wait"]
+    assert sorted(result["evidence"][2:]) == ["act_draft", "act_todo"]
+    assert "자동 추출 1건" in result["summary"] and "확인 필요 1건" in result["summary"]
+
+
+def test_minutes_of_a_meeting_that_settled_nothing_say_so(session: Session) -> None:
+    result = tools.meeting_minutes(session, TEAM, MEETING)
+
+    assert result["ok"] is True
+    assert result["items"][0]["body"] == "\n".join(
+        ["회의록 — 주간 회의", "", "결정 사항", "없음", "", "할 일", "없음"]
+    )
+    assert result["evidence"] == []
+
+
+def test_a_minutes_line_carrying_personal_data_does_not_leave(session: Session) -> None:
+    item(session, "act_ok")
+    session.add(
+        ExtActionItem(
+            id="act_phone",
+            meeting_id=MEETING,
+            description="010-1234-5678로 회신",
+            status="todo",
+            confidence=0.9,
+            origin="user",
+        )
+    )
+    session.flush()
+
+    result = tools.meeting_minutes(session, TEAM, MEETING)
+
+    assert "010-1234-5678" not in str(result)
+    assert result["evidence"] == ["act_ok"]
+    assert "뺀 줄 1건" in result["summary"]
+
+
+def test_another_teams_meeting_has_no_minutes_here(session: Session) -> None:
+    decision(session, "dec_theirs", status="confirmed", meeting=OTHER_MEETING)
+
+    theirs = tools.meeting_minutes(session, TEAM, OTHER_MEETING)
+    unknown = tools.meeting_minutes(session, TEAM, "mtg_nope")
+
+    assert theirs["ok"] is False and theirs["items"] == [] and theirs["evidence"] == []
+    assert "dec_theirs" not in str(theirs)
+    # The same answer for both, so the refusal does not say the meeting exists.
+    assert theirs["summary"] == unknown["summary"] == "이 팀에서 찾을 수 없습니다."
+
+
+def test_minutes_are_a_read_the_agent_registry_collects() -> None:
+    """What ``autune_agent.main.registry.collect_tools`` relies on, checked from
+    here since a module may not import it: listed in ``TOOLS`` and not a write,
+    a docstring that starts with when to use it, the session first, and the
+    run's ``team_id`` for ``bind_scope`` to fill -- never the model."""
+    assert tools.meeting_minutes in tools.TOOLS
+    assert tools.meeting_minutes not in tools.ACTIONS
+    assert tools.meeting_minutes not in getattr(tools, "PERSONAL_ONLY_TOOLS", [])
+    assert (inspect.getdoc(tools.meeting_minutes) or "").startswith("Use this")
+    params = list(inspect.signature(tools.meeting_minutes).parameters)
+    assert params == ["session", "team_id", "meeting_id"]
+    assert set(tools.RUN_SCOPE) <= set(params)
 
 
 # --- person_action_items ----------------------------------------------------------
