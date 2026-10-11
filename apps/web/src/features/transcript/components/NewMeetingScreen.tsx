@@ -17,6 +17,8 @@ import { ACCEPTED_EXTENSIONS, acceptsRecording } from "../recordingFile";
 import { teamToOpen } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
+import { AgendaDraftRow, type AgendaSource } from "./AgendaDraftRow";
+
 type Source = "live" | "file";
 /** Matches `MAX_UPLOAD_BYTES` in `modules/audio/src/autune_audio/config.py` and S03's dropzone. */
 const MAX_BYTES = 500 * 1024 * 1024;
@@ -87,10 +89,11 @@ function asInstant(date: string, time: string): string | undefined {
  * 녹음 시작" ignores them — a live meeting starts when it is opened.
  *
  * Field order follows S06: title, date and start, team, audio source, then
- * S06's two option rows. S06's attendee chips are omitted: they have no field
- * in the create payload. Its optional end time has none either, and is asked
- * only where it can be kept without one — in the first option row, on the
- * live path (`LaterOptions`, `plannedEnd`).
+ * S06's two option rows — the agenda row live when the route supplies what to
+ * draft from (`AgendaDraftRow`). S06's attendee chips are omitted: they have
+ * no field in the create payload. Its optional end time has none either, and
+ * is asked only where it can be kept without one — in the first option row,
+ * on the live path (`LaterOptions`, `plannedEnd`).
  *
  * `?meeting=` uploads to an existing meeting — the retry S12 offers when a
  * run failed, and S10's "파일 업로드로 대신" for a meeting opened to record
@@ -105,10 +108,13 @@ function asInstant(date: string, time: string): string | undefined {
 export function NewMeetingScreen({
   existingMeetingId,
   notice,
+  agendaSources,
 }: {
   existingMeetingId?: string;
   /** Drawn above the upload's consent row. The page fills it; see its file. */
   notice?: ReactNode;
+  /** What the agenda row may draft from. The page lists them; see its file. */
+  agendaSources?: readonly AgendaSource[];
 }) {
   const router = useRouter();
   const [teams, setTeams] = useState<TeamSummary[] | null>(null);
@@ -450,6 +456,7 @@ export function NewMeetingScreen({
                 ? { on: endAlert, time: endTime, setOn: setEndAlert, setTime: setEndTime }
                 : null
             }
+            agenda={agendaSources ? { teamId, sources: agendaSources } : null}
           />
         )}
 
@@ -643,20 +650,29 @@ function SourceChoice({
  * that was never told. Under the file source it is drawn disabled, with the
  * reason; "저장만" under the live source keeps nothing, and the field says so.
  *
- * The agenda row is still Phase 2, drawn disabled rather than hidden so the
- * roadmap shows.
+ * The agenda row is Phase 2, drawn disabled rather than hidden so the roadmap
+ * shows, when the route supplies nothing to draft from, and `AgendaDraftRow`
+ * when it does (#1147).
  *
  * S06 also draws Notion and Jira rows here as per-meeting overrides. Those
  * are left out, not drawn disabled: the integrations exist at team level, and
  * a per-meeting override row would read as a setting this form saves when it
  * does not.
  */
-function LaterOptions({ endAlert }: { endAlert: EndAlertChoice | null }) {
+function LaterOptions({
+  endAlert,
+  agenda,
+}: {
+  endAlert: EndAlertChoice | null;
+  agenda: { teamId: string; sources: readonly AgendaSource[] } | null;
+}) {
   const rows = [
     ...(endAlert === null
       ? [{ title: END_ALERT_TITLE, detail: "실시간 녹음을 지금 시작할 때만 켤 수 있습니다" }]
       : []),
-    { title: "자료 연결 후 어젠다 자동 생성", detail: "PRD · 이전 회의록 · Phase 2" },
+    ...(agenda === null
+      ? [{ title: "자료 연결 후 어젠다 자동 생성", detail: "PRD · 이전 회의록 · Phase 2" }]
+      : []),
   ];
   return (
     <div className="flex flex-col border-t border-[var(--color-hairline)]">
@@ -738,6 +754,9 @@ function LaterOptions({ endAlert }: { endAlert: EndAlertChoice | null }) {
           </span>
         </label>
       ))}
+      {agenda === null ? null : (
+        <AgendaDraftRow teamId={agenda.teamId} sources={agenda.sources} />
+      )}
     </div>
   );
 }
