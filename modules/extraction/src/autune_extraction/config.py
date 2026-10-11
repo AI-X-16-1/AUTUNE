@@ -430,19 +430,25 @@ class ExtractionSettings(BaseSettings):
     material_embedder_impl: str = "fake"
     """Which embedder makes an uploaded material's vectors and a search
     question's vector (#817): ``local`` (KURE-v1 in this process; checkpoint
-    and device from ``embedder_checkpoint`` and ``embedder_device``) or
-    ``fake``. Its own switch, apart from ``embedder_impl``: the resolver's
-    fake makes 64-wide vectors it only compares with each other, and a
-    material's are stored in a ``vector(1024)`` column
+    and device from ``embedder_checkpoint`` and ``embedder_device``),
+    ``hosted`` (the same model on our own inference server, at
+    ``material_embedder_endpoint``; ``embedder_checkpoint`` is recorded as its
+    version) or ``fake``. Its own switch, apart from ``embedder_impl``: the
+    resolver's fake makes 64-wide vectors it only compares with each other,
+    and a material's are stored in a ``vector(1024)`` column
     (``models.MATERIAL_EMBEDDING_DIM``).
 
     ``fake`` by default, which finds by shared characters rather than meaning
-    -- enough for tests and a dev stack, not for a team. No ``hosted`` yet: the
-    rule (``privacy.md``) names KURE-v1 on our own inference server, and B has
-    no client for it. Nothing here sends a material's text or a question out
-    of this process. A search finds only pieces embedded by the embedder it
-    asks with, so switching this leaves earlier uploads unfound until they
-    are uploaded again (``material_search``)."""
+    -- enough for tests and a dev stack, not for a team. ``hosted`` is where
+    the rule (``privacy.md``) says a material's vectors are made; it is given
+    masked text only, and nothing else here sends a material's text or a
+    question out of this process. A search finds only pieces embedded by the
+    embedder it asks with, so switching between implementations that record
+    different versions leaves earlier uploads unfound until they are uploaded
+    again (``material_search``)."""
+
+    material_embedder_endpoint: str = ""
+    """Our own inference server, required when ``material_embedder_impl=hosted``."""
 
     material_search_tool: bool = False
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
