@@ -248,7 +248,11 @@ export function ActionDetailDrawer({
               >
                 {isCandidate(item)
                   ? "후보"
-                  : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
+                  : // Sits in 완료 on the board, but was not finished (#856):
+                    // the window says what the card's 닫힘 and its history say.
+                    item.closed_unfinished
+                    ? "끝내지 않고 닫힘"
+                    : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
               </span>
               {/* A sentence, not a score (#1183): nobody knew how to read
                   0.82. "확실하지 않음" only where the server put the item
