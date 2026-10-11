@@ -22,7 +22,9 @@ import type { MaterialSearchAnswer } from "../types";
  * **What comes back is masked text, shown as text.** An excerpt is a cut of
  * what was kept of a file -- there is no original to open, so a hit names
  * its material and links to nothing. The server's notice is its own
- * sentence and is shown as it is. Masked is not anonymous, and the box says
+ * sentence and is shown as it is; when it comes with no hit it is the only
+ * word on why, and the screen's own "nothing found" is kept for a server
+ * that sends no notice. Masked is not anonymous, and the box says
  * so as the upload form does: values of a set shape are hidden, a name
  * written in a sentence is not -- a member who only searches reads this
  * box and never the form.
@@ -123,9 +125,13 @@ export function MaterialSearch({
             </p>
           ) : null}
           {shown.length === 0 ? (
-            <p className="text-[var(--color-ink-muted)]" style={meta}>
-              올린 파일에서 찾은 내용이 없습니다.
-            </p>
+            // A notice that came with no hit already says why there is none;
+            // the screen's own sentence is for a server that sends none.
+            answer.notice ? null : (
+              <p className="text-[var(--color-ink-muted)]" style={meta}>
+                올린 파일에서 찾은 내용이 없습니다.
+              </p>
+            )
           ) : (
             <ul className="flex flex-col gap-2">
               {shown.map((hit) => (

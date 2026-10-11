@@ -372,10 +372,10 @@ export interface Material {
   /** ISO 8601, when it was registered. */
   created_at: string;
   /**
-   * ISO 8601, when an upload's masked text is deleted: the upload plus the
-   * team's retention window as it was that day. An hourly task does it, so
-   * the row can outlive this by up to an hour. Null for a link, which keeps
-   * nothing to delete.
+   * Always null. An upload's masked text is kept until a member of the team
+   * deletes it -- there is no retention window (the owner, 2026-10-10;
+   * `docs/architecture/privacy.md`) -- and a link keeps no text at all. The
+   * field stays in the answer's shape; nothing on the screen reads it.
    */
   expires_at: string | null;
   /**
