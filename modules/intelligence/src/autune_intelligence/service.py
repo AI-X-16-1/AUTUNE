@@ -2056,10 +2056,7 @@ def searchable_reports(
     rows = session.execute(
         sa.select(IntelMeetingReport, held)
         .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
-        .where(
-            IntelMeetingReport.team_id == team_id,
-            sa.or_(Meeting.expires_at.is_(None), Meeting.expires_at > (now or datetime.now(UTC))),
-        )
+        .where(IntelMeetingReport.team_id == team_id, _not_expired(now or datetime.now(UTC)))
         .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
         .limit(limit)
     ).all()

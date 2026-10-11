@@ -399,6 +399,32 @@ def test_search_reports_refuses_an_empty_query(db_session: Session, team: str) -
     assert result["ok"] is False and result["reason"] == "empty query"
 
 
+def test_search_reports_refuses_a_query_over_300_characters_without_repeating_it(
+    db_session: Session, team: str
+) -> None:
+    _reported(db_session, team, "주간 회의", BODY)
+
+    assert tools.search_reports(db_session, team, "결제 API".ljust(300))["ok"] is True
+    refused = tools.search_reports(db_session, team, "결제 API " * 50)
+
+    assert refused["ok"] is False and refused["reason"] == "query over 300 characters"
+    assert "결제" not in refused["summary"] + refused["reason"]
+
+
+def test_search_reports_says_when_older_reports_were_not_searched(
+    db_session: Session, team: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(tools, "_SEARCH_POOL", 1)
+    _reported(db_session, team, "지난 회의", BODY, started_at=datetime(2026, 9, 25, tzinfo=UTC))
+    newer = _reported(db_session, team, "주간 회의", BODY)
+
+    result = tools.search_reports(db_session, team, "결제 API")
+
+    assert [i["meeting_id"] for i in result["items"]] == [newer]
+    assert result["truncated"] is True
+    assert result["summary"].endswith("최근 회의 리포트 1건만 찾아봤습니다.")
+
+
 def test_search_reports_says_so_when_nothing_matches(db_session: Session, team: str) -> None:
     _reported(db_session, team, "주간 회의", BODY)
 

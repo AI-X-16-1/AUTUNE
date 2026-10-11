@@ -439,9 +439,13 @@ def meeting_report_body(session: Session, team_id: str, meeting_id: str) -> dict
 _SEARCH_POOL = 200
 """Meeting reports ranked per question, newest first. A team has tens, so they
 are read whole and ranked in memory each time; there is no index to keep in step
-with an edit, a correction, a forgotten line or a deleted meeting (spec section 8)."""
+with an edit, a correction, a forgotten line or a deleted meeting (spec section 8).
+A team with more has its older ones left unsearched, and the answer says so."""
 _SEARCH_SHOWN = 3
 _EXCERPT_CHARS = 160
+_QUERY_CHARS = 300
+"""Rule 1's "short search string" (agent-layer.md section 4). A longer query is
+refused by naming the limit, never the words: they are the person's."""
 
 
 def search_reports(session: Session, team_id: str, query: str) -> dict[str, Any]:
@@ -449,21 +453,28 @@ def search_reports(session: Session, team_id: str, query: str) -> dict[str, Any]
     ("결제 API 얘기한 리포트") when its date or title is not known. Do not use it
     for a date or a title -- that is ``meeting_reports``.
 
-    ``query`` is the words to look for. Searches the team's meeting reports,
-    with the correction under each, and its weekly reports. Returns up to
-    three, best match first, each with its date and the line that matched, cut
-    to 160 characters; a meeting report also carries its meeting id. No item
-    when no report shares a word with the query.
+    ``query`` is the words to look for, 300 characters at most. Searches the
+    team's newest 200 meeting reports, with the correction under each, and its
+    weekly reports. Returns up to three, best match first, each with its date
+    and the line that matched, cut to 160 characters; a meeting report also
+    carries its meeting id. No item when no report shares a word with the query.
     """
     from .retrieval import matching_line, rank_texts
 
     if not query.strip():
         return _refused("empty query", "무엇을 찾을지 알려 주세요.")
-    reports = service.searchable_reports(session, team_id, limit=_SEARCH_POOL)
+    if len(query) > _QUERY_CHARS:
+        return _refused(
+            f"query over {_QUERY_CHARS} characters", f"찾을 말은 {_QUERY_CHARS}자까지입니다."
+        )
+    reports = service.searchable_reports(session, team_id, limit=_SEARCH_POOL + 1)
+    unsearched = len(reports) > _SEARCH_POOL
+    reports = reports[:_SEARCH_POOL]
     weeks = service.list_reports(session, team_id)
     ranked = rank_texts(query, [r.text for r in reports] + [w.body_markdown for w in weeks])
+    pool = f" 최근 회의 리포트 {_SEARCH_POOL}건만 찾아봤습니다." if unsearched else ""
     if not ranked:
-        return _result(summary="그 내용이 담긴 리포트를 찾지 못했습니다.", items=[])
+        return _result(summary="그 내용이 담긴 리포트를 찾지 못했습니다." + pool, items=[])
     best = ranked[0][1]
     items: list[dict[str, Any]] = []
     for index, score in ranked[:_SEARCH_SHOWN]:
@@ -491,8 +502,8 @@ def search_reports(session: Session, team_id: str, query: str) -> dict[str, Any]
                     "date": week.period_start.isoformat(),
                 }
             )
-    result = _result(summary=f"리포트 {len(items)}건을 찾았습니다.", items=items)
-    result["truncated"] = len(ranked) > _SEARCH_SHOWN
+    result = _result(summary=f"리포트 {len(items)}건을 찾았습니다.{pool}", items=items)
+    result["truncated"] = len(ranked) > _SEARCH_SHOWN or unsearched
     return result
 
 
