@@ -450,11 +450,12 @@ class MaterialRead(BaseModel):
     - ``upload``: a title over the masked text of a file a member sent. The
       text is not in this answer, and there is no original to open.
 
-    No person. ``expires_at`` is always null: an upload is kept until a member
-    deletes it or the team goes (the owner, 2026-10-10), and a link keeps no
-    text. ``not_read`` is what a file held that was not read, said only in the
-    answer to the upload; the plain-text formats read today have nothing
-    unread, so it is empty.
+    No person. ``expires_at`` is when an upload is deleted: its upload plus the
+    team's retention window (``teams.retention_days``). Null for an upload of a
+    team that keeps uploads until a member deletes them, and for a link, which
+    keeps no text (the owner, 2026-10-11). ``not_read`` is what a file held
+    that was not read, said only in the answer to the upload; the plain-text
+    formats read today have nothing unread, so it is empty.
     """
 
     id: str
@@ -466,6 +467,22 @@ class MaterialRead(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     not_read: list[Literal["pictures", "charts", "embedded_files"]] = Field(default_factory=list)
+
+
+class MaterialSettingsRead(BaseModel):
+    """How the team keeps its uploaded materials (the owner, 2026-10-11).
+    ``keep_until_deleted`` false -- the default -- deletes an upload
+    ``retention_days`` after it was uploaded; true keeps every upload until a
+    member deletes it. No person: who last changed it is not recorded."""
+
+    keep_until_deleted: bool
+    retention_days: int
+
+
+class MaterialSettingsWrite(BaseModel):
+    """A member switches how the team keeps its uploads."""
+
+    keep_until_deleted: bool
 
 
 class MaterialUploadRules(BaseModel):

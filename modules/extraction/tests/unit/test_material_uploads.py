@@ -14,7 +14,8 @@ decision on retention):
 - only masked text is stored, in pieces that each pass the outbound guard;
 - no row and no log line names a person or holds the title, the file's name or
   a word of the file;
-- a member's delete takes the text with the row; there is no window.
+- a member's delete takes the text with the row. The window an upload keeps
+  is ``test_material_retention``'s.
 
 Every value here is invented.
 """
@@ -205,7 +206,12 @@ def session() -> Iterator[Session]:
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     shared = {m.__tablename__ for m in (User, Team, TeamMember)}
-    owned = {"ext_materials", "ext_material_chunks", "ext_material_alarms"}
+    owned = {
+        "ext_materials",
+        "ext_material_chunks",
+        "ext_material_alarms",
+        "ext_material_settings",
+    }
     tables = [t for name, t in Base.metadata.tables.items() if name in shared | owned]
     Base.metadata.create_all(engine, tables=tables)
     with Session(engine) as s:
@@ -540,7 +546,10 @@ def test_a_member_uploads_lists_and_deletes(client: TestClient, session: Session
     body = answer.json()
     assert body["id"].startswith("mat_")
     assert (body["source"], body["drive_file_id"], body["drive_kind"]) == ("upload", None, None)
-    assert (body["title"], body["expires_at"], body["not_read"]) == ("3분기 계획", None, [])
+    assert (body["title"], body["not_read"]) == ("3분기 계획", [])
+    # The team's window, counted from the upload (90 days without a team row).
+    created = datetime.fromisoformat(body["created_at"])
+    assert datetime.fromisoformat(body["expires_at"]) - created == timedelta(days=90)
     # The text never comes back with the row.
     assert PHONE not in answer.text and "예산" not in answer.text
 

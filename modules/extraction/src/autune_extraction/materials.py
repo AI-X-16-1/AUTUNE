@@ -31,9 +31,15 @@ storage, and the original is not kept":
   ``autune_integrations.document_masking.mask_document`` (#1199), then cut
   into pieces, and every piece passes ``assert_masked`` before it is written
   to ``ext_material_chunks``.
-- **Kept until the team deletes it** (the owner, 2026-10-10). No retention
-  window: any member deletes a material at once, and its text goes in the
-  same transaction; everything goes with the team (``ON DELETE CASCADE``).
+- **Kept for the team's retention window, counted from the upload**
+  (``teams.retention_days``, 90 days by default; the owner, 2026-10-11).
+  ``forget_expired_uploads`` -- hourly, ``tasks.forget_expired_material_uploads``
+  -- deletes an upload past it with its text. A team may switch to keeping
+  its uploads until a member deletes them (``set_keep_until_deleted``,
+  ``ext_material_settings``); switching back gives every existing upload its
+  window again, counted from its own upload. Any member deletes a material at
+  once, and its text goes in the same transaction; everything goes with the
+  team (``ON DELETE CASCADE``). A Drive link keeps no text and has no window.
 
 **For both: a row names no person.** Any member of the team registers,
 uploads and deletes, as with the team's projects; there is no admin role
@@ -50,22 +56,28 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from autune_core import get_logger
+from autune_core import Team, get_logger
 from autune_core.errors import AutuneError, ConflictError, NotFoundError, ValidationError
 from autune_integrations.document_masking import mask_document
 from autune_integrations.privacy import assert_masked
 
 from .material_marking import Marking, file_marking
 from .material_reading import read_text
-from .models import DRIVE_KINDS, ExtMaterial, ExtMaterialAlarm, ExtMaterialChunk
-from .schemas import MaterialRead
+from .models import (
+    DRIVE_KINDS,
+    ExtMaterial,
+    ExtMaterialAlarm,
+    ExtMaterialChunk,
+    ExtMaterialSetting,
+)
+from .schemas import MaterialRead, MaterialSettingsRead
 from .typed_text import refuse_personal_data
 
 log = get_logger(__name__)
@@ -85,6 +97,10 @@ its second half."""
 ALARM_KEPT = timedelta(days=30)
 """How long an unacknowledged alarm row is kept (#817, #1198). In a small team
 the time of an attempt can point at one person, so the row is short-lived."""
+
+FORGET_BATCH = 100
+"""How many expired uploads one ``forget_expired_uploads`` call deletes, in
+one transaction. The task calls it again until a call finds fewer."""
 
 _ID = re.compile(r"[A-Za-z0-9_-]{10,200}")
 """Drive ids are URL-safe base64-ish -- ``ID`` in ``driveLink.ts``."""
@@ -155,7 +171,43 @@ def team_materials(session: Session, team_id: str) -> list[ExtMaterial]:
     )
 
 
-def read(row: ExtMaterial) -> MaterialRead:
+def keeps_until_deleted(session: Session, team_id: str) -> bool:
+    """Whether the team keeps its uploads until a member deletes them. No
+    row is the default: it does not."""
+    return bool(
+        session.scalar(
+            select(ExtMaterialSetting.keep_until_deleted).where(
+                ExtMaterialSetting.team_id == team_id
+            )
+        )
+    )
+
+
+def upload_window(session: Session, team_id: str) -> timedelta | None:
+    """How long the team's uploads are kept from their upload: the team's
+    retention window, or None when the team keeps them until deleted."""
+    if keeps_until_deleted(session, team_id):
+        return None
+    days = session.scalar(select(Team.retention_days).where(Team.id == team_id))
+    return timedelta(days=days if days is not None else 90)
+
+
+def _aware(moment: datetime) -> datetime:
+    # SQLite hands back what it was given without the zone; every time here is UTC.
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def expires_at(row: ExtMaterial, window: timedelta | None) -> datetime | None:
+    """When an upload is deleted: its upload plus ``window``. None for a link,
+    which keeps no text, and for a team that keeps uploads until deleted."""
+    if row.source != "upload" or window is None:
+        return None
+    return _aware(row.created_at) + window
+
+
+def read(row: ExtMaterial, window: timedelta | None = None) -> MaterialRead:
+    """The row as the screen gets it. ``window`` is ``upload_window`` of the
+    row's team; without it ``expires_at`` is null."""
     return MaterialRead(
         id=row.id,
         team_id=row.team_id,
@@ -164,7 +216,41 @@ def read(row: ExtMaterial) -> MaterialRead:
         drive_file_id=row.drive_file_id,
         drive_kind=row.drive_kind,  # type: ignore[arg-type]  # the table's check constraint
         created_at=row.created_at,
+        expires_at=expires_at(row, window),
     )
+
+
+def settings_read(session: Session, team_id: str) -> MaterialSettingsRead:
+    days = session.scalar(select(Team.retention_days).where(Team.id == team_id))
+    return MaterialSettingsRead(
+        keep_until_deleted=keeps_until_deleted(session, team_id),
+        retention_days=days if days is not None else 90,
+    )
+
+
+def set_keep_until_deleted(session: Session, team_id: str, keep: bool) -> None:
+    """Switch whether the team keeps its uploads until a member deletes them.
+    Takes no user: the change records when, never who. Switching back to the
+    window applies at once to every existing upload, counted from its own
+    upload -- the next hourly run deletes those already past it."""
+    row = session.get(ExtMaterialSetting, team_id)
+    if row is None:
+        # Two members switching at once both find no row; the second insert
+        # meets the primary key and becomes an update.
+        try:
+            with session.begin_nested():
+                session.add(ExtMaterialSetting(team_id=team_id, keep_until_deleted=keep))
+                session.flush()
+        except IntegrityError:
+            row = session.get(ExtMaterialSetting, team_id)
+            assert row is not None  # the other insert committed it
+        else:
+            log.info("extraction_material_setting_changed", team_id=team_id, keep=keep)
+            return
+    row.keep_until_deleted = keep
+    row.updated_at = datetime.now(UTC)
+    session.flush()
+    log.info("extraction_material_setting_changed", team_id=team_id, keep=keep)
 
 
 def lock_shelf(session: Session, team_id: str) -> None:
@@ -358,6 +444,51 @@ def acknowledge_alarm(session: Session, team_id: str, alarm_id: str) -> None:
     session.delete(row)
     session.flush()
     log.info("extraction_material_alarm_acknowledged", team_id=team_id)
+
+
+def forget_expired_uploads(session: Session, *, now: datetime, limit: int | None = None) -> int:
+    """Delete at most ``limit`` (``FORGET_BATCH``) uploads past their team's
+    window, with their text, the oldest of each team first. A team that keeps
+    uploads until deleted is passed over, and a link is never touched. Returns
+    how many went; the caller commits and calls again while a call returns
+    the whole batch."""
+    if limit is None:
+        limit = FORGET_BATCH
+    kept = select(ExtMaterialSetting.team_id).where(ExtMaterialSetting.keep_until_deleted)
+    teams = session.execute(
+        select(Team.id, Team.retention_days)
+        .where(
+            Team.id.in_(select(ExtMaterial.team_id).where(ExtMaterial.source == "upload")),
+            Team.id.not_in(kept),
+        )
+        .order_by(Team.id)
+    ).all()
+    gone: list[tuple[str, str]] = []
+    for team_id, days in teams:
+        if len(gone) >= limit:
+            break
+        cutoff = now - timedelta(days=days)
+        ids = session.scalars(
+            select(ExtMaterial.id)
+            .where(
+                ExtMaterial.team_id == team_id,
+                ExtMaterial.source == "upload",
+                ExtMaterial.created_at <= cutoff,
+            )
+            .order_by(ExtMaterial.created_at, ExtMaterial.id)
+            .limit(limit - len(gone))
+        ).all()
+        gone.extend((team_id, material_id) for material_id in ids)
+    if not gone:
+        return 0
+    ids = [material_id for _, material_id in gone]
+    # The text first, as in ``delete_material``; ``ON DELETE CASCADE`` would
+    # take it on PostgreSQL anyway.
+    session.execute(delete(ExtMaterialChunk).where(ExtMaterialChunk.material_id.in_(ids)))
+    session.execute(delete(ExtMaterial).where(ExtMaterial.id.in_(ids)))
+    for team_id, material_id in gone:
+        log.info("extraction_material_expired", material_id=material_id, team_id=team_id)
+    return len(ids)
 
 
 def forget_old_alarms(session: Session, *, now: datetime) -> int:
