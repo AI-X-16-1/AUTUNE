@@ -24,9 +24,12 @@ bind this step (10(b), 2026-10-08):
   model. The assistant's tool over it (``tools.find_materials``) is off by
   default for that reason.
 
-Ranking is cosine distance with no floor: no embedder has been measured on
-materials, so there is no honest threshold yet, and the nearest materials are
-returned whatever their distance.
+Ranking is cosine similarity with a floor
+(``ExtractionSettings.material_search_min_similarity``): a material whose
+nearest piece is under it is not a hit, so a question about nothing the team
+uploaded answers no materials, with a notice, instead of the nearest
+unrelated ones. The default is a starting point for KURE-v1, not a
+measurement; the setting's docstring says why and what to tune.
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ from autune_core.errors import PrivacyViolationError, ValidationError
 from autune_integrations.document_masking import mask_document, screen_output
 from autune_integrations.privacy import MASK_CHAR
 
+from .config import get_settings
 from .materials import embedded
 from .models import ExtMaterial, ExtMaterialChunk
 from .pipeline.base import Embedder
@@ -74,6 +78,17 @@ ASKS_FOR_PERSONAL = (
     "전화번호처럼 형식이 정해진 개인정보는 보관할 때 가려 두었으므로 찾아서 보여 드릴 수 없습니다."
 )
 STARRED = "별표(*)로 보이는 부분은 개인정보로 보여 가려진 값일 수 있습니다."
+NOTHING_CLOSE = "올린 자료에서 질문과 충분히 가까운 내용을 찾지 못했습니다."
+
+_MASKED_RUN = re.compile(r"\*+(?:[-.@_+/]\*+)*")
+"""What the masker leaves where a value was: every letter and digit of it a
+star, its separators kept (``document_masking._hide``) -- ``***-****-****``,
+``*******@****.***``. Every shape it hides has at least three letters or
+digits, so a run counts with three stars or more: a lone star (a footnote, a
+bullet) or markdown's ``**bold**`` is not one."""
+
+_RULE_LINE = re.compile(r"^[ \t]*\*{3,}[ \t]*$", re.MULTILINE)
+"""A line of stars alone: markdown's horizontal rule, not a hidden value."""
 
 _PERSONAL_KINDS = re.compile(
     r"전화\s*번호|연락처|휴대\s*폰|핸드폰|이메일|메일\s*주소|주민\s*(등록\s*)?번호|계좌|카드\s*번호|여권\s*번호",
@@ -165,35 +180,114 @@ def _words(masked_question: str) -> list[str]:
     return [w.casefold() for w in _WORD.findall(masked_question)]
 
 
+def _pairs(masked_question: str) -> set[str]:
+    """Every two adjacent letters inside a word of the masked question.
+    Korean glues its particles and endings to the word (롤백은, 배포할), so a
+    whole word rarely recurs in a piece; its pairs (롤백) do."""
+    return {w[i : i + 2] for w in _words(masked_question) for i in range(len(w) - 1)}
+
+
+_SEGMENT = re.compile(r"[^\n]+?(?:[.!?。](?=\s)|$)", re.MULTILINE)
+"""A line, or a sentence of a line: up to an ending mark before a space, or
+to the line's end."""
+
+
+def _segments(text: str) -> list[tuple[int, int]]:
+    spans = []
+    for match in _SEGMENT.finditer(text):
+        start, end = match.span()
+        while start < end and text[start].isspace():
+            start += 1
+        if start < end:
+            spans.append((start, end))
+    return spans
+
+
+def _best_segment(text: str, masked_question: str) -> tuple[int, int] | None:
+    """The line or sentence of ``text`` that shares most with the masked
+    question, or None when none shares anything.
+
+    Each of the question's letter pairs counts once per segment that holds
+    it, weighted by how few segments do: a pair in every line (the topic of
+    the whole piece) says least about where the answer is. A heading line
+    counts half, for the same reason -- it names what follows rather than
+    saying it. The first of equals wins."""
+    pairs = _pairs(masked_question)
+    spans = _segments(text)
+    if not pairs or not spans:
+        return None
+    held = [{p for p in pairs if p in text[a:b].casefold()} for a, b in spans]
+    df = {p: sum(p in h for h in held) for p in pairs}
+    best: tuple[int, int] | None = None
+    best_score = 0.0
+    for (a, b), h in zip(spans, held, strict=True):
+        score = sum(math.log(1 + len(spans) / df[p]) for p in h)
+        if text[a] == "#":
+            score /= 2
+        if score > best_score:
+            best, best_score = (a, b), score
+    return best
+
+
 def excerpt_of(text: str, masked_question: str, size: int = EXCERPT_CHARS) -> str:
-    """At most ``size`` characters of a stored piece, around the first word of
-    the masked question it holds (from its start when it holds none), with
-    "…" where it was cut out of a longer piece."""
+    """At most ``size`` characters of a stored piece, centred on the line or
+    sentence that shares most with the masked question (from the piece's
+    start when none shares anything), with "…" where it was cut out of a
+    longer piece. Never the question itself: only its masked form is read,
+    and only to choose the window."""
     flat = text.strip()
     if len(flat) <= size:
         return flat
-    folded = flat.casefold()
-    found = [i for i in (folded.find(w) for w in _words(masked_question)) if i >= 0]
-    start = max(0, min(found) - size // 4) if found else 0
-    if start:
-        space = flat.find(" ", start, start + size // 4)
-        start = space + 1 if space >= 0 else start
-    start = min(start, len(flat) - size)
-    end = start + size
+    found = _best_segment(flat, masked_question)
+    if found is None:
+        start = 0
+    else:
+        a, b = found
+        if b - a >= size:
+            # A segment longer than the window: start a little before the
+            # first of the question's pairs it holds.
+            folded = flat[a:b].casefold()
+            hits = [i for i in (folded.find(p) for p in _pairs(masked_question)) if i >= 0]
+            start = a + max(0, min(hits, default=0) - size // 4)
+        else:
+            start = a - (size - (b - a)) // 2
+        start = max(0, min(start, len(flat) - size))
+        if start:
+            # Begin on a word (or line) boundary, without cutting into the
+            # chosen segment.
+            limit = start + size // 4
+            if start < found[0]:
+                limit = min(limit, found[0])
+            cuts = [i for i in (flat.find(c, start, limit) for c in " \n") if i >= 0]
+            if cuts:
+                start = min(cuts) + 1
+    end = min(len(flat), start + size)
     if end < len(flat):
-        space = flat.rfind(" ", start + size // 2, end)
-        end = space if space > 0 else end
+        floor = start + size // 2
+        if found is not None and found[1] <= end:
+            floor = max(floor, found[1])
+        cut = max(flat.rfind(" ", floor, end), flat.rfind("\n", floor, end))
+        end = cut if cut > start else end
     piece = flat[start:end].strip()
     return ("…" if start > 0 else "") + piece + ("…" if end < len(flat) else "")
 
 
+def shows_masked_run(excerpt: str) -> bool:
+    """Whether ``excerpt`` shows a value the masker hid -- a run of stars of
+    the masker's shape -- and not merely a star."""
+    shown = _RULE_LINE.sub("", excerpt)
+    return any(run.group().count(MASK_CHAR) >= 3 for run in _MASKED_RUN.finditer(shown))
+
+
 def _notice(question_hid: bool, asks_personal: bool, hits: list[MaterialHit]) -> str | None:
     said = []
+    if not hits:
+        said.append(NOTHING_CLOSE)
     if question_hid:
         said.append(QUESTION_MASKED)
     if asks_personal:
         said.append(ASKS_FOR_PERSONAL)
-    if any(MASK_CHAR in hit.excerpt for hit in hits):
+    if any(shows_masked_run(hit.excerpt) for hit in hits):
         said.append(STARRED)
     return " ".join(said) or None
 
@@ -208,7 +302,9 @@ def search_materials(
 ) -> MaterialAnswer:
     """The team's uploaded materials nearest ``query``, best first: one hit per
     material, its nearest piece as an excerpt. **The caller has checked that
-    the asker is a member of ``team_id``.**
+    the asker is a member of ``team_id``.** A material whose nearest piece is
+    under the similarity floor is not a hit; with none left, ``hits`` is
+    empty and ``notice`` says nothing close enough was found.
 
     ``query`` is masked before anything else is done with it and is kept
     nowhere; a blank or too long one raises ``ValidationError`` naming the
@@ -225,6 +321,7 @@ def search_materials(
     model = embedder or get_material_embedder()
     (vector,) = embedded(model, [masked.text])
     wanted = max(1, min(int(limit), MAX_HITS))
+    floor = get_settings().material_search_min_similarity
 
     hits: list[MaterialHit] = []
     seen: set[str] = set()
@@ -232,6 +329,9 @@ def search_materials(
     for material_id, title, position, text, score in _nearest(
         session, team_id, vector, model.model_version
     ):
+        if score < floor:
+            # Nearest first: everything after this is further still.
+            break
         if material_id in seen:
             continue
         seen.add(material_id)
