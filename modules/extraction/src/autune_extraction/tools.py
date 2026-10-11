@@ -20,7 +20,7 @@ Rules from section 4 that are enforced here rather than trusted to the caller:
 
 - ``items`` holds at most ``MAX_ITEMS``; ``truncated`` says when more existed.
 - ``evidence`` holds ids only, never text: utterance ids, and a material's id
-  for ``find_materials``.
+  for ``find_materials`` and ``agenda_material_hints``.
 - An expected failure (unknown meeting) is ``ok=False`` with a reason, not an
   exception.
 - Synchronous, safe to call twice: every tool only reads. The writes are
@@ -1096,14 +1096,7 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
     # not in agent_runs or a waiting row, which keep the tool's name and ids.
     # So no reason, summary or item below repeats it.
     if not get_settings().material_search_tool:
-        return _result(
-            ok=False,
-            reason="material search is off for the assistant on this server",
-            summary="이 서버에서는 비서가 올린 자료를 찾지 않습니다.",
-            items=[],
-            evidence=[],
-            confidence=0.0,
-        )
+        return _material_search_off()
     if not isinstance(question, str):
         return _bad_question()
     try:
@@ -1135,6 +1128,76 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
     )
 
 
+def _material_search_off() -> dict[str, Any]:
+    """The answer of a material tool on a server where the assistant does not
+    search uploaded materials (``ExtractionSettings.material_search_tool``)."""
+    return _result(
+        ok=False,
+        reason="material search is off for the assistant on this server",
+        summary="이 서버에서는 비서가 올린 자료를 찾지 않습니다.",
+        items=[],
+        evidence=[],
+        confidence=0.0,
+    )
+
+
+AGENDA_MATERIALS = "회의 제목과 가까운 올린 자료"
+"""The group's name in the pre-meeting brief's agenda draft
+(``MATERIALS_BRIEF_AGENDA.label`` in ``apps/web/.../materialAgenda.ts``):
+"가까운", not "관련된", because the search has no distance floor."""
+
+
+def agenda_question(title: str) -> str:
+    """``agendaQuestion`` in ``materialAgenda.ts``: the meeting's title with its
+    spaces folded, cut to what the search takes. Nothing else of the meeting."""
+    return " ".join(title.split())[: material_search.MAX_QUESTION_CHARS].strip()
+
+
+def agenda_material_hints(session: Session, team_id: str, meeting_id: str) -> dict[str, Any]:
+    """Use this when drafting a meeting's agenda, or when asked which of the
+    team's uploaded documents (자료) to look at before a meeting. Do not use it
+    for what a document says -- that is ``find_materials`` -- or for what an
+    earlier meeting left open -- that is the action-item tools.
+
+    Returns at most five of the team's uploaded materials nearest the
+    meeting's title, best first, as the pre-meeting brief's agenda draft lists
+    them under "회의 제목과 가까운 올린 자료": each the material's title and
+    nothing else -- no excerpt -- with the material's id as evidence. The
+    search has no distance floor, so these are the nearest materials whatever
+    they are about: say "가까운", not "관련된". Nothing for a meeting with no
+    title. Off, like ``find_materials``, on a server where the assistant does
+    not search materials, and with nothing to find where uploads are off. A
+    meeting of another team, or past retention, is not found.
+    """
+    # The web's source and this one ask the same question the same way
+    # (``MATERIALS_BRIEF_AGENDA``): the title, folded and cut, and only the
+    # titles of the hits come back. The question is used to search and for
+    # nothing else, as ``find_materials``'s is -- no reason, summary or item
+    # repeats it, and no log line carries it (``material_search``).
+    if _team_of(session, meeting_id) != team_id:
+        return _not_found("meeting", meeting_id)
+    settings = get_settings()
+    if not settings.material_search_tool:
+        return _material_search_off()
+    title = session.scalar(select(Meeting.title).where(Meeting.id == meeting_id)) or ""
+    question = agenda_question(title)
+    if not settings.material_upload or not question:
+        return _result(summary=f"{AGENDA_MATERIALS}이 없습니다.", items=[], evidence=[])
+    found = material_search.search_materials(session, team_id, question, limit=MAX_ITEMS)
+    return _result(
+        summary=(
+            f"{AGENDA_MATERIALS} {len(found.hits)}건."
+            if found.hits
+            else f"{AGENDA_MATERIALS}이 없습니다."
+        ),
+        items=[
+            {"title": hit.title, "body": "", "score": hit.score, "id": hit.material_id}
+            for hit in found.hits
+        ],
+        evidence=[hit.material_id for hit in found.hits],
+    )
+
+
 def _bad_question() -> dict[str, Any]:
     """The refusal of a question that is blank, too long or not text. Names
     the rule, never the value: the value is the person's words."""
@@ -1150,6 +1213,7 @@ def _bad_question() -> dict[str, Any]:
 
 TOOLS = [
     find_materials,
+    agenda_material_hints,
     meeting_action_items,
     meeting_due_dates,
     open_action_items,

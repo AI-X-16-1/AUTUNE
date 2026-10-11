@@ -18,6 +18,7 @@ Every value here is invented.
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Iterator
 
@@ -469,3 +470,191 @@ def test_the_tool_refuses_a_bad_question_by_the_rule(
 
     assert result["ok"] is False and "question must be" in result["reason"]
     assert "가가" not in json.dumps(result, ensure_ascii=False)
+
+
+# --- the agenda draft's materials, for the assistant ---------------------------------
+
+
+def meeting(session: Session, title: str, *, mid: str = "mtg_1", team: str = TEAM) -> str:
+    session.add(Meeting(id=mid, team_id=team, title=title))
+    session.flush()
+    return mid
+
+
+@pytest.fixture
+def hints_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "material_search_tool", True)
+    monkeypatch.setattr(get_settings(), "material_upload", True)
+
+
+def test_agenda_hints_are_a_read_the_agent_registry_collects() -> None:
+    """What ``collect_tools`` and ``bind_scope`` rely on: in ``TOOLS`` and not a
+    write, the docstring first says when, the session first, and ``team_id``
+    for the run to fill -- never the model."""
+    assert tools.agenda_material_hints in tools.TOOLS
+    assert tools.agenda_material_hints not in tools.ACTIONS
+    assert (inspect.getdoc(tools.agenda_material_hints) or "").startswith("Use this")
+    params = list(inspect.signature(tools.agenda_material_hints).parameters)
+    assert params == ["session", "team_id", "meeting_id"]
+    assert set(tools.RUN_SCOPE) <= set(params)
+
+
+def test_agenda_hints_are_off_with_the_tool_switch_as_find_materials_is(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "material_upload", True)
+    mid = meeting(session, "출시 일정 점검")
+    upload(session, LAUNCH, title="출시 계획")
+    embedder.seen.clear()
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    assert result == tools.find_materials(session, TEAM, "출시")
+    assert result["ok"] is False and result["items"] == []
+    assert embedder.seen == []
+
+
+def test_agenda_hints_find_nothing_where_uploads_are_off(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "material_search_tool", True)
+    mid = meeting(session, "출시 일정 점검")
+    upload(session, LAUNCH, title="출시 계획")
+    embedder.seen.clear()
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    assert result["ok"] is True and result["items"] == [] and result["evidence"] == []
+    assert embedder.seen == []
+
+
+@pytest.mark.usefixtures("hints_on")
+def test_agenda_hints_are_the_titles_nearest_the_meetings_title_and_no_excerpt(
+    session: Session, embedder: Recording
+) -> None:
+    session.add(Team(id=OTHER, name="다른 팀"))
+    mid = meeting(session, "  출시   일정\n점검  ")
+    launch = upload(session, LAUNCH * 3, title="출시 계획")
+    budget = upload(session, BUDGET * 3, title="예산")
+    theirs = upload(session, LAUNCH, team=OTHER, title="남의 계획")
+    embedder.seen.clear()
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    # The question is the title, its spaces folded, as ``agendaQuestion`` asks.
+    assert embedder.seen == ["출시 일정 점검"]
+    assert result["ok"] is True
+    assert [i["id"] for i in result["items"]] == [launch.id, budget.id]
+    assert [i["title"] for i in result["items"]] == ["출시 계획", "예산"]
+    assert all(i["body"] == "" and "position" not in i for i in result["items"])
+    assert result["evidence"] == [launch.id, budget.id]
+    said = json.dumps(result, ensure_ascii=False)
+    assert "11월" not in said and "1200만원" not in said  # nothing of a document's text
+    assert theirs.id not in said and "남의" not in said
+    assert "점검" not in said  # nor the question
+
+
+@pytest.mark.usefixtures("hints_on")
+def test_agenda_hints_are_five_at_most(session: Session, embedder: Recording) -> None:
+    mid = meeting(session, "출시 일정")
+    for n in range(7):
+        upload(session, LAUNCH, title=f"자료 {n}")
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    assert len(result["items"]) == 5 and len(result["evidence"]) == 5
+
+
+@pytest.mark.usefixtures("hints_on")
+def test_agenda_hints_ask_with_the_title_cut_to_what_the_search_takes(
+    session: Session, embedder: Recording
+) -> None:
+    mid = meeting(session, "출시 " * 200)
+    upload(session, LAUNCH, title="출시 계획")
+    embedder.seen.clear()
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    assert result["ok"] is True
+    [question] = embedder.seen
+    assert question == ("출시 " * 200)[:MAX_QUESTION_CHARS].strip()
+    assert tools.agenda_question("  가\t나  ") == "가 나"
+
+
+@pytest.mark.usefixtures("hints_on")
+@pytest.mark.parametrize("title", ["", "   "])
+def test_a_meeting_with_no_title_has_no_agenda_hints(
+    session: Session, embedder: Recording, title: str
+) -> None:
+    mid = meeting(session, title)
+    upload(session, LAUNCH, title="출시 계획")
+    embedder.seen.clear()
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    assert result["ok"] is True and result["items"] == [] and result["evidence"] == []
+    assert embedder.seen == []
+
+
+@pytest.mark.usefixtures("hints_on")
+def test_a_team_with_no_upload_has_no_agenda_hints(session: Session, embedder: Recording) -> None:
+    mid = meeting(session, "출시 일정")
+
+    result = tools.agenda_material_hints(session, TEAM, mid)
+
+    assert result["ok"] is True and result["items"] == []
+
+
+@pytest.mark.usefixtures("hints_on")
+def test_another_teams_meeting_has_no_agenda_hints_here(
+    session: Session, embedder: Recording
+) -> None:
+    session.add(Team(id=OTHER, name="다른 팀"))
+    theirs = meeting(session, "출시 일정", mid="mtg_2", team=OTHER)
+    upload(session, LAUNCH, team=OTHER, title="남의 계획")
+    embedder.seen.clear()
+
+    refused = tools.agenda_material_hints(session, TEAM, theirs)
+    unknown = tools.agenda_material_hints(session, TEAM, "mtg_nope")
+
+    assert refused["ok"] is False and refused["items"] == [] and refused["evidence"] == []
+    # The same answer for both, so the refusal does not say the meeting exists.
+    assert refused["summary"] == unknown["summary"] == "이 팀에서 찾을 수 없습니다."
+    assert embedder.seen == []
+
+
+@pytest.mark.usefixtures("hints_on")
+def test_the_registry_collects_agenda_hints_and_binds_them_to_the_runs_meeting(
+    session: Session, embedder: Recording
+) -> None:
+    """Through the agent layer as a run calls it (``collect_tools``, ``Toolbox``),
+    as ``test_material_search_pg`` calls ``find_materials``: the run's meeting
+    is filled in, another team's meeting is refused before the tool runs, and
+    the run's trace keeps the tool's name and ids only."""
+    from autune_agent.main.registry import CallBudget, RunScope, Toolbox, collect_tools
+
+    session.add(Team(id=OTHER, name="다른 팀"))
+    mid = meeting(session, "출시 일정 점검")
+    theirs = meeting(session, "출시", mid="mtg_2", team=OTHER)
+    launch = upload(session, LAUNCH, title="출시 계획")
+    budget = CallBudget()
+    toolbox = Toolbox(
+        collect_tools(),
+        session,
+        budget,
+        allowed=["extraction.agenda_material_hints"],
+        scope=RunScope(team_id=TEAM, meeting_id=mid),
+    )
+
+    result = toolbox.call("extraction.agenda_material_hints")
+    refused = toolbox.call("extraction.agenda_material_hints", meeting_id=theirs)
+
+    assert result.ok and result.evidence == [launch.id]
+    assert [item.title for item in result.items] == ["출시 계획"]
+    assert refused.ok is False and refused.items == []
+    assert budget.steps[0] == {
+        "tool": "extraction.agenda_material_hints",
+        "ok": True,
+        "evidence": [launch.id],
+        "truncated": False,
+    }
