@@ -528,3 +528,25 @@ The sections above are left as designed; each affected one points here.
       올려줘" and "다시 써서 올려줘" from the team view proposed the post, the
       second also the draft (L1). The pending cards were keyed on that
       meeting, and asking again replaced the earlier card.
+17. **Report search, built without an index (section 8, 2026-10-11).**
+    "결제 API 얘기한 리포트 찾아줘" now reaches E's `search_reports(query)` in
+    the chat path, and it does not take the shape section 8 describes. Section
+    8's four conditions are what keeping meeting content in an index costs.
+    The search keeps no index, so it does not pay them:
+    - Each question reads the team's newest 200 meeting reports and its weekly
+      reports. A meeting report is read as its title line, its body and the
+      correction under it, without E's footer. The reports are ranked in
+      memory with BM25 over the glossary's Kiwi tokens, and three come back at
+      most, each with the line that matched (160 characters).
+    - An edit, a correction, a line replaced by #614's forgetting, a deleted
+      meeting and the hourly expiry are seen at once. There is no copy to keep
+      in step with them.
+    - The team is the run's (`RUN_SCOPE`). A meeting past its `expires_at` is
+      left out before the sweep deletes it.
+    - The query stays in the process, like `explain_metric`'s question
+      (agent-layer.md section 4, rule 1). It is neither stored nor logged.
+    - The IDF is Lucene's, not `BM25Okapi`'s. `BM25Okapi`'s falls to zero or
+      below for a word found in half the texts or more, so for a team with one
+      or two reports it would find nothing.
+    - A team has tens of reports. A team with many more would need a stored
+      index, and section 8's conditions with it.

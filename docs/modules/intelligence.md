@@ -438,6 +438,24 @@ uv run --package autune-intelligence --extra local-models python -m autune_intel
 # optionally: --dense-model nlpai-lab/KURE-v1
 ```
 
+## Report search
+
+`search_reports(query)` answers "결제 API 얘기한 리포트 찾아줘" in the Report
+subagent's chat. Nothing of a report is indexed or stored. Each question reads
+the team's newest 200 meeting reports and its weekly reports. A meeting report
+is read as its title line, its body and the correction under it; E's footer is
+left out. They are ranked in memory with BM25 over the glossary's tokens, and
+at most three come back, each with the line that matched (160 characters). So
+a report is searched as it is at that moment: edited, corrected, with a
+forgotten line replaced, or gone with its meeting. A meeting past its
+`expires_at` is left out before the hourly sweep deletes it.
+
+The IDF is Lucene's, `ln(1 + (N - n + 0.5) / (n + 0.5))`, not the glossary's
+`BM25Okapi`. `BM25Okapi`'s IDF falls to zero or below for a word found in half
+the texts or more, so it would find nothing for a team with one or two
+reports. A team has tens of reports. A team with many more would need a stored
+index, under the conditions in the E agent spec's section 8.
+
 ## Metric
 
 Prediction calibration, reported by the owner. Dashboard metrics are descriptive

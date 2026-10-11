@@ -436,6 +436,66 @@ def meeting_report_body(session: Session, team_id: str, meeting_id: str) -> dict
     return _result(summary="이 회의에는 아직 리포트가 없습니다.", items=[])
 
 
+_SEARCH_POOL = 200
+"""Meeting reports ranked per question, newest first. A team has tens, so they
+are read whole and ranked in memory each time; there is no index to keep in step
+with an edit, a correction, a forgotten line or a deleted meeting (spec section 8)."""
+_SEARCH_SHOWN = 3
+_EXCERPT_CHARS = 160
+
+
+def search_reports(session: Session, team_id: str, query: str) -> dict[str, Any]:
+    """Use this to find which of the team's reports talked about something
+    ("결제 API 얘기한 리포트") when its date or title is not known. Do not use it
+    for a date or a title -- that is ``meeting_reports``.
+
+    ``query`` is the words to look for. Searches the team's meeting reports,
+    with the correction under each, and its weekly reports. Returns up to
+    three, best match first, each with its date and the line that matched, cut
+    to 160 characters; a meeting report also carries its meeting id. No item
+    when no report shares a word with the query.
+    """
+    from .retrieval import matching_line, rank_texts
+
+    if not query.strip():
+        return _refused("empty query", "무엇을 찾을지 알려 주세요.")
+    reports = service.searchable_reports(session, team_id, limit=_SEARCH_POOL)
+    weeks = service.list_reports(session, team_id)
+    ranked = rank_texts(query, [r.text for r in reports] + [w.body_markdown for w in weeks])
+    if not ranked:
+        return _result(summary="그 내용이 담긴 리포트를 찾지 못했습니다.", items=[])
+    best = ranked[0][1]
+    items: list[dict[str, Any]] = []
+    for index, score in ranked[:_SEARCH_SHOWN]:
+        if index < len(reports):
+            report = reports[index]
+            items.append(
+                {
+                    "title": report.title,
+                    "body": matching_line(query, report.text, _EXCERPT_CHARS),
+                    "score": round(score / best, 3),
+                    "id": report.meeting_id,
+                    "meeting_id": report.meeting_id,
+                    "date": report.held.astimezone(service._KST).date().isoformat(),
+                    "status": "posted" if report.posted else "draft",
+                    "link": "report",
+                }
+            )
+        else:
+            week = weeks[index - len(reports)]
+            items.append(
+                {
+                    "title": f"주간 리포트 {week.period_start} ~ {week.period_end}",
+                    "body": matching_line(query, week.body_markdown, _EXCERPT_CHARS),
+                    "score": round(score / best, 3),
+                    "date": week.period_start.isoformat(),
+                }
+            )
+    result = _result(summary=f"리포트 {len(items)}건을 찾았습니다.", items=items)
+    result["truncated"] = len(ranked) > _SEARCH_SHOWN
+    return result
+
+
 _WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
 
 
@@ -574,6 +634,7 @@ TOOLS = [
     meeting_report_correction,
     meeting_reports,
     meeting_report_body,
+    search_reports,
     role_alignment,
     weekly_reports,
     weekly_report_schedule,

@@ -2031,6 +2031,46 @@ def team_meeting_report(
     return _report_read(row, editor, corrector), row.draft_id, at
 
 
+@dataclass(frozen=True)
+class SearchableReport:
+    """A meeting report as ``tools.search_reports`` reads it: ``text`` is its
+    title line, its body and the correction under it -- not E's footer."""
+
+    meeting_id: str
+    title: str
+    text: str
+    posted: bool
+    held: datetime
+
+
+def searchable_reports(
+    session: Session, team_id: str, *, limit: int, now: datetime | None = None
+) -> list[SearchableReport]:
+    """The team's meeting reports as text to search, newest meeting first, at
+    most ``limit``. Read whole at question time, so a search sees each report
+    as it is now: edited, corrected, with a forgotten line replaced, or gone
+    with its meeting. A meeting past its ``expires_at`` is left out before the
+    hourly sweep deletes it. No membership check, as ``team_meeting_reports``.
+    """
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    rows = session.execute(
+        sa.select(IntelMeetingReport, held)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .where(
+            IntelMeetingReport.team_id == team_id,
+            sa.or_(Meeting.expires_at.is_(None), Meeting.expires_at > (now or datetime.now(UTC))),
+        )
+        .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
+        .limit(limit)
+    ).all()
+    found = []
+    for row, at in rows:
+        title, body, _ = split_report_document(row.body_markdown)
+        text = "\n".join(part for part in (title, body, row.correction_body) if part)
+        found.append(SearchableReport(row.meeting_id, title, text, row.sent_at is not None, at))
+    return found
+
+
 def list_meeting_reports(
     session: Session, team_id: str, *, user_id: str
 ) -> list[MeetingReportRead]:

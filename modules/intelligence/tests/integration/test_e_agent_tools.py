@@ -290,3 +290,119 @@ def test_the_schedule_action_keeps_send_empty_when_it_is_left_out(
     assert result["ok"] is True
     kept = service.weekly_report_schedule(db_session, team)
     assert (kept.weekday, kept.hour, kept.send_empty) == (4, 18, True)
+
+
+# --- search_reports ------------------------------------------------------------
+
+
+def _reported(db_session: Session, team: str, title: str, body: str, **meeting: object) -> str:
+    row = Meeting(team_id=team, title=title, started_at=datetime(2026, 10, 2, 5, tzinfo=UTC))
+    for key, value in meeting.items():
+        setattr(row, key, value)
+    db_session.add(row)
+    db_session.flush()
+    service.save_meeting_report(
+        db_session, row.id, service.meeting_report_document(row, body), draft_id="rdr_s"
+    )
+    return row.id
+
+
+def test_search_reports_finds_a_report_by_what_it_said(db_session: Session, team: str) -> None:
+    _reported(db_session, team, "디자인 회의", "✅ 확정된 할 일\n• 온보딩 화면 문구 정리 — 디자인")
+    payment = _reported(db_session, team, "주간 회의", BODY)
+
+    result = tools.search_reports(db_session, team, "결제 API 얘기한 리포트")
+
+    (item,) = result["items"]
+    assert (item["meeting_id"], item["id"], item["link"]) == (payment, payment, "report")
+    assert (item["date"], item["status"]) == ("2026-10-02", "draft")
+    assert item["body"] == "• 결제 API 스펙 초안 — 백엔드 · 10/2"
+    assert item["title"].startswith("주간 회의")
+    assert result["ok"] is True and result["truncated"] is False
+
+
+def test_search_reports_reads_the_correction_under_a_report(db_session: Session, team: str) -> None:
+    meeting = _reported(db_session, team, "주간 회의", BODY)
+    row = db_session.get(IntelMeetingReport, meeting)
+    assert row is not None
+    row.correction_body = "정정: 배포 일정은 10/9로 미뤘습니다."
+    db_session.flush()
+
+    (item,) = tools.search_reports(db_session, team, "배포 일정")["items"]
+
+    assert item["meeting_id"] == meeting and "배포 일정" in item["body"]
+
+
+def test_search_reports_finds_a_weekly_report(db_session: Session, team: str) -> None:
+    db_session.add(
+        IntelReport(
+            team_id=team,
+            period_start=date(2026, 10, 5),
+            period_end=date(2026, 10, 12),
+            body_markdown="*주간 리포트*\n할 일 완료율 40% · 기한 지남 3건",
+            metrics_json={},
+            source_meeting_ids=[],
+        )
+    )
+    db_session.flush()
+
+    (item,) = tools.search_reports(db_session, team, "완료율")["items"]
+
+    assert item["title"] == "주간 리포트 2026-10-05 ~ 2026-10-12"
+    assert item["date"] == "2026-10-05" and "meeting_id" not in item
+    assert "완료율 40%" in item["body"]
+
+
+def test_search_reports_never_reads_another_teams(db_session: Session, team: str) -> None:
+    other = Team(name="Other")
+    db_session.add(other)
+    db_session.flush()
+    _reported(db_session, other.id, "남의 회의", BODY)
+
+    assert tools.search_reports(db_session, team, "결제 API")["items"] == []
+
+
+def test_search_reports_leaves_out_a_meeting_past_its_window(
+    db_session: Session, team: str
+) -> None:
+    """The hourly sweep has not deleted it yet; the search does not wait for it."""
+    now = datetime.now(UTC)
+    _reported(db_session, team, "지난 회의", BODY, expires_at=now - timedelta(hours=1))
+    kept = _reported(db_session, team, "남은 회의", BODY, expires_at=now + timedelta(days=1))
+
+    found = tools.search_reports(db_session, team, "결제")["items"]
+
+    assert [i["meeting_id"] for i in found] == [kept]
+
+
+def test_search_reports_shows_three_and_says_more_matched(db_session: Session, team: str) -> None:
+    for n in range(4):
+        _reported(db_session, team, f"회의 {n}", BODY)
+
+    result = tools.search_reports(db_session, team, "결제 API")
+
+    assert len(result["items"]) == 3 and result["truncated"] is True
+    assert result["items"][0]["score"] == 1.0
+
+
+def test_search_reports_cuts_the_line_it_shows(db_session: Session, team: str) -> None:
+    _reported(db_session, team, "긴 회의", "• " + "가" * 300 + " 결제 API " + "나" * 300)
+
+    (item,) = tools.search_reports(db_session, team, "결제 API")["items"]
+
+    assert len(item["body"]) <= 160 and "결제 API" in item["body"]
+
+
+def test_search_reports_refuses_an_empty_query(db_session: Session, team: str) -> None:
+    result = tools.search_reports(db_session, team, "  ")
+
+    assert result["ok"] is False and result["reason"] == "empty query"
+
+
+def test_search_reports_says_so_when_nothing_matches(db_session: Session, team: str) -> None:
+    _reported(db_session, team, "주간 회의", BODY)
+
+    result = tools.search_reports(db_session, team, "디자인 시안")
+
+    assert result["ok"] is True and result["items"] == []
+    assert "찾지 못했습니다" in result["summary"]
