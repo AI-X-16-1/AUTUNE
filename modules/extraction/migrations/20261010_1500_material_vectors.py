@@ -20,7 +20,7 @@ Owner: 강민구. Apply with `alembic upgrade heads` (plural).
 See docs/engineering/migrations.md.
 
 Revision ID: 7b3e9d2f5a61
-Revises: 5d1a7c3e9b24
+Revises: 3b8f1d6a2c47
 Create Date: 2026-10-10 15:00:00.000000
 """
 
@@ -33,7 +33,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 
 revision: str = "7b3e9d2f5a61"
-down_revision: str | None = "5d1a7c3e9b24"  # extraction: material uploads
+down_revision: str | None = "3b8f1d6a2c47"  # extraction: material settings
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = "aad0ea392ddc"  # core: enable_pgvector
 

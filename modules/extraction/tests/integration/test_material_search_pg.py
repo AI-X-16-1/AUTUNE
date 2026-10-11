@@ -163,7 +163,7 @@ def test_the_vector_revision_comes_off_and_goes_back_on(db_engine: sa.Engine) ->
     root = repo_root()
     assert "embedding" in column_names("ext_material_chunks")
 
-    subprocess.run([*ALEMBIC, "downgrade", "5d1a7c3e9b24"], check=True, cwd=root)
+    subprocess.run([*ALEMBIC, "downgrade", "3b8f1d6a2c47"], check=True, cwd=root)
     assert "embedding" not in column_names("ext_material_chunks")
     assert "embedding_model" not in column_names("ext_materials")
     assert "text" in column_names("ext_material_chunks")
