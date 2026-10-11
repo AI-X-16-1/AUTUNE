@@ -5,6 +5,7 @@ import { Button } from "@/shared/ui";
 import { timecode } from "../format";
 import { KIND_LABELS, type RecordingState, type UtteranceKind } from "../types";
 import { KindMark } from "./KindTag";
+import { Spinner } from "./Spinner";
 
 /**
  * The right rail: how long this has been running, what it has found, and the
@@ -37,6 +38,7 @@ export function LiveRail({
   onPause,
   onResume,
   onStop,
+  stopping = false,
 }: {
   state: RecordingState;
   elapsedSeconds: number;
@@ -56,6 +58,10 @@ export function LiveRail({
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
+  /** 녹음 종료 was pressed and the last row is still on its way: the server
+   * transcribes what it holds before it answers, which takes seconds, and a
+   * button that did nothing visible read as a press that did not land. */
+  stopping?: boolean;
 }) {
   const progress =
     plannedSeconds && plannedSeconds > 0
@@ -175,19 +181,26 @@ export function LiveRail({
             controls someone reaches for mid-meeting, sized to be hit without
             looking. */}
         <div className="flex items-center gap-1" style={{ marginTop: "var(--space-row)" }}>
-          {recording ? (
+          {recording && !stopping ? (
             <Button tone="secondary" className="flex-1" onClick={onPause}>
               일시정지
             </Button>
           ) : null}
-          {state === "paused" ? (
+          {state === "paused" && !stopping ? (
             <Button tone="secondary" className="flex-1" onClick={onResume}>
               이어서 녹음
             </Button>
           ) : null}
           {state === "ended" ? null : (
-            <Button tone="primary" className="flex-1" onClick={onStop}>
-              녹음 종료
+            <Button tone="primary" className="flex-1 gap-2" onClick={onStop} loading={stopping}>
+              {stopping ? (
+                <>
+                  <Spinner />
+                  마무리하는 중…
+                </>
+              ) : (
+                "녹음 종료"
+              )}
             </Button>
           )}
         </div>

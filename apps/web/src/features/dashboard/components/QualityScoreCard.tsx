@@ -85,9 +85,17 @@ function bucketByWeek(scores: DashboardScoreEntry[], weeks: number): WeekBucket[
     .map(([weekStart, { total, count }]) => ({ weekStart, average: total / count }));
 }
 
-/** The Monday (UTC) starting the week `iso` falls in, as `YYYY-MM-DD`. */
-function mondayOf(iso: string): string {
-  const date = new Date(iso);
+/** Korea Standard Time is UTC+9 all year: no daylight saving to follow. */
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+/**
+ * The Monday starting the week `iso` falls in, in Korean time, as
+ * `YYYY-MM-DD` (#231). A meeting scored on Monday 00:00-08:59 KST is still
+ * Sunday in UTC, so a UTC week put it in the bar before; the weekly report
+ * already splits weeks at midnight KST.
+ */
+export function mondayOf(iso: string): string {
+  const date = new Date(new Date(iso).getTime() + KST_OFFSET_MS);
   const daysSinceMonday = (date.getUTCDay() + 6) % 7;
   date.setUTCDate(date.getUTCDate() - daysSinceMonday);
   return date.toISOString().slice(0, 10);

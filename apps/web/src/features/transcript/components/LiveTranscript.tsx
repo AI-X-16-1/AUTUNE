@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import { RecordingFrame, StatusDot } from "@/shared/ui";
 
 import type { LiveRow, RecordingState, UtteranceKind } from "../types";
@@ -55,8 +57,11 @@ export function LiveTranscript({
   onPause,
   onResume,
   onStop,
+  stopping = false,
   classified = false,
   microphone,
+  onResearch,
+  research,
 }: {
   state: RecordingState;
   rows: LiveRow[];
@@ -66,6 +71,8 @@ export function LiveTranscript({
   onPause?: () => void;
   onResume?: () => void;
   onStop?: () => void;
+  /** 녹음 종료 was pressed and the session is finishing (LiveRail). */
+  stopping?: boolean;
   /** Whether module B has reported on this meeting.
    *
    * Not derived from the rows: a meeting B analysed and found nothing in looks
@@ -75,6 +82,10 @@ export function LiveTranscript({
   classified?: boolean;
   /** Undefined when the caller has no microphone to report on. */
   microphone?: MicrophoneStatus;
+  /** Ask the agent to look up the row at this index (the 조사 button). */
+  onResearch?: (index: number) => void;
+  /** The 회의 중 조사 panel, drawn in the right rail under the controls. */
+  research?: ReactNode;
 }) {
   const counts = classified ? countKinds(rows) : undefined;
 
@@ -102,15 +113,19 @@ export function LiveTranscript({
                   : "전사된 내용이 없습니다."}
               </p>
             ) : (
-              rows.map((row) => (
-                <TranscriptRow key={row.utterance.id} row={row} />
+              rows.map((row, i) => (
+                <TranscriptRow
+                  key={row.utterance.id}
+                  row={row}
+                  onResearch={onResearch ? () => onResearch(i) : undefined}
+                />
               ))
             )}
           </main>
           <StatusBar microphone={microphone} />
         </div>
 
-        <div className="border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
+        <div className="overflow-y-auto border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
           <LiveRail
             state={state}
             elapsedSeconds={elapsedSeconds}
@@ -120,7 +135,9 @@ export function LiveTranscript({
             onPause={onPause}
             onResume={onResume}
             onStop={onStop}
+            stopping={stopping}
           />
+          {research}
         </div>
       </div>
     </>

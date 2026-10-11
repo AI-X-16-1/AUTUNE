@@ -759,6 +759,17 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
       (``statement_resolved``; the user, 2026-10-06). Whether it cites a line
       has no part in it.
 
+    And every short title in the meeting goes, on the rows drawn from the
+    speech and on the rest (module B's owner, 2026-10-10). A title is a model's
+    line about one row, written in a request that carried the meeting's other
+    sentences too, and one word of it may be new to its own sentence
+    (``pipeline.title.accept``) -- so it can be a word of a row this very call
+    deletes or blanks, and no title says which request wrote it. Like the
+    written summary below, it is model output nobody accepted, and the next
+    run asks again from the sentences that are left. A title already sent in
+    a copy outside is not reached by this: only a row whose text changed is
+    queued to follow, as before.
+
     Nothing is republished here: copies C, D and E already received through
     ``ExtractionResult`` are theirs, and stay until they act on the same signal
     (#601 review).
@@ -796,6 +807,11 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
         .on_conflict_do_nothing(index_elements=["utterance_id"])
     )
     session.execute(delete(ExtMeetingSummary).where(ExtMeetingSummary.meeting_id.in_(meeting_ids)))
+    # Under the same lock, for the same reason: ``store_titles`` takes it, so
+    # an answer the model was still writing is either stored before this and
+    # cleared here, or arrives after and is stored only if every sentence of
+    # its request still stands.
+    _forget_titles(session, meeting_ids)
     items = session.scalars(
         select(ExtActionItem)
         .join(ExtActionItemSource, ExtActionItemSource.action_item_id == ExtActionItem.id)
@@ -862,6 +878,28 @@ def forget_speech(session: Session, utterance_ids: Collection[str]) -> SpeechFor
             changed_decisions.append(decision.id)
     session.flush()
     return SpeechForgotten(tuple(deleted), tuple(changed), tuple(changed_decisions))
+
+
+def _forget_titles(session: Session, meeting_ids: Collection[str]) -> None:
+    """Take the short title off every item and decision of ``meeting_ids``.
+
+    Row by row and not one ``UPDATE``: ``forget_speech`` goes on to read some
+    of these rows, and they must not come back holding the title. Read afresh,
+    for a title stored since this session first loaded the row."""
+    titled_items = session.scalars(
+        select(ExtActionItem)
+        .where(ExtActionItem.meeting_id.in_(meeting_ids), ExtActionItem.title.is_not(None))
+        .execution_options(populate_existing=True)
+    ).all()
+    for item in titled_items:
+        item.title = None
+    titled_decisions = session.scalars(
+        select(ExtDecision)
+        .where(ExtDecision.meeting_id.in_(meeting_ids), ExtDecision.title.is_not(None))
+        .execution_options(populate_existing=True)
+    ).all()
+    for decision in titled_decisions:
+        decision.title = None
 
 
 def withdraw_confirmed_draft(session: Session, confirmation: ExtConfirmation) -> int:
@@ -3916,10 +3954,22 @@ def title_targets(session: Session, meeting_id: str) -> list[TitleTarget]:
 def store_titles(
     session: Session, targets: Sequence[TitleTarget], titles: Sequence[str | None]
 ) -> int:
-    """Each title onto its row, if the row still says the sentence it is of.
+    """Each title onto its row, if the row still says the sentence it is of
+    -- and none at all when a sentence the request carried is gone.
 
-    The model answered with no session open: a row edited, rebuilt or deleted
-    in that time keeps what it has. Returns how many were written."""
+    The model answered with no session open: a row edited or rebuilt in that
+    time keeps what it has. A row deleted in that time, or one whose speaker
+    deleted the line it was (``SPEECH_DELETED_TEXT``), stops the whole answer:
+    the request carried that sentence beside the others, one word of any of
+    these titles may be its word, and it is no longer stored anywhere. So the
+    rows are read again here, under the lock ``forget_speech`` holds while it
+    drops the words and clears the meeting's titles; the two take turns, and
+    whichever comes second leaves no title written from a deleted sentence.
+    Returns how many were written."""
+    for meeting_id in _meetings_of(session, targets):
+        lock_summary(session, meeting_id)
+    if any(_sentence_gone(session, target) for target in targets):
+        return 0
     written = 0
     for target, title in zip(targets, titles, strict=True):
         if title is None:
@@ -3937,6 +3987,27 @@ def store_titles(
         written += 1
     session.flush()
     return written
+
+
+def _meetings_of(session: Session, targets: Sequence[TitleTarget]) -> list[str]:
+    """The meetings ``targets`` are rows of, in id order so two stores cannot
+    deadlock. Read as columns: the lock has to be held before a row is loaded."""
+    found: set[str] = set()
+    for model, kind in ((ExtActionItem, "item"), (ExtDecision, "decision")):
+        ids = [target.id for target in targets if target.kind == kind]
+        if ids:
+            found.update(session.scalars(select(model.meeting_id).where(model.id.in_(ids))))
+    return sorted(found)
+
+
+def _sentence_gone(session: Session, target: TitleTarget) -> bool:
+    """Whether the sentence a title request carried is stored no longer: its
+    row deleted, or reading the line that says its speech was deleted."""
+    if target.kind == "item":
+        item = session.get(ExtActionItem, target.id, populate_existing=True)
+        return item is None or item.description == SPEECH_DELETED_TEXT
+    decision = session.get(ExtDecision, target.id, populate_existing=True)
+    return decision is None or decision.statement == SPEECH_DELETED_TEXT
 
 
 def _edited_description(session: Session, action_item_id: str) -> bool:
@@ -5453,7 +5524,9 @@ def lock_summary(session: Session, meeting_id: str) -> None:
     """Hold the meeting's summary lock for the rest of ``session``'s transaction.
 
     What makes storing a summary and forgetting speech take turns
-    (``store_meeting_summary``, ``forget_speech``). A row lock cannot: a first
+    (``store_meeting_summary``, ``forget_speech``), and storing the meeting's
+    short titles too (``store_titles``): both are a model's answer about
+    sentences the deletion may be taking away. A row lock cannot: a first
     summary has no row yet for the deletion to wait on. Keyed in B's own
     namespace, like ``notion_setup.lock_setup``. PostgreSQL only; SQLite (unit
     tests) has no such lock and runs one writer anyway."""

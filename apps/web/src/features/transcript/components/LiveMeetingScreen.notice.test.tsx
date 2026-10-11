@@ -17,6 +17,8 @@ vi.mock("../api", () => ({
   attestConsent: (meetingId: string) => attest(meetingId),
   // The top bar's own title read; left unanswered, it draws no title.
   getMeeting: () => new Promise(() => undefined),
+  // The 회의 중 조사 panel's read; nothing looked up yet.
+  listLiveResearch: () => Promise.resolve([]),
 }));
 
 const start = vi.fn<() => Promise<void>>();
