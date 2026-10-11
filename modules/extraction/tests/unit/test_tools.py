@@ -992,10 +992,10 @@ def test_another_teams_meeting_has_no_minutes_here(session: Session) -> None:
 
 
 def test_minutes_are_a_read_the_agent_registry_collects() -> None:
-    """What ``autune_agent.main.registry.collect_tools`` relies on, checked from
-    here since a module may not import it: listed in ``TOOLS`` and not a write,
-    a docstring that starts with when to use it, the session first, and the
-    run's ``team_id`` for ``bind_scope`` to fill -- never the model."""
+    """What ``autune_agent.main.registry.collect_tools`` relies on: listed in
+    ``TOOLS`` and not a write, a docstring that starts with when to use it, the
+    session first, and the run's ``team_id`` for ``bind_scope`` to fill --
+    never the model."""
     assert tools.meeting_minutes in tools.TOOLS
     assert tools.meeting_minutes not in tools.ACTIONS
     assert tools.meeting_minutes not in getattr(tools, "PERSONAL_ONLY_TOOLS", [])
@@ -1003,6 +1003,39 @@ def test_minutes_are_a_read_the_agent_registry_collects() -> None:
     params = list(inspect.signature(tools.meeting_minutes).parameters)
     assert params == ["session", "team_id", "meeting_id"]
     assert set(tools.RUN_SCOPE) <= set(params)
+
+
+def test_the_registry_collects_the_minutes_and_binds_them_to_the_runs_meeting(
+    session: Session,
+) -> None:
+    """Through the agent layer as a run calls it (``collect_tools``, ``Toolbox``;
+    the test is outside ``src``, where import-linter does not look): the run's
+    meeting is filled in, another team's meeting is refused before the tool
+    runs, and the run's trace keeps the tool's name and ids only."""
+    from autune_agent.main.registry import CallBudget, RunScope, Toolbox, collect_tools
+
+    decision(session, "dec_ok", status="confirmed")
+    budget = CallBudget()
+    toolbox = Toolbox(
+        collect_tools(),
+        session,
+        budget,
+        allowed=["extraction.meeting_minutes"],
+        scope=RunScope(team_id=TEAM, meeting_id=MEETING),
+    )
+
+    result = toolbox.call("extraction.meeting_minutes")
+    refused = toolbox.call("extraction.meeting_minutes", meeting_id=OTHER_MEETING)
+
+    assert result.ok and result.evidence == ["dec_ok"]
+    assert result.items[0].body.startswith("회의록 — 주간 회의\n")
+    assert refused.ok is False and refused.items == []
+    assert budget.steps[0] == {
+        "tool": "extraction.meeting_minutes",
+        "ok": True,
+        "evidence": ["dec_ok"],
+        "truncated": False,
+    }
 
 
 # --- person_action_items ----------------------------------------------------------
