@@ -41,7 +41,7 @@ describe("useCarriedAgenda", () => {
     await waitFor(() => expect(view.result.current).toHaveLength(1));
 
     view.rerender({ current: brief("mtg_b", "old_b") });
-    await waitFor(() => expect(lines).toHaveBeenCalledWith("old_b"));
+    await waitFor(() => expect(lines).toHaveBeenCalledWith("old_b", expect.anything()));
 
     const underTheNewBrief = renders.filter((render) => render.earlier === "old_b");
     expect(underTheNewBrief.length).toBeGreaterThan(0);
@@ -144,10 +144,48 @@ describe("useCarriedAgenda, while a source is still out", () => {
     await waitFor(() => expect(view.result.current.waiting).toBe(false));
 
     view.rerender({ current: brief("mtg_b", "old_b") });
-    await waitFor(() => expect(lines).toHaveBeenCalledWith("old_b"));
+    await waitFor(() => expect(lines).toHaveBeenCalledWith("old_b", expect.anything()));
 
     const underTheNewBrief = renders.filter((render) => render.earlier === "old_b");
     expect(underTheNewBrief.length).toBeGreaterThan(0);
     expect(underTheNewBrief.every((render) => render.waiting)).toBe(true);
+  });
+});
+
+// A source is also told which meeting the brief is for and its title, both
+// already on the brief: the team's uploaded materials are searched by that
+// title (#1147 B2). Asked again when either changes, never under the old one.
+describe("useCarriedAgenda, what a source is told about the brief", () => {
+  it("hands every source the brief's meeting id and title beside the earlier meeting", async () => {
+    const lines = vi.fn<CarriedSource["lines"]>(() => Promise.resolve([]));
+    // One list for every render, as the route's module-level list is.
+    const sources = [{ label: "올린 자료", lines }];
+    const current = brief("mtg_a", "old_a");
+    renderHook(() => useCarriedAgenda(current, sources));
+
+    await waitFor(() =>
+      expect(lines).toHaveBeenCalledWith("old_a", { meetingId: "mtg_a", title: "주간 회의" }),
+    );
+  });
+
+  it("asks again when only the brief's title changes, and drops what the old title answered", async () => {
+    const lines = vi.fn<CarriedSource["lines"]>((_earlier, about) =>
+      about.title === "주간 회의"
+        ? Promise.resolve([{ title: "출시 계획" }])
+        : new Promise(() => undefined),
+    );
+    const sources = [{ label: "올린 자료", lines }];
+    const view = renderHook(({ current }) => useCarriedAgenda(current, sources), {
+      initialProps: { current: brief("mtg_a", "old_a") },
+    });
+    await waitFor(() => expect(view.result.current.groups).toHaveLength(1));
+
+    view.rerender({ current: { ...brief("mtg_a", "old_a"), title: "출시 점검" } });
+
+    expect(view.result.current.groups).toEqual([]);
+    await waitFor(() =>
+      expect(lines).toHaveBeenCalledWith("old_a", { meetingId: "mtg_a", title: "출시 점검" }),
+    );
+    expect(view.result.current.waiting).toBe(true);
   });
 });

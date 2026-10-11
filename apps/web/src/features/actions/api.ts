@@ -282,6 +282,13 @@ async function refusedBy(response: Response): Promise<ApiError> {
 }
 
 /**
+ * Which team a materials call is about: the team's id, or one of its meetings
+ * -- the pre-meeting brief knows its meeting and not its team (#1147 B2).
+ */
+const materialScope = (team: string | IntegrationScope) =>
+  scopeQuery(typeof team === "string" ? { teamId: team } : team);
+
+/**
  * Ask the team's uploaded materials a question. A POST, so that the question
  * travels in the body: it is a person's words, and an address is logged by
  * everything it passes through.
@@ -291,11 +298,11 @@ async function refusedBy(response: Response): Promise<ApiError> {
  * are the framework's (`refusedBy`).
  */
 export async function searchMaterials(
-  teamId: string,
+  team: string | IntegrationScope,
   question: string,
 ): Promise<MaterialSearchAnswer> {
   const response = await fetch(
-    `${API_BASE}/api/extraction/materials/search?team_id=${encodeURIComponent(teamId)}`,
+    `${API_BASE}/api/extraction/materials/search?${materialScope(team)}`,
     {
       method: "POST",
       headers: { "content-type": "application/json", ...authHeaders() },
@@ -307,10 +314,8 @@ export async function searchMaterials(
 }
 
 /** What the server takes as an upload, and whether it takes one at all. */
-export const getMaterialUploadRules = (teamId: string) =>
-  api.extraction<MaterialUploadRules>(
-    `/materials/upload-rules?team_id=${encodeURIComponent(teamId)}`,
-  );
+export const getMaterialUploadRules = (team: string | IntegrationScope) =>
+  api.extraction<MaterialUploadRules>(`/materials/upload-rules?${materialScope(team)}`);
 
 /**
  * Send a file for the team's shelf: a form of exactly two parts, `title` and

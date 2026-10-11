@@ -1,17 +1,17 @@
 "use client";
 
-import { EARLIER_ITEMS_AGENDA } from "@/features/actions";
+import { EARLIER_ITEMS_AGENDA, MATERIALS_BRIEF_AGENDA } from "@/features/actions";
 import { ContextTab } from "@/features/context";
 import { EARLIER_GAPS_AGENDA } from "@/features/gap";
 
 /**
  * What the brief's agenda draft carries from other modules (#1147), in the
  * order drawn under the brief's own Jira issues: what the earlier meeting left
- * open (C), then its to-dos nobody finished (B). Both are about the one
- * meeting the brief names as the earlier one. A further source — a team's
- * 자료, once they are read (#817) — joins by being added here.
+ * open (C), then its to-dos nobody finished (B), then the team's uploaded
+ * materials nearest this meeting's title (B, #1147 B2). The first two are
+ * about the one meeting the brief names as the earlier one.
  */
-const AGENDA_SOURCES = [EARLIER_GAPS_AGENDA, EARLIER_ITEMS_AGENDA];
+const AGENDA_SOURCES = [EARLIER_GAPS_AGENDA, EARLIER_ITEMS_AGENDA, MATERIALS_BRIEF_AGENDA];
 
 /**
  * The context tab with the agenda draft's sources joined to it.

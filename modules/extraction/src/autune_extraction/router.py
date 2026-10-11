@@ -652,11 +652,16 @@ def register_material(
 
 @router.get("/materials/upload-rules", response_model=MaterialUploadRules)
 def material_upload_rules(
-    team_id: str, session: SessionDep, reader: CurrentUser
+    session: SessionDep,
+    reader: CurrentUser,
+    team_id: str | None = None,
+    meeting_id: str | None = None,
 ) -> MaterialUploadRules:
     """What this server takes as an upload, in its own numbers, and whether it
-    takes one at all. Members of the team only."""
-    _member_team(session, reader, None, team_id)
+    takes one at all. Members of the team only, named by the team or by one of
+    its meetings -- the pre-meeting brief knows its meeting and not its team
+    (#1147 B2)."""
+    _member_team(session, reader, meeting_id, team_id)
     return MaterialUploadRules(
         enabled=get_settings().material_upload,
         max_bytes=material_reading.MAX_BYTES,
@@ -670,11 +675,17 @@ def material_upload_rules(
 
 @router.post("/materials/search", response_model=MaterialAnswer)
 def search_materials(
-    payload: MaterialQuestion, team_id: str, session: SessionDep, reader: CurrentUser
+    payload: MaterialQuestion,
+    session: SessionDep,
+    reader: CurrentUser,
+    team_id: str | None = None,
+    meeting_id: str | None = None,
 ) -> MaterialAnswer:
     """The team's uploaded materials nearest a question, best first: a title
     and a screened excerpt of masked text for each, five at most (#817).
     Members of the team only; anyone else gets the 404 an unknown team gets.
+    The team is named by itself or by one of its meetings: the pre-meeting
+    brief's agenda draft asks by its meeting, which is all it knows (#1147 B2).
 
     The question travels in the body, is masked before it is embedded, and is
     written nowhere -- not to a table, not to a log line -- and not returned.
@@ -682,7 +693,7 @@ def search_materials(
     a route that does not exist."""
     if not get_settings().material_upload:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    team = _member_team(session, reader, None, team_id)
+    team = _member_team(session, reader, meeting_id, team_id)
     found = material_search.search_materials(session, team, payload.question)
     return MaterialAnswer(
         hits=[

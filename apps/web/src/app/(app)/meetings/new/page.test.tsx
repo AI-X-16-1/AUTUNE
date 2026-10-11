@@ -14,6 +14,7 @@ vi.mock("@/features/actions", () => ({
     <p role="note">the notice of module B, {entrance}</p>
   ),
   JIRA_AGENDA: { label: "B's Jira issues", lines: () => Promise.resolve([]) },
+  MATERIALS_AGENDA: { label: "B's uploaded materials", lines: () => Promise.resolve([]) },
 }));
 vi.mock("@/features/gap", () => ({
   OPEN_GAPS_AGENDA: { label: "C's open gaps", lines: () => Promise.resolve([]) },
@@ -43,12 +44,13 @@ vi.mock("@/features/transcript", () => ({
 afterEach(cleanup);
 
 describe("the 새 회의 route", () => {
-  it("lists what the agenda row may draft from: an integration, then earlier meetings", async () => {
+  it("lists what the agenda row may draft from: an integration, then earlier meetings, then uploaded materials", async () => {
     render(await NewMeetingPage({ searchParams: Promise.resolve({}) }));
 
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "B's Jira issues",
       "C's open gaps",
+      "B's uploaded materials",
     ]);
   });
 

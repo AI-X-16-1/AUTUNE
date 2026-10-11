@@ -65,7 +65,7 @@ describe("ContextTab, the agenda draft's carried entries", () => {
 
     expect(await screen.findByText("롤백 계획이 없습니다")).toBeTruthy();
     expect(gaps.lines).toHaveBeenCalledTimes(1);
-    expect(gaps.lines).toHaveBeenCalledWith("mtg_old");
+    expect(gaps.lines).toHaveBeenCalledWith("mtg_old", expect.anything());
   });
 
   it("asks nothing when the brief has no earlier meeting, and still draws the draft section", async () => {
@@ -95,7 +95,7 @@ describe("ContextTab, the agenda draft's carried entries", () => {
     getBrief.mockResolvedValue(brief("mtg_next", "mtg_old"));
     const gaps = held("지난 회의의 미해결 갭");
     render(<ContextTab meetingId="mtg_next" agendaSources={[gaps.source]} />);
-    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("mtg_old"));
+    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("mtg_old", expect.anything()));
 
     // The brief is drawn and the source has not answered.
     expect(draft()).not.toBeNull();
@@ -111,7 +111,7 @@ describe("ContextTab, the agenda draft's carried entries", () => {
     getBrief.mockResolvedValue(brief("mtg_next", "mtg_old"));
     const gaps = held("지난 회의의 미해결 갭");
     render(<ContextTab meetingId="mtg_next" agendaSources={[gaps.source]} />);
-    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("mtg_old"));
+    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("mtg_old", expect.anything()));
     expect(draft()!.textContent).not.toContain("엮을 것이 없습니다.");
 
     gaps.release["mtg_old"]!([]);
@@ -161,10 +161,10 @@ describe("ContextTab, the agenda draft's carried entries", () => {
     const gaps = held("지난 회의의 미해결 갭");
     const sources = [gaps.source];
     const view = render(<ContextTab meetingId="mtg_a" agendaSources={sources} />);
-    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("old_a"));
+    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("old_a", expect.anything()));
 
     view.rerender(<ContextTab meetingId="mtg_b" agendaSources={sources} />);
-    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("old_b"));
+    await waitFor(() => expect(gaps.source.lines).toHaveBeenCalledWith("old_b", expect.anything()));
     // The first meeting's answer lands late, while the second's is still out.
     gaps.release.old_a?.([{ title: "A 회의의 갭" }]);
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -189,7 +189,7 @@ describe("ContextTab, the agenda draft's carried entries", () => {
 
     view.rerender(<ContextTab meetingId="mtg_b" agendaSources={sources} />);
 
-    await waitFor(() => expect(lines).toHaveBeenCalledWith("old_b"));
+    await waitFor(() => expect(lines).toHaveBeenCalledWith("old_b", expect.anything()));
     expect(screen.queryByText("A 회의의 갭")).toBeNull();
   });
 });

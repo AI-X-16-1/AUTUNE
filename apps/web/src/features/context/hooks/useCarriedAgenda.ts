@@ -8,13 +8,20 @@ import type { BriefRead } from "../types";
 export type CarriedLine = { title: string; detail?: string };
 
 /**
+ * What the brief itself says about the meeting it is for, handed to every
+ * source beside the earlier meeting: its id and its title, both already on
+ * the brief. A source that needs neither ignores it.
+ */
+export type CarriedAbout = { meetingId: string; title: string };
+
+/**
  * Something another module has for the agenda draft: its name, shown over its
  * entries, and its lines for the meeting the brief names as the earlier one.
  * The route supplies these; this feature names the shape and imports none.
  */
 export type CarriedSource = {
   label: string;
-  lines: (earlierMeetingId: string) => Promise<readonly CarriedLine[]>;
+  lines: (earlierMeetingId: string, about: CarriedAbout) => Promise<readonly CarriedLine[]>;
 };
 
 /** What one source answered, under its name. Only sources with a line are kept. */
@@ -36,8 +43,11 @@ const NOTHING_ASKED: CarriedAgenda = { groups: [], waiting: false };
  * its own. A brief with no recap asks nothing. A source that cannot be read
  * has nothing — the draft is an addition to the brief and never its error.
  *
- * Answers are kept under the meeting they were asked about, so one that
- * arrives after the brief changed is not shown under the new brief.
+ * Answers are kept under what they were asked about (the brief's meeting and
+ * title, and the earlier meeting), so one that arrives after the brief
+ * changed is not shown under the new brief. Each source is also handed the
+ * brief's own meeting id and title (`CarriedAbout`) — the team's uploaded
+ * materials are searched by that title (#1147 B2).
  *
  * `waiting` is true from the first render of a brief until every source has
  * answered about its earlier meeting, so the panel does not say there is
@@ -49,38 +59,42 @@ export function useCarriedAgenda(
   sources: readonly CarriedSource[] | undefined,
 ): CarriedAgenda {
   const earlier = brief?.recap?.meeting_id ?? null;
+  const meetingId = brief?.meeting_id ?? "";
+  const title = brief?.title ?? "";
+  // What an answer is about. Neither an id nor a title carries a NUL.
+  const asked = earlier === null ? null : [meetingId, title, earlier].join("\u0000");
   const [read, setRead] = useState<{
-    earlier: string | null;
+    asked: string | null;
     answers: Record<number, readonly CarriedLine[]>;
-  }>({ earlier, answers: {} });
+  }>({ asked, answers: {} });
 
   useEffect(() => {
-    if (earlier === null || sources === undefined) return;
+    if (earlier === null || asked === null || sources === undefined) return;
     let current = true;
-    setRead({ earlier, answers: {} });
+    setRead({ asked, answers: {} });
     sources.forEach((source, index) => {
       const settle = (lines: readonly CarriedLine[]) => {
         if (!current) return;
         setRead((previous) =>
-          previous.earlier === earlier
-            ? { earlier, answers: { ...previous.answers, [index]: lines } }
+          previous.asked === asked
+            ? { asked, answers: { ...previous.answers, [index]: lines } }
             : previous,
         );
       };
       source
-        .lines(earlier)
+        .lines(earlier, { meetingId, title })
         .then(settle)
         .catch(() => settle([]));
     });
     return () => {
       current = false;
     };
-  }, [earlier, sources]);
+  }, [asked, earlier, meetingId, title, sources]);
 
-  if (sources === undefined || earlier === null) return NOTHING_ASKED;
+  if (sources === undefined || asked === null) return NOTHING_ASKED;
   // The render in which the brief changes comes before the effect above empties
-  // what was held, so what was held is read only under the meeting it is about.
-  const answers = read.earlier === earlier ? read.answers : {};
+  // what was held, so what was held is read only under what it is about.
+  const answers = read.asked === asked ? read.answers : {};
   return {
     groups: sources
       .map((source, index) => ({ label: source.label, lines: answers[index] ?? [] }))

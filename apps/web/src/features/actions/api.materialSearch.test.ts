@@ -38,6 +38,22 @@ describe("searchMaterials", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ question: "김 대리 출시 일정" });
   });
 
+  it("names the team by one of its meetings when asked so, the question still in the body", async () => {
+    // The pre-meeting brief knows its meeting and not its team (#1147 B2).
+    const fetched = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(
+      async () =>
+        new Response(JSON.stringify({ hits: [], notice: null, more: false }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetched);
+
+    await searchMaterials({ meetingId: "mtg 7" }, "출시 점검 회의");
+
+    const [url, init] = fetched.mock.calls[0] ?? [];
+    expect(url).toMatch(/\/api\/extraction\/materials\/search\?meeting_id=mtg%207$/);
+    expect(decodeURIComponent(String(url))).not.toContain("출시");
+    expect(JSON.parse(String(init?.body))).toEqual({ question: "출시 점검 회의" });
+  });
+
   const failure = async (status: number, body: string): Promise<ApiError> => {
     vi.stubGlobal(
       "fetch",

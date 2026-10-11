@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
 
-from autune_core import Base, Team, TeamMember, User, get_session
+from autune_core import Base, Meeting, Team, TeamMember, User, get_session
 from autune_core.errors import AutuneError, ValidationError
 from autune_extraction import material_search, materials, tools
 from autune_extraction.config import get_settings
@@ -85,7 +85,7 @@ def session() -> Iterator[Session]:
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    shared = {m.__tablename__ for m in (User, Team, TeamMember)}
+    shared = {m.__tablename__ for m in (User, Team, TeamMember, Meeting)}
     owned = {"ext_materials", "ext_material_chunks", "ext_material_alarms"}
     tables = [t for name, t in Base.metadata.tables.items() if name in shared | owned]
     Base.metadata.create_all(engine, tables=tables)
@@ -337,6 +337,69 @@ def test_somebody_not_on_the_team_gets_the_404_of_an_unknown_team(
 
     assert answer.status_code == 404 and answer.json()["error"]["code"] == "not_found"
     assert "출시 일정은" not in answer.text
+
+
+@pytest.mark.usefixtures("enabled")
+def test_a_member_searches_by_one_of_the_teams_meetings(
+    client: TestClient, session: Session, embedder: Recording
+) -> None:
+    """The pre-meeting brief knows its meeting, not its team (#1147 B2)."""
+    session.add(Meeting(id="mtg_1", team_id=TEAM, title="주간 회의"))
+    row = upload(session, LAUNCH, title="출시 계획")
+
+    answer = client.post(
+        f"{PREFIX}/materials/search?meeting_id=mtg_1", json={"question": "출시 일정"}
+    )
+
+    assert answer.status_code == 200
+    assert [hit["material_id"] for hit in answer.json()["hits"]] == [row.id]
+
+
+@pytest.mark.usefixtures("enabled")
+def test_another_teams_meeting_gets_the_404_of_an_unknown_meeting(
+    client: TestClient, session: Session, embedder: Recording
+) -> None:
+    session.add(Team(id=OTHER, name="다른 팀"))
+    session.add(Meeting(id="mtg_2", team_id=OTHER, title="다른 팀 회의"))
+    upload(session, LAUNCH, team=OTHER, title="남의 계획")
+
+    answer = client.post(f"{PREFIX}/materials/search?meeting_id=mtg_2", json={"question": "출시"})
+
+    assert answer.status_code == 404 and answer.json()["error"]["code"] == "not_found"
+    assert "남의" not in answer.text and "출시 일정은" not in answer.text
+
+
+def test_off_with_uploads_a_meeting_scoped_search_is_not_there_either(
+    client: TestClient, session: Session
+) -> None:
+    session.add(Meeting(id="mtg_1", team_id=TEAM, title="주간 회의"))
+
+    answer = client.post(f"{PREFIX}/materials/search?meeting_id=mtg_1", json={"question": "출시"})
+
+    assert answer.status_code == 404 and "error" not in answer.json()
+
+
+def test_neither_team_nor_meeting_is_the_404_of_an_unknown_team(client: TestClient) -> None:
+    rules = client.get(f"{PREFIX}/materials/upload-rules")
+
+    assert rules.status_code == 404 and rules.json()["error"]["code"] == "not_found"
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_the_upload_rules_answer_by_one_of_the_teams_meetings(
+    client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch, on: bool
+) -> None:
+    monkeypatch.setattr(get_settings(), "material_upload", on)
+    session.add(Team(id=OTHER, name="다른 팀"))
+    session.add(Meeting(id="mtg_1", team_id=TEAM, title="주간 회의"))
+    session.add(Meeting(id="mtg_2", team_id=OTHER, title="다른 팀 회의"))
+
+    ours = client.get(f"{PREFIX}/materials/upload-rules?meeting_id=mtg_1")
+    theirs = client.get(f"{PREFIX}/materials/upload-rules?meeting_id=mtg_2")
+
+    assert ours.status_code == 200
+    assert (ours.json()["enabled"], ours.json()["search"]) == (on, on)
+    assert theirs.status_code == 404
 
 
 @pytest.mark.usefixtures("enabled")

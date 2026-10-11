@@ -11,8 +11,8 @@ import type { ActionStatus } from "./types";
  * key and the status are the line under the summary; **the assignee is left
  * out** — a draft agenda is about what to take up, not about who.
  *
- * The team's 자료 are not a source yet: #1147 left the material source after
- * 10-12 (B2), with #817's ingest.
+ * The team's uploaded 자료 are a source of their own (`materialAgenda.ts`,
+ * #1147 B2).
  */
 export const JIRA_AGENDA = {
   label: "열린 Jira 이슈",

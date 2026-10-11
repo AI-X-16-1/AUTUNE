@@ -16,4 +16,10 @@ export { OwnTeamMeetingsNotice } from "./components/OwnTeamMeetingsNotice";
  * to-dos, which the pre-meeting brief lists.
  */
 export { EARLIER_ITEMS_AGENDA, JIRA_AGENDA } from "./agendaSources";
+/**
+ * The team's uploaded materials as an agenda source (#1147 B2): counted by the
+ * new-meeting row, searched by the meeting's title for the brief's draft.
+ * Nothing where the server has uploads off.
+ */
+export { MATERIALS_AGENDA, MATERIALS_BRIEF_AGENDA } from "./materialAgenda";
 export { TeamActionsScreen } from "./components/TeamActionsScreen";
