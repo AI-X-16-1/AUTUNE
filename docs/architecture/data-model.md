@@ -243,8 +243,9 @@ because both must be deletable on request:
 - **User deletion** removes that user's utterances and anything derived from
   them; `privacy.md` section 4 says what "derived" reaches.
 - **Team departure** removes the `team_members` row and nothing else (decided
-  with the user, 2026-10-06, #552): the meeting's record stays, and
-  `participants.user_id` stays too, so the person can still delete their own
+  with the user, 2026-10-06, #552), whether the person leaves or the team's
+  first member removes them -- one code path, `service._depart` in module A:
+  the meeting's record stays, and `participants.user_id` stays too, so the person can still delete their own
   speech afterwards. ADR 0007 would clear that column on departure; it is
   Proposed and not followed on this point -- see `privacy.md` section 4 and
   the ADR's *Not taken yet*.

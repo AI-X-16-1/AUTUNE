@@ -11,8 +11,10 @@ import {
   deleteTeam,
   leaveTeam,
   listPendingInvitations,
+  listRemovableMembers,
   listTeamMembers,
   type PendingInvitation,
+  removeTeamMember,
 } from "../api";
 import { rememberTeam } from "../selectedTeam";
 import type { TeamMember } from "../types";
@@ -57,6 +59,13 @@ import { TeamScope } from "./TeamScope";
  * is typed. The server compares it; the button only waits for something to
  * have been typed, so there is one rule for what counts as the same name.
  *
+ * **The team's first member can take another member off** (#552): the one
+ * who joined earliest of those still on it -- the server says whom the
+ * caller may remove, and the list offers "내보내기" beside exactly those. One
+ * press asks, naming the person and what it does -- what leaving does: they
+ * can no longer read the team, what they said stays, the invitations they
+ * sent are cancelled, and nobody is told -- and a second press does it.
+ *
  * Which of the two the section shows follows the member list. Until that list
  * has been read it shows leaving, and the server's own refusal moves it: a
  * last member who presses leave is shown the deletion, and a deletion refused
@@ -78,6 +87,11 @@ const INPUT_STYLE = {
 } as const;
 
 /** What the server said, as the person can act on it. */
+const REMOVE_REFUSED: Record<string, string> = {
+  not_first_team_member: "구성원은 이 팀에 가장 먼저 들어온 사람만 내보낼 수 있습니다.",
+  not_found: "이미 이 팀에 없는 사람입니다.",
+};
+
 const DELETE_REFUSED: Record<string, string> = {
   team_name_mismatch:
     "입력한 이름이 팀 이름과 다릅니다. 띄어쓰기와 대소문자까지 그대로 입력해 주세요.",
@@ -120,6 +134,22 @@ function Members({ teamId }: { teamId: string }) {
   const [typed, setTyped] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteNote, setDeleteNote] = useState<string | null>(null);
+  // Whom this person may take off the team: nobody unless the server says so.
+  const [removable, setRemovable] = useState<string[]>([]);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeNote, setRemoveNote] = useState<string | null>(null);
+
+  const readRemovable = useCallback(() => {
+    listRemovableMembers(teamId)
+      .then(setRemovable)
+      // Not read is not offered.
+      .catch(() => setRemovable([]));
+  }, [teamId]);
+
+  useEffect(() => {
+    readRemovable();
+  }, [readRemovable]);
 
   const readPending = useCallback(() => {
     listPendingInvitations(teamId)
@@ -210,6 +240,30 @@ function Members({ teamId }: { teamId: string }) {
     }
   };
 
+  const removeMember = async (userId: string) => {
+    setRemoving(true);
+    setRemoveNote(null);
+    try {
+      setMembers(await removeTeamMember(teamId, userId));
+      setRemovable((list) => list.filter((id) => id !== userId));
+      // The invitations they sent went with them.
+      readPending();
+    } catch (error) {
+      const code = error instanceof ApiError ? error.code : null;
+      setRemoveNote(
+        (code && REMOVE_REFUSED[code]) ??
+          "구성원을 내보내지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      );
+      // The list on screen may be old: read who is on the team, and whom
+      // this person may remove, again.
+      readMembers();
+      readRemovable();
+    } finally {
+      setConfirming(null);
+      setRemoving(false);
+    }
+  };
+
   useEffect(() => {
     let current = true;
     readMembers(() => current);
@@ -242,11 +296,57 @@ function Members({ teamId }: { teamId: string }) {
                 className="border-b border-[var(--color-hairline)] text-[var(--color-ink-strong)]"
                 style={{ paddingBlock: "var(--space-8)", fontSize: "var(--text-rowBody)" }}
               >
-                {member.name}
+                <div className="flex flex-wrap items-center gap-3">
+                  <span>{member.name}</span>
+                  {removable.includes(member.user_id) && confirming !== member.user_id ? (
+                    <span className="ml-auto">
+                      <Button
+                        tone="text"
+                        size="compact"
+                        onClick={() => {
+                          setConfirming(member.user_id);
+                          setRemoveNote(null);
+                        }}
+                        aria-label={`${member.name} 님 내보내기`}
+                      >
+                        내보내기
+                      </Button>
+                    </span>
+                  ) : null}
+                </div>
+                {confirming === member.user_id ? (
+                  <div className="mt-2">
+                    <p style={META}>
+                      {member.name} 님을 이 팀에서 내보낼까요? 내보내면 {member.name} 님은 이 팀의
+                      회의와 기록을 더 볼 수 없습니다. {member.name} 님이 이 팀 회의에서 한 말과
+                      담당한 항목은 팀의 기록으로 남고, {member.name} 님이 보낸 초대 중 아직
+                      수락되지 않은 것은 함께 취소됩니다. {member.name} 님에게 따로 알림은 가지
+                      않습니다. 다시 들어오려면 팀원의 초대가 필요합니다.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <Button
+                        tone="quiet"
+                        size="compact"
+                        loading={removing}
+                        onClick={() => void removeMember(member.user_id)}
+                      >
+                        {member.name} 님 내보내기
+                      </Button>
+                      <Button tone="text" size="compact" onClick={() => setConfirming(null)}>
+                        취소
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
         )}
+        {removeNote ? (
+          <p role="alert" className="mt-2" style={META}>
+            {removeNote}
+          </p>
+        ) : null}
       </section>
 
       <section className="mt-8" aria-labelledby="invite-title">

@@ -18,6 +18,10 @@ const cancel = vi.fn<(teamId: string, id: number) => Promise<PendingInvitation[]
 const leave = vi.fn<(teamId: string) => Promise<Team[]>>();
 const remove = vi.fn<(teamId: string, name: string) => Promise<Team[]>>();
 const membersOf = vi.fn<(teamId: string) => Promise<{ user_id: string; name: string }[]>>();
+const removable = vi.fn<(teamId: string) => Promise<string[]>>();
+const expel = vi.fn<
+  (teamId: string, userId: string) => Promise<{ user_id: string; name: string }[]>
+>();
 const invite = vi.fn<(teamId: string, email: string) => Promise<{ token: string; expires_at: string }>>();
 vi.mock("../api", () => ({
   listTeams: () => Promise.resolve([{ team_id: "team_1", name: "Alpha" }]),
@@ -27,6 +31,8 @@ vi.mock("../api", () => ({
   cancelInvitation: (teamId: string, id: number) => cancel(teamId, id),
   leaveTeam: (teamId: string) => leave(teamId),
   deleteTeam: (teamId: string, name: string) => remove(teamId, name),
+  listRemovableMembers: (teamId: string) => removable(teamId),
+  removeTeamMember: (teamId: string, userId: string) => expel(teamId, userId),
 }));
 vi.mock("@/shared/api/auth", () => ({
   getGmailConnection: () => Promise.resolve(null),
@@ -53,12 +59,25 @@ beforeEach(() => {
   pendingList.mockResolvedValue([]);
   // A team of two: the screen as it was before #1007.
   membersOf.mockResolvedValue([ME, MATE]);
+  // Not the team's first member unless a test says so.
+  removable.mockResolvedValue([]);
   vi.stubGlobal("location", { ...window.location, assign });
 });
 
 afterEach(() => {
   cleanup();
-  for (const mock of [pendingList, cancel, leave, remove, membersOf, invite, remember, assign])
+  for (const mock of [
+    pendingList,
+    cancel,
+    leave,
+    remove,
+    membersOf,
+    invite,
+    remember,
+    assign,
+    removable,
+    expel,
+  ])
     mock.mockReset();
   vi.unstubAllGlobals();
 });
@@ -396,5 +415,71 @@ describe("MembersSettingsScreen, for the one person left on the team (#1007)", (
     const said = (await screen.findByRole("alert")).textContent ?? "";
     expect(said).toBe("팀을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  describe("taking another member off (#552)", () => {
+    const expelButton = () => screen.findByRole("button", { name: "서연 님 내보내기" });
+
+    it("offers it to nobody the server did not name", async () => {
+      render(<MembersSettingsScreen />);
+
+      await screen.findByText("서연");
+      await waitFor(() => expect(removable).toHaveBeenCalledWith("team_1"));
+      expect(screen.queryByRole("button", { name: /내보내기/ })).toBeNull();
+    });
+
+    it("offers it beside exactly the members the first member may remove", async () => {
+      removable.mockResolvedValue([MATE.user_id]);
+      render(<MembersSettingsScreen />);
+
+      await expelButton();
+      expect(screen.queryByRole("button", { name: "민호 님 내보내기" })).toBeNull();
+    });
+
+    it("names the person and says what it does before anything is sent", async () => {
+      removable.mockResolvedValue([MATE.user_id]);
+      render(<MembersSettingsScreen />);
+
+      fireEvent.click(await expelButton());
+
+      const said = screen.getByText(/서연 님을 이 팀에서 내보낼까요\?/).textContent ?? "";
+      expect(said).toContain("이 팀의 회의와 기록을 더 볼 수 없습니다");
+      expect(said).toContain("팀의 기록으로 남고");
+      expect(said).toContain("함께 취소됩니다");
+      expect(said).toContain("따로 알림은 가지 않습니다");
+      expect(expel).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "취소" }));
+      expect(screen.queryByText(/내보낼까요/)).toBeNull();
+      expect(expel).not.toHaveBeenCalled();
+    });
+
+    it("removes on the second press and shows the list the server answers with", async () => {
+      removable.mockResolvedValue([MATE.user_id]);
+      expel.mockResolvedValue([ME]);
+      render(<MembersSettingsScreen />);
+
+      fireEvent.click(await expelButton());
+      fireEvent.click(await expelButton());
+
+      await waitFor(() => expect(expel).toHaveBeenCalledWith("team_1", MATE.user_id));
+      await waitFor(() => expect(screen.queryByText("서연")).toBeNull());
+      // Their pending invitations went with them: the list is read again.
+      expect(pendingList).toHaveBeenCalledTimes(2);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    it("says why when the server refuses, and reads the members again", async () => {
+      removable.mockResolvedValue([MATE.user_id]);
+      expel.mockRejectedValue(new ApiError(403, "not_first_team_member", "no"));
+      render(<MembersSettingsScreen />);
+
+      fireEvent.click(await expelButton());
+      fireEvent.click(await expelButton());
+
+      const said = (await screen.findByRole("alert")).textContent ?? "";
+      expect(said).toBe("구성원은 이 팀에 가장 먼저 들어온 사람만 내보낼 수 있습니다.");
+      await waitFor(() => expect(membersOf).toHaveBeenCalledTimes(2));
+      expect(removable).toHaveBeenCalledTimes(2);
+    });
   });
 });

@@ -389,6 +389,14 @@ class TeamMemberSummary(BaseModel):
     name: str
 
 
+class MemberRemoval(BaseModel):
+    """Whom the caller may take off a team (#552): every other member for the
+    member who joined earliest of those still on it, nobody for anybody else.
+    The caller's own permission -- the member list itself stays id and name."""
+
+    removable: list[str]
+
+
 class ConsentAttestation(BaseModel):
     """What a member sends to say everyone in the recording consented.
 

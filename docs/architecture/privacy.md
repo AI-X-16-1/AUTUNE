@@ -308,10 +308,21 @@ person's, those counts are that person's completion record. So:
   delete them. That deletion is not per team -- it removes their speech
   everywhere at once -- and somebody who has left can no longer open the
   meetings to look first; the screen says both before they leave.
-  A member leaves only by their own act
+  A member leaves by their own act
   (`DELETE /api/audio/teams/{team_id}/members/me`), and the last member of a
   team cannot leave it: a team with nobody on it could be neither read nor
   deleted. What the last member can do is delete the team (the next rule).
+  **The team's first member -- whoever joined earliest of those still on
+  it; when they go, the next earliest -- may take another member off**
+  (`DELETE /api/audio/teams/{team_id}/members/{user_id}`; #552). It is the
+  same departure as leaving, in the same code (`service._depart`): the
+  membership and the pending invitations that
+  member sent to the team go, and nothing else -- what they said stays, their
+  participant rows keep their `user_id`, and their own speech stays theirs to
+  delete. Nobody is notified, the removed person included; the member list
+  shows it. Nobody removes themselves this way (that is leaving), and nobody
+  but the first member removes anybody. No new per-person data is kept: who
+  is first is read from the order of joining.
   This is ADR 0007's ownership rule -- the record belongs to the meeting, and
   leaving is an access change rather than a data change -- **without that
   ADR's mechanism**, which clears `participants.user_id` on departure and
@@ -325,8 +336,9 @@ person's, those counts are that person's completion record. So:
   ADR 0007, #92 -- that ADR carries a dated note on it).
   `DELETE /api/audio/teams/{team_id}`, by the one person still on the team,
   with the team's name typed on the screen and sent in the request's body.
-  A team with two or more members is as it was: nobody deletes it, and nobody
-  takes anybody else off it.
+  A team with two or more members is as it was: nobody deletes it. Its first
+  member may take somebody else off (the rule above), which is a departure,
+  not a deletion.
   - **What goes.** The `teams` row and every row PostgreSQL reaches from it or
     from its meetings by `ON DELETE CASCADE`: the membership, the team's
     integrations with their tokens, pending invitations, masking rules, every
@@ -408,10 +420,10 @@ has not signed up -- and it does not wait for the analysis window: the row
 is deleted when the invitation is accepted, when it lapses (seven days; the
 retention sweep, and the next invitation made for that team), when a new
 invitation to the same address replaces it, when a member of the team
-cancels it, when the inviter leaves the team (somebody who is no longer on a
-team brings nobody onto it, so their pending invitations to it go with
-them), when the team or the inviter's account is deleted, and when the
-invited person deletes their own account.
+cancels it, when the inviter leaves the team or is removed from it
+(somebody who is no longer on a team brings nobody onto it, so their pending
+invitations to it go with them), when the team or the inviter's account
+is deleted, and when the invited person deletes their own account.
 The link's token is stored as a hash, and log lines about invitations carry
 ids, never the address.
 While it is pending the address is shown to the members of that team, and
@@ -432,17 +444,13 @@ it is in the same pending list, as a link with no address, where any member
 of the team can cancel it. Its token is stored as a hash like any other,
 and log lines carry ids. Nobody is told when somebody joins by it -- the
 member list shows them. **Somebody who joins by it stays for as long as
-they choose to.** A member can leave a team by their own act (section 4,
-the departure rule), and nobody can take another member off: removing
-another member was never built, and otherwise a `team_members` row goes only
-with the account or the team. So a link that reaches the wrong person admits
-them, with everything the team can read, until they themselves leave -- the
-team cannot put them out -- and the limits above are all there is against
-it: they make it one person within one hour, they do not undo it. This is
-accepted for now, knowingly; a way to remove a member is what would change
-it. A link somebody made goes when they leave the team, like their other
-pending invitations. An invitation for an address is unchanged and is
-still only for that address.
+they choose to,** unless the team's first member takes them off (section
+4, the departure rule). So a link that reaches the wrong person admits them,
+with everything the team can read, until they leave or the first member
+removes them; the limits above make it one person within one hour, and the
+removal is what undoes it. A link somebody made goes when they leave the
+team or are removed from it, like their other pending invitations. An
+invitation for an address is unchanged and is still only for that address.
 
 The inviter may have the link **mailed from their own Gmail** (#552), when
 they ask and only through their own `gmail.send` grant -- Autune runs no mail

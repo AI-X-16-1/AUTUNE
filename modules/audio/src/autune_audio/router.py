@@ -50,6 +50,7 @@ from .schemas import (
     MeetingRename,
     MeetingState,
     MeetingSummary,
+    MemberRemoval,
     MyData,
     PendingInvitation,
     PiiReport,
@@ -244,6 +245,26 @@ def leave_team(team_id: str, user: CurrentUser, session: SessionDep) -> list[Tea
     See ``service.leave_team`` for what stays."""
     service.leave_team(session, team_id=team_id, member=user)
     return _my_teams(session, user)
+
+
+@router.get("/teams/{team_id}/member-removal", response_model=MemberRemoval)
+def member_removal(team_id: str, user: CurrentUser, session: SessionDep) -> MemberRemoval:
+    """Whom the caller may take off this team (#552): the other members when
+    the caller is its first member, nobody otherwise. Their own permission."""
+    return MemberRemoval(removable=service.removable_members(session, team_id=team_id, member=user))
+
+
+@router.delete("/teams/{team_id}/members/{user_id}", response_model=list[TeamMemberSummary])
+def remove_team_member(
+    team_id: str, user_id: str, user: CurrentUser, session: SessionDep
+) -> list[TeamMemberSummary]:
+    """The team's first member takes another member off (#552), and is
+    answered with the member list as it now stands. Declared after
+    ``/members/me``, which is the caller leaving. Refused: 403
+    ``not_first_team_member``, 409 ``remove_self``, 404 for somebody not on
+    the team. What it does is what leaving does; see ``service.remove_member``."""
+    service.remove_member(session, team_id=team_id, user_id=user_id, by=user)
+    return service.members_of(session, team_id=team_id, reader=user)
 
 
 @router.delete("/teams/{team_id}", response_model=list[TeamSummary])

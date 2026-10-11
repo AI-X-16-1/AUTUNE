@@ -294,10 +294,11 @@ class LastTeamMemberError(ConflictError):
 def leave_team(session: Session, *, team_id: str, member: User) -> None:
     """Take ``member`` off ``team_id``, by their own act (#552).
 
-    Only a person's own membership: there is no argument for anybody else's,
-    so nobody is removed from a team by somebody else here. The row is what
-    every module checks before it lets a person read the team's data, so that
-    stops with this commit; their pin goes with the row.
+    Only a person's own membership: there is no argument for anybody else's.
+    Taking somebody else off is ``remove_member``, which ends in the same
+    ``_depart`` as this. The row is what every module checks before it lets a
+    person read the team's data, so that stops with this commit; their pin
+    goes with the row.
 
     **What they said and what they hold stays, and stays theirs to delete**
     (decided with the user, 2026-10-06; privacy.md section 4). Their
@@ -333,18 +334,124 @@ def leave_team(session: Session, *, team_id: str, member: User) -> None:
         # Gone while this request waited for the lock: the same person's
         # other request left first. Refused as for anybody not on the team.
         raise NotATeamMemberError("you are not a member of this team")
+    _depart(session, team_id=team_id, rows=rows, departing=own, removed_by=None)
+
+
+def _depart(
+    session: Session,
+    *,
+    team_id: str,
+    rows: list[TeamMember],
+    departing: TeamMember,
+    removed_by: str | None,
+) -> None:
+    """What a membership ending does, whoever ended it: ``leave_team`` for a
+    person's own, ``remove_member`` for somebody else's. One function so the
+    two cannot drift -- a removed member loses exactly what a member who
+    leaves loses, and keeps exactly what they keep.
+
+    ``rows`` is every membership of the team, already locked by the caller.
+    No module registers a hook on a membership ending: each one checks
+    ``team_members`` at the request (and ``approver_scopes`` joins it), so
+    deleting the row is the whole of it. If a hook is ever added, it goes
+    here, so both paths run it.
+    """
     if len(rows) <= 1:
         raise LastTeamMemberError("the last member of a team cannot leave it")
-    session.delete(own)
+    session.delete(departing)
     result = session.execute(
         sa.delete(AudTeamInvitation).where(
-            AudTeamInvitation.team_id == team_id, AudTeamInvitation.invited_by == member.id
+            AudTeamInvitation.team_id == team_id,
+            AudTeamInvitation.invited_by == departing.user_id,
         )
     )
     withdrawn = int(getattr(result, "rowcount", 0))
     session.flush()
     # Ids and a count: an invitation's address is never logged.
-    log.info("team_left", team_id=team_id, user_id=member.id, invitations_withdrawn=withdrawn)
+    log.info(
+        "team_left",
+        team_id=team_id,
+        user_id=departing.user_id,
+        removed_by=removed_by,
+        invitations_withdrawn=withdrawn,
+    )
+
+
+class NotFirstTeamMemberError(PermissionDeniedError):
+    """Somebody other than the team's first member asked to take a member off.
+    Its own code, so the screen can say who may."""
+
+    code = "not_first_team_member"
+
+
+class RemoveSelfError(ConflictError):
+    """The first member named themselves. Leaving is its own act and its own
+    route (``DELETE /teams/{id}/members/me``), with its own confirmation."""
+
+    code = "remove_self"
+
+
+def first_member_id(rows: list[TeamMember]) -> str | None:
+    """The user id of whoever joined the team earliest among those still on
+    it: the lowest membership id, the order of joining ``team_order`` uses.
+    When they leave, the next earliest becomes first. No column records who
+    made a team, and none is needed (B's owner, #552, 2026-10-06)."""
+    return min(rows, key=lambda row: row.id).user_id if rows else None
+
+
+def removable_members(session: Session, *, team_id: str, member: User) -> list[str]:
+    """The user ids ``member`` may take off ``team_id``: every other member
+    when they are its first member, none otherwise. Ids the member list
+    already shows them; what is new is only their own permission."""
+    require_team_member(session, user_id=member.id, team_id=team_id)
+    rows = list(session.scalars(sa.select(TeamMember).where(TeamMember.team_id == team_id)))
+    if first_member_id(rows) != member.id:
+        return []
+    return sorted(row.user_id for row in rows if row.user_id != member.id)
+
+
+def remove_member(session: Session, *, team_id: str, user_id: str, by: User) -> None:
+    """Take ``user_id`` off ``team_id``, by the team's first member (#552).
+
+    **Who may.** The member who joined earliest of those still on the team
+    (``first_member_id``) -- B's owner's choice on #552, for a team that has
+    no record of who made it. Anybody else is refused, 403
+    ``not_first_team_member``; somebody not on the team, 403 as everywhere.
+
+    **Not yourself.** Naming your own id is 409 ``remove_self``: leaving is
+    ``leave_team``, behind its own confirmation.
+
+    **Exactly what leaving does** (``_depart``): the membership goes, so
+    every module stops letting them read the team at the next request; their
+    pin goes with it; the pending invitations they sent to the team go
+    (somebody no longer on a team brings nobody onto it); what they said and
+    the items they hold stay, and their participant rows keep their
+    ``user_id`` so their own speech stays theirs to delete (privacy.md
+    section 4). **Nobody is notified** -- not the person removed, not the
+    team; the member list shows it.
+
+    Every membership of the team is locked first, as ``leave_team`` and
+    ``team_deletion.delete_team`` lock them, so the first member leaving and
+    removing at once, or two removals of the same person, are counted one
+    after the other. A target that is not (or no longer) on the team is 404.
+    """
+    require_team_member(session, user_id=by.id, team_id=team_id)
+    rows = list(
+        session.scalars(
+            sa.select(TeamMember).where(TeamMember.team_id == team_id).with_for_update()
+        )
+    )
+    if not any(row.user_id == by.id for row in rows):
+        # Left while this request waited for the lock.
+        raise NotATeamMemberError("you are not a member of this team")
+    if user_id == by.id:
+        raise RemoveSelfError("use leave to take yourself off a team")
+    if first_member_id(rows) != by.id:
+        raise NotFirstTeamMemberError("only the team's first member can remove a member")
+    target = next((row for row in rows if row.user_id == user_id), None)
+    if target is None:
+        raise NotFoundError("team member", user_id)
+    _depart(session, team_id=team_id, rows=rows, departing=target, removed_by=by.id)
 
 
 def unpin_team(session: Session, *, team_id: str, member: User) -> None:

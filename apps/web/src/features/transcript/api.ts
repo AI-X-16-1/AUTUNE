@@ -156,6 +156,27 @@ export const leaveTeam = (teamId: string) =>
   });
 
 /**
+ * Whom the caller may take off a team (#552): every other member when the
+ * caller joined it earliest of those still on it, nobody otherwise.
+ */
+export const listRemovableMembers = (teamId: string) =>
+  api
+    .audio<{ removable: string[] }>(`/teams/${encodeURIComponent(teamId)}/member-removal`)
+    .then((answer) => answer.removable);
+
+/**
+ * The team's first member takes another member off (#552). It does what
+ * leaving does; nobody is notified. Answers with the member list as it now
+ * stands. Refused: 403 `not_first_team_member`, 409 `remove_self`, 404 for
+ * somebody no longer on the team.
+ */
+export const removeTeamMember = (teamId: string, userId: string) =>
+  api.audio<TeamMember[]>(
+    `/teams/${encodeURIComponent(teamId)}/members/${encodeURIComponent(userId)}`,
+    { method: "DELETE" },
+  );
+
+/**
  * Delete a team, by the one person left on it (#1007). Answers with the
  * teams they are still on. The name is the team's, typed by the person, and
  * goes in the body: a team's name can name a client, and an address is
