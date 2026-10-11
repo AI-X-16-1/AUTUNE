@@ -6,6 +6,7 @@ error strings reach external error tracking. See docs/architecture/privacy.md.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 
@@ -38,6 +39,42 @@ class ValidationError(AutuneError):
 
     def __init__(self, message: str, field: str | None = None) -> None:
         super().__init__(message, **({"field": field} if field else {}))
+
+
+class SchemaValidationError(AutuneError):
+    """A request that failed its schema, in the shared wire format (#1225).
+
+    FastAPI's default 422 answers ``{"detail": [...]}``, and every entry carries
+    ``input`` -- the value that was sent, a typed RRN or phone number included
+    -- and often ``ctx``. This keeps where the error is (``loc``), what kind it
+    is (``type``) and pydantic's message (``msg``), so the refusal names the
+    field and never repeats the value. ``apps/api`` renders it for every
+    ``RequestValidationError``.
+
+    A message is pydantic's or a validator's own text. Should one ever quote
+    the submitted string, the message is replaced too: the rule is "never the
+    value", not "never the ``input`` key".
+    """
+
+    code = "validation_error"
+    status_code = 422
+
+    def __init__(self, errors: Iterable[Mapping[str, Any]]) -> None:
+        super().__init__(
+            "Request validation failed", errors=[_without_input(error) for error in errors]
+        )
+
+
+def _without_input(error: Mapping[str, Any]) -> dict[str, Any]:
+    sent = error.get("input")
+    message = str(error.get("msg", ""))
+    if isinstance(sent, str) and sent and sent in message:
+        message = "Invalid value"
+    return {
+        "loc": [part if isinstance(part, int) else str(part) for part in error.get("loc", ())],
+        "type": str(error.get("type", "")),
+        "msg": message,
+    }
 
 
 class PermissionDeniedError(AutuneError):

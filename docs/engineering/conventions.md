@@ -78,6 +78,19 @@ Which produces a consistent body:
 Never put transcript text, a file path, or personal data in an error message —
 error strings reach external error tracking.
 
+A request that fails its schema gets the same body (#1225). `apps/api` renders
+every `RequestValidationError` as `autune_core.errors.SchemaValidationError`:
+code `validation_error`, and `details.errors` lists each failure's `loc`,
+`type` and `msg`. FastAPI's `input` and `ctx` are dropped, so a 422 never
+sends the refused value back. A validator message must not quote the value
+either; one that does is replaced with `Invalid value`.
+
+```json
+{"error": {"code": "validation_error", "message": "Request validation failed",
+  "details": {"errors": [{"loc": ["body", "title"], "type": "string_too_long",
+    "msg": "String should have at most 400 characters"}]}}}
+```
+
 ## Logging
 
 Structured logging through `autune_core.logging`:

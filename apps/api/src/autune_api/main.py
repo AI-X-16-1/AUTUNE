@@ -16,11 +16,18 @@ from __future__ import annotations
 from importlib import import_module
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from autune_contracts import MODULES
-from autune_core import AutuneError, configure_logging, get_logger, get_settings
+from autune_core import (
+    AutuneError,
+    SchemaValidationError,
+    configure_logging,
+    get_logger,
+    get_settings,
+)
 from autune_core.auth_router import router as auth_router
 from autune_core.celery_app import make_celery_app
 
@@ -69,6 +76,13 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
     @app.exception_handler(AutuneError)
     async def _autune_error_handler(_: Request, exc: AutuneError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    # A schema refusal in the same wire format, without the value that failed
+    # (#1225): FastAPI's default 422 sends each field's ``input`` back.
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+        refused = SchemaValidationError(exc.errors())
+        return JSONResponse(status_code=refused.status_code, content=refused.to_dict())
 
     @app.get("/health", tags=["meta"])
     def health() -> dict[str, object]:

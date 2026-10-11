@@ -190,6 +190,45 @@ def test_errors_render_a_consistent_body() -> None:
         assert set(body) == {"code", "message", "details"}
 
 
+def test_a_schema_refusal_keeps_the_field_and_drops_the_value() -> None:
+    """#1225: ``input`` and ``ctx`` never reach the wire format."""
+    from autune_core.errors import SchemaValidationError
+
+    error = SchemaValidationError(
+        [
+            {
+                "loc": ("body", "items", 0, "phone"),
+                "type": "string_pattern_mismatch",
+                "msg": "String should match pattern '^x$'",
+                "input": "010-1234-5678",
+                "ctx": {"pattern": "^x$"},
+                "url": "https://errors.pydantic.dev/",
+            },
+            # A validator that quoted the value: the message goes too.
+            {
+                "loc": ("body", "rrn"),
+                "type": "value_error",
+                "msg": "Value error, 900101-1234567 is not allowed",
+                "input": "900101-1234567",
+            },
+        ]
+    )
+
+    body = error.to_dict()
+    assert error.status_code == 422
+    assert body["error"]["code"] == "validation_error"
+    assert body["error"]["details"] == {
+        "errors": [
+            {
+                "loc": ["body", "items", 0, "phone"],
+                "type": "string_pattern_mismatch",
+                "msg": "String should match pattern '^x$'",
+            },
+            {"loc": ["body", "rrn"], "type": "value_error", "msg": "Invalid value"},
+        ]
+    }
+
+
 def test_deletion_hooks_run_for_registered_modules(monkeypatch: pytest.MonkeyPatch) -> None:
     # An empty registry: in the full suite the modules' own hooks are already
     # registered (extraction's since #588), and they need tables this test

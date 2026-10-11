@@ -43,6 +43,7 @@ from .errors import (
     NotFoundError,
     PermissionDeniedError,
     PrivacyViolationError,
+    SchemaValidationError,
     ValidationError,
 )
 from .events import consumer_task_suffix, publish, subscribers
@@ -118,6 +119,7 @@ __all__ = [
     "AutuneError",
     "NotFoundError",
     "ValidationError",
+    "SchemaValidationError",
     "PermissionDeniedError",
     "PrivacyViolationError",
     "ConflictError",
