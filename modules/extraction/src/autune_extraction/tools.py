@@ -1088,8 +1088,10 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
     Returns at most five of the team's uploaded materials nearest the
     question, best first: each a title and one short excerpt of the masked
     text Autune kept (never a whole document), with the material's id as
-    evidence. A value hidden as personal data reads as ``*`` and cannot be
-    recovered. ``question`` is the words to look for, 300 characters at most.
+    evidence. No items, and a summary that says so, when nothing is close
+    enough to the question -- then the documents do not answer it. A value
+    hidden as personal data reads as ``*`` and cannot be recovered.
+    ``question`` is the words to look for, 300 characters at most.
     """
     # #817 10(b), 2026-10-08: the question is used to search and for nothing
     # else -- not in the result, not in a log line, and (as for every tool)
@@ -1110,14 +1112,15 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
         found = material_search.search_materials(session, team_id, question, limit=MAX_ITEMS)
     except ValidationError:
         return _bad_question()
-    if not found.hits:
-        summary = "올린 자료에서 찾은 내용이 없습니다."
-    else:
-        summary = f"올린 자료 {len(found.hits)}건에서 찾았습니다."
+    said = []
+    if found.hits:
+        said.append(f"올린 자료 {len(found.hits)}건에서 찾았습니다.")
         if found.more:
-            summary += " 더 있으니 질문을 좁혀 다시 찾을 수 있습니다."
+            said.append("더 있으니 질문을 좁혀 다시 찾을 수 있습니다.")
     if found.notice:
-        summary += " " + found.notice
+        # With no hits, the notice is the answer: nothing close enough.
+        said.append(found.notice)
+    summary = " ".join(said) or material_search.NOTHING_CLOSE
     return _result(
         summary=summary,
         items=[

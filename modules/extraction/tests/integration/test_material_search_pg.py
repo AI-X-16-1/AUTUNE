@@ -41,6 +41,13 @@ def new_team(session: Session, name: str) -> str:
     return team.id
 
 
+@pytest.fixture(autouse=True)
+def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake embedder's scores mean nothing on the real embedder's scale,
+    so the floor is set here: none, except where it is what is tested."""
+    monkeypatch.setattr(extraction_settings(), "material_search_min_similarity", -1.0)
+
+
 @pytest.fixture
 def team_id(db_session: Session) -> str:
     return new_team(db_session, "팀")
@@ -66,6 +73,21 @@ def test_pgvector_ranks_the_teams_pieces_and_no_other_teams(
     assert [hit.material_id for hit in answer.hits] == [launch, budget]
     assert answer.hits[0].score > answer.hits[1].score
     assert "남의" not in repr(answer)
+
+
+def test_the_floor_drops_a_material_pgvector_ranks_under_it(
+    db_session: Session, team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch = upload(db_session, team_id, LAUNCH * 3, "출시 계획")
+    upload(db_session, team_id, BUDGET * 3, "예산")
+    first, second = search_materials(db_session, team_id, "출시 일정 점검").hits
+    monkeypatch.setattr(
+        extraction_settings(), "material_search_min_similarity", (first.score + second.score) / 2
+    )
+
+    answer = search_materials(db_session, team_id, "출시 일정 점검")
+
+    assert [hit.material_id for hit in answer.hits] == [launch]
 
 
 def test_a_deleted_material_and_a_deleted_team_leave_nothing_to_find(

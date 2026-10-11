@@ -9,7 +9,11 @@ masked before storage"; #817 10(b), 2026-10-08):
   or logged -- by the service, the route or the tool;
 - a search reads only the asking team's uploads, and a deleted material is
   not found;
-- an excerpt is short, one per material, and screened on its way out;
+- an excerpt is short, one per material, around the line that answers, and
+  screened on its way out;
+- a material under the similarity floor is not a hit, and with none left the
+  answer is empty and says nothing close enough was found;
+- the note that stars are hidden values comes only with a run the masker made;
 - the assistant's tool is off by default, and on, names no other team's
   material and repeats nothing of the question.
 
@@ -25,6 +29,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -33,15 +38,17 @@ from structlog.testing import capture_logs
 from autune_core import Base, Meeting, Team, TeamMember, User, get_session
 from autune_core.errors import AutuneError, ValidationError
 from autune_extraction import material_search, materials, tools
-from autune_extraction.config import get_settings
+from autune_extraction.config import ExtractionSettings, get_settings
 from autune_extraction.material_search import (
     ASKS_FOR_PERSONAL,
     EXCERPT_CHARS,
     MAX_QUESTION_CHARS,
+    NOTHING_CLOSE,
     QUESTION_MASKED,
     STARRED,
     excerpt_of,
     search_materials,
+    shows_masked_run,
 )
 from autune_extraction.models import MATERIAL_EMBEDDING_DIM, ExtMaterial, ExtMaterialChunk
 from autune_extraction.pipeline import FakeEmbedder
@@ -70,6 +77,18 @@ class Recording(FakeEmbedder):
     def embed(self, texts: list[str]) -> list[list[float]]:
         self.seen.extend(texts)
         return super().embed(texts)
+
+
+@pytest.fixture(autouse=True)
+def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake counts shared characters, so its scores mean nothing on the
+    real embedder's scale: these tests set the floor themselves -- none, here,
+    and a chosen one where the floor is what is tested."""
+    monkeypatch.setattr(get_settings(), "material_search_min_similarity", -1.0)
+
+
+def set_floor(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
+    monkeypatch.setattr(get_settings(), "material_search_min_similarity", value)
 
 
 @pytest.fixture
@@ -267,6 +286,94 @@ def test_no_notice_when_nothing_was_hidden(session: Session, embedder: Recording
     assert search_materials(session, TEAM, "출시 일정").notice is None
 
 
+def test_a_lone_star_in_an_excerpt_says_nothing_of_hidden_values(
+    session: Session, embedder: Recording
+) -> None:
+    upload(session, "* 출시 일정은 11월이다. **중요** 점검은 QA 팀이 맡는다.\n***\n")
+
+    [hit] = search_materials(session, TEAM, "출시 일정").hits
+
+    assert "*" in hit.excerpt
+    assert search_materials(session, TEAM, "출시 일정").notice is None
+
+
+@pytest.mark.parametrize(
+    ("excerpt", "masked"),
+    [
+        ("연락처 ***-****-****", True),
+        ("메일 *****@*******.***", True),
+        ("번호 ************ 끝", True),
+        ("* 항목 하나", False),
+        ("**굵게** 쓴 말", False),
+        ("각주*", False),
+        ("위\n***\n아래", False),
+        ("*-*", False),
+    ],
+)
+def test_only_a_run_of_the_maskers_shape_counts_as_hidden(excerpt: str, masked: bool) -> None:
+    assert shows_masked_run(excerpt) is masked
+
+
+# --- the floor --------------------------------------------------------------------
+
+
+def test_the_floor_has_a_default_for_the_real_embedder_and_reads_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    field = ExtractionSettings.model_fields["material_search_min_similarity"]
+    assert field.default == 0.4
+
+    monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY", "0.55")
+    assert ExtractionSettings().material_search_min_similarity == 0.55
+    monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY", "1.5")
+    with pytest.raises(PydanticValidationError):
+        ExtractionSettings()
+
+
+def test_a_material_under_the_floor_is_not_a_hit(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch = upload(session, LAUNCH * 3, title="출시 계획")
+    budget = upload(session, BUDGET * 3, title="예산")
+    question = "출시 일정 점검"
+    scores = {hit.material_id: hit.score for hit in search_materials(session, TEAM, question).hits}
+    assert scores[launch.id] > scores[budget.id]
+    set_floor(monkeypatch, (scores[launch.id] + scores[budget.id]) / 2)
+
+    answer = search_materials(session, TEAM, question)
+
+    assert [hit.material_id for hit in answer.hits] == [launch.id]
+    assert answer.more is False and answer.notice is None
+
+
+def test_nothing_over_the_floor_is_an_empty_answer_that_says_so(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload(session, LAUNCH * 3, title="출시 계획")
+    upload(session, BUDGET * 3, title="예산")
+    set_floor(monkeypatch, 0.99)
+
+    with capture_logs() as logs:
+        answer = search_materials(session, TEAM, "출시 일정 점검")
+
+    assert answer.hits == [] and answer.more is False
+    assert answer.notice == NOTHING_CLOSE
+    assert logs[0]["hits"] == 0 and "출시" not in repr(logs)
+
+
+def test_an_empty_answer_still_says_the_question_was_masked(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload(session, LAUNCH)
+    set_floor(monkeypatch, 0.99)
+
+    answer = search_materials(session, TEAM, QUESTION)
+
+    assert answer.hits == []
+    assert answer.notice == f"{NOTHING_CLOSE} {QUESTION_MASKED}"
+    assert PHONE not in repr(answer)
+
+
 def test_an_excerpt_is_cut_around_the_question_and_marked_where_cut() -> None:
     text = "가나다 " * 60 + "출시 일정은 11월이다 " + "라마바 " * 60
 
@@ -277,6 +384,51 @@ def test_an_excerpt_is_cut_around_the_question_and_marked_where_cut() -> None:
     assert len(cut) <= EXCERPT_CHARS + 2
     assert excerpt_of("짧은 글", "출시") == "짧은 글"
     assert excerpt_of(text, "없는 말").startswith("가나다")
+
+
+ROLLBACK = (
+    "# 배포 체크리스트\n\n"
+    "배포 전에 모든 테스트가 통과했는지 확인한다. 스테이징 환경에서 주요 화면을 직접 "
+    "눌러 보고, 로그에 오류가 없는지 본다. 데이터베이스 마이그레이션은 배포 전날 리뷰를 "
+    "받는다. 알림 채널에 배포 시작을 알리고 담당자를 지정한다. 트래픽이 적은 시간대를 "
+    "고른다.\n"
+    "모니터링 대시보드를 띄워 두고 오류율과 응답 시간을 지켜본다.\n"
+    "롤백 절차: 문제가 생기면 직전 릴리스 태그로 되돌리고, 마이그레이션은 down "
+    "스크립트로 되돌린 뒤 알림 채널에 공지한다.\n"
+    "배포 후 30분 동안 지표를 확인한다. 이상이 없으면 알림 채널에 완료를 알린다. "
+    "다음 배포 일정은 회고에서 정한다. 회고 문서는 위키에 남긴다. 체크리스트는 분기마다 "
+    "다시 본다.\n"
+)
+
+
+def test_the_excerpt_is_the_window_around_the_line_that_answers() -> None:
+    """The hand-tried case: the old excerpt began at the heading and cut
+    before the rollback line."""
+    line = "롤백 절차: 문제가 생기면 직전 릴리스 태그로 되돌리고"
+    assert line not in ROLLBACK[:EXCERPT_CHARS]
+
+    cut = excerpt_of(ROLLBACK, "배포할 때 롤백은 어떻게 하나요")
+
+    assert line in cut
+    assert cut.startswith("…") and cut.endswith("…")
+    assert len(cut) <= EXCERPT_CHARS + 2
+
+
+def test_the_rollback_excerpt_reaches_the_person_through_the_search(
+    session: Session, embedder: Recording
+) -> None:
+    upload(session, ROLLBACK, title="배포 체크리스트")
+
+    [hit] = search_materials(session, TEAM, "배포할 때 롤백은 어떻게 하나요").hits
+
+    assert "롤백 절차" in hit.excerpt and len(hit.excerpt) <= EXCERPT_CHARS + 2
+
+
+def test_the_window_is_chosen_from_the_masked_question_only() -> None:
+    """A word the masker hid is not looked for: ``***`` holds no letters."""
+    text = "가나다 " * 40 + "연락처는 ***-****-**** 이다. " + "라마바 " * 40
+
+    assert excerpt_of(text, "***-****-****").startswith("가나다")
 
 
 # --- the route --------------------------------------------------------------------
@@ -469,3 +621,17 @@ def test_the_tool_refuses_a_bad_question_by_the_rule(
 
     assert result["ok"] is False and "question must be" in result["reason"]
     assert "가가" not in json.dumps(result, ensure_ascii=False)
+
+
+@pytest.mark.usefixtures("tool_on")
+def test_the_tool_answers_nothing_close_enough_as_the_search_does(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    upload(session, LAUNCH, title="출시 계획")
+    set_floor(monkeypatch, 0.99)
+
+    result = tools.find_materials(session, TEAM, "출시 일정")
+
+    assert result["ok"] is True
+    assert result["items"] == [] and result["evidence"] == []
+    assert result["summary"] == NOTHING_CLOSE
