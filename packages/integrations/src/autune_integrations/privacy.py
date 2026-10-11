@@ -336,13 +336,75 @@ MAX_OUTBOUND_CHARS: Final = 4000
 is never what a feature needs."""
 
 
+# One star with a digit directly on each side, and nothing wider. See
+# ``_guard_readings`` for why the width is exactly this.
+_STAR_BETWEEN_DIGITS: Final = re.compile(rf"(?<=\d){re.escape(MASK_CHAR)}(?=\d)")
+
+
+def _guard_readings(text: str) -> list[str]:
+    """``text`` as written, plus the readings the guard adds for text a person
+    typed (#1200, #1223). Every reading is ``text``'s length, so a position in
+    one is a position in all of them.
+
+    **A star between two digits, read as a space (#1200).** ``find_pii`` lets
+    go of any match holding ``*``, so that text module A already masked is not
+    read as a value again. A person typing ``010*1234*5678`` or
+    ``900101*1234567`` gets the same pass, and every guard that reads this
+    function -- the save checks of B and C, E's report checks, the agent's,
+    ``check_outbound`` -- let it through. So one ``*`` with a digit directly on
+    each side is read as a space, and only that. The digits module A's masker
+    keeps (``masking._digits_to_keep``: a mobile prefix and a tail with two or
+    more stars between them, or a resident number's one marker digit with
+    stars on both sides) never leave one star alone between two digits, so
+    this reading is not known to see anything new in masked text; the
+    measurement on #1200 found no masked sentence it newly refused. Reading every star as a
+    space (what the document masker of #1199 does, for a document) finds
+    numbers in masked transcripts that are not there, which is why the guard,
+    which also reads masked text, stays this narrow. ``find_pii`` is not
+    changed, so what module A masks is not changed.
+
+    **A line break, read as a space (#1223).** Most patterns stop at CR and LF
+    (``_HSPACE``) because in a transcript a break is where one speaker's number
+    ends and the next one's begins. In typed or written text a break falls
+    where the writer put it, and a resident number with a break beside its
+    hyphen, an account over three lines or a +82 number broken before its
+    last group passed the guard whole. So CR and LF are each read as one
+    space -- CRLF as two, which every separator that takes a space also takes
+    as a run. Every other character that breaks a line is already a space to
+    the detector.
+
+    Both at once as well, so a value with a star in it and a break in it is
+    read whole. The reading as written always stays: the extra readings can
+    only add to what is refused, whatever the patterns become.
+    """
+    readings = [text]
+    unbroken = text.replace("\r", " ").replace("\n", " ")
+    for candidate in (unbroken, _STAR_BETWEEN_DIGITS.sub(" ", text)):
+        if candidate not in readings:
+            readings.append(candidate)
+    both = _STAR_BETWEEN_DIGITS.sub(" ", unbroken)
+    if both not in readings:
+        readings.append(both)
+    return readings
+
+
 def find_unmasked(text: str) -> list[str]:
     """The categories of personal data still present in ``text``, without repeats.
 
     Ordered as ``PII_PATTERNS`` is, so the same text always reports the same
     list — an exception message and a test both read this.
+
+    Reads ``text`` as written and the way a person may have typed it -- a star
+    between two digits and a line break each taken for a space
+    (``_guard_readings``) -- and reports what any reading finds. This is the
+    guard's reading only: ``find_pii``, which module A masks by, reads the
+    text as written.
     """
-    found = {category for _, _, category in _most_specific(find_pii(text))}
+    found = {
+        category
+        for reading in _guard_readings(text)
+        for _, _, category in _most_specific(find_pii(reading))
+    }
     ordered: list[str] = []
     for category, _ in PII_PATTERNS:
         if category in found and category not in ordered:

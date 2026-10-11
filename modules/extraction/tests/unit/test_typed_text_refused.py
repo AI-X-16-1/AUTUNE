@@ -39,7 +39,7 @@ from autune_extraction.models import (
 )
 from autune_extraction.router import router
 from autune_extraction.typed_text import TypedPersonalDataError, refuse_personal_data
-from autune_integrations.privacy import find_unmasked
+from autune_integrations.privacy import find_pii
 
 from .conftest import sign_in
 
@@ -463,8 +463,10 @@ def test_a_value_broken_over_lines_is_refused_in_a_memo(
     queued: list[str],
 ) -> None:
     """The memo is the field a person writes lines in. As typed the detector
-    reads none of these -- which is the hole -- and the save is refused."""
-    assert find_unmasked(broken) == [], "read as nothing as typed"
+    reads none of these -- which is the hole -- and the save is refused. The
+    shared guard reads them too since #1223; this fold is what stood in for
+    it until then."""
+    assert find_pii(broken) == [], "read as nothing as typed"
     before, held = counts(session), texts(session)
 
     with capture_logs() as logs:
@@ -576,7 +578,7 @@ def test_what_the_fold_newly_refuses_that_is_nobodys_number(
     """The cost, written down: two numbers that meet across the break and make
     a shape together. Each was saved until now. "A sentence the detector reads
     wrongly cannot be saved; that cost is accepted" (privacy.md, #1130)."""
-    assert find_unmasked(memo) == [], "saved until now"
+    assert find_pii(memo) == [], "saved until now"
 
     response = _memo(client, memo)
 
@@ -588,14 +590,15 @@ def test_two_numbers_one_line_feed_apart_were_refused_before_and_name_both_readi
     client: TestClient,
 ) -> None:
     """Not new: the detector's account shape already crosses one line break.
-    The refusal lists what each reading found, the typed one first."""
+    The refusal lists what the guard's readings found, in the detector's
+    order: since #1223 the shared guard also reads the break as a space."""
     memo = "150000\n200000"
-    assert find_unmasked(memo) == ["account"]
+    assert {category for _, _, category in find_pii(memo)} == {"account"}
 
     response = _memo(client, memo)
 
     assert response.status_code == 422
-    assert response.json()["error"]["details"]["categories"] == ["account", "rrn"]
+    assert response.json()["error"]["details"]["categories"] == ["rrn", "account"]
 
 
 @pytest.mark.parametrize(
