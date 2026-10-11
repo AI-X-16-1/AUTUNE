@@ -3,13 +3,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/shared/api/client";
 
+import { localToday } from "../dates";
 import { CONFIDENTIAL_REFUSAL, UNANSWERED } from "../materialUpload";
-import type { Material, MaterialUploadRules } from "../types";
+import type { Material, MaterialSettings, MaterialUploadRules } from "../types";
 import { MaterialsScreen } from "./MaterialsScreen";
 
 // The 자료 screen where the deployment takes uploads (#817). What is under
 // test is what the screen promises about a file -- no original, masked text,
-// kept until the team deletes it -- and that it sends nothing the rules already refuse. The
+// kept until a day or until the team deletes it -- and that it sends nothing
+// the rules already refuse. The
 // files are a few made-up words; no real document is near this.
 
 const session = vi.fn();
@@ -18,6 +20,8 @@ const rules = vi.fn();
 const register = vi.fn();
 const upload = vi.fn();
 const remove = vi.fn();
+const settingsGet = vi.fn();
+const settingsSave = vi.fn();
 vi.mock("@/shared/api/auth", () => ({ getSession: () => session() }));
 vi.mock("../api", () => ({
   getMaterialUploadRules: (teamId: string) => rules(teamId),
@@ -25,6 +29,8 @@ vi.mock("../api", () => ({
   registerMaterial: (teamId: string, draft: unknown) => register(teamId, draft),
   uploadMaterial: (teamId: string, draft: unknown) => upload(teamId, draft),
   deleteMaterial: (teamId: string, id: string) => remove(teamId, id),
+  getMaterialSettings: (teamId: string) => settingsGet(teamId),
+  saveMaterialSettings: (teamId: string, keep: boolean) => settingsSave(teamId, keep),
 }));
 
 const me = () => ({
@@ -43,6 +49,11 @@ const RULES: MaterialUploadRules = {
   max_materials: 200,
 };
 
+const EXPIRES = "2099-01-07T03:00:00Z";
+// Not the server's default, so a number on screen can only be the answer's.
+const WINDOW: MaterialSettings = { keep_until_deleted: false, retention_days: 45 };
+const KEPT: MaterialSettings = { keep_until_deleted: true, retention_days: 45 };
+
 const uploaded = (over: Partial<Material> = {}): Material => ({
   id: "mat_up",
   team_id: "team_a",
@@ -51,8 +62,8 @@ const uploaded = (over: Partial<Material> = {}): Material => ({
   drive_file_id: null,
   drive_kind: null,
   created_at: "2026-10-09T03:00:00Z",
-  // The server sends null for every upload: kept until the team deletes it.
-  expires_at: null,
+  // The upload plus the team's window; null where the team keeps until deleted.
+  expires_at: EXPIRES,
   not_read: [],
   ...over,
 });
@@ -78,8 +89,13 @@ const send = () => screen.getByRole("button", { name: "파일 올리기" });
 const rows = () =>
   within(screen.getByRole("list", { name: "등록한 자료" })).getAllByRole("listitem");
 
-const open = async (materials: Material[] = [], answer: unknown = RULES) => {
+const open = async (
+  materials: Material[] = [],
+  answer: unknown = RULES,
+  settings: MaterialSettings = WINDOW,
+) => {
   session.mockResolvedValue(me());
+  settingsGet.mockResolvedValue(settings);
   list.mockResolvedValue(materials);
   if (answer instanceof Error) rules.mockRejectedValue(answer);
   else rules.mockResolvedValue(answer);
@@ -89,7 +105,8 @@ const open = async (materials: Material[] = [], answer: unknown = RULES) => {
 
 afterEach(() => {
   cleanup();
-  for (const fake of [session, list, rules, register, upload, remove]) fake.mockReset();
+  for (const fake of [session, list, rules, register, upload, remove, settingsGet, settingsSave])
+    fake.mockReset();
 });
 
 describe("MaterialsScreen, whether a file can be sent at all", () => {
@@ -114,18 +131,26 @@ describe("MaterialsScreen, whether a file can be sent at all", () => {
     const form = await screen.findByRole("form", { name: "파일 올리기" });
     expect(within(form).getByText(/원본은 보관하지 않으며/)).toBeTruthy();
     expect(within(form).getByText(/개인정보를 가린 글/)).toBeTruthy();
-    expect(within(form).getByText(/팀이 지울 때까지\s+보관합니다/)).toBeTruthy();
-    expect(form.textContent).not.toMatch(/목록에 적힌 날|삭제 예정|일 뒤/);
+    expect(form.textContent).toMatch(/목록에 적힌 날에 삭제됩니다/);
+    expect(form.textContent).not.toMatch(/팀이 지울 때까지/);
     expect(within(form).getByText(/문장 속의 이름은 가려지지 않으며/)).toBeTruthy();
     expect(within(form).getByText(/그림으로만 들어 있는 글은\s+읽지 않습니다/)).toBeTruthy();
     expect(within(form).getByText(/한 파일 5MB까지 · \.txt \.pdf \.docx/)).toBeTruthy();
     expect(screen.getByLabelText("올릴 파일").getAttribute("accept")).toBe(".txt,.pdf,.docx");
     expect(screen.getByLabelText("올릴 자료 제목").getAttribute("maxlength")).toBe("80");
   });
+
+  it("says the text is kept until the team deletes it where the team chose that", async () => {
+    await open([], RULES, KEPT);
+
+    const form = await screen.findByRole("form", { name: "파일 올리기" });
+    await waitFor(() => expect(form.textContent).toMatch(/팀이 지울 때까지 보관합니다/));
+    expect(form.textContent).not.toMatch(/목록에 적힌 날/);
+  });
 });
 
 describe("MaterialsScreen, sending a file", () => {
-  it("sends the title and the file, puts the row first and says its text is kept until the team deletes it", async () => {
+  it("sends the title and the file, puts the row first and says until when its text is kept", async () => {
     await open([linked()]);
     await screen.findByRole("form", { name: "파일 올리기" });
     upload.mockResolvedValue(uploaded({ not_read: ["pictures"] }));
@@ -139,11 +164,25 @@ describe("MaterialsScreen, sending a file", () => {
     expect(upload).toHaveBeenCalledExactlyOnceWith("team_a", { title: "분기 계획", file: chosen });
     expect(within(rows()[0] as HTMLElement).getByText("분기 계획")).toBeTruthy();
     const said = screen.getByRole("status").textContent ?? "";
-    expect(said).toContain("개인정보를 가린 글을 팀이 지울 때까지 보관합니다.");
-    expect(said).not.toMatch(/\d{4}-\d{2}-\d{2}|일 뒤/);
+    expect(said).toContain(`개인정보를 가린 글을 ${localToday(new Date(EXPIRES))}까지 보관합니다`);
     expect(said).toContain("이 파일의 그림 안에 있는 글은 읽지 않았습니다");
     expect((screen.getByLabelText("올릴 자료 제목") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("올릴 파일") as HTMLInputElement).files).toHaveLength(0);
+  });
+
+  it("says the text is kept until the team deletes it when the answer has no day", async () => {
+    await open([], RULES, KEPT);
+    await screen.findByRole("form", { name: "파일 올리기" });
+    upload.mockResolvedValue(uploaded({ expires_at: null }));
+
+    title("분기 계획");
+    choose(file());
+    fireEvent.click(send());
+
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    const said = screen.getByRole("status").textContent ?? "";
+    expect(said).toContain("개인정보를 가린 글을 팀이 지울 때까지 보관합니다.");
+    expect(said).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
   it("cannot be sent without a title or without a file", async () => {
@@ -292,19 +331,27 @@ describe("MaterialsScreen, a full shelf", () => {
 });
 
 describe("MaterialsScreen, an uploaded row", () => {
-  it("says its text is kept until the team deletes it, and has nothing to preview or open", async () => {
+  it("shows the day its text is deleted, and nothing to preview or open", async () => {
     await open([uploaded(), linked()]);
 
     const [up, link] = rows() as [HTMLElement, HTMLElement];
     const meta = within(up).getByText(/올린 파일/).textContent ?? "";
-    expect(meta).toContain("팀이 지울 때까지 보관");
-    expect(meta).not.toContain("삭제 예정");
+    expect(meta).toContain(`${localToday(new Date(EXPIRES))} 삭제 예정`);
+    expect(meta).not.toContain("팀이 지울 때까지");
     expect(within(up).queryByRole("button", { name: "미리보기" })).toBeNull();
     expect(within(up).queryByRole("link")).toBeNull();
     // A link keeps no text, so it says nothing of keeping -- and keeps its two doors.
     expect(within(link).getByText(/Google 문서/).textContent).not.toMatch(/보관|삭제/);
     expect(within(link).getByRole("button", { name: "미리보기" })).toBeTruthy();
     expect(within(link).getByRole("link", { name: "Drive에서 열기" })).toBeTruthy();
+  });
+
+  it("says it is kept until the team deletes it where the server sends no day", async () => {
+    await open([uploaded({ expires_at: null })], RULES, KEPT);
+
+    const meta = within(rows()[0] as HTMLElement).getByText(/올린 파일/).textContent ?? "";
+    expect(meta).toContain("팀이 지울 때까지 보관");
+    expect(meta).not.toContain("삭제 예정");
   });
 
   it("asks before deleting, in words that say it cannot be undone", async () => {
@@ -359,5 +406,63 @@ describe("MaterialsScreen, an uploaded row", () => {
 
     expect(await screen.findByText("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.")).toBeTruthy();
     expect(rows()).toHaveLength(1);
+  });
+});
+
+describe("MaterialsScreen, how the team keeps its uploads", () => {
+  const setting = () => screen.findByRole("group", { name: "올린 자료 보관 방식" });
+  const choice = (group: HTMLElement, name: RegExp) =>
+    within(group).getByRole("radio", { name }) as HTMLInputElement;
+
+  it("says both choices, with the team's own window, and which one holds", async () => {
+    await open([uploaded()]);
+
+    const group = await setting();
+    expect(group.textContent).toMatch(/보관 기간이 지나면 삭제 \(기본\)/);
+    expect(group.textContent).toMatch(/올린 날부터 팀의 보관 기간\(45일\)이 지나면/);
+    expect(group.textContent).toMatch(/팀 구성원이 직접 삭제할 때까지 보관합니다/);
+    expect(group.textContent).toMatch(/이미 올린 자료도 올린 날부터 다시 계산해/);
+    expect(group.textContent).toMatch(/누가 바꿨는지는 기록하지 않습니다/);
+    expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);
+    expect(choice(group, /팀이 지울 때까지 보관/).checked).toBe(false);
+    expect(settingsGet).toHaveBeenCalledExactlyOnceWith("team_a");
+  });
+
+  it("switches, then reads the list again for every row's new day", async () => {
+    await open([uploaded()]);
+    settingsSave.mockResolvedValue(KEPT);
+    list.mockResolvedValue([uploaded({ expires_at: null })]);
+
+    fireEvent.click(choice(await setting(), /팀이 지울 때까지 보관/));
+
+    await waitFor(() => expect(settingsSave).toHaveBeenCalledExactlyOnceWith("team_a", true));
+    await waitFor(() => expect(choice(screen.getByRole("group", { name: "올린 자료 보관 방식" }), /팀이 지울 때까지 보관/).checked).toBe(true));
+    await waitFor(() =>
+      expect(within(rows()[0] as HTMLElement).getByText(/올린 파일/).textContent).toContain(
+        "팀이 지울 때까지 보관",
+      ),
+    );
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("says so when the switch did not go through, and keeps the old choice", async () => {
+    await open([uploaded()]);
+    settingsSave.mockRejectedValue(new ApiError(500, "internal", "boom"));
+
+    const group = await setting();
+    fireEvent.click(choice(group, /팀이 지울 때까지 보관/));
+
+    expect((await within(group).findByRole("alert")).textContent).toBe(
+      "보관 방식을 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
+    );
+    expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);
+  });
+
+  it("is not drawn where the deployment takes no uploads, and not asked for", async () => {
+    await open([linked()], { ...RULES, enabled: false });
+
+    await waitFor(() => expect(rules).toHaveBeenCalled());
+    expect(screen.queryByRole("group", { name: "올린 자료 보관 방식" })).toBeNull();
+    expect(settingsGet).not.toHaveBeenCalled();
   });
 });

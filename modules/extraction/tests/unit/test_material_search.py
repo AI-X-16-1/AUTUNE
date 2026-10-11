@@ -25,6 +25,7 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI, Request
@@ -106,7 +107,12 @@ def session() -> Iterator[Session]:
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
     shared = {m.__tablename__ for m in (User, Team, TeamMember, Meeting)}
-    owned = {"ext_materials", "ext_material_chunks", "ext_material_alarms"}
+    owned = {
+        "ext_materials",
+        "ext_material_chunks",
+        "ext_material_alarms",
+        "ext_material_settings",
+    }
     tables = [t for name, t in Base.metadata.tables.items() if name in shared | owned]
     Base.metadata.create_all(engine, tables=tables)
     with Session(engine) as s:
@@ -214,6 +220,19 @@ def test_a_deleted_material_is_not_found(session: Session, embedder: Recording) 
     materials.delete_material(session, TEAM, row.id)
 
     assert search_materials(session, TEAM, "출시").hits == []
+
+
+def test_an_upload_past_its_window_is_not_found_before_the_task_deletes_it(
+    session: Session, embedder: Recording
+) -> None:
+    session.add(Team(id=TEAM, name="팀", retention_days=30))
+    row = upload(session, LAUNCH)
+    row.created_at = datetime.now(UTC) - timedelta(days=31)
+    session.flush()
+    assert search_materials(session, TEAM, "출시").hits == []
+
+    materials.set_keep_until_deleted(session, TEAM, True)
+    assert [hit.material_id for hit in search_materials(session, TEAM, "출시").hits] == [row.id]
 
 
 def test_a_drive_link_and_a_piece_of_another_model_are_never_hits(

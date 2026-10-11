@@ -10,17 +10,20 @@ import { Button } from "@/shared/ui";
 
 import {
   deleteMaterial,
+  getMaterialSettings,
   getMaterialUploadRules,
   listMaterials,
   registerMaterial,
+  saveMaterialSettings,
   searchMaterials,
   uploadMaterial,
 } from "../api";
 import { localToday } from "../dates";
 import { questionLimit } from "../materialSearch";
-import { KEPT_UNTIL_DELETED, notReadNote, shelfFull } from "../materialUpload";
+import { keepingLabel, keptNote, notReadNote, shelfFull } from "../materialUpload";
 import { typedTextRefusal } from "../refusal";
-import type { Material, MaterialUploadRules } from "../types";
+import type { Material, MaterialSettings, MaterialUploadRules } from "../types";
+import { MaterialKeepSetting } from "./MaterialKeepSetting";
 import { MaterialSearch } from "./MaterialSearch";
 import { MaterialUploadForm } from "./MaterialUploadForm";
 
@@ -45,14 +48,15 @@ const KIND: Record<NonNullable<Material["drive_kind"]>, string> = {
  * lets see it. The screen says so, because a shelf of documents reads as
  * "Autune has our documents" unless told otherwise.
  *
- * **An uploaded file: its masked text, until the team deletes it, and no
- * original.** Only where the deployment takes uploads
+ * **An uploaded file: its masked text, until a day or until the team deletes
+ * it, and no original.** Only where the deployment takes uploads
  * (`MaterialUploadRules.enabled`); off, the screen is the link shelf it was.
  * Such a row has nothing to preview and nothing to open -- Autune kept no
- * file -- and it says its text is kept until the team deletes it: there is no
- * retention window and no day (the owner, 2026-10-10). Deleting it is real
- * and at once, so the question before it says that and not "take it off the
- * list".
+ * file -- and it shows the day its text is deleted (the upload plus the
+ * team's retention window), or says it is kept until the team deletes it
+ * where the team chose that (`MaterialKeepSetting`; the owner, 2026-10-11).
+ * Deleting it is real and at once, so the question before it says that and
+ * not "take it off the list".
  *
  * Any member registers and deletes, as with the team's projects: there is no
  * admin role yet (#592). The team is the one chosen elsewhere in the app when
@@ -156,6 +160,21 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   // Deleted here since the screen opened: an excerpt found earlier must not
   // stay on it after its material's text is gone.
   const [removed, setRemoved] = useState<string[]>([]);
+  // How the team keeps uploads; null until the server says, and where it
+  // cannot -- then no toggle is drawn and the rows still say their days.
+  const [settings, setSettings] = useState<MaterialSettings | null>(null);
+  const uploadsOn = rules?.enabled === true;
+
+  useEffect(() => {
+    if (!uploadsOn) return;
+    let alive = true;
+    getMaterialSettings(teamId)
+      .then((answer) => alive && setSettings(answer))
+      .catch(() => alive && setSettings(null));
+    return () => {
+      alive = false;
+    };
+  }, [teamId, uploadsOn]);
 
   useEffect(() => {
     let alive = true;
@@ -198,9 +217,23 @@ function TeamMaterials({ teamId }: { teamId: string }) {
           setNote("자료를 등록했습니다.");
         }}
       />
+      {rules?.enabled && settings ? (
+        <MaterialKeepSetting
+          settings={settings}
+          onChange={async (keep) => {
+            setNote(null);
+            setSettings(await saveMaterialSettings(teamId, keep));
+            // Every upload's day changes with the choice: the list says.
+            void listMaterials(teamId)
+              .then(setMaterials)
+              .catch(() => undefined);
+          }}
+        />
+      ) : null}
       {rules?.enabled ? (
         <MaterialUploadForm
           rules={rules}
+          keepUntilDeleted={settings?.keep_until_deleted ?? null}
           onUpload={async (draft) => {
             // "자료를 올렸습니다" under a refusal would read as this file's.
             setNote(null);
@@ -208,7 +241,7 @@ function TeamMaterials({ teamId }: { teamId: string }) {
             setMaterials((list) => [saved, ...(list ?? [])]);
             setNote(
               [
-                "자료를 올렸습니다. 개인정보를 가린 글을 팀이 지울 때까지 보관합니다.",
+                `자료를 올렸습니다. ${keptNote(saved.expires_at ?? null)}`,
                 notReadNote(saved.not_read ?? []),
               ]
                 .filter(Boolean)
@@ -246,8 +279,8 @@ function TeamMaterials({ teamId }: { teamId: string }) {
                 try {
                   await deleteMaterial(teamId, material.id);
                 } catch (cause) {
-                  // Somebody else deleted it: it is not there, which is
-                  // what was asked for.
+                  // Somebody else deleted it, or its day came: it is not
+                  // there, which is what was asked for.
                   gone = cause instanceof ApiError && cause.status === 404;
                   if (!gone) {
                     setNote(
@@ -388,8 +421,9 @@ function RegisterForm({
 
 /**
  * One material: its title, what kind of row it is, and what can be done with
- * it. A link opens in Google's preview and in Drive; an upload says its text
- * is kept until the team deletes it, and can only be deleted.
+ * it. A link opens in Google's preview and in Drive; an upload shows the day
+ * its text goes, or that it is kept until the team deletes it, and can only
+ * be deleted.
  */
 function MaterialRow({
   material,
@@ -431,7 +465,7 @@ function MaterialRow({
               ? KIND[material.drive_kind]
               : "Drive 파일"}{" "}
           · {localToday(new Date(material.created_at))} 등록
-          {uploaded ? ` · ${KEPT_UNTIL_DELETED}` : null}
+          {uploaded ? ` · ${keepingLabel(material.expires_at ?? null)}` : null}
         </span>
         {address ? (
           <>

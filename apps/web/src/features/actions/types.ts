@@ -372,10 +372,11 @@ export interface Material {
   /** ISO 8601, when it was registered. */
   created_at: string;
   /**
-   * Always null. An upload's masked text is kept until a member of the team
-   * deletes it -- there is no retention window (the owner, 2026-10-10;
-   * `docs/architecture/privacy.md`) -- and a link keeps no text at all. The
-   * field stays in the answer's shape; nothing on the screen reads it.
+   * ISO 8601, when an upload's masked text is deleted: the upload plus the
+   * team's retention window (the owner, 2026-10-11). An hourly task does it,
+   * so the row can outlive this by up to an hour. Null for an upload of a
+   * team that keeps uploads until a member deletes them, and for a link,
+   * which keeps no text.
    */
   expires_at: string | null;
   /**
@@ -386,6 +387,17 @@ export interface Material {
 }
 
 export type MaterialNotRead = "pictures" | "charts" | "embedded_files";
+
+/**
+ * How the team keeps its uploaded materials -- `MaterialSettingsRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py`. False, the default:
+ * an upload is deleted `retention_days` after it was uploaded. True: kept
+ * until a member deletes it. Any member switches it; who did is not kept.
+ */
+export interface MaterialSettings {
+  keep_until_deleted: boolean;
+  retention_days: number;
+}
 
 /**
  * What the server takes as an upload, in its own numbers -- `GET

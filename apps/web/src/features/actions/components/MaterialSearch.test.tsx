@@ -25,6 +25,8 @@ vi.mock("../api", () => ({
   uploadMaterial: vi.fn(),
   searchMaterials: (teamId: string, question: string) => search(teamId, question),
   deleteMaterial: (teamId: string, id: string) => remove(teamId, id),
+  getMaterialSettings: () => Promise.resolve({ keep_until_deleted: false, retention_days: 90 }),
+  saveMaterialSettings: vi.fn(),
 }));
 
 const me = () => ({

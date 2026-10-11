@@ -6,7 +6,10 @@ import {
   CONFIDENTIAL_REFUSAL,
   KEPT_UNTIL_DELETED,
   UNANSWERED,
+  deletionDay,
   fileRefusal,
+  keepingLabel,
+  keptNote,
   mayHaveStored,
   megabytes,
   notReadNote,
@@ -200,8 +203,31 @@ describe("what a stored file held that was not read", () => {
 });
 
 describe("how long a row's text is kept", () => {
-  it("is until the team deletes it, with no day", () => {
+  const now = new Date(2026, 9, 9, 12, 0, 0);
+
+  it("is the day it is deleted, where the viewer is", () => {
+    const at = new Date(2027, 0, 7, 0, 30, 0);
+
+    expect(deletionDay(at.toISOString(), now)).toBe("2027-01-07 삭제 예정");
+    expect(keepingLabel(at.toISOString(), now)).toBe("2027-01-07 삭제 예정");
+  });
+
+  it("reads as soon once the time has come, since the task runs hourly", () => {
+    expect(deletionDay(new Date(2026, 9, 9, 11, 59, 0).toISOString(), now)).toBe("곧 삭제");
+    expect(deletionDay(now.toISOString(), now)).toBe("곧 삭제");
+  });
+
+  it("is until the team deletes it when the server sends no day", () => {
+    expect(deletionDay(null, now)).toBeNull();
+    expect(keepingLabel(null, now)).toBe(KEPT_UNTIL_DELETED);
     expect(KEPT_UNTIL_DELETED).toBe("팀이 지울 때까지 보관");
-    expect(KEPT_UNTIL_DELETED).not.toMatch(/\d|삭제 예정|일 뒤/);
+    expect(keepingLabel("not a time", now)).toBe(KEPT_UNTIL_DELETED);
+  });
+
+  it("says the same in the upload's note", () => {
+    const at = new Date(2027, 0, 7, 0, 30, 0);
+
+    expect(keptNote(at.toISOString())).toBe("개인정보를 가린 글을 2027-01-07까지 보관합니다.");
+    expect(keptNote(null)).toBe("개인정보를 가린 글을 팀이 지울 때까지 보관합니다.");
   });
 });
