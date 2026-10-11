@@ -23,6 +23,8 @@ vi.mock("../api", () => ({
   listMaterials: (teamId: string) => list(teamId),
   registerMaterial: (teamId: string, draft: unknown) => register(teamId, draft),
   deleteMaterial: (teamId: string, id: string) => remove(teamId, id),
+  getMaterialSettings: () => Promise.resolve({ keep_until_deleted: false, retention_days: 90 }),
+  saveMaterialSettings: vi.fn(),
 }));
 
 const TEAMS = [

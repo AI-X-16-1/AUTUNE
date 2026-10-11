@@ -12,6 +12,7 @@ import type {
   ExtractionResult,
   Material,
   MaterialSearchAnswer,
+  MaterialSettings,
   MaterialUploadRules,
   MeetingReview,
   MeetingSummary,
@@ -305,6 +306,21 @@ export async function searchMaterials(
   if (!response.ok) throw await refusedBy(response);
   return (await response.json()) as MaterialSearchAnswer;
 }
+
+/** How the team keeps its uploads: for its retention window, or until deleted. */
+export const getMaterialSettings = (teamId: string) =>
+  api.extraction<MaterialSettings>(`/materials/settings?team_id=${encodeURIComponent(teamId)}`);
+
+/**
+ * Switch how the team keeps its uploads. Any member; the server records no
+ * person. Back to the window, every existing upload is counted from its own
+ * upload, so the list's days change: read it again.
+ */
+export const saveMaterialSettings = (teamId: string, keepUntilDeleted: boolean) =>
+  api.extraction<MaterialSettings>(`/materials/settings?team_id=${encodeURIComponent(teamId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ keep_until_deleted: keepUntilDeleted }),
+  });
 
 /** What the server takes as an upload, and whether it takes one at all. */
 export const getMaterialUploadRules = (teamId: string) =>

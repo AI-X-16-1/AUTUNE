@@ -1,5 +1,6 @@
 import { ApiError } from "@/shared/api/client";
 
+import { localToday } from "./dates";
 import { typedTextRefusal } from "./refusal";
 import type { MaterialNotRead, MaterialUploadRules } from "./types";
 
@@ -175,9 +176,37 @@ export function notReadNote(kinds: readonly string[]): string | null {
 }
 
 /**
- * How long an uploaded row's masked text stays, as its row says it: until a
- * member of the team deletes it. There is no retention window and no day to
- * show (the owner, 2026-10-10; `docs/architecture/privacy.md`), and the
- * server sends `expires_at: null` for every upload.
+ * What an uploaded row says when its team keeps uploads until a member
+ * deletes them: the server sends `expires_at: null` for it (the owner,
+ * 2026-10-11).
  */
 export const KEPT_UNTIL_DELETED = "팀이 지울 때까지 보관";
+
+/**
+ * The day a row's masked text is deleted, where the viewer is; null for no
+ * day. A day already reached reads as soon, not as a date in the past: the
+ * task that deletes runs hourly.
+ */
+export function deletionDay(expiresAt: string | null, now: Date = new Date()): string | null {
+  if (expiresAt === null) return null;
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return null;
+  return at.getTime() <= now.getTime() ? "곧 삭제" : `${localToday(at)} 삭제 예정`;
+}
+
+/**
+ * How long an uploaded row's text stays, as its row says it: the day it is
+ * deleted -- the upload plus the team's retention window -- or, where the
+ * team keeps uploads until deleted (`expires_at: null`), that.
+ */
+export function keepingLabel(expiresAt: string | null, now: Date = new Date()): string {
+  return deletionDay(expiresAt, now) ?? KEPT_UNTIL_DELETED;
+}
+
+/** What the upload's note says of its text, from the row the server answered. */
+export function keptNote(expiresAt: string | null): string {
+  const at = expiresAt === null ? null : new Date(expiresAt);
+  return at === null || Number.isNaN(at.getTime())
+    ? "개인정보를 가린 글을 팀이 지울 때까지 보관합니다."
+    : `개인정보를 가린 글을 ${localToday(at)}까지 보관합니다.`;
+}
