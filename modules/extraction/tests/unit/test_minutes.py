@@ -6,7 +6,9 @@ same expected text, so the two renderings stay in step. Two of the web's have no
 counterpart: a due date that is not a day cannot reach the server's
 ``ActionItemRead`` (its ``due_date`` is a ``date``), and the clipboard is the
 browser's. What is here and not there is the screening, which only this page
-needs: it leaves B.
+needs: it leaves B -- and ``confirmed_only``, the page ``tools.meeting_minutes``
+hands the assistant, which leaves off what nobody confirmed (rule 3 of #261) and
+writes everything else as the web does.
 """
 
 from __future__ import annotations
@@ -280,3 +282,135 @@ def test_a_title_or_overview_carrying_personal_data_is_left_off() -> None:
 
     assert page.text == "\n".join(["회의록", "", "결정 사항", "없음", "", "할 일", "없음"])
     assert page.held_back == 2
+
+
+# --- only here: the tool's page counts what nobody confirmed and does not quote it ----
+
+
+def test_the_tools_page_is_the_web_page_without_the_drafts_and_says_how_many() -> None:
+    page = minutes_page(SUMMARY, title_of(SUMMARY), confirmed_only=True)
+
+    assert page.text == "\n".join(
+        [
+            "회의록 — 주간 회의",
+            "",
+            "결정 사항",
+            "1. 배포는 다음 주 화요일에 한다",
+            "확인 전인 결정 1건은 싣지 않았습니다.",
+            "",
+            "할 일",
+            "1. 스펙 초안 공유 — 김민경 · 2026년 10월 9일 금 · 진행 중",
+            "2. 회고 자료 정리 — 담당 미지정 · 기한 없음 · 완료",
+            "확인 전인 할 일 1건은 싣지 않았습니다.",
+            "",
+            "메모",
+            "다음 회의는 목요일.",
+        ]
+    )
+    assert page.decision_ids == ["dec_1"] and page.action_ids == ["a1", "a3"]
+    assert page.unconfirmed_decisions == 1 and page.waiting_actions == 1
+    assert page.candidates == 1 and page.held_back == 0
+
+
+def test_no_unconfirmed_text_reaches_the_tools_page() -> None:
+    page = minutes_page(
+        with_(
+            meeting_started_at=STARTED,
+            decisions=[
+                decision("dec_1", "배포는 다음 주 화요일에 한다"),
+                decision("dec_2", "검색 개편은 2주 미룬다", "pending"),
+                decision("dec_3", "예산안은 새해에 냅니다 (기한 2027-01-05)", "pending"),
+            ],
+            action_items=[
+                item(id="a1", description="스펙 초안 공유", status="in_progress"),
+                item(id="a2", description="QA 일정 확인", status="needs_confirmation"),
+                item(id="a3", description="법무 검토 요청", status="needs_confirmation"),
+                item(id="a4", description="디자인 시안 받기", status="needs_confirmation"),
+            ],
+        ),
+        "주간 회의",
+        confirmed_only=True,
+    )
+
+    for drafted in ("검색 개편", "예산안", "QA 일정", "법무 검토", "디자인 시안"):
+        assert drafted not in page.text
+    assert "자동 추출" not in page.text and "확인 필요" not in page.text
+    assert "확인 전인 결정 2건은 싣지 않았습니다." in page.text
+    assert "확인 전인 할 일 3건은 싣지 않았습니다." in page.text
+    assert page.unconfirmed_decisions == 2 and page.waiting_actions == 3
+    assert page.decision_ids == ["dec_1"] and page.action_ids == ["a1"]
+
+
+def test_a_meeting_with_only_drafts_says_none_are_confirmed_and_how_many_wait() -> None:
+    page = minutes_page(
+        with_(
+            decisions=[decision("dec_2", "검색 개편은 2주 미룬다", "pending")],
+            action_items=[
+                item(id="a2", description="QA 일정 확인", status="needs_confirmation"),
+                item(id="a3", description="법무 검토 요청", status="needs_confirmation"),
+                item(id="a4", description="모델이 확신하지 못한 것", is_candidate=True),
+            ],
+            note=None,
+        ),
+        None,
+        confirmed_only=True,
+    )
+
+    assert page.text == "\n".join(
+        [
+            "회의록",
+            "",
+            "결정 사항",
+            "없음",
+            "확인 전인 결정 1건은 싣지 않았습니다.",
+            "",
+            "할 일",
+            "없음",
+            "확인 전인 할 일 2건은 싣지 않았습니다.",
+        ]
+    )
+    assert page.decision_ids == [] and page.action_ids == []
+
+
+def test_a_draft_carrying_personal_data_is_counted_as_a_draft_not_screened() -> None:
+    page = minutes_page(
+        with_(
+            decisions=[decision("dec_2", "고객 010-1234-5678에게 회신한다", "pending")],
+            action_items=[
+                item(id="a2", description="계좌 110-123-456789로 환불", status="needs_confirmation")
+            ],
+            note=None,
+        ),
+        None,
+        confirmed_only=True,
+    )
+
+    assert "010-1234-5678" not in page.text and "110-123-456789" not in page.text
+    assert page.unconfirmed_decisions == 1 and page.waiting_actions == 1
+    assert page.held_back == 0
+
+
+def test_with_nothing_unconfirmed_the_tools_page_is_the_web_page() -> None:
+    """Parity for what is confirmed: the same summaries the web's tests use,
+    with the drafts taken out, render the same text both ways."""
+    settled = [
+        with_(
+            decisions=[d for d in SUMMARY.decisions if d.status == "confirmed"],
+            action_items=[i for i in SUMMARY.action_items if i.status != "needs_confirmation"],
+        ),
+        with_(
+            meeting_title="10월 2주차 점검",
+            meeting_started_at=STARTED,
+            decisions=[decision("dec_3", "배포는 미룹니다 (담당 박지영, 기한 2026-10-13)")],
+            action_items=[
+                item(id="a6", due_date=date(2026, 10, 13), status="todo"),
+                item(id="a9", description="외주 견적 받기", status="done", closed_unfinished=True),
+            ],
+        ),
+        with_(decisions=[], action_items=[], note=None),
+    ]
+    for summary in settled:
+        web = minutes_page(summary, title_of(summary))
+        tool = minutes_page(summary, title_of(summary), confirmed_only=True)
+        assert tool.text == web.text
+        assert "싣지 않았습니다" not in tool.text

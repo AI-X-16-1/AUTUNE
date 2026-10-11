@@ -926,26 +926,62 @@ def test_the_minutes_are_the_page_the_summary_tab_copies(session: Session) -> No
     assert result["ok"] is True
     [row] = result["items"]
     assert row["title"] == "회의록" and row["meeting_id"] == MEETING
-    lines = row["body"].split("\n")
-    assert lines[:5] == [
-        "회의록 — 주간 회의",
-        "",
-        "결정 사항",
-        "1. dec_ok 결정",
-        "2. dec_wait 결정 (자동 추출)",
-    ]
-    # The items in the order the board lists them, which is the service's to say.
-    assert lines[5:7] == ["", "할 일"]
-    assert sorted(line[3:] for line in lines[7:9]) == [
-        "act_draft 할 일 — 담당 미지정 · 기한 없음 · 확인 필요",
-        "act_todo 할 일 — 박지영 · 기한 없음",
-    ]
-    assert lines[9:] == ["", "메모", "다음 회의는 목요일."]
+    # Rule 3 of #261: what nobody confirmed is counted, not quoted.
+    assert row["body"] == "\n".join(
+        [
+            "회의록 — 주간 회의",
+            "",
+            "결정 사항",
+            "1. dec_ok 결정",
+            "확인 전인 결정 1건은 싣지 않았습니다.",
+            "",
+            "할 일",
+            "1. act_todo 할 일 — 박지영 · 기한 없음",
+            "확인 전인 할 일 1건은 싣지 않았습니다.",
+            "",
+            "메모",
+            "다음 회의는 목요일.",
+        ]
+    )
+    assert "dec_wait" not in str(result) and "act_draft" not in str(result)
+    assert "dec_no" not in str(result)
     # No quotation: neither the line an item came from nor its id.
     assert "제가 할게요" not in str(result) and "utt_a" not in str(result)
-    assert result["evidence"][:2] == ["dec_ok", "dec_wait"]
-    assert sorted(result["evidence"][2:]) == ["act_draft", "act_todo"]
-    assert "자동 추출 1건" in result["summary"] and "확인 필요 1건" in result["summary"]
+    assert result["evidence"] == ["dec_ok", "act_todo"]
+    assert result["summary"] == (
+        "회의록: 확인된 결정 1건, 확인된 할 일 1건. "
+        "확인 전인 결정 1건과 할 일 1건은 싣지 않았습니다."
+    )
+
+
+def test_minutes_of_a_meeting_with_only_drafts_quote_none_and_count_them(
+    session: Session,
+) -> None:
+    decision(session, "dec_wait", status=None)
+    decision(session, "dec_wait2", status=None)
+    item(session, "act_draft", status="needs_confirmation", assignee=None)
+    session.flush()
+
+    result = tools.meeting_minutes(session, TEAM, MEETING)
+
+    assert result["ok"] is True
+    assert result["items"][0]["body"] == "\n".join(
+        [
+            "회의록 — 주간 회의",
+            "",
+            "결정 사항",
+            "없음",
+            "확인 전인 결정 2건은 싣지 않았습니다.",
+            "",
+            "할 일",
+            "없음",
+            "확인 전인 할 일 1건은 싣지 않았습니다.",
+        ]
+    )
+    for drafted in ("dec_wait", "act_draft"):
+        assert drafted not in str(result)
+    assert result["evidence"] == []
+    assert "확인 전인 결정 2건과 할 일 1건" in result["summary"]
 
 
 def test_minutes_of_a_meeting_that_settled_nothing_say_so(session: Session) -> None:

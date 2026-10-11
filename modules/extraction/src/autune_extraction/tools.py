@@ -31,12 +31,12 @@ Rules from section 4 that are enforced here rather than trusted to the caller:
 **Rule 3 of #261 -- B content that leaves goes through B's outbound read.** An
 item's text appears in ``items`` only once a person has confirmed it (the same
 gate as ``service.outbound_for_meeting``). What is still unconfirmed is counted,
-not quoted. Two exceptions: ``unresolved_questions``, whose whole point is
-utterances nobody has confirmed -- its docstring says the agent may use them
-internally (L0) and must not post them anywhere without a person's review --
-and ``meeting_minutes``, which is the page the 요약 tab copies and lists a
-draft as the tab does, marked "확인 필요" or "(자동 추출)" on its own line, under
-the same instruction.
+not quoted. The one exception is ``unresolved_questions``, whose whole point is
+utterances nobody has confirmed; its docstring says the agent may use them
+internally (L0) and must not post them anywhere without a person's review.
+``meeting_minutes`` is not an exception: unlike the 요약 tab's "회의록 복사",
+its page leaves off a pending decision and an item awaiting confirmation and
+says how many it left off.
 """
 
 from __future__ import annotations
@@ -870,21 +870,26 @@ def meeting_minutes(session: Session, team_id: str, meeting_id: str) -> dict[str
     for one part of the outcome: decisions alone are ``meeting_decisions``, who
     should do what is ``meeting_action_items``.
 
-    Returns one row whose ``body`` is the whole page as plain text, the page a
-    person copying it from the tab gets: the meeting's title and day; a model's
-    overview only where one was written, headed "요약 (AI 작성)"; the decisions,
-    one nobody confirmed marked "(자동 추출)"; the action items as "description
-    — who · due · state", where "끝내지 않고 닫힘" is an item closed without
-    being finished (not done) and "확인 필요" one nobody has confirmed yet; and
-    the team's memo. Give the page as it is, with those marks: an item marked
-    "확인 필요" or a decision marked "(자동 추출)" is a model's draft, not
-    settled, and the page must not be posted to a channel or tracker without a
-    person. Candidates are left out, and no utterance is quoted.
+    Returns one row whose ``body`` is the whole page as plain text: the
+    meeting's title and day; a model's overview only where one was written,
+    headed "요약 (AI 작성)"; the decisions a person confirmed; the action items
+    a person confirmed, as "description — who · due · state", where "끝내지 않고
+    닫힘" is an item closed without being finished (not done); and the team's
+    memo. Give the page as it is. Candidates are left out, and no utterance is
+    quoted.
+
+    This tool follows rule 3 of #261 (unconfirmed things are counted, not
+    quoted) and is not an exception to it: a decision nobody confirmed and an
+    item still awaiting confirmation are not on the page. Each section instead
+    ends with how many were left off ("확인 전인 결정 N건은 싣지 않았습니다.",
+    "확인 전인 할 일 N건은 싣지 않았습니다."), and ``summary`` repeats the
+    counts; to see or confirm them a person opens the 요약 tab.
 
     The other rendering of the same page is the web's
-    (``apps/web/src/features/actions/minutes.ts``); ``autune_extraction.minutes``
-    ports its rules, and the two are tested on the same strings. Unlike the
-    web's copy this text leaves B, so every line is screened with
+    (``apps/web/src/features/actions/minutes.ts``), which a person copies with
+    the drafts on it, marked; ``autune_extraction.minutes`` ports its rules,
+    and the two are tested on the same strings for what is confirmed. Unlike
+    the web's copy this text leaves B, so every line is screened with
     ``find_unmasked``: a line carrying personal data is left off and counted in
     ``summary``. ``evidence`` holds the ids of the decisions and items on the
     page. A meeting of another team, or past retention, is not found.
@@ -892,11 +897,13 @@ def meeting_minutes(session: Session, team_id: str, meeting_id: str) -> dict[str
     if _team_of(session, meeting_id) != team_id:
         return _not_found("meeting", meeting_id)
     summary = service.meeting_summary(session, meeting_id)
-    page = minutes.minutes_page(summary, minutes.title_of(summary))
-    said = (
-        f"회의록: 결정 {len(page.decision_ids)}건(자동 추출 {page.unconfirmed_decisions}건), "
-        f"할 일 {len(page.action_ids)}건(확인 필요 {page.waiting_actions}건)."
-    )
+    page = minutes.minutes_page(summary, minutes.title_of(summary), confirmed_only=True)
+    said = f"회의록: 확인된 결정 {len(page.decision_ids)}건, 확인된 할 일 {len(page.action_ids)}건."
+    if page.unconfirmed_decisions or page.waiting_actions:
+        said += (
+            f" 확인 전인 결정 {page.unconfirmed_decisions}건과 "
+            f"할 일 {page.waiting_actions}건은 싣지 않았습니다."
+        )
     if page.candidates:
         said += f" 후보 {page.candidates}건은 넣지 않았습니다."
     if page.held_back:

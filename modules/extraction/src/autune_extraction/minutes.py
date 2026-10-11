@@ -4,9 +4,10 @@
 (``minutesOf`` / ``minutesText``). That one is built in the browser from what the
 summary tab holds and put on the clipboard; this one is built here from the same
 ``service.meeting_summary`` and handed to the assistant (``tools.meeting_minutes``),
-so "이 회의 회의록 써 줘" is answered with the page a person would have copied.
-The rules are the web's, line for line, and ``tests/unit/test_minutes.py`` holds
-the strings ``CopyMinutes.test.tsx`` holds. A change to one is a change to both.
+so "이 회의 회의록 써 줘" is answered with the page a person would have copied,
+less what nobody has confirmed (below). The rules are the web's, line for line,
+and ``tests/unit/test_minutes.py`` holds the strings ``CopyMinutes.test.tsx``
+holds. A change to one is a change to both.
 
 What the page carries, as minutes.ts says it: the meeting's title and the day it
 began; a model's overview only where one was written, headed "AI 작성"; the
@@ -16,12 +17,22 @@ without being finished is "끝내지 않고 닫힘" and one not begun says nothi
 typed sentence on one line (#1229); and the team's memo, which keeps its lines.
 No quotation of an utterance: the lines an item was drawn from are not on it.
 
-**One difference, and it is the screening.** The web copy never leaves the
-reader's browser except by the reader's own paste. This page leaves B for a
-model, so every line of typed text on it goes through ``find_unmasked``, the
-check ``service.outbound_for_meeting`` and ``tools._shown_title`` run on what
-leaves: a line that carries personal data is held back and counted in
-``held_back``, never sent. The date is Korea's (``slots.KST``), not a browser's.
+**Two differences, both because this page leaves B.** The web copy never leaves
+the reader's browser except by the reader's own paste. This page leaves B for a
+model, so:
+
+- every line of typed text on it goes through ``find_unmasked``, the check
+  ``service.outbound_for_meeting`` and ``tools._shown_title`` run on what
+  leaves: a line that carries personal data is held back and counted in
+  ``held_back``, never sent;
+- with ``confirmed_only`` (what ``tools.meeting_minutes`` asks for) it follows
+  rule 3 of #261 -- unconfirmed things are counted, not quoted -- on the same
+  gate as ``service.outbound_for_meeting``: a pending decision and an action
+  item still in ``needs_confirmation`` are left off, and each section says how
+  many were (``UNCONFIRMED_DECISIONS_LEFT_OFF``, ``WAITING_ACTIONS_LEFT_OFF``).
+  Everything that is on the page is written as the web writes it.
+
+The date is Korea's (``slots.KST``), not a browser's.
 """
 
 from __future__ import annotations
@@ -43,6 +54,12 @@ UNCONFIRMED_DECISION = "자동 추출"
 
 CLOSED_UNFINISHED = "끝내지 않고 닫힘"
 """minutes.ts ``CLOSED_UNFINISHED``: an item closed without being finished (#856)."""
+
+UNCONFIRMED_DECISIONS_LEFT_OFF = "확인 전인 결정 {n}건은 싣지 않았습니다."
+"""Under 결정 사항 on a ``confirmed_only`` page: the pending decisions left off."""
+
+WAITING_ACTIONS_LEFT_OFF = "확인 전인 할 일 {n}건은 싣지 않았습니다."
+"""Under 할 일 on a ``confirmed_only`` page: the items awaiting confirmation left off."""
 
 COLUMN_LABELS = {
     "needs_confirmation": "확인 필요",
@@ -75,7 +92,11 @@ class MinutesPage:
     held_back: int = 0
     """Lines left off because ``find_unmasked`` found personal data in them."""
     unconfirmed_decisions: int = 0
+    """Pending decisions: marked "(자동 추출)" on the page, or -- with
+    ``confirmed_only`` -- left off it and only counted."""
     waiting_actions: int = 0
+    """Items in ``needs_confirmation``: marked "확인 필요" on the page, or -- with
+    ``confirmed_only`` -- left off it and only counted."""
 
 
 def title_of(summary: MeetingSummary) -> str | None:
@@ -165,8 +186,15 @@ def _clean(text: str) -> bool:
     return not find_unmasked(text)
 
 
-def minutes_page(summary: MeetingSummary, title: str | None) -> MinutesPage:
-    """minutes.ts ``minutesText``, with each line of typed text screened."""
+def minutes_page(
+    summary: MeetingSummary, title: str | None, *, confirmed_only: bool = False
+) -> MinutesPage:
+    """minutes.ts ``minutesText``, with each line of typed text screened.
+
+    ``confirmed_only`` leaves off what nobody has confirmed -- a pending decision,
+    an item in ``needs_confirmation`` -- and says under each section how many
+    were left off, so their text never reaches the page (rule 3 of #261).
+    """
     page = MinutesPage(text="")
     began = _began(summary)
     year = began.year if began else None
@@ -193,6 +221,9 @@ def minutes_page(summary: MeetingSummary, title: str | None) -> MinutesPage:
     shown_decisions: list[str] = []
     for decision in summary.decisions:
         unconfirmed = decision.status == "pending"
+        if unconfirmed and confirmed_only:
+            page.unconfirmed_decisions += 1
+            continue
         line = one_line(shown_statement(decision.statement, year))
         if unconfirmed:
             line += f" ({UNCONFIRMED_DECISION})"
@@ -205,6 +236,8 @@ def minutes_page(summary: MeetingSummary, title: str | None) -> MinutesPage:
     if not shown_decisions:
         lines.append("없음")
     lines += [f"{n}. {line}" for n, line in enumerate(shown_decisions, start=1)]
+    if confirmed_only and page.unconfirmed_decisions:
+        lines.append(UNCONFIRMED_DECISIONS_LEFT_OFF.format(n=page.unconfirmed_decisions))
 
     lines += ["", "할 일"]
     shown_actions: list[str] = []
@@ -212,16 +245,22 @@ def minutes_page(summary: MeetingSummary, title: str | None) -> MinutesPage:
         if item.is_candidate:
             page.candidates += 1
             continue
+        waiting = item.status == "needs_confirmation"
+        if waiting and confirmed_only:
+            page.waiting_actions += 1
+            continue
         line = f"{one_line(item.description)} — {action_meta(item, year)}"
         if not _clean(line):
             page.held_back += 1
             continue
         shown_actions.append(line)
         page.action_ids.append(item.id)
-        page.waiting_actions += item.status == "needs_confirmation"
+        page.waiting_actions += waiting
     if not shown_actions:
         lines.append("없음")
     lines += [f"{n}. {line}" for n, line in enumerate(shown_actions, start=1)]
+    if confirmed_only and page.waiting_actions:
+        lines.append(WAITING_ACTIONS_LEFT_OFF.format(n=page.waiting_actions))
 
     note = (summary.note or "").strip()
     if note:
