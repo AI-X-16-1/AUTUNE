@@ -1254,14 +1254,30 @@ it.
 
 ### How long it is kept
 
-**Until the team deletes it** (`privacy.md` section 4; module B's owner on
-#817, 2026-10-10). An uploaded material is a reference document the team keeps,
-not an analysis result of a meeting, so the team's retention window does not
-apply and no task deletes it by age. Any member deletes one from the 자료
-screen, at any time; the `ext_materials` row and its `ext_material_chunks`
-rows -- masked text and vectors -- go in one transaction, and nothing else holds
-a copy of either. Deleting the team deletes every material it has. Only masked
-text is ever kept; the original file is not.
+**For the team's retention window, counted from the upload, unless the team
+chose to keep it until deleted** (`privacy.md` section 4; #817, option 다 of
+lsh2217's review on #1198, chosen by module B's owner on 2026-10-11).
+
+- **Default.** The upload sets `ext_materials.expires_at` to now plus the
+  team's `teams.retention_days` (90 by default). The hourly
+  `autune.extraction.periodic.expire_materials` deletes every material past
+  it -- the row, its masked text and its vectors -- and every alarm row older
+  than 30 days.
+- **The team's choice.** In its settings a team may choose "kept until a
+  member deletes it" (`ext_material_settings`, one row a team, cascading
+  from `teams`; no row is the default). Any member may change it, either
+  way; the row records the choice and when it changed, never who. It covers
+  all of the team's uploads, past and future, and the expiry task skips the
+  team's materials while it is on. Switching back to the window applies to
+  existing materials counted from their upload: `expires_at` is set at every
+  upload whatever the choice, so a material already past it goes in the next
+  hourly run, and the settings screen says how many before saving.
+- **Either way**, any member deletes a material from the 자료 screen at any
+  time; the `ext_materials` row and its `ext_material_chunks` rows -- masked
+  text and vectors -- go in one transaction, and nothing else holds a copy of
+  either. Deleting the team deletes every material it has. Only masked text
+  is ever kept; the original file is not. An agenda draft made from a
+  material for a meeting is that meeting's and keeps the meeting's window.
 
 ### What is read, per format
 

@@ -147,10 +147,10 @@ item quotes readable around it.
 **Status, 2026-10-09: the rule is written first.** On `main` today
 `ext_materials` exists for Drive links only (#1016: team, title, the file's
 id and kind, the time), and nothing of a file is read. What this subsection
-adds is not there yet: the column that marks an uploaded row,
-`ext_material_chunks`, `ext_material_alarms`, the upload route, the delete
-of an uploaded material and the task that deletes old alarm rows. They
-arrive in the changes listed on #817 -- the document masker in
+adds is not there yet: the columns that mark an uploaded row and give it a
+window, `ext_material_chunks`, `ext_material_alarms`, the team's keeping
+setting (`ext_material_settings`), the upload route, the delete of an
+uploaded material and the expiry task. They arrive in the changes listed on #817 -- the document masker in
 `packages/integrations`, module B's storage, the approvers' alert
 in the agent layer, search -- each built to this text and off by default,
 and none of them merges before this rule is approved. The legal notice
@@ -158,7 +158,11 @@ and none of them merges before this rule is approved. The legal notice
 collected, how long it is kept, what the terms of use call content -- and it
 is changed before upload is switched on anywhere: while the notice does not
 say what is read of an uploaded file and what is kept of it, the switch
-stays off. The storage change removes this paragraph, and that sentence
+stays off. The notice's sentences go in with the storage change (2b), and
+they describe both what section 4 allows: by default a material is deleted
+when the team's retention window, counted from the upload, has passed, and
+a team may choose in its settings to keep its materials until a member
+deletes them. The storage change removes this paragraph, and that sentence
 stays until the notice has changed.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
@@ -218,7 +222,9 @@ patterned values -- a phone number, an e-mail address, a resident
 registration number, a card or account number. It does not hide a name
 written in a sentence, or content that identifies somebody by what it
 describes (ADR 0007, accepted cost). That is why this text has a deletion
-path any member can run (section 4) and is read by the team alone.
+path and a retention rule (section 4) -- any member's delete, and the
+team's window by default or the team's own choice to keep it until deleted
+-- and is read by the team alone.
 
 **No row names a person.** Not who uploaded a file, not who deleted one, not
 who was stopped. The title is typed by a member and can hold a name; it is
@@ -255,7 +261,7 @@ link is for approvers only and shows the time and the kind of marking. An
 approver's acknowledgement deletes the row, and who acknowledged is not
 recorded. In a small team the time of an attempt can point at one person,
 which is why the row is short-lived: unacknowledged, it is deleted 30 days
-after it was written, by an hourly task of module B's.
+after it was written, by the task that deletes materials past their window.
 
 The check reads words, not meaning, and only in those places: a marking
 that exists only in the body, or only as a picture, is not seen.
@@ -361,8 +367,9 @@ person's, those counts are that person's completion record. So:
 ## 4. Retention and deletion
 
 - Analysis results are retained **90 days** by default, adjustable per team.
-  A team's uploaded materials are not analysis results and are kept until the
-  team deletes them (#817, below).
+  A team's uploaded materials have the same window, counted from the upload,
+  unless the team chose to keep them until a member deletes them (#817,
+  below).
 - A scheduled sweep deletes expired results: `autune.audio.periodic.expire_meetings`,
   hourly (#206). Module A deletes every meeting past `meetings.expires_at` and
   everything cascades from it. The window starts when the meeting is held —
@@ -512,21 +519,34 @@ person's, those counts are that person's completion record. So:
   `teams`), the last member's deletion of it included (#1007). A person's
   own deletion (`DELETE /api/audio/me`, `/me/speech`) reaches no material:
   no row names a person, and a document is not speech.
-- **An uploaded material is kept until the team deletes it** (decided by
-  module B's owner on #817, 2026-10-10, for the other four owners'
-  approval). It has no window: the upload sets no expiry, the team's
-  `retention_days` does not apply to it, and no task deletes it by age. This
-  is an exception to the 90-day default, made for one reason: **a material
-  is not an analysis result.** The window is for what Autune derives from a
-  meeting -- a transcript and what is drawn from it -- and it is counted from
-  when the meeting was held. A material is a reference document the team
-  chose to put on its 자료 screen: no meeting produced it, and it stays
-  because the team still wants it there. Expiring it would delete a document
-  the team never asked to lose and Autune cannot give back, since no
-  original is kept. The exception covers the material only; nothing Autune
-  derives from a meeting loses its window because a material was involved.
-  A link-only row (#1016) holds a title and a Drive file id, no text, and
-  has no window either, as before.
+- **A material's masked text has the team's retention window, counted from
+  the upload, unless the team chose to keep it until deleted** (#817; module
+  B's owner chose this, option 다 of lsh2217's review on #1198, 2026-10-11).
+  - **The default is the window.** The upload sets `ext_materials.expires_at`
+    to now plus the team's `retention_days` (90 by default), as a meeting's
+    is set when it is held. Module B's own hourly task
+    (`autune.extraction.periodic.expire_materials`) deletes every material
+    past it -- row, masked text and vectors -- except a material of a team
+    that chose to keep its materials, and every alarm row older than 30
+    days. Autune kept no original, so a team that still needs the document
+    uploads the file again.
+  - **A team may choose "kept until a member deletes it".** It is a setting
+    of the team's, in module B's `ext_material_settings` (one row a team,
+    cascading from `teams`; no row means the default), changed from the
+    team's settings screen. Any member of the team may change it, either
+    way; the row holds the choice and when it last changed, and no row, log
+    line or notice names who changed it. The choice covers **all** of the
+    team's uploads, those already made and those to come -- not one
+    material at a time -- and the 자료 screen shows every member which one
+    is in force. While it is on, no task deletes the team's materials by
+    age, and a material goes only by a member's delete or with the team.
+  - **Switching back to the window applies to existing materials, counted
+    from their upload.** Every upload keeps its `expires_at` whichever
+    choice is in force, so on switching back a material whose window has
+    already passed is deleted by the next hourly run. The settings screen
+    says so, and how many materials that is, before the change is saved.
+  - A link-only row (#1016) holds a title and a Drive file id, no text, and
+    keeps having no window.
   - **How a team deletes one.** Any member of the team, at any time, from
     the team's 자료 screen; nobody's approval is asked and there is no trash.
     One transaction deletes the `ext_materials` row and every
@@ -551,20 +571,23 @@ person's, those counts are that person's completion record. So:
   - **Open (#817): a team nobody is on.** A last member who deletes their own
     account (`DELETE /api/audio/me`) instead of the team leaves the team
     with no member, and nothing deletes such a team today. Its materials
-    would then have nobody who can delete them and no window to end them.
-    Module B's proposal: the last member's account deletion deletes the
-    team with it, after a confirmation that names the team, so nothing is
-    left that nobody can reach. That is module A's code and module A's
+    would then have nobody who can delete them or change the team's
+    setting. The case matters only for a team that chose to keep its
+    materials until deleted -- nothing would ever end them -- and, under the
+    default, for the length of the window, during which nobody can delete
+    one; when the window passes, the hourly task still ends them. Module
+    B's proposal: the last member's account deletion deletes the team with
+    it, after a confirmation that names the team, so nothing is left that
+    nobody can reach. That is module A's code and module A's (mkkim68's)
     decision. Upload stays off until that case has an answer.
   - **What a meeting makes from a material is the meeting's.** An agenda
     draft built from a material for a meeting (#1147) is an analysis result
     of that meeting: it has the meeting's window and goes with the meeting.
     Deleting the material does not reach a draft already made from it.
-  - **No expiry a team can switch on.** A material has no window, and none
-    can be set per team; a team that wants one gone deletes it.
 - Somebody whose data sits in a document's unmasked prose, and who is not on
   the team, has no route of their own in Autune: the route is a team
-  member's delete. The same is true of a third party named in a meeting.
+  member's delete, or the team's window unless the team chose to keep its
+  materials until deleted. The same is true of a third party named in a meeting.
 
 **Required of every module:**
 - Every module-owned table is reachable from a `meeting_id` or a `user_id`.
@@ -573,8 +596,8 @@ person's, those counts are that person's completion record. So:
   time, and a team's materials (`ext_materials` and what cascades from it) --
   while any per-meeting rows under it cascade from `meetings` (#619 review). A
   material holds a document's masked text, so unlike the other two it also has
-  a delete any member can run. It has no window: it is kept until a member
-  deletes it or the team is deleted.
+  a delete any member can run, and it is kept for the team's retention window
+  counted from the upload, or until a member deletes it if the team chose so.
 - Each module registers a deletion hook in `autune_core`'s deletion registry.
   Rows reachable by `ON DELETE CASCADE` from `meetings` are covered
   automatically — embeddings and topic graphs included, since both are
@@ -1280,6 +1303,8 @@ Reject a pull request that does any of the following:
 - [ ] Records who uploaded, deleted or was stopped uploading a material
 - [ ] Keeps any of a material's text or vectors where a member's delete of
       that material does not reach
+- [ ] Keeps a material past the team's window when the team has not chosen
+      "kept until a member deletes it", or records who changed that choice
 
 ## 8. When a rule blocks you
 
