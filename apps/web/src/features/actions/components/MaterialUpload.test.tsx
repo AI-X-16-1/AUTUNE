@@ -3,14 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "@/shared/api/client";
 
-import { localToday } from "../dates";
 import { CONFIDENTIAL_REFUSAL, UNANSWERED } from "../materialUpload";
 import type { Material, MaterialUploadRules } from "../types";
 import { MaterialsScreen } from "./MaterialsScreen";
 
 // The 자료 screen where the deployment takes uploads (#817). What is under
 // test is what the screen promises about a file -- no original, masked text,
-// a day it goes -- and that it sends nothing the rules already refuse. The
+// kept until the team deletes it -- and that it sends nothing the rules already refuse. The
 // files are a few made-up words; no real document is near this.
 
 const session = vi.fn();
@@ -44,7 +43,6 @@ const RULES: MaterialUploadRules = {
   max_materials: 200,
 };
 
-const EXPIRES = "2099-01-07T03:00:00Z";
 const uploaded = (over: Partial<Material> = {}): Material => ({
   id: "mat_up",
   team_id: "team_a",
@@ -53,7 +51,8 @@ const uploaded = (over: Partial<Material> = {}): Material => ({
   drive_file_id: null,
   drive_kind: null,
   created_at: "2026-10-09T03:00:00Z",
-  expires_at: EXPIRES,
+  // The server sends null for every upload: kept until the team deletes it.
+  expires_at: null,
   not_read: [],
   ...over,
 });
@@ -115,6 +114,8 @@ describe("MaterialsScreen, whether a file can be sent at all", () => {
     const form = await screen.findByRole("form", { name: "파일 올리기" });
     expect(within(form).getByText(/원본은 보관하지 않으며/)).toBeTruthy();
     expect(within(form).getByText(/개인정보를 가린 글/)).toBeTruthy();
+    expect(within(form).getByText(/팀이 지울 때까지\s+보관합니다/)).toBeTruthy();
+    expect(form.textContent).not.toMatch(/목록에 적힌 날|삭제 예정|일 뒤/);
     expect(within(form).getByText(/문장 속의 이름은 가려지지 않으며/)).toBeTruthy();
     expect(within(form).getByText(/그림으로만 들어 있는 글은\s+읽지 않습니다/)).toBeTruthy();
     expect(within(form).getByText(/한 파일 5MB까지 · \.txt \.pdf \.docx/)).toBeTruthy();
@@ -124,7 +125,7 @@ describe("MaterialsScreen, whether a file can be sent at all", () => {
 });
 
 describe("MaterialsScreen, sending a file", () => {
-  it("sends the title and the file, puts the row first and says until when its text is kept", async () => {
+  it("sends the title and the file, puts the row first and says its text is kept until the team deletes it", async () => {
     await open([linked()]);
     await screen.findByRole("form", { name: "파일 올리기" });
     upload.mockResolvedValue(uploaded({ not_read: ["pictures"] }));
@@ -138,7 +139,8 @@ describe("MaterialsScreen, sending a file", () => {
     expect(upload).toHaveBeenCalledExactlyOnceWith("team_a", { title: "분기 계획", file: chosen });
     expect(within(rows()[0] as HTMLElement).getByText("분기 계획")).toBeTruthy();
     const said = screen.getByRole("status").textContent ?? "";
-    expect(said).toContain(`개인정보를 가린 글을 ${localToday(new Date(EXPIRES))}까지 보관합니다`);
+    expect(said).toContain("개인정보를 가린 글을 팀이 지울 때까지 보관합니다.");
+    expect(said).not.toMatch(/\d{4}-\d{2}-\d{2}|일 뒤/);
     expect(said).toContain("이 파일의 그림 안에 있는 글은 읽지 않았습니다");
     expect((screen.getByLabelText("올릴 자료 제목") as HTMLInputElement).value).toBe("");
     expect((screen.getByLabelText("올릴 파일") as HTMLInputElement).files).toHaveLength(0);
@@ -290,17 +292,17 @@ describe("MaterialsScreen, a full shelf", () => {
 });
 
 describe("MaterialsScreen, an uploaded row", () => {
-  it("shows the day its text is deleted, and nothing to preview or open", async () => {
+  it("says its text is kept until the team deletes it, and has nothing to preview or open", async () => {
     await open([uploaded(), linked()]);
 
     const [up, link] = rows() as [HTMLElement, HTMLElement];
-    expect(within(up).getByText(/올린 파일/).textContent).toContain(
-      `${localToday(new Date(EXPIRES))} 삭제 예정`,
-    );
+    const meta = within(up).getByText(/올린 파일/).textContent ?? "";
+    expect(meta).toContain("팀이 지울 때까지 보관");
+    expect(meta).not.toContain("삭제 예정");
     expect(within(up).queryByRole("button", { name: "미리보기" })).toBeNull();
     expect(within(up).queryByRole("link")).toBeNull();
-    // A link keeps nothing, so it has no such day -- and keeps its two doors.
-    expect(within(link).getByText(/Google 문서/).textContent).not.toContain("삭제");
+    // A link keeps no text, so it says nothing of keeping -- and keeps its two doors.
+    expect(within(link).getByText(/Google 문서/).textContent).not.toMatch(/보관|삭제/);
     expect(within(link).getByRole("button", { name: "미리보기" })).toBeTruthy();
     expect(within(link).getByRole("link", { name: "Drive에서 열기" })).toBeTruthy();
   });

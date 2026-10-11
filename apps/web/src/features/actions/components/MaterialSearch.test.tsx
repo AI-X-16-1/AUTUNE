@@ -53,7 +53,7 @@ const uploaded = (id: string, title: string): Material => ({
   drive_file_id: null,
   drive_kind: null,
   created_at: "2026-10-09T03:00:00Z",
-  expires_at: "2099-01-07T03:00:00Z",
+  expires_at: null,
   not_read: [],
 });
 
