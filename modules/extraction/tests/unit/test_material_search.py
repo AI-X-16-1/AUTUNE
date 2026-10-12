@@ -422,7 +422,7 @@ def test_the_floor_has_a_default_for_the_real_embedder_and_reads_the_environment
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     field = ExtractionSettings.model_fields["material_search_min_similarity"]
-    assert field.default == 0.4
+    assert field.default == 0.5
 
     monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY", "0.55")
     assert ExtractionSettings().material_search_min_similarity == 0.55

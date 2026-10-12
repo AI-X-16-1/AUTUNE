@@ -1452,9 +1452,10 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   hides (전화번호, 이메일, ...) gets a notice that it cannot be shown, and the
   note that stars are hidden values comes only with an excerpt that shows a
   run the masker made. A material whose nearest piece is under
-  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY` (cosine, 0.4 by default)
+  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY` (cosine, 0.5 by default)
   is not a hit; with none left the answer is empty and says nothing close
-  enough was found. 0.4 is a starting point for KURE-v1, not a measurement.
+  enough was found. 0.5 was measured for KURE-v1 on made-up documents, not
+  on a team's materials, and no floor separates every unrelated question.
   An upload past its `expires_at` is not searched, even in the hour before
   the task deletes it; a team that keeps its uploads until deleted has
   none such, as the task passes it over.
