@@ -47,7 +47,8 @@ from autune_integrations.privacy import MASK_CHAR, SEPARATOR_PUNCTUATION, find_p
 # copy drifted (#324): a thin space the pattern accepts made a phone number
 # "mixed script" and every digit went, and a card read across lines lost its
 # last four. So it is derived instead -- any whitespace (the card pattern may
-# cross a line break; the others cannot reach one) and the punctuation
+# cross a line break, and since #1223 every pattern may cross one beside a
+# dash) and the punctuation
 # `privacy` exports, plus `+` for an international prefix. Not `(`: a span
 # starts at its first digit, so the opening parenthesis is never inside one.
 def _layout(char: str) -> bool:

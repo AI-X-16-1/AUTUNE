@@ -19,12 +19,12 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from sqlalchemy.orm import Session
 
 from autune_contracts.enums import GapSeverity
 from autune_contracts.gap import GapReport
-from autune_core import CurrentUser, User, get_session
+from autune_core import CurrentUser, SessionDep, User
 
 from . import service
 from .enqueue import enqueue_publish_report
@@ -49,8 +49,6 @@ from .schemas import (
 )
 
 router = APIRouter()
-
-SessionDep = Annotated[Session, Depends(get_session)]
 
 
 @router.get("/health")
@@ -153,9 +151,9 @@ def undo_dismiss_gap(gap_id: str, session: SessionDep, reader: CurrentUser) -> G
 def _dismiss(session: Session, gap_id: str, reader: User, *, dismissed: bool) -> GapDismissal:
     """Set the mark, commit it, then queue the republish.
 
-    Committed here rather than left to ``get_session``, which commits after the
-    route returns: a worker that picked the task up first would publish the
-    report as it was before the mark.
+    Committed here rather than left to ``SessionDep``, which commits as the
+    route returns -- after the task is queued: a worker that picked the task
+    up first would publish the report as it was before the mark.
     """
     result = service.set_dismissed(session, gap_id, reader, dismissed=dismissed)
     session.commit()
@@ -317,9 +315,10 @@ def set_meeting_template(
     service.require_readable_meeting(session, meeting_id, reader)
     chosen = service.set_template(session, meeting_id, selection.template_key)
 
-    # Committed here rather than left to `get_session`, which commits after the
-    # route returns: `detect_gaps` opens its own session — it is the same call
-    # the Celery task makes — and an uncommitted override is one it cannot see.
+    # Committed here rather than left to `SessionDep`, which commits as the
+    # route returns -- after this: `detect_gaps` opens its own session — it is
+    # the same call the Celery task makes — and an uncommitted override is one
+    # it cannot see.
     # Without this the re-comparison would run against the previous template.
     session.commit()
     service.detect_gaps(meeting_id)

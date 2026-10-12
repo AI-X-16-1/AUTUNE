@@ -71,8 +71,14 @@ copies text from another module, so it is purged once stale).
 Four of those cascade from `meetings.id`. `ctx_decisions` is anchored on
 `team_id` instead — a lineage must outlive its origin meeting reaching the
 retention window — so a thread left with no versions is dead weight.
-`service.sweep_orphan_decision_threads` removes them; it is not yet an
-`autune_core.deletion` hook (blocked on #87, same as module E's `intel_reports`).
+`service.forget_deleted_meeting` (`@on_meeting_deleted("context")`, #1161)
+deletes them before the meeting's row goes, and with them the two other places
+a meeting's decision text is left in a thread: a later version's
+`previous_statement` and the thread's `topic_label`. The three sweeps
+(`service.sweep_orphan_decision_threads` and its siblings) still run at the end
+of every lineage build, for what the hook cannot see. Do not delete a thread or
+empty a copy anywhere but there and in the sweeps, and do not make the hook wait
+for the `meetings` or `teams` row: its caller holds a lock on one of them.
 See `/docs/modules/context.md`, "Deletion".
 
 A lineage is a chain: `previous_version_id` plus a recursive CTE. The graph

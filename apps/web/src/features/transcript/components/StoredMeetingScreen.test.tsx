@@ -95,6 +95,29 @@ describe("StoredMeetingScreen", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("다른 회의");
   });
 
+  // #1176: an internal id is the address's business, not the reader's.
+  it("does not show the meeting id on the screen", () => {
+    vi.spyOn(api, "listLiveResearch").mockResolvedValue([]);
+    state = { status: "ready", meeting: meeting("complete") };
+
+    const { container } = render(<StoredMeetingScreen meetingId="mtg_1" />);
+
+    expect(container.querySelector("header")?.textContent).not.toContain("mtg_1");
+    expect(container.querySelector("header")?.textContent).toContain("분석 완료");
+    expect(screen.getByRole("link", { name: "실시간 보기" })).toBeTruthy();
+  });
+
+  it("says a failed read in Korean and asks again on 다시 시도 (#1176)", () => {
+    const retry = vi.fn();
+    state = { status: "error", message: "회의 정보를 불러오지 못했습니다.", retry };
+
+    render(<StoredMeetingScreen meetingId="mtg_1" />);
+
+    expect(screen.getByRole("alert").textContent).toContain("회의 정보를 불러오지 못했습니다.");
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("offers no rename before the meeting has been read", () => {
     state = { status: "loading" };
 

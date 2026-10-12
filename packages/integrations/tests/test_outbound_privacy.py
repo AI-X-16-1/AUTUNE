@@ -711,3 +711,99 @@ def test_an_unbounded_group_run_is_scanned_quickly() -> None:
     find_pii("1-" * 2_000 + "x")
     find_pii("1음 " * 1_300 + "x")
     assert time.monotonic() - started < 2.0
+
+
+# #1223: every row of the issue's table. The separators stood on horizontal
+# space only, so a break beside the hyphen let these through all three guards.
+SPLIT_AT_THE_HYPHEN = [
+    ("rrn", "주민 900101-1234567"),  # one line: refused before the fix too
+    ("rrn", "주민 900101-\n1234567"),  # LF after the hyphen
+    ("rrn", "주민 900101\n-1234567"),  # LF before the hyphen
+    ("rrn", "주민 900101-\r\n1234567"),  # CRLF after the hyphen
+    ("digits", "계좌 123456-\n01-\n234567"),
+    ("phone", "+82 10-2345-\n6789"),
+    ("phone", "010-2345-\n6789"),  # refused before the fix too, by the card-separator phone
+    # The same breaks in the other forms they come in.
+    ("rrn", "주민 900101\r\n-1234567"),  # CRLF before the hyphen
+    ("rrn", "주민 900101-\r1234567"),  # a bare CR
+    ("rrn", "주민 900101\n-\n1234567"),  # the hyphen on a line of its own
+    ("rrn", "주민 900101 -\n 1234567"),  # spaces around the break
+    ("rrn", "주민 900101–\n1234567"),  # an en dash
+    ("digits", "계좌 123456\n-01\n-234567"),
+]
+
+
+@pytest.mark.parametrize(("category", "text"), SPLIT_AT_THE_HYPHEN)
+def test_a_line_break_beside_the_hyphen_does_not_hide_the_number(category: str, text: str) -> None:
+    assert category in {cat for _, _, cat in find_pii(text)}
+    assert find_unmasked(text)
+    with pytest.raises(PrivacyViolationError):
+        assert_masked(text, destination="slack")
+    with pytest.raises(PrivacyViolationError):
+        check_outbound({"body": text}, destination="notion")
+
+
+# From the same issue's "함께 보실 만한 것": two ways of writing the hyphen that
+# a single line already got past.
+OTHER_HYPHENS = [
+    ("rrn", "주민 900101－1234567"),  # fullwidth hyphen-minus
+    ("rrn", "주민 900101--1234567"),  # the hyphen typed twice
+    ("phone", "010－2345－6789"),
+    ("card", "1234－5678－9012－3456"),
+]
+
+
+@pytest.mark.parametrize(("category", "text"), OTHER_HYPHENS)
+def test_a_fullwidth_or_doubled_hyphen_is_still_a_separator(category: str, text: str) -> None:
+    assert category in {cat for _, _, cat in find_pii(text)}
+    with pytest.raises(PrivacyViolationError):
+        assert_masked(text, destination="slack")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A Markdown list of figures: a dash and a space at the start of a line
+        # is a bullet, not the second half of a number.
+        "- 매출 300000\n- 1200000",
+        "- 1\n- 2\n- 3\n- 4\n- 5\n- 6\n- 7\n- 8\n- 9\n- 10\n- 11",
+        # A horizontal rule between two figures.
+        "123456\n---\n1234567",
+        # An ellipsis between two figures: only a dash doubles.
+        "가격 120000...1300000",
+        # A date range broken at its hyphen is still a date range.
+        "2026-10-02\n-2026-10-05",
+    ],
+)
+def test_a_line_break_beside_a_dash_does_not_join_ordinary_figures(text: str) -> None:
+    assert find_pii(text) == []
+
+
+def test_figures_on_adjacent_lines_with_no_dash_are_still_not_an_rrn() -> None:
+    """The break counts only beside a dash; with nothing between them two
+    figures on adjacent lines are still two figures (the hazard `_HSPACE`
+    exists for)."""
+    assert "rrn" not in {cat for _, _, cat in find_pii("900101\n1234567")}
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["예산 150000.\n1200000원", "(150000)\n1200000", "예산 150000.\r\n1200000원"],
+)
+def test_a_line_break_after_a_full_stop_or_parenthesis_joins_nothing(text: str) -> None:
+    """Only a dash opens the way to the next line; a sentence ending on a
+    figure above another figure is two figures, as on `main` (#1232)."""
+    assert "rrn" not in {cat for _, _, cat in find_pii(text)}
+
+
+# Named ids: a 50,000-character id lands in PYTEST_CURRENT_TEST and overruns
+# the environment-variable limit on Windows (@lsh2217 on #1232).
+@pytest.mark.parametrize(
+    "tail",
+    ["\n" * 50_000, " \n" * 25_000, "-\n" * 25_000, "\n-" * 25_000],
+    ids=["lf", "space-lf", "dash-lf", "lf-dash"],
+)
+def test_a_long_run_of_line_breaks_after_a_digit_is_scanned_quickly(tail: str) -> None:
+    started = time.monotonic()
+    find_pii("900101" + tail + "x")
+    assert time.monotonic() - started < 2.0

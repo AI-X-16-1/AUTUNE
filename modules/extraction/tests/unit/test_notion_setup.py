@@ -75,10 +75,12 @@ def test_a_new_connection_gets_an_autune_page_with_three_databases_in_it() -> No
 
 def test_each_database_has_exactly_the_columns_its_sync_writes() -> None:
     """The schema is built from the same name maps the sync uses, so the two
-    cannot drift apart."""
+    cannot drift apart. The item and decision databases also get 내용, which the
+    sync names only for a database known to have it
+    (``test_notion_content_property``)."""
     assert [names for _, _, names, _ in DATABASES] == [
-        NOTION_PROPERTIES,
-        DECISION_NOTION_PROPERTIES,
+        {**NOTION_PROPERTIES, "content": "내용"},
+        {**DECISION_NOTION_PROPERTIES, "content": "내용"},
         MINUTES_NOTION_PROPERTIES,
     ]
     for _, _, names, status_select in DATABASES:

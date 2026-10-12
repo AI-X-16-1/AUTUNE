@@ -462,9 +462,10 @@ def test_a_value_broken_over_lines_is_refused_in_a_memo(
     session: Session,
     queued: list[str],
 ) -> None:
-    """The memo is the field a person writes lines in. As typed the detector
-    reads none of these -- which is the hole -- and the save is refused."""
-    assert find_unmasked(broken) == [], "read as nothing as typed"
+    """The memo is the field a person writes lines in. Before #1223 the
+    detector read none of these as typed -- which was the hole -- and B's fold
+    refused them; since #1223 the detector reads a break beside a dash too, so
+    either may be what refuses. The save is refused either way."""
     before, held = counts(session), texts(session)
 
     with capture_logs() as logs:
@@ -575,8 +576,9 @@ def test_what_the_fold_newly_refuses_that_is_nobodys_number(
 ) -> None:
     """The cost, written down: two numbers that meet across the break and make
     a shape together. Each was saved until now. "A sentence the detector reads
-    wrongly cannot be saved; that cost is accepted" (privacy.md, #1130)."""
-    assert find_unmasked(memo) == [], "saved until now"
+    wrongly cannot be saved; that cost is accepted" (privacy.md, #1130). Whether
+    the detector also reads a row as typed changed with #1223 and is not this
+    test's question."""
 
     response = _memo(client, memo)
 

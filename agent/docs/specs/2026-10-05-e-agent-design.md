@@ -528,3 +528,48 @@ The sections above are left as designed; each affected one points here.
       올려줘" and "다시 써서 올려줘" from the team view proposed the post, the
       second also the draft (L1). The pending cards were keyed on that
       meeting, and asking again replaced the earlier card.
+17. **Report search, built without an index (section 8, 2026-10-11).**
+    "결제 API 얘기한 리포트 찾아줘" now reaches E's `search_reports(query)` in
+    the chat path, and it does not take the shape section 8 describes. Section
+    8's four conditions are what keeping meeting content in an index costs.
+    The search keeps no index, so it does not pay them:
+    - Each question reads the team's newest 200 meeting reports and its weekly
+      reports. A meeting report is read as its title line, its body and the
+      correction under it, without E's footer. The reports are ranked in
+      memory with BM25 over the glossary's Kiwi tokens, and three come back at
+      most, each with the line that matched (160 characters).
+    - An edit, a correction, a line replaced by #614's forgetting, a deleted
+      meeting and the hourly expiry are seen at once. There is no copy to keep
+      in step with them.
+    - The team is the run's (`RUN_SCOPE`). A meeting past its `expires_at` is
+      left out before the sweep deletes it.
+    - The query stays in the process, like `explain_metric`'s question
+      (agent-layer.md section 4, rule 1). It is neither stored nor logged.
+    - The IDF is Lucene's, not `BM25Okapi`'s. `BM25Okapi`'s falls to zero or
+      below for a word found in half the texts or more, so for a team with one
+      or two reports it would find nothing.
+    - A team has tens of reports. A team with many more would need a stored
+      index, and section 8's conditions with it.
+    - **Checked with the real model on a synthetic team** (2026-10-11,
+      `gemini-3.5-flash-lite`, a scratch database seeded with one mock team
+      of eight meeting reports and two weekly reports):
+      - **Routing.** 24 questions were routed three times each, with Report's
+        description from main and from this change. Five search questions
+        went to Report every time with the new description. On main, two of
+        them went to the ask loop ("배포 일정 언급된 리포트 어디 있어?" three of
+        three, "결제 API 얘기한 리포트 찾아줘" one of three). The twelve E
+        questions of item 12 and #1160 went where they went before. Of the
+        seven controls, one moved: "결제 API 얘기한 회의 찾아줘" now reaches
+        Report instead of the ask loop. It is answered from the meetings'
+        reports, naming both meetings that discussed it, so this was kept. A
+        meeting without a report is not found that way.
+      - **Whole turns.** Six questions went through `run_and_record`, as the
+        chat route runs them. Two faults were found and fixed. "온보딩" found
+        nothing, because Kiwi cuts the word and drops it, and that led to the
+        syllable-pair fallback (`retrieval.unread_pairs`). "로그인 오류 다룬
+        리포트 보여줘" searched and then read the found report's text, and the
+        reply counted that one report twice. The chat now lists a report it
+        read whole once. After the fixes, all of them answered with the
+        right reports.
+      - "다시 써줘" with no object goes to the ask loop on main as well;
+        "리포트 다시 써줘" reaches Report. That is not this change.

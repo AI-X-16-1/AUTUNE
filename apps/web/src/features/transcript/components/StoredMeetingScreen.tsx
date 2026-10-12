@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useMeeting } from "../hooks/useMeeting";
 import { STATUS_LABEL } from "../status";
 import { LiveResearchList } from "./LiveResearchPanel";
+import { LoadError } from "./LoadError";
 import { MeetingDeletion } from "./MeetingDeletion";
 import { MeetingTitle, TITLE_STYLE } from "./MeetingTitle";
 import { ProcessingStages } from "./ProcessingStages";
@@ -73,16 +74,16 @@ export function StoredMeetingScreen({ meetingId }: { meetingId: string }) {
           className="mt-2 text-[var(--color-ink-muted)]"
           style={{ fontSize: "var(--text-meta)" }}
         >
-          <span>{meetingId}</span>
+          {/* No meeting id here (#1176): it is the address's business, not
+              the reader's. */}
           {state.status === "ready" ? (
             <>
-              <span aria-hidden="true"> · </span>
               <span>
                 {STATUS_LABEL[state.meeting.status] ?? state.meeting.status}
               </span>
+              <span aria-hidden="true"> · </span>
             </>
           ) : null}
-          <span aria-hidden="true"> · </span>
           <Link href={`/meetings/${meetingId}/live`} className="underline">
             실시간 보기
           </Link>
@@ -113,17 +114,7 @@ function body(state: ReturnType<typeof useMeeting>, meetingId: string) {
     );
   }
   if (state.status === "error") {
-    return (
-      <p
-        role="alert"
-        style={{
-          fontSize: "var(--text-meta)",
-          color: "var(--color-signal-attention)",
-        }}
-      >
-        {state.message}
-      </p>
-    );
+    return <LoadError message={state.message} onRetry={state.retry} />;
   }
 
   const { meeting } = state;
