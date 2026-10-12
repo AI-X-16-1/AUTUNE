@@ -786,6 +786,16 @@ def test_figures_on_adjacent_lines_with_no_dash_are_still_not_an_rrn() -> None:
     assert "rrn" not in {cat for _, _, cat in find_pii("900101\n1234567")}
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["예산 150000.\n1200000원", "(150000)\n1200000", "예산 150000.\r\n1200000원"],
+)
+def test_a_line_break_after_a_full_stop_or_parenthesis_joins_nothing(text: str) -> None:
+    """Only a dash opens the way to the next line; a sentence ending on a
+    figure above another figure is two figures, as on `main` (#1232)."""
+    assert "rrn" not in {cat for _, _, cat in find_pii(text)}
+
+
 @pytest.mark.parametrize("tail", ["\n" * 50_000, " \n" * 25_000, "-\n" * 25_000, "\n-" * 25_000])
 def test_a_long_run_of_line_breaks_after_a_digit_is_scanned_quickly(tail: str) -> None:
     started = time.monotonic()

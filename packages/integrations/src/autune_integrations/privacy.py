@@ -133,13 +133,19 @@ _BREAK: Final = r"(?:\r\n|[\r\n])"
 # dash doubles: two full stops are an ellipsis, and `120000...1300000` is a
 # sentence trailing off between two figures.
 #
-# Each alternative starts on a different character -- a dash or other
+# Each alternative starts on a different character -- a dash, other
 # punctuation, or a line break -- so a run of whitespace still has one parse
 # (see the quadratic case above).
-_PUNCT: Final = rf"(?:[{re.escape(_DASHES)}]{{1,2}}|[{re.escape(SEPARATOR_PUNCTUATION)}])"
+#
+# Only a dash opens the way to the next line. A full stop or a closing
+# parenthesis keeps horizontal space after it, as on `main`: `150000.` ending a
+# sentence and `1200000원` opening the next are two figures, and so are
+# `(150000)` and a figure below it (@kjfcvx12 on #1232).
+_NON_DASH_PUNCT: Final = "".join(c for c in SEPARATOR_PUNCTUATION if c not in _DASHES)
 _SEP: Final = (
     rf"{_HSPACE}*"
-    rf"(?:{_PUNCT}\s*"
+    rf"(?:[{re.escape(_DASHES)}]{{1,2}}\s*"
+    rf"|[{re.escape(_NON_DASH_PUNCT)}]{_HSPACE}*"
     rf"|{_BREAK}{_HSPACE}*[{re.escape(_DASHES)}]{{1,2}}(?:{_HSPACE}*{_BREAK}\s*)?)?"
 )
 
