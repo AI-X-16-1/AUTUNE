@@ -263,26 +263,45 @@ export const nameSpeaker = (meetingId: string, speakerLabel: string, name: strin
 export const unassignSpeaker = (meetingId: string, speakerLabel: string) =>
   writeSpeaker(meetingId, speakerLabel, "", "DELETE");
 
-async function writeSpeaker(
+const writeSpeaker = (
   meetingId: string,
   speakerLabel: string,
   suffix: "" | "/name",
+  method: "POST" | "PUT" | "DELETE",
+  payload?: Record<string, string>,
+): Promise<void> =>
+  writeForNoAnswer(
+    `/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}${suffix}`,
+    method,
+    payload,
+  );
+
+/**
+ * Delete a meeting and everything Autune keeps for it, as any member of its
+ * team (#1161). The meeting's title, typed by the person, goes in the body:
+ * it can name a client, and an address is logged. 204, no body, so it goes
+ * the way `assignSpeaker` does. Refused: 409 `meeting_in_progress` while it
+ * is being transcribed or recorded, 422 `meeting_title_mismatch`, and 403 or
+ * 404 as for any read of the meeting.
+ */
+export const deleteMeeting = (meetingId: string, title: string) =>
+  writeForNoAnswer(`/meetings/${encodeURIComponent(meetingId)}`, "DELETE", { title });
+
+/** A write under `/api/audio` that answers 204; see `assignSpeaker` for why
+ *  it cannot go through `request()`. */
+async function writeForNoAnswer(
+  path: string,
   method: "POST" | "PUT" | "DELETE",
   payload?: Record<string, string>,
 ): Promise<void> {
   // Same origin, like the upload below: a direct call to the API's own port is
   // cross-origin, so the browser sent a CORS preflight the API answers 405 and
   // the assignment never left the page.
-  const response = await fetch(
-    `${SAME_ORIGIN_BASE}/api/audio/meetings/${meetingId}/speakers/${encodeURIComponent(speakerLabel)}${suffix}`,
-    {
-      method,
-      headers: payload
-        ? { "content-type": "application/json", ...authHeaders() }
-        : authHeaders(),
-      body: payload ? JSON.stringify(payload) : undefined,
-    },
-  );
+  const response = await fetch(`${SAME_ORIGIN_BASE}/api/audio${path}`, {
+    method,
+    headers: payload ? { "content-type": "application/json", ...authHeaders() } : authHeaders(),
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
   if (!response.ok) {
     let body: { error?: { code?: string; message?: string; details?: Record<string, unknown> } } | undefined;
     try {
