@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
@@ -53,5 +53,54 @@ describe("StoredMeetingScreen", () => {
     render(<StoredMeetingScreen meetingId="mtg_1" />);
 
     expect(await screen.findByText("가격 정책")).toBeTruthy();
+  });
+
+  it("shows the title just saved, which the route does not send back (#1161)", async () => {
+    vi.spyOn(api, "listLiveResearch").mockResolvedValue([]);
+    const rename = vi
+      .spyOn(api, "renameMeeting")
+      .mockResolvedValue({ meeting_id: "mtg_1", status: "complete" });
+    state = { status: "ready", meeting: meeting("complete") };
+    render(<StoredMeetingScreen meetingId="mtg_1" />);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("주간 회의");
+
+    fireEvent.click(screen.getByRole("button", { name: "이름 변경" }));
+    fireEvent.change(screen.getByLabelText("회의 이름"), {
+      target: { value: "3분기 계획" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "3분기 계획" })).toBeTruthy();
+    expect(rename).toHaveBeenCalledWith("mtg_1", "3분기 계획");
+  });
+
+  it("does not show one meeting's saved title on another meeting", async () => {
+    vi.spyOn(api, "listLiveResearch").mockResolvedValue([]);
+    vi.spyOn(api, "renameMeeting").mockResolvedValue({ meeting_id: "mtg_1", status: "complete" });
+    state = { status: "ready", meeting: meeting("complete") };
+    const view = render(<StoredMeetingScreen meetingId="mtg_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "이름 변경" }));
+    fireEvent.change(screen.getByLabelText("회의 이름"), {
+      target: { value: "3분기 계획" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await screen.findByRole("heading", { level: 1, name: "3분기 계획" });
+
+    state = {
+      status: "ready",
+      meeting: { ...meeting("complete"), meeting_id: "mtg_2", title: "다른 회의" },
+    };
+    view.rerender(<StoredMeetingScreen meetingId="mtg_2" />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("다른 회의");
+  });
+
+  it("offers no rename before the meeting has been read", () => {
+    state = { status: "loading" };
+
+    render(<StoredMeetingScreen meetingId="mtg_1" />);
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("회의 전사");
+    expect(screen.queryByRole("button", { name: "이름 변경" })).toBeNull();
   });
 });

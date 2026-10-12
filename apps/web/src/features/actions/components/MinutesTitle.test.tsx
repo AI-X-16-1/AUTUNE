@@ -78,6 +78,17 @@ describe("a row's short title on the page of minutes", () => {
     expect(text).not.toContain(STATEMENT);
   });
 
+  it("keeps a title that came over several lines on its numbered line", () => {
+    const text = minutesText({
+      ...MEETING,
+      decisions: [{ id: "dec_3", statement: STATEMENT, title: "가입 화면\n이메일 인증", status: "confirmed" }],
+      action_items: [item({ id: "a4", title: "결제 오류\r\n  목록 공유" })],
+    });
+
+    expect(text).toContain("1. 가입 화면 이메일 인증\n");
+    expect(text).toContain("1. 결제 오류 목록 공유 — 김민경 · 기한 없음");
+  });
+
   it("heads a row of the 요약 tab, with the whole sentence under it", async () => {
     getSummary.mockResolvedValue(MEETING);
 

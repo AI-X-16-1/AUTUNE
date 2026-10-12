@@ -15,6 +15,7 @@ import {
 import { nextInstantAt, rememberPlannedEnd } from "../plannedEnd";
 import { ACCEPTED_EXTENSIONS, acceptsRecording } from "../recordingFile";
 import { teamToOpen } from "../selectedTeam";
+import { titleRefusal } from "../titleRefusal";
 import type { TeamSummary } from "../types";
 
 type Source = "live" | "file";
@@ -202,7 +203,9 @@ export function NewMeetingScreen({
       router.push(`/meetings/${meeting_id}/live`);
     } catch (e: unknown) {
       setStep("idle");
-      setError(e instanceof Error ? e.message : "회의를 만들지 못했습니다");
+      setError(
+        titleRefusal(e) ?? (e instanceof Error ? e.message : "회의를 만들지 못했습니다"),
+      );
     }
   }
 
@@ -233,7 +236,9 @@ export function NewMeetingScreen({
       router.push(`/meetings/${meetingId}`);
     } catch (e: unknown) {
       setStep("idle");
-      setError(e instanceof Error ? e.message : "업로드에 실패했습니다");
+      setError(
+        titleRefusal(e) ?? (e instanceof Error ? e.message : "업로드에 실패했습니다"),
+      );
     }
   }
 
@@ -250,7 +255,9 @@ export function NewMeetingScreen({
       router.push(`/meetings/${meeting_id}`);
     } catch (e: unknown) {
       setStep("idle");
-      setError(e instanceof Error ? e.message : "회의를 만들지 못했습니다");
+      setError(
+        titleRefusal(e) ?? (e instanceof Error ? e.message : "회의를 만들지 못했습니다"),
+      );
     }
   }
 

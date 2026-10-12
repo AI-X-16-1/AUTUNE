@@ -51,7 +51,7 @@ from autune_core import (
     new_id,
     session_scope,
 )
-from autune_core.deletion import on_speech_deleted
+from autune_core.deletion import on_meeting_deleted, on_speech_deleted
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -2525,4 +2525,31 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         texts_replaced=done.texts_replaced,
         topics_removed=done.topics_removed,
         reports_changed=done.reports_changed,
+    )
+
+
+# --- a meeting is deleted (#1161) -----------------------------------------------
+
+
+@on_meeting_deleted("intelligence")
+def forget_deleted_meeting(meeting_id: str) -> None:
+    """Before a meeting's row goes -- at its expiry, with its team, or by a
+    member's own act: E takes it out of the other meetings' rows that would
+    outlive it (``forget.forget_meeting``). E's own rows of the meeting go with
+    the row.
+
+    Registered from this file for the reason ``forget_deleted_speech`` is: a
+    member's and a team's deletion run in the API process, which imports every
+    router and no ``tasks`` module; an expiry runs in the worker, whose
+    ``tasks`` imports this file too. Opens its own session and commits before
+    the caller deletes; raises on failure, so the caller keeps the meeting.
+    Does not read the meeting's row and locks none of the caller's. Safe to
+    repeat. Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget.forget_meeting(session, meeting_id)
+    log.info(
+        "intelligence_meeting_forgotten",
+        meeting_id=meeting_id,
+        statements_cleared=done.statements_cleared,
     )
