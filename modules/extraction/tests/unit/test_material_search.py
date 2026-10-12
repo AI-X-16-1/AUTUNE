@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from itertools import permutations
 
 import pytest
 from fastapi import FastAPI, Request
@@ -734,6 +735,14 @@ def set_cut(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
     monkeypatch.setattr(get_settings(), "material_search_max_below_best", value)
 
 
+def alike(n: int) -> str:
+    """The launch text with its lines in the ``n``-th order: the same
+    characters each time, so the fake places every one at the same distance
+    from a question, and a text of its own, so each is its own material."""
+    lines = sorted(set(permutations(LAUNCH.strip().split(". ") * 3)))[n]
+    return "\n".join(lines) + "\n"
+
+
 def three(session: Session) -> tuple[list[str], list[float]]:
     """Three materials at three distances from ``ASKED``: their ids and scores,
     nearest first, as the search answers with no floor and no cut."""
@@ -818,7 +827,7 @@ def test_materials_as_near_as_the_best_all_stay_at_the_narrowest_cut(
     session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for n in range(3):
-        upload(session, LAUNCH * 3, title=f"출시 계획 {n}")
+        upload(session, alike(n), title=f"출시 계획 {n}")
     upload(session, BUDGET * 3, title="예산")
     set_cut(monkeypatch, 0.0)
 
@@ -842,14 +851,14 @@ def test_more_counts_only_materials_within_the_cut(
     """Five alike fill the answer; a sixth beyond the cut is not more of them,
     a sixth as near as they are is."""
     for n in range(5):
-        upload(session, LAUNCH * 3, title=f"출시 계획 {n}")
+        upload(session, alike(n), title=f"출시 계획 {n}")
     upload(session, BUDGET * 3, title="예산")
     set_cut(monkeypatch, 0.0)
 
     answer = search_materials(session, TEAM, ASKED)
     assert len(answer.hits) == 5 and answer.more is False
 
-    upload(session, LAUNCH * 3, title="출시 계획 5")
+    upload(session, alike(5), title="출시 계획 5")
     assert search_materials(session, TEAM, ASKED).more is True
 
 
