@@ -300,7 +300,10 @@ def get_material_embedder() -> Embedder:
     and ``hosted``; the fake is as wide as the stored column. A vector of
     another width is refused where it is used (``materials.embedded``), and
     ``hosted`` refuses one itself: ``LocalKureEmbedder`` knows its width only
-    once it has loaded, the server only once it has answered."""
+    once it has loaded, the server only once it has answered. ``hosted`` is
+    built only once its server has named the checkpoint as the model it runs
+    (``HostedKureEmbedder.confirm_model``); a server that names another, or
+    cannot be asked, raises here and the next call asks again."""
     settings = get_settings()
     impl = settings.material_embedder_impl
     if impl in ("local", "hosted") and not settings.embedder_checkpoint:
@@ -318,11 +321,15 @@ def get_material_embedder() -> Embedder:
                 "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=hosted needs "
                 "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_ENDPOINT"
             )
-        return HostedKureEmbedder(
+        hosted = HostedKureEmbedder(
             settings.material_embedder_endpoint,
             settings.embedder_checkpoint,
             dim=MATERIAL_EMBEDDING_DIM,
         )
+        # Before it is handed to anybody: a server running another model of
+        # the same width gets no text, and nothing is cached when this raises.
+        hosted.confirm_model()
+        return hosted
     if impl == "fake":
         return FakeEmbedder(dim=MATERIAL_EMBEDDING_DIM)
     raise ValueError(
