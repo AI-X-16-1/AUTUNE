@@ -92,10 +92,62 @@ _R: Final = rf"(?![{_EDGE}])"
 # the detector `check_outbound` relies on. Detection stays wide; how the masker
 # lays out what it hides is ``masking._layout``'s business.
 _HSPACE: Final = r"[^\S\r\n]"
-SEPARATOR_PUNCTUATION: Final = "-.–—)"
+SEPARATOR_PUNCTUATION: Final = "-.–—)－"
 """The punctuation `_SEP` accepts between digit groups. Exported so module A's
-masker keeps exactly these as layout instead of a hand-made copy (#324)."""
-_SEP: Final = rf"{_HSPACE}*(?:[{re.escape(SEPARATOR_PUNCTUATION)}]{_HSPACE}*)?"
+masker keeps exactly these as layout instead of a hand-made copy (#324).
+
+The fullwidth hyphen-minus (U+FF0D) is what a Korean IME in fullwidth mode
+types for `-`, and `900101－1234567` passed the guard whole (#1223)."""
+
+# The dashes among them: what joins digit groups in a hyphenated identifier, as
+# opposed to a full stop or a closing parenthesis.
+_DASHES: Final = "-–—－"
+
+# One line break, as CR, LF or CRLF.
+_BREAK: Final = r"(?:\r\n|[\r\n])"
+
+# **A line break may stand next to a dash, and nowhere else** (#1223).
+# `900101-` at the end of one line and `1234567` at the start of the next is one
+# number, and so is `900101` above `-1234567`: an editor wraps a hyphenated value
+# at its hyphen, and a person typing a report breaks the line there. On
+# horizontal space only, a resident number, a hyphenated account and a +82
+# number each passed `find_unmasked`, `assert_masked` and `check_outbound` the
+# moment a break stood beside the hyphen.
+#
+# The hazard `_HSPACE` exists for is still closed. Two figures on adjacent
+# lines with *nothing* between them (`예산\n150000\n200000`) are two figures,
+# and nothing here joins them -- the break counts only when a dash is beside it.
+#
+# The two sides are not symmetric, and that is on purpose:
+#
+#   - after a dash, any whitespace: `900101-` + break + `1234567`. A dash that
+#     ends a line in the middle of a number is not a thing prose does.
+#   - before a dash, a break only when the dash is followed directly by the next
+#     digit (`900101` / `-1234567`), or by another break. A dash followed by a
+#     space at the start of a line is a Markdown bullet, and E's reports are
+#     Markdown: `- 매출 300000` above `- 1200000` would otherwise be a resident
+#     number. A bullet over a hyphen-split number still loses that half of the
+#     number to the bullet reading; this is the narrower trade.
+#
+# A doubled dash (`900101--1234567`) is the same separator typed twice. Only a
+# dash doubles: two full stops are an ellipsis, and `120000...1300000` is a
+# sentence trailing off between two figures.
+#
+# Each alternative starts on a different character -- a dash, other
+# punctuation, or a line break -- so a run of whitespace still has one parse
+# (see the quadratic case above).
+#
+# Only a dash opens the way to the next line. A full stop or a closing
+# parenthesis keeps horizontal space after it, as on `main`: `150000.` ending a
+# sentence and `1200000원` opening the next are two figures, and so are
+# `(150000)` and a figure below it (@kjfcvx12 on #1232).
+_NON_DASH_PUNCT: Final = "".join(c for c in SEPARATOR_PUNCTUATION if c not in _DASHES)
+_SEP: Final = (
+    rf"{_HSPACE}*"
+    rf"(?:[{re.escape(_DASHES)}]{{1,2}}\s*"
+    rf"|[{re.escape(_NON_DASH_PUNCT)}]{_HSPACE}*"
+    rf"|{_BREAK}{_HSPACE}*[{re.escape(_DASHES)}]{{1,2}}(?:{_HSPACE}*{_BREAK}\s*)?)?"
+)
 
 # The card pattern alone may cross a line break. Four groups of four is a
 # shape nothing else in a transcript has, and a card number read aloud
@@ -105,7 +157,7 @@ _SEP: Final = rf"{_HSPACE}*(?:[{re.escape(SEPARATOR_PUNCTUATION)}]{_HSPACE}*)?"
 # three groups and keeps its tail, and the fourth group falls outside every
 # span (@PARKJAEKYUNG0525 on #211). The same one-parse shape as `_SEP`, so
 # the quadratic case does not come back with the wider class.
-_SEP_CARD: Final = r"\s*(?:[-.–—)]\s*)?"
+_SEP_CARD: Final = rf"\s*(?:[{re.escape(SEPARATOR_PUNCTUATION)}]\s*)?"
 
 # The account catch-all keeps the narrow one, and this is the whole reason the
 # two exist separately. `account` is three groups of two-to-six digits, which is
@@ -156,7 +208,15 @@ MIN_ACCOUNT_DIGITS: Final = 10
 # reader to recognise their own account. A mis-grouped resident number keeping
 # four is the leak; an account losing four is the annoyance.
 MIN_GROUPED_DIGITS: Final = 11
-_GROUP_SEP: Final = rf"{_HSPACE}*(?:[-–—]|음|어){_HSPACE}*"
+# A line break beside a dash joins groups here as it does in `_SEP`, on the
+# same terms (#1223): `123456-` + break + `01-` + break + `234567` is an
+# account. Not beside a filler -- `음` is speech, and speech has no line breaks.
+_GROUP_SEP: Final = (
+    rf"{_HSPACE}*"
+    rf"(?:[{re.escape(_DASHES)}]{{1,2}}\s*"
+    rf"|(?:음|어){_HSPACE}*"
+    rf"|{_BREAK}{_HSPACE}*[{re.escape(_DASHES)}]{{1,2}}(?:{_HSPACE}*{_BREAK}\s*)?)"
+)
 _DATE: Final = (
     r"(?:19|20)\d\d"
     r"(?:\D+(?:0?[1-9]|1[0-2])"  # month
