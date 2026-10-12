@@ -19,9 +19,10 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from autune_contracts.enums import ActionStatus
 from autune_contracts.extraction import ExtractionResult
@@ -33,6 +34,9 @@ from . import (
     attempts,
     jira_issues,
     leave_calendar,
+    material_reading,
+    material_search,
+    material_upload,
     materials,
     notion_connect,
     projects,
@@ -61,7 +65,13 @@ from .schemas import (
     DueReminderSettingIn,
     ExtractionState,
     JiraProjectIssues,
+    MaterialAnswer,
+    MaterialHit,
+    MaterialQuestion,
     MaterialRead,
+    MaterialSettingsRead,
+    MaterialSettingsWrite,
+    MaterialUploadRules,
     MaterialWrite,
     MeetingNoteUpdate,
     MeetingReview,
@@ -625,7 +635,8 @@ def list_materials(team_id: str, session: SessionDep, reader: CurrentUser) -> li
     first. Members of the team only; anyone else gets the 404 an unknown team
     gets."""
     team = _member_team(session, reader, None, team_id)
-    return [materials.read(row) for row in materials.team_materials(session, team)]
+    kept = materials.keeps_until_deleted(session, team)
+    return [materials.read(row, kept=kept) for row in materials.team_materials(session, team)]
 
 
 @router.post("/materials", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
@@ -637,17 +648,139 @@ def register_material(
     file itself is never read."""
     team = _member_team(session, reader, None, team_id)
     row = materials.register(session, team, title=payload.title, link=payload.link)
-    response = materials.read(row)
+    response = materials.read(row)  # a link has no day
     session.commit()
     return response
+
+
+@router.get("/materials/settings", response_model=MaterialSettingsRead)
+def material_settings(
+    team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialSettingsRead:
+    """How the team keeps its uploads: for its retention window from the
+    upload (the default) or until a member deletes them. Members only."""
+    team = _member_team(session, reader, None, team_id)
+    return materials.settings_read(session, team)
+
+
+@router.put("/materials/settings", response_model=MaterialSettingsRead)
+def update_material_settings(
+    payload: MaterialSettingsWrite, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialSettingsRead:
+    """Switch how the team keeps its uploads. Any member; who switched is not
+    recorded. Back to the window, every existing upload is counted from its
+    own upload."""
+    team = _member_team(session, reader, None, team_id)
+    materials.set_keep_until_deleted(session, team, payload.keep_until_deleted)
+    response = materials.settings_read(session, team)
+    session.commit()
+    return response
+
+
+@router.get("/materials/upload-rules", response_model=MaterialUploadRules)
+def material_upload_rules(
+    team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialUploadRules:
+    """What this server takes as an upload, in its own numbers, and whether it
+    takes one at all. Members of the team only."""
+    _member_team(session, reader, None, team_id)
+    return MaterialUploadRules(
+        enabled=get_settings().material_upload,
+        max_bytes=material_reading.MAX_BYTES,
+        suffixes=list(material_reading.SUFFIXES),
+        max_title_chars=materials.MAX_TITLE_CHARS,
+        max_materials=materials.MAX_MATERIALS,
+        search=get_settings().material_upload,
+        max_question_chars=material_search.MAX_QUESTION_CHARS,
+    )
+
+
+@router.post("/materials/search", response_model=MaterialAnswer)
+def search_materials(
+    payload: MaterialQuestion, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialAnswer:
+    """The team's uploaded materials nearest a question, best first: a title
+    and a screened excerpt of masked text for each, five at most (#817).
+    Members of the team only; anyone else gets the 404 an unknown team gets.
+
+    The question travels in the body, is masked before it is embedded, and is
+    written nowhere -- not to a table, not to a log line -- and not returned.
+    Off with uploads (``AUTUNE_EXTRACTION_MATERIAL_UPLOAD``): the bare 404 of
+    a route that does not exist."""
+    if not get_settings().material_upload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    team = _member_team(session, reader, None, team_id)
+    found = material_search.search_materials(session, team, payload.question)
+    return MaterialAnswer(
+        hits=[
+            MaterialHit(
+                material_id=hit.material_id,
+                title=hit.title,
+                excerpt=hit.excerpt,
+                position=hit.position,
+            )
+            for hit in found.hits
+        ],
+        notice=found.notice,
+        more=found.more,
+    )
+
+
+def _stored_upload(session: Session, team: str, upload: material_upload.Upload) -> MaterialRead:
+    """Off the event loop: read, check, mask and store, then commit. A file
+    stopped for a marking has its alarm row committed before the refusal is
+    answered -- the route's own rollback would otherwise take it."""
+    try:
+        row, not_read = materials.store_upload(
+            session, team, title=upload.title, file_name=upload.file_name, data=upload.data
+        )
+    except materials.ConfidentialFileError:
+        session.commit()
+        raise
+    response = materials.read(row, kept=materials.keeps_until_deleted(session, team))
+    session.commit()
+    return response.model_copy(update={"not_read": list(not_read)})
+
+
+@router.post("/materials/upload", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
+async def upload_material(
+    request: Request, team_id: str, session: SessionDep, reader: CurrentUser
+) -> MaterialRead:
+    """Keep the masked text of a file a member uploads: a form of exactly two
+    parts, ``title`` and ``file`` (#817). Any member.
+
+    **The file lives in this request's memory and nowhere else.** The body is
+    read here, not by a form reader that spools to disk, and only after the
+    caller is known to be a member; the cap holds as it arrives
+    (``material_upload``). It is read, checked for a confidentiality marking,
+    masked and stored inside this one request -- no path and no byte goes to
+    a task -- and the buffers are wiped in the ``finally`` on every path out.
+    The answer says whether it was kept.
+
+    With ``AUTUNE_EXTRACTION_MATERIAL_UPLOAD`` off -- the default -- it answers
+    the bare 404 of a route that does not exist."""
+    if not get_settings().material_upload:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    team = await run_in_threadpool(_member_team, session, reader, None, team_id)
+    upload: material_upload.Upload | None = None
+    try:
+        upload = await material_upload.read_upload(
+            request.headers.get("content-type", ""),
+            request.headers.get("content-length"),
+            request.stream(),
+        )
+        return await run_in_threadpool(_stored_upload, session, team, upload)
+    finally:
+        if upload is not None:
+            upload.wipe()
 
 
 @router.delete("/materials/{material_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_material(
     material_id: str, team_id: str, session: SessionDep, reader: CurrentUser
 ) -> None:
-    """Take a material off the team's shelf. Any member; the Drive file is not
-    touched."""
+    """Take a material off the team's shelf, at once. Any member. An upload's
+    masked text goes with it; a Drive file is not touched."""
     team = _member_team(session, reader, None, team_id)
     materials.delete_material(session, team, material_id)
     session.commit()

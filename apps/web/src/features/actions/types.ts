@@ -353,20 +353,109 @@ export interface Project {
 }
 
 /**
- * A Google Drive file a team keeps on its 자료 screen -- `MaterialRead` in
+ * A row of a team's 자료 screen -- `MaterialRead` in
  * `modules/extraction/src/autune_extraction/schemas.py` (`ext_materials`,
- * #817). A title and which file it is: no address, which the screen builds
- * from the id (`@/shared/drive`), and no person.
+ * #817). Two kinds, told apart by `source`:
+ *
+ * - `drive_link`: a title and which Drive file it is. No address, which the
+ *   screen builds from the id (`@/shared/drive`); Autune read no byte of it.
+ * - `upload`: a title over the masked text of a file a member sent. Autune
+ *   keeps no original, so there is nothing to preview or download, and the
+ *   text itself comes back only as excerpts of a search, never with the row.
+ *
+ * No row names a person.
  */
 export interface Material {
   id: string;
   team_id: string;
   /** Typed by a member, shown as typed. */
   title: string;
-  drive_file_id: string;
-  drive_kind: "file" | "document" | "presentation" | "spreadsheets";
+  source: "upload" | "drive_link";
+  /** Null for an upload, set for a link -- and so is `drive_kind`. */
+  drive_file_id: string | null;
+  drive_kind: "file" | "document" | "presentation" | "spreadsheets" | null;
   /** ISO 8601, when it was registered. */
   created_at: string;
+  /**
+   * ISO 8601, when an upload's masked text is deleted: the upload plus the
+   * team's retention window (the owner, 2026-10-11). An hourly task does it,
+   * so the row can outlive this by up to an hour. Null for an upload of a
+   * team that keeps uploads until a member deletes them, and for a link,
+   * which keeps no text.
+   */
+  expires_at: string | null;
+  /**
+   * Kinds of content the file held that were not read. Only in the answer to
+   * an upload; always empty in a list.
+   */
+  not_read: MaterialNotRead[];
+}
+
+export type MaterialNotRead = "pictures" | "charts" | "embedded_files";
+
+/**
+ * How the team keeps its uploaded materials -- `MaterialSettingsRead` in
+ * `modules/extraction/src/autune_extraction/schemas.py`. False, the default:
+ * an upload is deleted on the day it was given when it was uploaded --
+ * `retention_days`, the team's window today, is what an upload made now
+ * gets. True: kept until a member deletes it. Any member switches it; who
+ * did is not kept. `uploads_past_their_day` is how many uploads are already
+ * past their day: under true, what switching back deletes within the hour.
+ * A count only; absent from a server older than the field.
+ */
+export interface MaterialSettings {
+  keep_until_deleted: boolean;
+  retention_days: number;
+  uploads_past_their_day?: number;
+}
+
+/**
+ * What the server takes as an upload, in its own numbers -- `GET
+ * /materials/upload-rules`. `enabled` is the deployment's switch
+ * (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`, off by default): off, the upload
+ * route does not exist and the screen shows no control for it.
+ */
+export interface MaterialUploadRules {
+  enabled: boolean;
+  max_bytes: number;
+  /** Accepted file-name endings, with the dot: ".pdf". Matched in any case. */
+  suffixes: string[];
+  max_title_chars: number;
+  /** How many rows a team may keep, links and uploads together. */
+  max_materials: number;
+  /**
+   * Whether this server answers a question over the uploaded materials. A
+   * server that takes uploads and has no search route does not send it, and
+   * the screen draws no search box.
+   */
+  search?: boolean;
+  /** The longest question the search takes; 0 or absent where there is none. */
+  max_question_chars?: number;
+}
+
+/**
+ * One uploaded material that answers a question -- `MaterialHit` in
+ * `modules/extraction/src/autune_extraction/schemas.py`. A Drive link is
+ * never one: Autune does not read it.
+ */
+export interface MaterialSearchHit {
+  material_id: string;
+  title: string;
+  /**
+   * A cut of the masked text that was kept, with "…" at an end where it was
+   * cut out of a longer piece and `*` where a value was masked. There is no
+   * original behind it to open.
+   */
+  excerpt: string;
+}
+
+/** `MaterialAnswer`: at most five materials, best first. */
+export interface MaterialSearchAnswer {
+  hits: MaterialSearchHit[];
+  /** A sentence of the server's own, shown as it is; it can come with no hit. */
+  notice: string | null;
+  /** More materials answered than the ones in `hits`. */
+  more: boolean;
 }
 
 /**

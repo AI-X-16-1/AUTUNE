@@ -16,12 +16,14 @@ two things:
 
 Which past meeting, in order:
 
-1. ``series`` -- the most recent analyzed meeting with the same title. A
-   recurring meeting ("주간 스탠드업") is the common case, and its title is
-   exactly the signal retrieval cannot use: it names the series, not a topic.
+1. ``series`` -- the most recent analyzed meeting with the same title, or
+   failing that, with the same title once a round, a number or a date is taken
+   out of both ("2차 회의" follows "1차 회의", "10/14 주간회의" follows "10/7
+   주간회의"). A recurring meeting is the common case, and its title is exactly
+   the signal retrieval cannot use: it names the series, not a topic.
 2. ``topic`` -- hybrid retrieval over the title and agenda, re-ranked, the same
-   retrieve-broad, re-rank-narrow path topic linking takes, asserted on the
-   same rule a topic link is.
+   retrieve-broad, re-rank-narrow path topic linking takes, on the brief's own
+   similarity threshold; the most recent confident meeting wins.
 3. ``latest`` -- the team's most recent analyzed meeting.
 
 **Stores which meeting was chosen, never the recap** -- see ``CtxBrief``. The
@@ -34,6 +36,7 @@ Reads shared entities; writes only ``ctx_briefs`` and ``ctx_team_agendas``.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -218,6 +221,30 @@ def _normalize_title(title: str) -> str:
     return " ".join(title.split()).casefold()
 
 
+_ROUND = re.compile(
+    r"\d{4}[./-]\d{1,2}[./-]\d{1,2}"  # 2026.10.07, 2026-10-07
+    r"|(?<![\d.])\d{1,2}/\d{1,2}(?![\d/])"  # 10/7
+    r"|\d{4}\s*년"
+    r"|\d{1,2}\s*월(?:\s*\d{1,2}\s*일)?"  # 10월, 10월 14일
+    r"|\d+\s*(?:회차|주차|번째|차|분기)"  # 3회차, 2주차, 3번째, 2차, 4분기
+    r"|(?:첫|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*번째"
+    r"|#\d+"
+    r"|\bq[1-4]\b"
+)
+_COUNTED = re.compile(r"(스프린트|sprint|iteration|week)\s*\d+")
+"""A word a bare number counts for: "스프린트 15", "Sprint 23". A bare number
+anywhere else is left alone -- "1팀" and "2팀", "고객사 1" and "고객사 2" are
+different groups, not one series."""
+
+
+def _series_key(title: str) -> str:
+    """``title`` normalized, with its round, number and date taken out, so the
+    meetings of a numbered series share one key ("v2.0 출시 준비 3차 회의" ->
+    "v2.0 출시 준비 회의"). A version ("v2.0") is not a round and stays."""
+    key = _COUNTED.sub(r"\1", _normalize_title(title))
+    return " ".join(_ROUND.sub(" ", key).split())
+
+
 def _analyzed_before(session: Session, meeting: Meeting, now: datetime) -> list[tuple[str, str]]:
     """``(id, title)`` of the team's visible meetings that D has analyzed and
     that started before ``meeting``, newest first.
@@ -245,15 +272,17 @@ def _analyzed_before(session: Session, meeting: Meeting, now: datetime) -> list[
 
 def _topic_match(
     session: Session, meeting: Meeting, agenda: list[AgendaItem], candidate_ids: set[str]
-) -> str | None:
-    """The past meeting whose topics best match this one's title and agenda,
-    if confident enough to assert it.
+) -> set[str]:
+    """The past meetings whose topics match this one's title and agenda
+    confidently enough to assert it; empty when none does.
 
-    The same two signals, and the same thresholds, topic linking asserts a link
-    on (``service._link_topic``): dense similarity at or above
-    ``link_similarity_threshold``, or a re-rank score of the candidate's closest
-    segment at or above ``link_confidence_threshold``. The strongest of the two
-    picks among the confident candidates.
+    The two signals topic linking asserts a link on (``service._link_topic``),
+    but not its dense threshold: a dense similarity at or above
+    ``brief_similarity_threshold``, or a re-rank score of the candidate's
+    closest segment at or above ``link_confidence_threshold``. Topic linking
+    compares a topic segment with another; the query here is a title and a few
+    agenda lines, which score lower against the same meeting
+    (docs/modules/context-evaluations/02-brief-selection.md).
     """
     assert meeting.started_at is not None
     settings = get_settings()
@@ -278,16 +307,15 @@ def _topic_match(
         if candidate.linked_meeting_id in candidate_ids
     ][: settings.rerank_top_k]
     if not candidates:
-        return None
+        return set()
 
     scores = reranker.score(query, [candidate.passage for candidate in candidates])
-    confident = [
-        (max(candidate.similarity, float(score)), candidate.linked_meeting_id)
+    return {
+        candidate.linked_meeting_id
         for candidate, score in zip(candidates, scores, strict=True)
-        if candidate.similarity >= settings.link_similarity_threshold
+        if candidate.similarity >= settings.brief_similarity_threshold
         or score >= settings.link_confidence_threshold
-    ]
-    return max(confident)[1] if confident else None
+    }
 
 
 def choose_previous_meeting(
@@ -310,6 +338,11 @@ def choose_previous_meeting(
     for meeting_id, past_title in analyzed:
         if _normalize_title(past_title) == title:
             return meeting_id, SERIES
+    key = _series_key(meeting.title)
+    if key:
+        for meeting_id, past_title in analyzed:
+            if _series_key(past_title) == key:
+                return meeting_id, SERIES
 
     try:
         matched = _topic_match(session, meeting, agenda, {meeting_id for meeting_id, _ in analyzed})
@@ -319,9 +352,12 @@ def choose_previous_meeting(
         log.warning(
             "context_brief_topic_match_failed", meeting_id=meeting.id, error=type(exc).__name__
         )
-        matched = None
-    if matched is not None:
-        return matched, TOPIC
+        matched = set()
+    # The most recent confident one, not the best-scoring: of a kick-off and
+    # the check-in after it, this meeting follows the check-in.
+    for meeting_id, _ in analyzed:
+        if meeting_id in matched:
+            return meeting_id, TOPIC
     return analyzed[0][0], LATEST
 
 
