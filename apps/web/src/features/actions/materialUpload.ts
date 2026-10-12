@@ -101,11 +101,15 @@ export const CONFIDENTIAL_REFUSAL =
 
 /**
  * No answer that says what happened: a dropped connection, or a failure on
- * the server's side. A proxy can give up on a request the server finished,
- * so this does not claim nothing was stored -- the list, read again, says.
+ * the server's side. A proxy can give up on a request the server is still
+ * working on, and the file is then stored after this is shown: the list read
+ * at that moment does not have it yet. So this neither claims nothing was
+ * stored nor sends the member straight back to upload a second copy -- it
+ * asks them to read the list again in a minute or two first.
  */
 export const UNANSWERED =
-  "올린 결과를 확인하지 못했습니다. 목록에 자료가 보이지 않으면 저장되지 않은 것이니 다시 올려 주세요.";
+  "올린 결과를 확인하지 못했습니다. 저장이 아직 진행 중일 수 있으니 1~2분 뒤 화면을 새로 고쳐 목록을 확인해 주세요. " +
+  "그때도 자료가 보이지 않으면 다시 올려 주세요.";
 
 /** Whether a failed upload may still have stored a row, so the list is worth reading again. */
 export function mayHaveStored(cause: unknown): boolean {
