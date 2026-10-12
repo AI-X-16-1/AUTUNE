@@ -196,16 +196,14 @@
  *   end with the upload request, and no row says who uploaded, deleted or was
  *   refused. It belongs to the team, so a member's own deletion (탈퇴, 발화
  *   삭제) does not reach it -- 제2조, 제3조, 제4조 and terms 제10조 say so. Off
- *   unless the operator turns uploads on. These sentences came in as an
- *   amendment: each document says so at its head (`amendment`) and in its
- *   dating clause (처리방침 제15조 ①, the two 부칙).
+ *   unless the operator turns uploads on. Part of the first published text
+ *   (the owner, 2026-10-12): the documents took effect with these sentences
+ *   in them, so there is no amendment notice.
  * A sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
  * User-facing copy is Korean; this file's comments stay English.
  */
-
-import { AMENDED_ON } from "./consents";
 
 export interface Blank {
   blank: string;
@@ -238,12 +236,6 @@ export interface Section {
 export interface LegalDocument {
   id: "privacy" | "terms" | "security";
   title: string;
-  /**
-   * The notice of an amendment (개정 안내), shown above everything else:
-   * what changed, the day it was announced and the day it applies. Worded
-   * to stay true after that day, so it is not taken down on it.
-   */
-  amendment?: Line;
   /** The preamble, for a document that has one. */
   lead?: Line;
   sections: readonly Section[];
@@ -275,30 +267,6 @@ const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
 const EFFECTIVE = "2026년 10월 12일";
 
-// The amendment for a team's uploaded documents (#817; the owner,
-// 2026-10-12: announced in the documents themselves, seven days).
-// ANNOUNCED_ON is the day the page carrying it is on the site -- the
-// deploy, not the merge. AMENDED_ON (./consents, where it is also the
-// version a person agrees to) is at least seven days after it (처리방침
-// 제15조 ②). Both are YYYY-MM-DD and both are empty until that day is known:
-// an empty one shows as "확정 전" and content.test.ts fails, so this does
-// not merge unset. If the change waits past the day written here, move
-// both. Nothing in code holds AUTUNE_EXTRACTION_MATERIAL_UPLOAD to
-// AMENDED_ON: the head paragraphs promise it, and the operator keeps it.
-const ANNOUNCED_ON: string = "";
-export const AMENDMENT_DAYS = {
-  announced: ANNOUNCED_ON,
-  applies: AMENDED_ON,
-} as const;
-const day = (iso: string, label: string): Inline => {
-  if (iso === "") return blank(label);
-  const [year, month, date] = iso.split("-").map(Number);
-  return `${year}년 ${month}월 ${date}일`;
-};
-const ANNOUNCED = day(ANNOUNCED_ON, "개정 공지일");
-const AMENDED = day(AMENDED_ON, "개정 시행일");
-const AMENDMENT_HEAD: Inline = { strong: "개정 안내" };
-
 /**
  * Shown above the documents. Their text cannot be selected on the page (the
  * user, 2026-10-02), and a customer is owed a copy of the terms on request, so
@@ -313,16 +281,6 @@ export const COPY_NOTICE: Line = [
 const PRIVACY: LegalDocument = {
   id: "privacy",
   title: "개인정보 처리방침",
-  amendment: [
-    AMENDMENT_HEAD,
-    " (",
-    ANNOUNCED,
-    " 공지, ",
-    AMENDED,
-    " 시행) 팀 구성원이 팀의 자료에 올린 문서 파일의 처리에 관한 사항을 새로 정하였습니다. 변경된 조항은 제1조, 제2조 제1항 및 제5항, 제3조 제2항, 제4조 제2항, 제8조 제2항이며, 아래 본문에 반영되어 있습니다. 변경된 조항은 ",
-    AMENDED,
-    "부터 적용되고, 회사는 그 전까지 문서 파일을 올리는 기능을 제공하지 않으므로 시행일 전에는 문서 자료에 관한 개인정보를 수집하거나 보관하지 않습니다. 그 밖의 내용은 변경되지 않았습니다.",
-  ],
   lead: [
     OPERATOR,
     '(이하 "회사")는 「개인정보 보호법」 제30조에 따라 정보주체의 개인정보를 보호하고 이와 관련한 고충을 신속하고 원활하게 처리할 수 있도록 다음과 같이 개인정보 처리방침을 수립·공개합니다.',
@@ -889,13 +847,7 @@ const PRIVACY: LegalDocument = {
     {
       heading: "제15조(개인정보 처리방침의 변경)",
       blocks: [
-        p([
-          "① 이 개인정보 처리방침은 ",
-          EFFECTIVE,
-          "부터 적용됩니다. 다만, 팀의 문서 자료에 관한 조항(제1조, 제2조 제1항 및 제5항, 제3조 제2항, 제4조 제2항, 제8조 제2항 중 해당 부분)은 ",
-          AMENDED,
-          "부터 적용됩니다.",
-        ]),
+        p(["① 이 개인정보 처리방침은 ", EFFECTIVE, "부터 적용됩니다."]),
         p(
           "② 회사는 이 개인정보 처리방침을 변경하는 경우 변경 내용과 시행일을 시행일 7일 전부터 서비스 화면에 공지합니다. 다만, 정보주체의 권리에 중대한 변경이 있는 경우에는 시행일 30일 전부터 공지합니다.",
         ),
@@ -907,16 +859,6 @@ const PRIVACY: LegalDocument = {
 const TERMS: LegalDocument = {
   id: "terms",
   title: "서비스 이용약관",
-  amendment: [
-    AMENDMENT_HEAD,
-    " (",
-    ANNOUNCED,
-    " 공지, ",
-    AMENDED,
-    ' 시행) 개정 사유: 팀 구성원이 팀의 자료에 문서 파일을 올려 그 글을 보관하는 기능을 새로 제공하기 위한 것입니다. 개정 내용: 제2조("콘텐츠"의 정의에 팀의 문서 자료의 글을 더함), 제8조(서비스의 내용에 팀의 문서 자료의 보관을 더함), 제10조 제4항(문서 자료의 보관과 삭제를 새로 정함), 제15조 제2항 제1호(올려서는 안 되는 것에 문서를 더함). 개정 내용은 아래 본문에 반영되어 있으며, ',
-    AMENDED,
-    "부터 적용되고 그 전까지는 개정 전의 내용이 적용됩니다. 회사는 적용일자 전까지 문서 파일을 올리는 기능을 제공하지 않습니다. 개정 약관에 동의하지 않는 이용자는 제17조에 따라 이용계약을 해지할 수 있습니다.",
-  ],
   sections: [
     {
       chapter: "제1장 총칙",
@@ -1199,16 +1141,7 @@ const TERMS: LegalDocument = {
     },
     {
       heading: "부칙",
-      blocks: [
-        p(["이 약관은 ", EFFECTIVE, "부터 시행합니다."]),
-        p([
-          "(",
-          ANNOUNCED,
-          " 개정) 제2조, 제8조, 제10조 제4항 및 제15조 제2항 제1호의 개정 규정은 ",
-          AMENDED,
-          "부터 시행합니다.",
-        ]),
-      ],
+      blocks: [p(["이 약관은 ", EFFECTIVE, "부터 시행합니다."])],
     },
   ],
 };
@@ -1216,16 +1149,6 @@ const TERMS: LegalDocument = {
 const SECURITY: LegalDocument = {
   id: "security",
   title: "정보보호 정책",
-  amendment: [
-    AMENDMENT_HEAD,
-    " (",
-    ANNOUNCED,
-    " 공지, ",
-    AMENDED,
-    " 시행) 제8조에 제5항(팀의 자료에 올린 문서 파일의 처리)을 새로 두었습니다. 이 항은 ",
-    AMENDED,
-    "부터 적용됩니다.",
-  ],
   sections: [
     {
       heading: "제1조(목적)",
@@ -1403,10 +1326,7 @@ const SECURITY: LegalDocument = {
     },
     {
       heading: "부칙",
-      blocks: [
-        p(["이 정책은 ", EFFECTIVE, "부터 시행합니다."]),
-        p(["(", ANNOUNCED, " 개정) 제8조 제5항은 ", AMENDED, "부터 시행합니다."]),
-      ],
+      blocks: [p(["이 정책은 ", EFFECTIVE, "부터 시행합니다."])],
     },
   ],
 };

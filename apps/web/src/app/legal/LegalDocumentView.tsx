@@ -138,14 +138,6 @@ export function DocumentBody({ doc }: { doc: LegalDocument }) {
   const chaptered = doc.sections.some((s) => s.chapter);
   return (
     <div className="flex select-none flex-col gap-6">
-      {doc.amendment ? (
-        <p
-          className="rounded-md border border-hairline px-4 py-3 text-ink-body"
-          style={BODY}
-        >
-          <Text line={doc.amendment} />
-        </p>
-      ) : null}
       {doc.lead ? (
         <p className="text-ink-body" style={BODY}>
           <Text line={doc.lead} />
