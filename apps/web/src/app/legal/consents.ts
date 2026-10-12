@@ -28,6 +28,14 @@
  * own calendar event (#824) came in after `2026-10-12.2`. The terms did not
  * change, so theirs stays.
  *
+ * `2026-10-12.4`, the privacy policy alone: two of its sentences about the
+ * Meeting Context Engine no longer matched the code. The channel's notice
+ * of a changed decision was said to show how many did not speak; it has
+ * shown no number since #339. And a person deleting their own speech was
+ * told the decision statements kept for meeting linking would still hold
+ * it; they have been cleared on that deletion since #587. The terms did not
+ * change, so theirs stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -47,7 +55,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.2" },
-  { document: "privacy", version: "2026-10-12.3" },
+  { document: "privacy", version: "2026-10-12.4" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

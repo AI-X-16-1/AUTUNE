@@ -69,6 +69,7 @@ import re
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy import delete, func, select, text
@@ -80,8 +81,9 @@ from autune_core.errors import AutuneError, ConflictError, NotFoundError, Valida
 from autune_integrations.document_masking import mask_document
 from autune_integrations.privacy import assert_masked
 
+from .material_formats import NotRead
 from .material_marking import Marking, file_marking
-from .material_reading import read_text
+from .material_reading import read_file
 from .models import (
     DRIVE_KINDS,
     MATERIAL_EMBEDDING_DIM,
@@ -132,6 +134,14 @@ class ConfidentialFileError(AutuneError):
 
     def __init__(self) -> None:
         super().__init__("the file carries a confidentiality marking and was not kept")
+
+
+class StoredUpload(NamedTuple):
+    """An upload's row, and what its file held that was not read -- said once,
+    in the answer to the upload, and stored nowhere."""
+
+    row: ExtMaterial
+    not_read: tuple[NotRead, ...]
 
 
 @dataclass(frozen=True)
@@ -413,27 +423,30 @@ def _stop(session: Session, team_id: str, marking: Marking) -> None:
 
 def store_upload(
     session: Session, team_id: str, *, title: str, file_name: str, data: bytes | bytearray
-) -> ExtMaterial:
+) -> StoredUpload:
     """Keep the masked text of a file a member uploaded, under the title they
     typed. The caller has checked the member and owns ``data``.
 
     In order: the title; the file read, refused whole when it cannot be; the
-    marking check, which writes an alarm row and raises
+    marking check over the file's name, its head, its foot and its own label
+    (``FileText.edges``), which writes an alarm row and raises
     ``ConfidentialFileError`` -- the caller commits that row before it
     answers; the team's cap; then the whole text masked, cut, each piece
     checked, and the row and its pieces written. ``file_name`` is read for its
     ending and the marking check and is not stored. A piece the outbound
     guard still refuses raises ``PrivacyViolationError`` and nothing is
-    written."""
+    written. What the file held that was not read -- pictures, charts,
+    embedded files -- comes back beside the row."""
     clean = _checked_title(title, team_id)
-    original = read_text(file_name, data)
-    marking = file_marking(file_name, original)
+    found = read_file(file_name, data)
+    marking = file_marking(file_name, found.edges())
     if marking is not None:
         _stop(session, team_id, marking)
         raise ConfidentialFileError
     _hold_a_place(session, team_id, field="file")
-    masked = mask_document(original).text
-    del original
+    masked = mask_document(found.text).text
+    not_read = found.not_read
+    del found
     pieces = cut(masked)
     for piece in pieces:
         assert_masked(piece, destination="ext_material_chunks")
@@ -460,7 +473,7 @@ def store_upload(
     log.info(
         "extraction_material_uploaded", material_id=row.id, team_id=team_id, pieces=len(pieces)
     )
-    return row
+    return StoredUpload(row, not_read)
 
 
 def material_text(session: Session, material_id: str) -> list[str]:

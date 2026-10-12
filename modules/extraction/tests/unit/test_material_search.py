@@ -37,7 +37,7 @@ from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
 
 from autune_core import Base, Team, TeamMember, User, get_session
-from autune_core.errors import AutuneError, ValidationError
+from autune_core.errors import AutuneError, PrivacyViolationError, ValidationError
 from autune_extraction import material_search, materials, tools
 from autune_extraction.config import ExtractionSettings, get_settings
 from autune_extraction.material_search import (
@@ -46,6 +46,7 @@ from autune_extraction.material_search import (
     MAX_QUESTION_CHARS,
     NOTHING_CLOSE,
     QUESTION_MASKED,
+    QUESTION_REFUSED,
     STARRED,
     excerpt_of,
     search_materials,
@@ -121,7 +122,7 @@ def session() -> Iterator[Session]:
 def upload(session: Session, body: str, *, team: str = TEAM, title: str = "자료") -> ExtMaterial:
     return materials.store_upload(
         session, team, title=title, file_name="plan.txt", data=body.encode()
-    )
+    ).row
 
 
 # --- vectors ----------------------------------------------------------------------
@@ -474,6 +475,38 @@ def test_an_empty_answer_still_says_the_question_was_masked(
     assert PHONE not in repr(answer)
 
 
+@pytest.fixture
+def unclearable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A question the masker cannot clear: it refuses rather than let a value
+    it is unsure of through."""
+
+    def refuse(text: str) -> None:
+        raise PrivacyViolationError("the masker could not clear this text")
+
+    monkeypatch.setattr(material_search, "mask_document", refuse)
+
+
+@pytest.mark.usefixtures("unclearable")
+def test_a_question_the_masker_cannot_clear_says_nothing_was_searched(
+    session: Session, embedder: Recording
+) -> None:
+    """It used to answer with the sentence for a question that was masked and
+    searched (#1248 review). Nothing is searched on this path, and the
+    sentence says so."""
+    upload(session, LAUNCH)
+    embedder.seen.clear()
+
+    with capture_logs() as logs:
+        answer = search_materials(session, TEAM, QUESTION)
+
+    assert embedder.seen == []
+    assert answer.hits == [] and answer.more is False
+    assert answer.notice == QUESTION_REFUSED
+    assert "찾지 않았습니다" in QUESTION_REFUSED
+    assert QUESTION_MASKED not in (answer.notice or "")
+    assert PHONE not in repr(answer) + repr(logs)
+
+
 def test_an_excerpt_is_cut_around_the_question_and_marked_where_cut() -> None:
     text = "가나다 " * 60 + "출시 일정은 11월이다 " + "라마바 " * 60
 
@@ -616,6 +649,21 @@ def test_the_tool_is_collected_says_when_to_use_it_and_takes_the_run_scope() -> 
     assert tools.find_materials in tools.TOOLS
     assert tools.find_materials not in tools.ACTIONS
     assert (tools.find_materials.__doc__ or "").startswith("Use this")
+
+
+@pytest.mark.usefixtures("tool_on", "unclearable")
+def test_the_tool_says_nothing_was_searched_for_a_question_the_masker_cannot_clear(
+    session: Session, embedder: Recording
+) -> None:
+    upload(session, LAUNCH)
+    embedder.seen.clear()
+
+    result = tools.find_materials(session, TEAM, QUESTION)
+
+    assert embedder.seen == []
+    assert result["items"] == [] and result["evidence"] == []
+    assert result["summary"] == QUESTION_REFUSED
+    assert PHONE not in repr(result)
 
 
 def test_off_by_default_the_tool_searches_nothing(session: Session, embedder: Recording) -> None:

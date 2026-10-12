@@ -158,17 +158,15 @@ one (#1201). The sentences on the search came in with the alert's and not
 with the search: while the switch is off the search route answers 404, so
 no search ran ahead of its notice. The switch
 (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default, and no code turns
-it on. Whether a deployment turns it on is decided on #817. Two things this
-subsection describes are not on `main` yet. The embedder on our own
-inference server: on `main` the vectors are made by
-whichever `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` names -- `fake` by
-default, which is no model at all, or `local`, KURE-v1 loaded in the API's
-own process. Neither sends a text anywhere. And of the nine formats listed
-below `main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
-`.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`) are not read on `main` yet and are
-refused. Each of those two changes -- the embedder on the inference
-server, the six formats -- removes its own sentence from this paragraph.
-The tool that hands excerpts to the chatbot's model
+it on. Whether a deployment turns it on is decided on #817.
+Which embedder makes the vectors is a setting
+(`AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL`): `hosted` is KURE-v1 on our own
+inference server, which is sent the masked text and nothing else; `local` is
+the same model loaded in the API's own process, and `fake`, the default, is
+no model at all -- neither sends a text anywhere. Until #1250 is decided,
+`hosted` is not turned on in a deployment the team uses -- the dev site or
+production. A trial on a developer's own machine with made-up text is not
+barred. The tool that hands excerpts to the chatbot's model
 (`extraction.find_materials`) is on `main` too and answers nothing: its
 switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by default and
 stays off until the later change this subsection names is approved.
