@@ -215,21 +215,43 @@ def facts(suggestion: rules.Suggestion) -> dict[str, object]:
     }
 
 
-def usable(template: str, suggestion: rules.Suggestion) -> bool:
-    """Every rule the model's template must keep (module docstring)."""
+def _shaped(template: str) -> bool:
+    """The rules a template keeps whatever the suggestion: one line, one or two
+    Korean sentences, each blank one of ``SLOTS`` and used once, ``{date}``
+    among them, and outside the blanks no stray brace and no date, weekday or
+    day-pinning word."""
     if not template or len(template) > MAX_CHARS or "\n" in template:
         return False
-    must, may = _blanks(suggestion)
     used = _BLANK.findall(template)
-    if not must <= set(used) or not set(used) <= may or len(used) != len(set(used)):
+    if "date" not in used or not set(used) <= SLOTS.keys() or len(used) != len(set(used)):
         return False
     outside = _BLANK.sub(" ", template)
     if "{" in outside or "}" in outside:
         return False
     if not _HANGUL.search(outside) or _DATE_LIKE.search(outside):
         return False
-    if not 1 <= len(_SENTENCE_END.findall(template)) <= 2:
+    return 1 <= len(_SENTENCE_END.findall(template)) <= 2
+
+
+def storable(template: str) -> bool:
+    """Whether a template may be kept on a stored row, checked without the
+    suggestion it was written for: ``usable``'s rules less the two that need
+    one -- which blanks the step requires and offers, and which numbers its
+    facts hold. ``card_reason`` checks those two when the card is shown.
+
+    Every template ``explain`` returns passes. The check is for a caller that
+    keeps one and does not take this package's word for it (#1037)."""
+    return _shaped(template)
+
+
+def usable(template: str, suggestion: rules.Suggestion) -> bool:
+    """Every rule the model's template must keep (module docstring)."""
+    if not _shaped(template):
         return False
+    must, may = _blanks(suggestion)
+    if not must <= set(_BLANK.findall(template)) <= may:
+        return False
+    outside = _BLANK.sub(" ", template)
     given = facts(suggestion)["numbers"]
     allowed = {str(v) for v in given.values()} if isinstance(given, dict) else set()
     return all(n in allowed for n in _NUMBER.findall(outside))
