@@ -79,6 +79,7 @@ describe("a refusal, in the member's words", () => {
     ["encoding", /UTF-8로 저장해/],
     ["empty", /읽을 글이 없는/],
     ["too_long", /30만 자/],
+    ["too_deep", /여러 겹으로 겹쳐/],
     ["unsupported_type", /이 형식의 파일은 받지 않습니다/],
     ["too_large", /10MB까지/],
   ])("says why a file could not be read: %s", (reason, sentence) => {

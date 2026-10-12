@@ -57,6 +57,8 @@ const READ = {
   encoding: "글자를 읽을 수 없는 파일입니다. UTF-8로 저장해 다시 올려 주세요.",
   empty: "읽을 글이 없는 파일입니다.",
   too_long: "글이 너무 깁니다. 한 파일의 글은 30만 자까지 받습니다.",
+  too_deep:
+    "표나 도형이 너무 여러 겹으로 겹쳐 있어 읽을 수 없습니다. 겹친 것을 풀어 다시 올려 주세요.",
 } as const satisfies Record<string, string>;
 
 /**
