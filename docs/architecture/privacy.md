@@ -159,8 +159,11 @@ and nobody but the member who brought it is told. The switch
 (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned
 on anywhere before the alert is in, nor before the day the notice's
 amendment applies (its 개정 안내 names the day; nothing in code compares the
-switch with it). Each of those two changes removes its own sentence from
-this paragraph.
+switch with it). And of the nine formats listed below `main` reads three:
+`.txt`, `.md` and `.csv`. The other six (`.docx`, `.xlsx`, `.pptx`, `.pdf`,
+`.xls`, `.ppt`) are not read on `main` yet and are refused. Each of those
+three changes -- search, the alert, the six formats -- removes its own
+sentence from this paragraph.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.
