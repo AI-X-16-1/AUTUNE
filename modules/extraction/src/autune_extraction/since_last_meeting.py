@@ -42,8 +42,9 @@ open item of the team, listed or not.
 
 **Items, never people** (ADR 0003; privacy.md section 3). The answer is item
 ids in parts and one team total. It names nobody, groups nothing by assignee
-and counts nothing per person; the board draws each id as the card it already
-shows. Whoever made an edit is not known here and not said. Nothing is logged.
+and counts nothing per person; the board draws each id as the item's title
+and due date, without its owner. Whoever made an edit is not known here and
+not said. Nothing is logged.
 """
 
 from __future__ import annotations

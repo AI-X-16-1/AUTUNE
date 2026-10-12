@@ -33,9 +33,19 @@ const item = (id: string, overrides: Partial<ActionItemRead> = {}): ActionItemRe
 
 const ITEMS = [
   item("act_done", { status: "done", description: "배포 점검표 쓰기" }),
-  item("act_closed", { status: "done", description: "구 버전 문서 정리" }),
+  item("act_closed", {
+    status: "done",
+    description: "구 버전 문서 정리",
+    assignee_id: null,
+    assignee_name: null,
+    assignee_label: "박외주",
+  }),
   item("act_late", { description: "견적서 보내기", due_date: "2026-10-02" }),
-  item("act_doing", { status: "in_progress", description: "검색 속도 재기" }),
+  item("act_doing", {
+    status: "in_progress",
+    description: "검색 속도 재기",
+    needs_reassignment: true,
+  }),
   item("act_new", { description: "온보딩 문구 고치기", assignee_name: null }),
 ];
 
@@ -107,10 +117,10 @@ describe("SinceLastMeetingSection", () => {
     expect(part("늦은 일 · 1건").getByRole("button", { name: "견적서 보내기" })).toBeTruthy();
     expect(part("시작한 일 · 1건").getByRole("button", { name: "검색 속도 재기" })).toBeTruthy();
     expect(part("새로 생긴 일 · 1건").getByRole("button", { name: "온보딩 문구 고치기" })).toBeTruthy();
-    // The owner and the due date as the card says them, and their gaps named.
+    // The due date as the card writes it, and its gap named.
     const year = new Date().getFullYear() === 2026 ? "" : "2026년 ";
-    expect(part("늦은 일 · 1건").getByText(`김가나 · ${year}10월 2일 금`)).toBeTruthy();
-    expect(part("새로 생긴 일 · 1건").getByText("담당 미지정 · 기한 없음")).toBeTruthy();
+    expect(part("늦은 일 · 1건").getByText(`${year}10월 2일 금`)).toBeTruthy();
+    expect(part("새로 생긴 일 · 1건").getByText("기한 없음")).toBeTruthy();
     expect(screen.getByText("열린 할 일 4건 · Jira 열린 이슈 3건")).toBeTruthy();
     expect(screen.getByText(/따로 저장하지 않습니다/)).toBeTruthy();
   });
@@ -254,19 +264,20 @@ describe("SinceLastMeetingSection", () => {
     expect(screen.queryByRole("heading", { name: /끝난 일/ })).toBeNull();
   });
 
-  it("says nothing of a person but an item's own owner: no count or order by name", async () => {
-    since.mockResolvedValue([{ ...ANSWER, finished: ["act_done", "act_closed"], closed: [] }]);
+  it("names nobody: a row is an item's title and its due date, whoever holds it", async () => {
+    since.mockResolvedValue([ANSWER]);
     jira.mockResolvedValue([]);
     const view = render(<SinceLastMeetingSection items={ITEMS} onOpen={() => {}} />);
 
     open();
-    await screen.findByRole("heading", { name: "끝난 일 · 2건" });
+    await screen.findByRole("heading", { name: "끝난 일 · 1건" });
 
-    // The name is on an item's own row and nowhere else: no heading, no total.
-    const named = Array.from(view.container.querySelectorAll("*")).filter(
-      (node) => node.children.length === 0 && (node.textContent ?? "").includes("김가나"),
-    );
-    expect(named.every((node) => node.closest("li") !== null)).toBe(true);
-    expect(view.container.textContent).not.toMatch(/김가나[^·]*\d+건/);
+    // A member's name, a name typed for somebody outside the team, the mark
+    // of an item whose owner left, and the word for an item nobody holds:
+    // each would say who, under a heading that says what happened since.
+    const drawn = view.container.textContent ?? "";
+    for (const owner of ["김가나", "박외주", "user_kim", "재배정", "담당"]) {
+      expect(drawn).not.toContain(owner);
+    }
   });
 });

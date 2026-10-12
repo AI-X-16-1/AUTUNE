@@ -26,10 +26,14 @@ import type { ActionItemRead } from "../types";
  * this component keeps the answer only while it is mounted. It is as old as
  * the last press of 다시 불러오기: a card moved since is not followed.
  *
- * **The rows are the board's.** An id is drawn from the item the board
- * already holds (`items`), with the owner and the due date as its card shows
- * them, and opens the same drawer. Nothing here is grouped, counted or ordered
- * by person: a part's count is the team's. An id the board does not hold --
+ * **The rows are the board's items, without their owner.** An id is drawn
+ * from the item the board already holds (`items`) as its title and its due
+ * date, and opens the same drawer. **A row names nobody** (the user,
+ * 2026-10-12: "담당자 빼기"): lined up under "끝난 일" since a meeting, rows
+ * with a name on each would read as each person's record since that meeting,
+ * which no single card says. Who holds an item is on its card and in the
+ * drawer the row opens. Nothing here is grouped, counted or ordered by
+ * person: a part's count is the team's. An id the board does not hold --
  * deleted since, or another team's under a board of one -- is left out.
  *
  * **The Jira count is the open-issues read, not a new one.** Opening this
@@ -229,10 +233,7 @@ function Row({ item, onOpen }: { item: ActionItemRead; onOpen: (id: string) => v
         {rowTitle(item.title, item.description).shown}
       </button>
       <span className="text-[var(--color-ink-muted)]" style={meta}>
-        {item.needs_reassignment
-          ? "재배정 필요"
-          : (item.assignee_name ?? item.assignee_label ?? "담당 미지정")}{" "}
-        · {item.due_date ? shownDue(item.due_date) : "기한 없음"}
+        {item.due_date ? shownDue(item.due_date) : "기한 없음"}
       </span>
     </li>
   );

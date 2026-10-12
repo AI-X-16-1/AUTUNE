@@ -908,9 +908,9 @@ class SinceLastMeeting(BaseModel):
 
     **Item ids in parts and one team total -- no person in it.** Each part is a
     list of action-item ids, and an id is in one part at most; the board draws
-    an id as the card it already shows. Nothing here is grouped, counted or
-    ordered by assignee, and adding an assignee to a part's count would make
-    the per-person completion record ADR 0003 forbids.
+    an id as the item's title and due date, without its owner. Nothing here is
+    grouped, counted or ordered by assignee, and adding an assignee to a part
+    would make the per-person completion record ADR 0003 forbids.
 
     ``state`` is ``no_meeting`` for a team with no analysed meeting yet: there
     is nothing to count from, and every part is empty. ``open`` is every open
