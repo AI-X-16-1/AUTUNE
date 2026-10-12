@@ -1226,9 +1226,9 @@ the feature needs.
     logged as an error with the meeting's id (`gap_followup_refused`), apart
     from Google not answering.
   - **Slack, S20's team notices (module C, #824):** three kinds of message
-    to the channel of the team that held the meeting, each once per press,
-    with the team's connection, and one more when Follow-up's meeting is
-    approved -- the meeting's title, when the follow-up starts, the open
+    to the channel of the team that held the meeting, on each press, with
+    the team's connection, and one more when Follow-up's meeting is approved
+    -- the meeting's title, when the follow-up starts, the open
     gaps' titles and questions and the approver's display name, once per
     meeting. Nobody is sent a DM about it: a DM to the meeting's members is a
     new kind of message and waits for the team's decision after 10/12

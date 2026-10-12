@@ -74,7 +74,7 @@ export function cardsNotice(result: GapCardsSent): string {
       return `팀 Slack 채널에 질문 카드 ${result.sent}건을 올렸습니다.${more}`;
     }
     case "not_tried":
-      return "Slack으로 보낼 high 갭이 없습니다.";
+      return "Slack으로 보낼 위험도 높은 갭이 없습니다.";
     case "no_slack":
       return "팀 Slack 채널이 연결되어 있지 않아 질문 카드를 보내지 못했습니다.";
     case "refused":
@@ -106,6 +106,8 @@ export function useGapActions(reload: () => void) {
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** The question cards went out on this visit; the button is not offered again. */
+  const [cardsSent, setCardsSent] = useState(false);
 
   const run = useCallback(
     async <T>(
@@ -178,7 +180,10 @@ export function useGapActions(reload: () => void) {
         "slack",
         () => sendCards(meetingId),
         "질문 카드를 보내지 못했습니다. 잠시 후 다시 시도해 주세요.",
-        cardsNotice,
+        (result: GapCardsSent) => {
+          if (result.slack === "posted") setCardsSent(true);
+          return cardsNotice(result);
+        },
       ),
     [run],
   );
@@ -227,6 +232,7 @@ export function useGapActions(reload: () => void) {
     scheduleNext,
     ask,
     sendToSlack,
+    cardsSent,
     saveQuestion,
     choose,
   };
