@@ -7,17 +7,25 @@ asked for is a summary instead: twenty characters or fewer, ended by a noun
 ("보고서 정리", not "보고서를 정리함"), saying what is to be done or what was
 settled and nothing else.
 
-**Beside the sentence, never instead of it.** The description and the statement
-stay as they are made today -- the said words tidied by rule (``noun_form``),
-with the resolver's checks on a rewrite -- and stay what Jira, Notion, Slack, a
-calendar, the minutes, module D and module E are given. The title is one more
-column on B's own rows and only B's screens read it.
+**Stored beside the sentence; it leads the copies that leave.** The description
+and the statement stay as they are made today -- the said words tidied by rule
+(``noun_form``), with the resolver's checks on a rewrite -- and stay what module
+D, module E and the agent's tools are given. The title is one more column on
+B's own rows. B's screens read it, and since 2026-10-09 so do the copies B
+sends: Jira, Notion, a calendar, a line of a Slack message and of a project's
+minutes lead with it where a row has one (``top_line``), the sentence going to
+the copy's body where it has a body. So ``accept`` decides what leaves, not
+only what a screen shows.
 
 **A title is accepted or it is not there.** ``accept`` is rules, no model: one
 line, twenty characters with the spaces, a noun at the end, no number that is
 not in the sentence, no person, no date on an item, no word that only points
 ("이거 진행" names nothing; module B's owner, 2026-10-09), and words that are
-the sentence's own. A title that fails any of them is dropped and the row has no
+the sentence's, all but one (``_own_words``: one word may be new, and each other
+word has to begin as some part of the sentence does). No masker reads the
+answer: the model was given the meeting's masked sentences and nothing else
+of the meeting, and the outbound check reads the title wherever it is sent.
+A title that fails any of them is dropped and the row has no
 title -- the screen then shows what it showed before, the sentence cut. So a
 refused title, a failed call and ``title_impl=none`` all look like yesterday.
 Nothing is shortened by rule here: cutting an answer to fit would make a

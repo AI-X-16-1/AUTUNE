@@ -3,10 +3,11 @@
  * policy, as data -- in the form such documents take: articles (조), numbered
  * paragraphs (①), items, and a supplementary provision (부칙).
  *
- * DRAFT, not reviewed by a lawyer. Every `blank(...)` is a value only the
- * operator can give -- its name, the hosting provider, the privacy officer,
- * the security contact, the effective date. The page marks each as "확정 전".
- * Do not publish while one is left.
+ * Not reviewed by a lawyer. The values only the operator can give -- its
+ * name, the hosting, the privacy officer, the security contact, the effective
+ * date -- were filled on 2026-10-11. `blank(...)` stays for a value a later
+ * change cannot fill yet: the page marks one as "확정 전", and nothing is
+ * published while one is left.
  *
  * The wording follows the article-form text the team keeps as a document
  * (2026-10-02). That text also makes choices that are assumptions until a
@@ -100,6 +101,13 @@
  *   the person finished. No new message, recipient or record: a close alone
  *   sends nothing, and what is kept of it is an edit event about the item,
  *   with no person on it, like every other.
+ * - a row's short title (B, 2026-10-09; `top_line.py`): the Notion, Jira and
+ *   Google Calendar rows say a copy carries it beside the content it is made
+ *   of. No new message, recipient or record. The title is a model's short
+ *   wording of the sentence the same copy already carried -- one word of it
+ *   may be the model's own (`pipeline/title.py::accept`) -- and the kind mark
+ *   before it ("[할 일] ", "[결정] ") is fixed text. The Slack row is unchanged: a line
+ *   there names an item, by its title or by its sentence.
  * - the notice after a meeting (B, 2026-10-07; `meeting_notice.py`) is named
  *   in the same places -- what is kept of it, for how long, the out-of-office
  *   read, the copies that stay in Slack and the Slack row -- as "회의 직후
@@ -172,6 +180,10 @@
  *   meeting that does NOT ask for the project minutes back -- the team's
  *   integration, and the queue of copies to take back, go with the team --
  *   so 제4조 ⑤ and terms 제13조 ③ say so where they promise the taking back.
+ * - any member of a team may delete one of its meetings (#1161): the meeting
+ *   and what was made from it go, everybody's lines in it among them, and
+ *   they are not told (privacy 제4조 ②). It takes what an expiry takes and
+ *   asks back what an expiry asks back, so 제4조 ⑤ reads for it as written.
  * - a pending invitation keeps the address of someone who has agreed to
  *   nothing (#739), and each sign-in keeps which document version was agreed
  *   to (#715): both are in 제2조 and 제3조.
@@ -222,7 +234,7 @@ export interface LegalDocument {
   sections: readonly Section[];
 }
 
-const blank = (label: string, proposed?: string): Blank => ({
+export const blank = (label: string, proposed?: string): Blank => ({
   blank: label,
   proposed,
 });
@@ -238,10 +250,15 @@ const table = (head: string[], ...rows: Line[][]): Block => ({
   rows,
 });
 
-const OPERATOR = blank("운영자 명칭");
-const HOSTING = blank("호스팅 사업자");
-const OFFICER_EMAIL = blank("전자우편 주소");
-const EFFECTIVE = blank("시행일");
+// Filled by module B's owner on 2026-10-11. The service runs on a server the
+// team operates; Cloudflare, Inc. carries the connection to it (a tunnel), so
+// it is the one processor of the hosting row and is listed under 제7조.
+const OPERATOR = "AI-X-16-1 팀";
+const RELAY = "Cloudflare, Inc.";
+const OFFICER_NAME = "강민구";
+const OFFICER_TITLE = "팀원";
+const OFFICER_EMAIL = "kjfcvx12@gmail.com";
+const EFFECTIVE = "2026년 10월 12일";
 
 /**
  * Shown above the documents. Their text cannot be selected on the page (the
@@ -355,9 +372,9 @@ const PRIVACY: LegalDocument = {
           [
             "자동 생성 정보",
             [
-              "쿠키(세션 식별자). 접속 일시 및 접속 IP 주소는 서비스의 데이터베이스에 저장하지 않으나, 서버 운영 환경(",
-              HOSTING,
-              ")의 접속 기록에 남을 수 있습니다",
+              "쿠키(세션 식별자). 접속 일시 및 접속 IP 주소는 서비스의 데이터베이스에 저장하지 않으나, 회사가 운영하는 서버와 접속을 중계하는 ",
+              RELAY,
+              "의 접속 기록에 남을 수 있습니다",
             ],
             "서비스 이용 과정에서 자동 생성",
           ],
@@ -441,6 +458,7 @@ const PRIVACY: LegalDocument = {
           "보유 기간이 만료된 회의는 1시간마다 확인하여 해당 회의에 부속된 자료 일체와 함께 삭제합니다.",
           "회원이 탈퇴하면 해당 회원의 발화, 음성 특징정보 및 회원 정보를 삭제합니다.",
           "팀에 남은 구성원이 한 명뿐인 경우 그 구성원은 팀을 삭제할 수 있습니다. 팀을 삭제하면 해당 팀, 팀의 모든 회의 및 그 회의에 부속된 자료 일체를 삭제하며, 여기에는 먼저 팀에서 나간 구성원이 그 팀의 회의에서 한 발화가 포함됩니다. 회사는 팀의 삭제를 먼저 팀에서 나간 구성원에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 팀을 삭제할 수 없습니다.",
+          "팀의 구성원은 그 팀의 회의를 삭제할 수 있습니다. 회의를 삭제하면 해당 회의 및 그 회의에 부속된 자료 일체를 삭제하며, 여기에는 다른 사람(먼저 팀에서 나간 구성원을 포함합니다)이 그 회의에서 한 발화가 포함됩니다. 회사는 회의의 삭제를 그 회의에서 발언한 다른 사람에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 그 회의를 삭제할 수 없습니다.",
         ),
         p(
           "③ 회사는 삭제 표시만 하고 정보를 남겨 두는 방식을 사용하지 않으며, 전자적 파일 형태로 기록·저장된 개인정보를 데이터베이스에서 삭제합니다.",
@@ -452,7 +470,7 @@ const PRIVACY: LegalDocument = {
           "⑤ 이용자 또는 팀이 연결한 외부 서비스에 전달된 사본의 처리는 다음과 같습니다.",
         ),
         ol(
-          "Notion 및 Jira에 전달된 할 일 및 결정 사항은 해당 팀의 기록으로서 보유 기간의 만료, 팀의 삭제 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
+          "Notion 및 Jira에 전달된 할 일 및 결정 사항은 해당 팀의 기록으로서 회의의 삭제, 보유 기간의 만료, 팀의 삭제 또는 회원 탈퇴로 삭제되지 않습니다. 이용자가 자신의 발화를 삭제하거나 내용을 정정한 경우에는 그 사본의 문장에 이를 반영합니다.",
           "이용자가 할 일을 삭제한 경우 해당 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다. 이용자가 결정 사항의 확정을 취소하거나 결정 사항을 삭제한 경우에는 해당 Notion 페이지와 Jira 항목에서 결정 사항의 문장을 지운 뒤 Notion 페이지는 휴지통으로 옮기고 Jira 항목은 종료 처리합니다(Jira 항목은 삭제하지 않습니다). 외부 서비스의 응답이 없어 처리하지 못한 사본은 기록해 두었다가 다시 시도하며, 거듭 실패한 사본은 해당 서비스에 남을 수 있습니다. Notion의 페이지 변경 이력과 Jira의 항목 변경 이력에는, 각 서비스가 자체적으로 보관하는 범위에서 지우기 전의 문장이 남을 수 있습니다.",
           "Slack, Notion 및 Jira에 보낸 프로젝트별 회의록은 해당 회의가 삭제되거나 보유 기간이 만료된 경우 회수(내용을 비우고 삭제 또는 종료)를 요청하고, 그 회의록에 포함된 내용이 삭제·정정·확정 취소된 경우 사본을 다시 작성합니다. 외부 서비스의 응답이 없으면 일정 기간 다시 시도하며, 그래도 처리하지 못한 사본은 해당 서비스에 남을 수 있습니다. 다만, 팀에 남은 마지막 구성원이 팀을 삭제한 경우에는 팀이 연결한 외부 서비스의 연동 정보가 함께 삭제되므로 회수를 요청하지 않으며, 그 사본은 해당 서비스에 남습니다.",
           "팀의 Slack 채널에 보낸 회의 리포트 및 주간 팀 리포트는 회의의 삭제, 보유 기간의 만료 또는 회원 탈퇴 시 회수하지 않으며, 해당 채널에 남습니다.",
@@ -483,28 +501,28 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "Slack Technologies, LLC (Slack)",
-            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약, 화요일부터 금요일까지 아침의 본인 업무 요약 및 월요일부터 금요일까지 오후의 본인 업무 보고 초안(본인이 담당하는 할 일의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 끝내지 않고 닫힌 본인 담당 항목은 아침 요약과 오늘 업무 보고 초안에서 완료한 항목과 구분하여 적습니다. 오늘 업무 보고 초안은 그날 본인이 담당하는 항목 중 완료되었거나 진행 중으로 바뀐 것이 있는 날에만 보내며, 본인이 팀에 직접 붙여 넣을 수 있도록 팀의 명칭을 적은 보고문의 형태입니다. 회사는 이를 본인에게만 보내고, 팀이나 다른 이용자에게 보내지 않습니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림이 모두 중지됩니다. 기간을 정하여 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림만 받지 않을 수도 있습니다. 월요일 요약, 아침 요약 및 오늘 업무 보고 초안은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 회사가 해당 기능을 활성화한 경우 회의가 처리된 직후 그 회의에서 담당 항목이 생긴 본인에게 보내는 회의 직후 알림(회의 제목, 본인의 확인을 기다리는 본인 담당 항목의 건수, 이미 확정된 본인 담당 항목의 내용 및 기한, 서비스 화면 링크. 확정되지 않은 항목의 내용과 기한은 싣지 않습니다. 공휴일이 아닌 월요일부터 금요일까지 09시부터 17시 사이에 보내고, 그 밖의 시간에 처리된 회의의 알림은 다음 근무일 09시 이후에 보냅니다. 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에는, 회사가 해당 기능을 활성화한 경우 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 할 일의 건수), 회의의 할 일 및 결정 사항의 추출이 연속하여 3회 실패한 때 팀 채널에 1회 보내는 알림(회의 제목, 시도 횟수 및 서비스 화면 링크. 발화 내용과 오류의 내용은 싣지 않습니다), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한), 팀장이 후속 회의 제안을 승인한 때 팀 채널에 1회 보내는 공지(회의 제목, 후속 회의의 일시, 열린 논의 누락의 제목과 추천 질문 및 승인한 구성원의 표시 이름. 팀 구성원 개인에게는 보내지 않습니다)",
+            "본인에게 보내는 확인 요청 메시지(본인의 발화 인용 포함), 본인의 발화 비율 및 승인을 기다리는 제안의 건수, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 본인에게 보내는 알림(결정 문장의 일부, 주제의 명칭 및 회의 일자). 회사가 해당 기능을 활성화한 경우 본인에게 보내는 마감 알림, 매주 월요일(월요일이 공휴일인 주에는 그 주의 월요일부터 금요일까지 중 공휴일이 아닌 첫날)의 본인 할 일 요약, 화요일부터 금요일까지 아침의 본인 업무 요약 및 월요일부터 금요일까지 오후의 본인 업무 보고 초안(본인이 담당하는 할 일의 내용, 기한, 회의 제목 및 서비스 화면 링크. 아침 요약에는 지난 요약 이후 본인이 완료하였거나 새로 맡은 항목이 포함됩니다. 끝내지 않고 닫힌 본인 담당 항목은 아침 요약과 오늘 업무 보고 초안에서 완료한 항목과 구분하여 적습니다. 오늘 업무 보고 초안은 그날 본인이 담당하는 항목 중 완료되었거나 진행 중으로 바뀐 것이 있는 날에만 보내며, 본인이 팀에 직접 붙여 넣을 수 있도록 팀의 명칭을 적은 보고문의 형태입니다. 회사는 이를 본인에게만 보내고, 팀이나 다른 이용자에게 보내지 않습니다. 이용자는 본인에게 오는 이 알림을 끌 수 있으며, 끄면 마감 알림, 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림이 모두 중지됩니다. 기간을 정하여 월요일 요약, 아침 요약, 오늘 업무 보고 초안 및 회의 직후 알림만 받지 않을 수도 있습니다. 월요일 요약, 아침 요약 및 오늘 업무 보고 초안은 공휴일에는 보내지 않으며, 회사가 해당 기능을 활성화한 경우 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에도 보내지 않습니다. 월요일 요약을 월요일이 아닌 날에 보내는 주에는 그날의 아침 요약을 보내지 않습니다). 회사가 해당 기능을 활성화한 경우 회의가 처리된 직후 그 회의에서 담당 항목이 생긴 본인에게 보내는 회의 직후 알림(회의 제목, 본인의 확인을 기다리는 본인 담당 항목의 건수, 이미 확정된 본인 담당 항목의 내용 및 기한, 서비스 화면 링크. 확정되지 않은 항목의 내용과 기한은 싣지 않습니다. 공휴일이 아닌 월요일부터 금요일까지 09시부터 17시 사이에 보내고, 그 밖의 시간에 처리된 회의의 알림은 다음 근무일 09시 이후에 보냅니다. 본인이 연결한 Google Calendar에 부재중 일정이 있는 시간에는, 회사가 해당 기능을 활성화한 경우 보내지 않습니다). 팀 채널에 보내는 회의 리포트 및 주간 팀 리포트(팀 단위로 집계한 지표, 반복되는 논의 누락의 유형, 할 일의 건수), 회의의 할 일 및 결정 사항의 추출이 연속하여 3회 실패한 때 팀 채널에 1회 보내는 알림(회의 제목, 시도 횟수 및 서비스 화면 링크. 발화 내용과 오류의 내용은 싣지 않습니다), 이전 회의와 연결된 주제의 명칭, 변경된 결정 사항의 문장 일부와 주제의 명칭(팀 채널의 이 공지에는 결정이 바뀐 회의에서 발언하지 않은 위 구성원의 인원수만 표시하고 이름은 싣지 않습니다), 회의 전 브리핑(이전 회의의 요약 및 예정 안건), 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용 또는 그 내용을 줄인 제목·담당자·기한), 팀장이 후속 회의 제안을 승인한 때 팀 채널에 1회 보내는 공지(회의 제목, 후속 회의의 일시, 열린 논의 누락의 제목과 추천 질문 및 승인한 구성원의 표시 이름. 팀 구성원 개인에게는 보내지 않습니다)",
             "확인 요청 및 알림의 전달",
             "팀이 Slack을 연결한 때부터",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Notion Labs, Inc. (Notion)",
-            "확정된 할 일 및 결정 사항(내용, 담당자, 기한, 상태, 회의 제목). 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한)",
+            "확정된 할 일 및 결정 사항(내용 및 그 내용을 줄인 제목, 담당자, 기한, 상태, 회의 제목). 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용 또는 그 내용을 줄인 제목·담당자·기한)",
             "팀의 업무 기록 작성",
             "팀이 Notion을 연결하고 이용자가 항목을 확정한 때. 프로젝트별 회의록은 팀 구성원이 보내기를 선택한 때",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Atlassian Pty Ltd (Jira)",
-            "확정된 할 일(내용, 기한, 담당자의 Jira 계정) 및 담당자의 Jira 계정을 찾기 위한 담당자의 전자우편 주소. 확정된 결정 사항의 문장. 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용·담당자·기한)",
+            "확정된 할 일(내용 및 그 내용을 줄인 제목, 기한, 담당자의 Jira 계정) 및 담당자의 Jira 계정을 찾기 위한 담당자의 전자우편 주소. 확정된 결정 사항의 문장 및 그 문장을 줄인 제목. 팀 구성원이 보내기를 선택한 프로젝트별 회의록(팀 및 프로젝트의 명칭, 회의 일자, 확정된 결정 사항과 할 일의 내용 또는 그 내용을 줄인 제목·담당자·기한)",
             "팀의 업무 항목 등록",
             "팀이 Jira를 연결하고 이용자가 항목을 확정한 때. 프로젝트별 회의록은 팀 구성원이 보내기를 선택한 때",
             "해당 서비스의 약관 및 팀의 설정에 따름",
           ],
           [
             "Google LLC (Google Calendar)",
-            "할 일의 내용 및 기한. 참석자와 전사 내용은 포함하지 않습니다. 이용자가 본인의 캘린더에도 추가하기를 선택한 경우에 한하여 본인이 정한 알림 중지 기간(시작일 및 종료일). 팀장이 후속 회의 제안을 승인한 경우 승인한 이용자 본인의 캘린더에 만드는 후속 회의 일정(회의 제목, 일시, 열린 논의 누락의 제목과 추천 질문. 다른 사람을 초대하지 않으며 다른 사람의 메일 주소를 보내지 않습니다)",
+            "할 일의 내용, 그 내용을 줄인 제목 및 기한. 참석자와 전사 내용은 포함하지 않습니다. 이용자가 본인의 캘린더에도 추가하기를 선택한 경우에 한하여 본인이 정한 알림 중지 기간(시작일 및 종료일). 팀장이 후속 회의 제안을 승인한 경우 승인한 이용자 본인의 캘린더에 만드는 후속 회의 일정(회의 제목, 일시, 열린 논의 누락의 제목과 추천 질문. 다른 사람을 초대하지 않으며 다른 사람의 메일 주소를 보내지 않습니다)",
             "담당자 본인의 일정 등록. 이용자가 선택한 경우 본인의 휴가 일정(비공개 종일 일정) 등록. 팀장이 승인한 경우 승인한 이용자 본인의 후속 회의 일정 등록",
             "담당자가 본인의 캘린더를 연결한 때부터. 알림 중지 기간은 이용자가 본인의 캘린더에도 추가하기를 선택하고 저장한 때에 한하며, 선택하지 않은 기간은 Google에 전송하지 않습니다.",
             "해당 서비스의 약관 및 이용자의 설정에 따름. 캘린더에 추가한 휴가 일정은 이용자가 선택을 해제하거나 기간을 해제하면 삭제하며, 종료일이 지난 일정은 이용자 본인의 캘린더에 남습니다.",
@@ -532,9 +550,9 @@ const PRIVACY: LegalDocument = {
         table(
           ["수탁자", "위탁하는 업무의 내용", "위탁하는 개인정보의 항목"],
           [
-            HOSTING,
-            "서비스 제공을 위한 서버 운영 및 데이터 보관",
-            "서비스가 보관하는 자료 전부. 음성 녹음은 전사하는 동안에만 처리되며 보관되지 않습니다.",
+            RELAY,
+            "서비스 접속의 중계. 서비스가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며, 그 보관은 위탁하지 않습니다.",
+            "이용자와 서비스 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시. 통신 내용은 전송하는 동안에만 처리되며 보관되지 않습니다. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있습니다.",
           ],
           [
             "Google LLC (Gemini API)",
@@ -542,7 +560,7 @@ const PRIVACY: LegalDocument = {
             "가림 처리된 회의 문장(해당 발화와 그 전후 문장). 모호한 동의 발화의 판정의 경우 분류에서 모호하다고 판단된 발화에 한합니다. 회의 요약 작성의 경우 분석에 동의한 화자의 가림 처리된 회의 문장 전체와 그 회의에서 추출된 결정 사항 및 할 일. 짧은 제목 작성의 경우 서비스가 회의에서 추출하여 작성한 할 일 및 결정 사항의 문장에 한하며, 이용자가 직접 입력하거나 수정한 문장은 전송하지 않습니다",
           ],
           [
-            blank("회의 간 연결 판단에 쓰는 언어 모델 제공자"),
+            "Google LLC (Gemini API)",
             "언어 모델을 이용한 회의 간 연결 판단",
             "가림 처리된 주제 발췌문 및 결정 사항의 문장(두 회의의 것을 한 쌍으로)",
           ],
@@ -593,6 +611,14 @@ const PRIVACY: LegalDocument = {
             "제5조 및 제6조에 기재한 항목",
             "본인 인증, 일정 등록, 팀 초대 메일의 발송, 언어 모델을 이용한 분석 및 AI 비서 응답 생성",
             "제5조 및 제6조에 기재한 기간",
+          ],
+          [
+            RELAY,
+            "미국 및 Cloudflare 네트워크가 있는 국가",
+            "이용자가 서비스에 접속하는 때마다 정보통신망을 통하여 전송",
+            "이용자와 서비스 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시",
+            "서비스 접속의 중계",
+            "통신 내용은 전송하는 동안에만 처리하며 보관하지 않음. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있음",
           ],
           [
             "Slack Technologies, LLC",
@@ -756,8 +782,8 @@ const PRIVACY: LegalDocument = {
         ),
         table(
           ["구분", "내용"],
-          ["성명", blank("성명")],
-          ["직책", blank("직책")],
+          ["성명", OFFICER_NAME],
+          ["직책", OFFICER_TITLE],
           ["연락처", OFFICER_EMAIL],
         ),
         p(
@@ -1224,7 +1250,7 @@ const SECURITY: LegalDocument = {
       blocks: [
         p([
           "① 서비스의 보안 취약점을 발견한 자는 다음 연락처로 신고할 수 있습니다: ",
-          blank("보안 문의 전자우편 주소"),
+          OFFICER_EMAIL,
         ]),
         p(
           "② 회사는 신고를 접수한 날부터 3영업일 이내에 접수 사실을 회신합니다.",
@@ -1272,3 +1298,10 @@ export const LEGAL_DOCUMENTS: readonly LegalDocument[] = [
   TERMS,
   SECURITY,
 ];
+
+/** The document the consent page opens for one required consent. */
+export function legalDocument(id: LegalDocument["id"]): LegalDocument {
+  const found = LEGAL_DOCUMENTS.find((doc) => doc.id === id);
+  if (found === undefined) throw new Error(`no legal document "${id}"`);
+  return found;
+}

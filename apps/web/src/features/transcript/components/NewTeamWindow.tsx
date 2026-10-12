@@ -7,6 +7,7 @@ import { Button, ChipToggle } from "@/shared/ui";
 
 import { createTeam, listTeams } from "../api";
 import { announceTeams, rememberTeam } from "../selectedTeam";
+import { readableError } from "../readableError";
 
 import { TeamInvite } from "./TeamInvite";
 import { ROLES } from "./WorkspaceScreen";
@@ -112,7 +113,7 @@ export function NewTeamWindow({
         .then(announceTeams)
         .catch(() => undefined);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "팀을 만들지 못했습니다.");
+      setError(readableError(caught, "팀을 만들지 못했습니다."));
       setSubmitting(false);
     }
   };
