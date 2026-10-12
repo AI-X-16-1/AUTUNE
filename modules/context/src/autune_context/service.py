@@ -40,7 +40,12 @@ from autune_context.notify import (
 from autune_context.pipeline import get_embedder, get_llm_judge, get_nli, get_reranker
 from autune_context.pipeline.change import classify_change, strip_keep_words
 from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_clauses
-from autune_context.pipeline.topics import extract_topics
+from autune_context.pipeline.topics import (
+    content_nouns,
+    extract_topics,
+    keyphrases,
+    person_names,
+)
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
 from autune_contracts import Utterance as UtteranceContract
 from autune_core import (
@@ -380,6 +385,7 @@ def _link_topics(meeting_id: str, utterances: list[UtteranceContract]) -> bool:
         )
         before = meeting.started_at or datetime.now(tz=UTC)
         links_written = 0
+        segment_texts: dict[str, list[str]] = {}
         for topic in topics:
             candidates = retriever.retrieve(
                 topic,
@@ -387,6 +393,13 @@ def _link_topics(meeting_id: str, utterances: list[UtteranceContract]) -> bool:
                 before=before,
                 exclude_meeting_id=meeting_id,
             )
+            if mode != "llm":
+                unread = [
+                    c.linked_meeting_id
+                    for c in candidates
+                    if c.linked_meeting_id not in segment_texts
+                ]
+                segment_texts.update(retriever.segment_texts(unread))
             if mode == "llm":
                 assert judge is not None
                 links_written += _link_topic_llm(
@@ -403,6 +416,7 @@ def _link_topics(meeting_id: str, utterances: list[UtteranceContract]) -> bool:
                     embedder,
                     verdicts,
                     verifier=judge,
+                    segment_texts=segment_texts,
                 )
 
         # Under the row lock publish_if_ready takes: either a publish committed
@@ -458,9 +472,13 @@ def _link_topic(
     embedder,
     verdicts: dict[tuple[str | None, str], str],
     verifier: LlmJudge | None = None,
+    segment_texts: dict[str, list[str]] | None = None,
 ) -> int:
     """``classic`` topic linking; with a ``verifier`` (``hybrid`` mode), also a
     check on every link about to be asserted.
+
+    ``segment_texts`` (``HybridRetriever.segment_texts``) is what the keyphrase
+    check reads of each past meeting; without it, the candidate's passage.
 
     The verifier is asked only about candidates the thresholds would *assert*: a
     link classic already leaves ``pending`` needs no second opinion, and this
@@ -508,10 +526,19 @@ def _link_topic(
             continue
         kept.append((candidate, rerank_score))
 
-    def confident(candidate, rerank_score) -> bool:
+    def scores_enough(candidate, rerank_score) -> bool:
         return bool(
             candidate.similarity >= settings.link_similarity_threshold
             or rerank_score >= settings.link_confidence_threshold
+        )
+
+    agree = _subjects_agree(
+        topic, [c for c, s in kept if scores_enough(c, s)], embedder, settings, segment_texts
+    )
+
+    def confident(candidate, rerank_score) -> bool:
+        return scores_enough(candidate, rerank_score) and agree.get(
+            candidate.linked_meeting_id, False
         )
 
     checked: dict[str, float | None] = {}
@@ -559,6 +586,52 @@ def _link_topic(
         )
         written += 1
     return written
+
+
+def _subjects_agree(
+    topic,
+    candidates: list,
+    embedder,
+    settings,
+    segment_texts: dict[str, list[str]] | None = None,
+) -> dict[str, bool]:
+    """Past meeting id -> whether one of its segments is about what ``topic``
+    is about, for each of ``candidates`` (those the scores alone would assert).
+
+    Between two segments of one team's meetings, dense similarity is high
+    whatever they discuss, and the re-ranker scores 1.0 wherever the two share
+    a stretch of near-identical text -- an opening, a closing, a stock phrase.
+    So neither asserts a link without this check behind it:
+    the topic's keyphrases close to one past segment's in embedding space
+    (``link_keyphrase_threshold``), or enough content nouns in common with it
+    (``link_shared_nouns``). Every segment of the past meeting is tried
+    (``segment_texts``), falling back to ``Candidate.passage``: the passage is
+    the segment closest by vector, and between one team's meetings the vector
+    is what cannot tell which segment shares the subject.
+    """
+    asked = list(candidates)
+    if not asked:
+        return {}
+    k = settings.link_keyphrases
+    mine = " ".join(keyphrases(topic.text, topic.names, k=k) or [topic.label])
+    my_nouns = content_nouns(topic.text, topic.names)
+    segments: list[tuple[str, str, set[str]]] = []  # (meeting id, keyphrases, nouns)
+    for candidate in asked:
+        texts = (segment_texts or {}).get(candidate.linked_meeting_id) or [candidate.passage]
+        for segment in texts:
+            names = person_names([segment])
+            phrases = keyphrases(segment, names, k=k) or [candidate.topic_label]
+            nouns = content_nouns(segment, names)
+            segments.append((candidate.linked_meeting_id, " ".join(phrases), nouns))
+    vectors = embedder.embed([mine, *(phrases for _, phrases, _ in segments)])
+    agree = {c.linked_meeting_id: False for c in asked}
+    for (meeting_id, _, nouns), vector in zip(segments, vectors[1:], strict=True):
+        if (
+            _cosine(vectors[0], vector) >= settings.link_keyphrase_threshold
+            or len(my_nouns & nouns) >= settings.link_shared_nouns
+        ):
+            agree[meeting_id] = True
+    return agree
 
 
 def _link_topic_llm(

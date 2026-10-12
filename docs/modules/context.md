@@ -86,7 +86,12 @@ with different content — the plan vs. its status update, the same issue in
 other words — near zero. So a link is asserted on dense segment similarity
 (`link_similarity_threshold`) *or* a confident re-ranker score
 (`link_confidence_threshold`); below both, offer it for user confirmation
-rather than asserting it.
+rather than asserting it. Neither score is enough between two meetings of one
+team, though: their segments clear the similarity threshold whatever they
+discuss, and the re-ranker scores 1.0 wherever they share a stretch of
+near-identical text. So either score asserts only if the two segments' subjects
+agree as well — keyphrases close in embedding space, or enough content nouns in
+common (`link_keyphrase_threshold`, `link_shared_nouns`; step 6 below).
 
 ### Topic-statement extraction is not an LLM task (MVP)
 
@@ -99,13 +104,20 @@ For the MVP, topics are extracted without an LLM:
 
 1. **Segment** the transcript with an embedding-based TextTiling: a sliding
    window over consecutive utterance embeddings, cut at local similarity minima,
-   with sub-minimum-length segments merged.
+   with sub-minimum-length segments merged. Utterances with no noun that could
+   name anything — "자, 모였으면 시작합시다.", "없으면 목요일에 다시 모이죠.
+   수고하셨습니다.", "네." — are left out first: kept, a meeting's closing became a
+   segment that linked to the last meeting's closing, or was averaged into the
+   topic beside it.
 2. **Label** each segment with its most repeated noun phrase. Phrases are
    runs of whitespace-separated words that kiwipiepy reads as starting with a
    content noun — word-level, so a word missing from its dictionary (온보딩)
-   survives whole. Numbers with counters (5장), one-letter nouns, names with an
-   honorific (민재님) and nouns every meeting shares (오늘, 회의, 확인) break a
-   phrase. The score is words × occurrences among the repeated phrases, so a
+   survives whole. Numbers with counters (5장), one-letter nouns, adverbial
+   nouns in -적 (기본적으로), nouns every meeting shares (오늘, 회의, 확인) or says
+   to open, close, thank or console (시간, 수고, 다행), and people's names break a
+   phrase. A name is what an honorific attaches to: 지우님, and — collected over
+   the whole meeting, since a transcript often spaces it — the word before a
+   detached 님/씨 (도윤 님) or before a title that carries one (한서진 팀장님). The score is words × occurrences among the repeated phrases, so a
    phrase said twice outranks one of its words said three times (#352: one-word
    labels such as `장` or `10` gave the re-ranker nothing to score). When no
    phrase repeats, the label is the segment's first phrase — a segment starts
@@ -325,8 +337,16 @@ and is settled in Phase 0.
    utterances; it was derived from consented speech only for rows written
    after #439 — see "Re-deriving after consent changes".
 6. At or above `link_similarity_threshold` (dense cosine between the two
-   segments) or `link_confidence_threshold` (re-ranker), write an `asserted`
-   link; below both, write a `pending` link for the user to confirm. The top 10
+   segments) or `link_confidence_threshold` (re-ranker), *and* with the
+   subjects agreeing, write an `asserted` link; otherwise a `pending` link for
+   the user to confirm. The subjects agree when the topic's top
+   `link_keyphrases` noun phrases, embedded as one string, reach
+   `link_keyphrase_threshold` cosine with one of the past meeting's segments'
+   (or share `link_shared_nouns` content nouns with it). Every segment of the
+   past meeting is tried (`HybridRetriever.segment_texts`, consented text only,
+   read at link time like the passage): the passage is the segment closest by
+   vector, and between one team's meetings the vector cannot say which segment
+   shares the subject. The top 10
    kept are the 10 with the highest of the two scores, stored as `confidence`.
 7. Mark `ctx_meeting_status.topic_linking_done`, then schedule
    `autune.context.publish_if_ready` with a countdown of
@@ -1154,7 +1174,9 @@ pre-meeting brief was added to the build on 2026-09-29.
 - The thresholds for asserting a link versus asking the user
   (`link_similarity_threshold = 0.74`, `link_confidence_threshold = 0.6`) come
   from short, synthetic evaluation meetings, with a thin margin between same-
-  and different-topic pairs. They need re-checking against real meetings.
+  and different-topic pairs; `link_keyphrase_threshold = 0.55` and
+  `link_shared_nouns = 4` from a synthetic development series. They need
+  re-checking against real meetings.
 - Whether `autune_core.publish_event` lands before Phase 2, or D ships the
   interim `current_app.send_task` path.
 - Whether the LLM client moves to `packages/integrations` at the start of
