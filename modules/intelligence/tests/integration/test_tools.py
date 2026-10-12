@@ -61,6 +61,7 @@ def test_the_tool_list_is_exactly_these_reads() -> None:
         "meeting_report_correction",  # the approval card's preview of a correction (#674)
         "meeting_reports",
         "meeting_report_body",
+        "search_reports",  # reports by what they said, ranked at question time
         "role_alignment",
         "weekly_reports",
         "weekly_report_schedule",
