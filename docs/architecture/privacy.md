@@ -184,7 +184,9 @@ the bottom of a page, are text of the file -- masked and kept with the rest;
 an `.xlsx` sheet's print header and footer, and a deck's masters and
 layouts, are read only to look for a marking and are not kept. Who wrote the
 file is never read: not the author, the last editor, a comment's author or
-the company. A file
+the company. The one exception is a cell note's author in an Excel file:
+Excel opens a note's own text with that name, so the reader reads it only to
+compare the two and leave that line out, and keeps it nowhere. A file
 whose text cannot be read -- protected by a password, damaged, or a PDF with
 a page that is only a picture -- is refused whole, because text that was not
 read can be neither checked nor masked. There is no OCR: text that exists
