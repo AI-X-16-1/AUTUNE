@@ -1451,8 +1451,9 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY` (cosine, 0.4 by default)
   is not a hit; with none left the answer is empty and says nothing close
   enough was found. 0.4 is a starting point for KURE-v1, not a measurement.
-  An upload past its team's window is not searched, even in the hour before
-  the task deletes it.
+  An upload past its `expires_at` is not searched, even in the hour before
+  the task deletes it; a team that keeps its uploads until deleted has
+  none such, as the task passes it over.
 - The assistant's tool (`tools.find_materials`, in `TOOLS`) reads through the
   same search, for the run's team only; the question is its one argument
   besides the team, and it is not in the result, a log line, `agent_runs` or

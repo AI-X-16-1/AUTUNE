@@ -221,17 +221,98 @@ def test_a_deleted_material_is_not_found(session: Session, embedder: Recording) 
     assert search_materials(session, TEAM, "출시").hits == []
 
 
-def test_an_upload_past_its_window_is_not_found_before_the_task_deletes_it(
+def found(session: Session, *, now: datetime | None = None) -> list[str]:
+    return [hit.material_id for hit in search_materials(session, TEAM, "출시", now=now).hits]
+
+
+def day_of(row: ExtMaterial) -> datetime:
+    day = materials.expires_at(row, kept=False)
+    assert day is not None
+    return day
+
+
+def test_an_upload_past_its_day_is_not_found_before_the_task_deletes_it(
     session: Session, embedder: Recording
 ) -> None:
     session.add(Team(id=TEAM, name="팀", retention_days=30))
     row = upload(session, LAUNCH)
-    row.created_at = datetime.now(UTC) - timedelta(days=31)
+    day = day_of(row)
+    assert day - row.created_at.replace(tzinfo=UTC) == timedelta(days=30)
+
+    assert found(session, now=day - timedelta(days=1)) == [row.id]
+    assert found(session, now=day + timedelta(days=1)) == []
+    # The row and its text are still there: it is the search that leaves them out.
+    assert session.get(ExtMaterial, row.id) is not None
+    assert session.scalars(select(ExtMaterialChunk)).first() is not None
+
+
+def test_an_upload_is_last_found_the_moment_before_its_day(
+    session: Session, embedder: Recording
+) -> None:
+    row = upload(session, LAUNCH)
+    day = day_of(row)
+    before = day - timedelta(microseconds=1)
+
+    assert found(session, now=before) == [row.id]
+    assert found(session, now=day) == []
+    # The same moment the hourly task starts to take it: nothing the task
+    # would delete is an answer, and nothing it leaves is hidden.
+    assert materials.forget_expired_uploads(session, now=before) == 0
+    assert materials.forget_expired_uploads(session, now=day) == 1
+
+
+def test_an_upload_already_past_its_day_is_not_found_by_the_clock(
+    session: Session, embedder: Recording
+) -> None:
+    row = upload(session, LAUNCH)
+    assert found(session) == [row.id]
+
+    row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     session.flush()
-    assert search_materials(session, TEAM, "출시").hits == []
+
+    assert found(session) == []
+
+
+def test_a_team_that_keeps_its_uploads_until_deleted_finds_one_past_its_day(
+    session: Session, embedder: Recording
+) -> None:
+    row = upload(session, LAUNCH)
+    late = day_of(row) + timedelta(days=400)
+    assert found(session, now=late) == []
 
     materials.set_keep_until_deleted(session, TEAM, True)
-    assert [hit.material_id for hit in search_materials(session, TEAM, "출시").hits] == [row.id]
+    assert found(session, now=late) == [row.id]
+
+    # Switching back hides it again at once, before the task runs.
+    materials.set_keep_until_deleted(session, TEAM, False)
+    assert found(session, now=late) == []
+
+
+def test_another_teams_choice_to_keep_does_not_show_ours_past_its_day(
+    session: Session, embedder: Recording
+) -> None:
+    row = upload(session, LAUNCH)
+    materials.set_keep_until_deleted(session, OTHER, True)
+
+    assert found(session, now=day_of(row)) == []
+
+
+def test_the_team_changing_its_window_later_moves_no_upload_in_or_out_of_search(
+    session: Session, embedder: Recording
+) -> None:
+    team = Team(id=TEAM, name="팀", retention_days=30)
+    session.add(team)
+    row = upload(session, LAUNCH)
+    day = day_of(row)
+
+    # A shorter window does not hide an upload that still has its day ...
+    team.retention_days = 7
+    session.flush()
+    assert found(session, now=day - timedelta(days=1)) == [row.id]
+    # ... and a longer one does not bring back an upload past it.
+    team.retention_days = 365
+    session.flush()
+    assert found(session, now=day) == []
 
 
 def test_a_drive_link_and_a_piece_of_another_model_are_never_hits(
