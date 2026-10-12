@@ -57,7 +57,7 @@ def team_id(db_session: Session) -> str:
 def upload(session: Session, team_id: str, body: str, title: str = "자료") -> str:
     row = materials.store_upload(
         session, team_id, title=title, file_name="plan.txt", data=body.encode()
-    )
+    ).row
     return row.id
 
 

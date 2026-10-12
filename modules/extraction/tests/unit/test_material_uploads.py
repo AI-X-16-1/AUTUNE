@@ -9,7 +9,8 @@ decision on retention):
   read before the caller is known to be a member;
 - a file whose text cannot be read is refused whole, with a reason code and
   nothing of the file in the error;
-- a file marked confidential in its name or its head is refused, nothing of it
+- a file marked confidential in its name or its head is refused (the other
+  formats' foot and label are ``test_material_formats``'), nothing of it
   is stored, and one alarm row says the team, the time and the kind of marking;
 - only masked text is stored, in pieces that each pass the outbound guard;
 - no row and no log line names a person or holds the title, the file's name or
@@ -23,7 +24,9 @@ Every value here is invented.
 from __future__ import annotations
 
 import asyncio
+import io
 import tempfile
+import zipfile
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -45,8 +48,9 @@ from autune_extraction.material_marking import file_marking, head_of
 from autune_extraction.material_reading import (
     MAX_BYTES,
     MAX_TEXT_CHARS,
+    SUFFIXES,
     UnreadableFileError,
-    read_text,
+    read_file,
     suffix_of,
 )
 from autune_extraction.models import ExtMaterial, ExtMaterialAlarm, ExtMaterialChunk
@@ -72,9 +76,9 @@ BODY = (
 
 
 def test_utf8_with_or_without_a_bom_and_cp949_are_read() -> None:
-    assert read_text("a.txt", "회의 자료".encode()) == "회의 자료"
-    assert read_text("a.md", "﻿# 회의 자료".encode()) == "# 회의 자료"
-    assert read_text("a.csv", "항목,금액\n회의,3".encode("cp949")) == "항목,금액\n회의,3"
+    assert read_file("a.txt", "회의 자료".encode()).text == "회의 자료"
+    assert read_file("a.md", "﻿# 회의 자료".encode()).text == "# 회의 자료"
+    assert read_file("a.csv", "항목,금액\n회의,3".encode("cp949")).text == "항목,금액\n회의,3"
 
 
 @pytest.mark.parametrize(
@@ -87,8 +91,8 @@ def test_the_type_is_the_names_ending(name: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("name", "data", "reason"),
     [
-        ("plan.pdf", b"%PDF-1.7", "unsupported_type"),
-        ("plan.docx", b"PK\x03\x04", "unsupported_type"),
+        ("plan.doc", b"\xd0\xcf\x11\xe0", "unsupported_type"),
+        ("plan.hwp", b"HWP Document File", "unsupported_type"),
         (".txt", b"text", "unsupported_type"),
         ("plan", b"text", "unsupported_type"),
         ("plan.txt", b"", "empty"),
@@ -98,12 +102,26 @@ def test_the_type_is_the_names_ending(name: str, expected: str) -> None:
         ("plan.txt", b"a" * (MAX_BYTES + 1), "too_large"),
         ("plan.txt", b"a" * (MAX_TEXT_CHARS + 1), "too_long"),
     ],
+    # Named, so the ten megabytes of a case are not its name: Windows refuses
+    # the environment variable pytest keeps the running test's name in.
+    ids=[
+        "doc",
+        "hwp",
+        "only-an-ending",
+        "no-ending",
+        "no-bytes",
+        "only-space",
+        "neither-encoding",
+        "a-nul",
+        "too-large",
+        "too-long",
+    ],
 )
 def test_a_file_that_cannot_be_read_is_refused_whole_with_a_reason(
     name: str, data: bytes, reason: str
 ) -> None:
     with pytest.raises(UnreadableFileError) as refused:
-        read_text(name, data)
+        read_file(name, data)
 
     error = refused.value
     assert (error.status_code, error.details) == (422, {"field": "file", "reason": reason})
@@ -112,12 +130,17 @@ def test_a_file_that_cannot_be_read_is_refused_whole_with_a_reason(
 
 def test_a_refusal_carries_nothing_of_the_file() -> None:
     with pytest.raises(UnreadableFileError) as refused:
-        read_text("김민수_평가.txt", f"{PHONE}\x00".encode())
+        read_file("김민수_평가.txt", f"{PHONE}\x00".encode())
     said = repr(refused.value.to_dict()) + str(refused.value)
     assert PHONE not in said and "김민수" not in said
 
 
 # --- the marking ------------------------------------------------------------------
+
+
+def marking_of(name: str, text: str) -> str | None:
+    """The marking of a text file, by the places ``store_upload`` looks in."""
+    return file_marking(name, read_file(name, text.encode()).edges())
 
 
 @pytest.mark.parametrize(
@@ -138,7 +161,7 @@ def test_a_refusal_carries_nothing_of_the_file() -> None:
     ],
 )
 def test_a_korean_marking_in_the_head_stops_the_file(line: str) -> None:
-    assert file_marking("plan.txt", f"\n{line}\n본문") == "korean_marking"
+    assert marking_of("plan.txt", f"\n{line}\n본문") == "korean_marking"
 
 
 @pytest.mark.parametrize(
@@ -155,18 +178,18 @@ def test_a_korean_marking_in_the_head_stops_the_file(line: str) -> None:
     ],
 )
 def test_an_english_marking_in_any_case_stops_the_file(line: str) -> None:
-    assert file_marking("plan.md", f"# Plan\n{line}") == "english_marking"
+    assert marking_of("plan.md", f"# Plan\n{line}") == "english_marking"
 
 
 def test_the_files_name_is_looked_at_with_underscores_as_spaces() -> None:
-    assert file_marking("plan_confidential.txt", "본문") == "english_marking"
-    assert file_marking("대외비_계획.md", "본문") == "korean_marking"
-    assert file_marking("Internal API design.md", "본문") is None
+    assert marking_of("plan_confidential.txt", "본문") == "english_marking"
+    assert marking_of("대외비_계획.md", "본문") == "korean_marking"
+    assert marking_of("Internal API design.md", "본문") is None
 
 
 @pytest.mark.parametrize("line", ["비밀", "secret", "내부", "internal", "Internal API design"])
 def test_words_that_are_not_markings_on_purpose_pass(line: str) -> None:
-    assert file_marking("plan.txt", line) is None
+    assert marking_of("plan.txt", line) is None
 
 
 def test_only_the_first_five_lines_that_say_anything_are_the_head() -> None:
@@ -175,8 +198,8 @@ def test_only_the_first_five_lines_that_say_anything_are_the_head() -> None:
 
     assert head_of(text) == ["하나", "둘", "셋", "넷", "다섯"]
     # A marking in the body, line six on, is not seen -- the documented gap.
-    assert file_marking("plan.txt", text) is None
-    assert file_marking("plan.txt", "\n".join(["하나", "", "", "대외비"])) == "korean_marking"
+    assert marking_of("plan.txt", text) is None
+    assert marking_of("plan.txt", "\n".join(["하나", "", "", "대외비"])) == "korean_marking"
 
 
 # --- cutting ----------------------------------------------------------------------
@@ -221,7 +244,9 @@ def session() -> Iterator[Session]:
 def upload(
     session: Session, *, title: str = "3분기 계획", name: str = "plan.txt", body: str = BODY
 ):
-    return materials.store_upload(session, TEAM, title=title, file_name=name, data=body.encode())
+    return materials.store_upload(
+        session, TEAM, title=title, file_name=name, data=body.encode()
+    ).row
 
 
 def count(session: Session, model: type) -> int:
@@ -292,7 +317,7 @@ def test_a_title_that_reads_as_personal_data_is_refused_before_the_file_is_read(
     def must_not_read(*_: object) -> str:
         raise AssertionError("the file was read")
 
-    monkeypatch.setattr(materials, "read_text", must_not_read)
+    monkeypatch.setattr(materials, "read_file", must_not_read)
     with pytest.raises(AutuneError) as refused:
         upload(session, title=f"연락처 {PHONE}")
     assert refused.value.status_code == 422
@@ -532,7 +557,7 @@ def test_the_rules_are_the_servers_own_numbers(client: TestClient) -> None:
     assert client.get(f"{PREFIX}/materials/upload-rules?team_id={TEAM}").json() == {
         "enabled": True,
         "max_bytes": MAX_BYTES,
-        "suffixes": [".txt", ".md", ".csv"],
+        "suffixes": list(SUFFIXES),
         "max_title_chars": materials.MAX_TITLE_CHARS,
         "max_materials": materials.MAX_MATERIALS,
         "search": True,
@@ -579,15 +604,49 @@ def test_a_marked_file_answers_422_and_its_alarm_row_is_kept(
 @pytest.mark.usefixtures("enabled")
 @pytest.mark.parametrize(
     ("name", "body", "reason"),
-    [("plan.pdf", BODY, "unsupported_type"), ("plan.txt", "  ", "empty")],
+    [
+        ("plan.doc", BODY, "unsupported_type"),
+        ("plan.pdf", BODY, "damaged"),
+        ("plan.txt", "  ", "empty"),
+    ],
+    ids=["a-format-not-read", "not-the-format-its-name-says", "nothing-written"],
 )
 def test_an_unreadable_file_answers_its_reason(
-    client: TestClient, name: str, body: str, reason: str
+    client: TestClient, session: Session, name: str, body: str, reason: str
 ) -> None:
     answer = post(client, name=name, body=body)
 
     assert answer.status_code == 422
     assert answer.json()["error"]["details"] == {"field": "file", "reason": reason}
+    assert PHONE not in answer.text and count(session, ExtMaterial) == 0
+
+
+@pytest.mark.usefixtures("enabled")
+def test_what_a_file_held_unread_is_said_once_in_the_answer_to_its_upload(
+    client: TestClient,
+) -> None:
+    # A Word file of one paragraph and one picture.
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w") as archive:
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            f"<w:body><w:p><w:r><w:t>{BODY}</w:t></w:r></w:p></w:body></w:document>",
+        )
+        archive.writestr("word/media/image1.png", b"png")
+
+    answer = client.post(
+        UPLOAD,
+        data={"title": "3분기 계획"},
+        files={"file": ("plan.docx", packed.getvalue(), "application/octet-stream")},
+    )
+
+    assert answer.status_code == 201
+    assert answer.json()["not_read"] == ["pictures"]
+    assert PHONE not in answer.text and "예산" not in answer.text
+    # Not kept with the row: the list has nothing to say of it afterwards.
+    listed = client.get(f"{PREFIX}/materials?team_id={TEAM}").json()
+    assert [m["not_read"] for m in listed] == [[]]
 
 
 @pytest.mark.usefixtures("enabled")

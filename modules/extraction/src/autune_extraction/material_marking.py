@@ -5,12 +5,15 @@ A marked file stops the upload: nothing of it is stored, and one
 list its marking was -- never the word, where it was or the file's name.
 
 **Words, not meaning, and only in some places.** The words are looked for in
-the file's name and the document's head, not its body
-(``docs/modules/extraction.md``, "Where a marking is looked for"). For the
-formats read today -- ``.txt``, ``.md``, ``.csv`` -- the head is the first five
-lines that say anything; those formats have no footer and no properties. A
-marking that sits only in the body, line six on, is not seen. In a file name
-``_`` separates words as a space does (``plan_confidential.txt``).
+the file's name, the document's head, its page footers and the file's own
+label -- not in its body (``docs/modules/extraction.md``, "Where a marking is
+looked for"). For ``.txt``, ``.md`` and ``.csv`` the head is the first five
+lines that say anything, and those formats have no footer and no label; what
+the head, the foot and the label are in each of the other formats is
+``material_formats``' to say (``FileText.edges``). Each line is looked at on
+its own: a marking broken over two lines is not one. A marking that sits only
+in the body is not seen. In a file name ``_`` separates words as a space does
+(``plan_confidential.txt``).
 
 **The list** is the one ``docs/modules/extraction.md`` gives, and it is the
 whole of it. Korean: 대외비, 사외비, 극비, 기밀, 보안문서, 비밀문서, 1급·2급·3급
@@ -34,7 +37,7 @@ from typing import Literal
 Marking = Literal["korean_marking", "english_marking"]
 
 HEAD_LINES = 5
-"""How many lines that say anything make the head of a text file."""
+"""How many lines that say anything make the head of what a file opens on."""
 
 
 def _spaced(word: str) -> str:
@@ -89,6 +92,7 @@ def marking_in(places: Iterable[str]) -> Marking | None:
     return None
 
 
-def file_marking(file_name: str, text: str) -> Marking | None:
-    """Whether a text file is marked: its name, then its head."""
-    return marking_in([file_name.replace("_", " "), *head_of(text)])
+def file_marking(file_name: str, edges: Iterable[str]) -> Marking | None:
+    """Whether a file is marked: its name, then the lines of its head, its
+    foot and its own label (``FileText.edges``)."""
+    return marking_in([file_name.replace("_", " "), *edges])
