@@ -10,6 +10,7 @@ import { approvePending, listPending, rejectPending } from "../api";
 import { meetingLabel } from "../meetingLabel";
 import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
+import { MaterialAlarms } from "./MaterialAlarms";
 
 const SUBAGENT_LABEL: Record<string, string> = {
   research: "리서치",
@@ -322,6 +323,7 @@ export function ApprovalsScreen() {
           );
         })}
       </ul>
+      <MaterialAlarms />
     </main>
   );
 }

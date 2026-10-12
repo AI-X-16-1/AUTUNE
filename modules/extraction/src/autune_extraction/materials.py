@@ -26,7 +26,9 @@ storage, and the original is not kept":
   stored (``material_marking``). One ``ext_material_alarms`` row is written:
   the team, the time and the kind of marking. The team's approvers are told
   by the agent layer (#1201), through ``pending_alarms`` and
-  ``acknowledge_alarm``.
+  ``acknowledge_alarm``. It finds the teams to tell with
+  ``teams_with_untold_alarms`` and records that it did with
+  ``mark_alarms_told``: this module does not know who an approver is.
 - **Only masked text is kept.** The whole text is masked with
   ``autune_integrations.document_masking.mask_document`` (#1199), then cut
   into pieces, and every piece passes ``assert_masked`` before it is written
@@ -64,6 +66,7 @@ material's id and the team's.
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
@@ -512,6 +515,53 @@ def acknowledge_alarm(session: Session, team_id: str, alarm_id: str) -> None:
     session.delete(row)
     session.flush()
     log.info("extraction_material_alarm_acknowledged", team_id=team_id)
+
+
+def teams_with_untold_alarms(session: Session) -> list[str]:
+    """The teams holding an alarm whose approvers have not been told of it.
+    For the agent layer's periodic task (#1201): this module does not know
+    who a team's approvers are and sends them nothing itself. A row the
+    30-day task already deleted is in no answer, so it is never told."""
+    return list(
+        session.scalars(
+            select(ExtMaterialAlarm.team_id)
+            .where(ExtMaterialAlarm.told_at.is_(None))
+            .distinct()
+            .order_by(ExtMaterialAlarm.team_id)
+        )
+    )
+
+
+def mark_alarms_told(
+    session: Session, team_id: str, alarm_ids: Collection[str], *, now: datetime | None = None
+) -> int:
+    """The team's approvers were told of these alarms; set when. Returns how
+    many it set; the caller commits.
+
+    By id, not "every alarm of the team": an upload stopped between the
+    caller's count and this call was not in the message, and stays untold
+    for the next one. Another team's alarm, one already told and an id that
+    is not there are passed over. Who was told is not a parameter, so it
+    cannot be kept. The count goes in the log; the ids and the team do not.
+
+    Being told does not keep a row: acknowledged or not, it still goes 30
+    days after it was written (``forget_old_alarms``).
+    """
+    if not alarm_ids:
+        return 0
+    moment = now or datetime.now(UTC)
+    rows = session.scalars(
+        select(ExtMaterialAlarm).where(
+            ExtMaterialAlarm.team_id == team_id,
+            ExtMaterialAlarm.id.in_(alarm_ids),
+            ExtMaterialAlarm.told_at.is_(None),
+        )
+    ).all()
+    for row in rows:
+        row.told_at = moment
+    session.flush()
+    log.info("extraction_material_alarms_told", count=len(rows))
+    return len(rows)
 
 
 def forget_expired_uploads(session: Session, *, now: datetime, limit: int | None = None) -> int:

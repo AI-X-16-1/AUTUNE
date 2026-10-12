@@ -39,7 +39,7 @@ from structlog.testing import capture_logs
 
 from autune_core import Base, Team, TeamMember, User, get_session
 from autune_core.errors import AutuneError, PrivacyViolationError
-from autune_extraction import material_upload, materials
+from autune_extraction import material_upload, materials, tools
 from autune_extraction.config import get_settings
 from autune_extraction.material_marking import file_marking, head_of
 from autune_extraction.material_reading import (
@@ -277,6 +277,7 @@ def test_an_alarm_row_names_no_person_and_no_file() -> None:
         "team_id",
         "marking",
         "created_at",
+        "told_at",
     }
     assert {c.name for c in ExtMaterialChunk.__table__.columns} == {
         "material_id",
@@ -395,6 +396,125 @@ def test_an_alarm_nobody_acknowledged_goes_after_thirty_days(session: Session) -
 
     assert materials.forget_old_alarms(session, now=now) == 1
     assert [a.id for a in materials.pending_alarms(session, TEAM)] == ["mal_new"]
+
+
+def test_an_alarm_is_untold_until_its_approvers_are_said_to_have_been_told(
+    session: Session,
+) -> None:
+    """What the agent layer's hourly task rests on (#1201): by id, once, and
+    with nothing of a team or an alarm in the log."""
+    now = datetime(2026, 10, 12, 12, tzinfo=UTC)
+    first, second, theirs = (
+        ExtMaterialAlarm(id="mal_a", team_id=TEAM, marking="korean_marking",
+                         created_at=now - timedelta(hours=2)),
+        ExtMaterialAlarm(id="mal_b", team_id=TEAM, marking="english_marking",
+                         created_at=now - timedelta(hours=1)),
+        ExtMaterialAlarm(id="mal_c", team_id="team_2", marking="korean_marking",
+                         created_at=now),
+    )  # fmt: skip
+    session.add_all([first, second, theirs])
+    session.flush()
+    assert first.told_at is None
+    assert materials.teams_with_untold_alarms(session) == [TEAM, "team_2"]
+
+    # The second alarm was not in the message, so it stays untold. Another
+    # team's id and an id that is not there are passed over.
+    with capture_logs() as lines:
+        marked = materials.mark_alarms_told(
+            session, TEAM, [first.id, theirs.id, "mal_unknown"], now=now
+        )
+    assert marked == 1
+    assert first.told_at is not None and first.told_at.replace(tzinfo=UTC) == now
+    assert second.told_at is None and theirs.told_at is None
+    assert materials.teams_with_untold_alarms(session) == [TEAM, "team_2"]
+    assert [line["count"] for line in lines if "told" in line["event"]] == [1]
+    assert not any(word in repr(lines) for word in ("mal_", TEAM, "team_2"))
+
+    # Told once: a second call does not move the time.
+    later = now + timedelta(hours=1)
+    assert materials.mark_alarms_told(session, TEAM, [first.id], now=later) == 0
+    assert first.told_at.replace(tzinfo=UTC) == now
+    assert materials.mark_alarms_told(session, TEAM, []) == 0
+
+    materials.mark_alarms_told(session, TEAM, [second.id], now=later)
+    assert materials.teams_with_untold_alarms(session) == ["team_2"]
+    # A told alarm still waits for an approver's acknowledgement.
+    assert [a.id for a in materials.pending_alarms(session, TEAM)] == [first.id, second.id]
+
+
+def test_being_told_does_not_keep_an_alarm_and_a_deleted_one_is_never_told(
+    session: Session,
+) -> None:
+    now = datetime(2026, 10, 12, 12, tzinfo=UTC)
+    old = now - timedelta(days=30, seconds=1)
+    session.add_all(
+        [
+            ExtMaterialAlarm(id="mal_told", team_id=TEAM, marking="korean_marking",
+                             created_at=old, told_at=now - timedelta(days=1)),
+            ExtMaterialAlarm(id="mal_untold", team_id="team_2", marking="korean_marking",
+                             created_at=old),
+        ]
+    )  # fmt: skip
+    session.flush()
+    assert materials.teams_with_untold_alarms(session) == ["team_2"]
+
+    assert materials.forget_old_alarms(session, now=now) == 2
+
+    assert session.scalars(select(ExtMaterialAlarm)).all() == []
+    assert materials.teams_with_untold_alarms(session) == []
+
+
+def test_the_agent_layer_reads_alarms_through_four_functions_no_model_can_call(
+    session: Session,
+) -> None:
+    """The layer's owner, #1201: ``main/`` reads module B through ``tools.py``
+    and never its models; and none of the four is a tool or an action, so a
+    model cannot read an alarm and an acknowledgement is in no run."""
+    four = (
+        tools.stopped_uploads,
+        tools.acknowledge_stopped_upload,
+        tools.teams_with_untold_stopped_uploads,
+        tools.mark_stopped_uploads_told,
+    )
+    assert not set(four) & (set(tools.TOOLS) | set(tools.ACTIONS))
+    assert set(tools.StoppedUpload.__dataclass_fields__) == {
+        "id",
+        "team_id",
+        "marking",
+        "created_at",
+        "told",
+    }
+
+    now = datetime(2026, 10, 12, 12, tzinfo=UTC)
+    with pytest.raises(materials.ConfidentialFileError):
+        upload(session, body="대외비\n" + BODY)
+    with pytest.raises(materials.ConfidentialFileError):
+        upload(session, name="CONFIDENTIAL plan.txt")
+    [row, later] = sorted(
+        session.scalars(select(ExtMaterialAlarm)), key=lambda a: a.marking, reverse=True
+    )
+    row.created_at, later.created_at = now - timedelta(hours=1), now
+    session.flush()
+
+    [first, second] = tools.stopped_uploads(session, TEAM)
+    assert (first.id, first.team_id, first.marking, first.told) == (
+        row.id,
+        TEAM,
+        "korean_marking",
+        False,
+    )
+    assert second.id == later.id and tools.stopped_uploads(session, "team_2") == []
+    assert tools.teams_with_untold_stopped_uploads(session) == [TEAM]
+
+    assert tools.mark_stopped_uploads_told(session, TEAM, [first.id], now=now) == 1
+    assert [a.told for a in tools.stopped_uploads(session, TEAM)] == [True, False]
+    assert tools.mark_stopped_uploads_told(session, TEAM, [first.id], now=now) == 0
+
+    with pytest.raises(AutuneError) as refused:
+        tools.acknowledge_stopped_upload(session, "team_2", first.id)
+    assert refused.value.status_code == 404
+    tools.acknowledge_stopped_upload(session, TEAM, first.id)
+    assert [a.id for a in tools.stopped_uploads(session, TEAM)] == [second.id]
 
 
 # --- the form, in memory ------------------------------------------------------------
