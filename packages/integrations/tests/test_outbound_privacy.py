@@ -796,7 +796,13 @@ def test_a_line_break_after_a_full_stop_or_parenthesis_joins_nothing(text: str) 
     assert "rrn" not in {cat for _, _, cat in find_pii(text)}
 
 
-@pytest.mark.parametrize("tail", ["\n" * 50_000, " \n" * 25_000, "-\n" * 25_000, "\n-" * 25_000])
+# Named ids: a 50,000-character id lands in PYTEST_CURRENT_TEST and overruns
+# the environment-variable limit on Windows (@lsh2217 on #1232).
+@pytest.mark.parametrize(
+    "tail",
+    ["\n" * 50_000, " \n" * 25_000, "-\n" * 25_000, "\n-" * 25_000],
+    ids=["lf", "space-lf", "dash-lf", "lf-dash"],
+)
 def test_a_long_run_of_line_breaks_after_a_digit_is_scanned_quickly(tail: str) -> None:
     started = time.monotonic()
     find_pii("900101" + tail + "x")
