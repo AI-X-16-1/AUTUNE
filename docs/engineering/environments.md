@@ -898,6 +898,20 @@ builds each from `DEV_SITE_URL` (`<site>/api/auth/<service>/callback`), because
 the browser must come back to the origin its state cookie was set on. A
 `*_REDIRECT_URI` secret is read by nothing.
 
+The compose file also sets `AUTUNE_EXTRACTION_MATERIAL_UPLOAD=true` with
+`AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local` (module B's owner, 2026-10-12,
+#817), so **this site keeps the masked text of documents uploaded to a team's
+자료**, and a member of the team finds one by typing a question. The file itself
+is not kept. The two are set together: with uploads on and the embedder at
+`.env.example`'s `fake`, the api, the workers and beat do not start. `local` is
+KURE-v1 inside the `api` container, on the CPU, loaded at the first upload or
+search from the `models` volume: no material text and no question leaves the
+server. One message does leave: a file refused for a confidentiality
+marking is told to the team's approvers with the '전체' scope in one Slack DM --
+a count and a link, nothing of the file -- where the team connected Slack and
+the approver linked their account. `AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`
+stays off, so the assistant's model is given no material text.
+
 To sign in, open the site and use Google with an account on the consent
 screen's test-user list; nothing else is asked. An account that is not on the
 list is refused by Google before it reaches Autune.
