@@ -144,32 +144,31 @@ item quotes readable around it.
 
 ### Uploaded documents are masked before storage, and the original is not kept (#817)
 
-**Status: storage and search are on `main`, off by default; the alert is
-not.** `main` has what this subsection says is kept and how it goes: the
+**Status: storage, search and the approvers' alert are on `main`, off by
+default.** `main` has what this subsection says is kept and how it goes: the
 uploaded rows of `ext_materials`, `ext_material_chunks` with a vector for
 each piece, `ext_material_alarms`, the team's keeping setting
 (`ext_material_settings`), the upload route, the search of a team's
 materials by a question a member types, the delete of an uploaded material
 and the two hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
-file, what is kept of it, for how long, and who deletes it. It does not say
-yet that the kept text is searched: those sentences arrive with the
-approvers' alert. Three things this subsection describes are not on `main`
-yet. The approvers' alert in the agent layer (#1201): until it is in, a
-refused file leaves its `ext_material_alarms` row and nobody but the member
-who brought it is told, and the notice does not name the search. The switch
-(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned on
-anywhere before the alert is in; while it is off the search route answers
-404, so no search runs ahead of its notice. The
-embedder on our own inference server: on `main` the vectors are made by
+file, what is kept of it, that it is searched, for how long it is kept,
+who deletes it, and what the approvers of a team are sent about a refused
+one (#1201). The sentences on the search came in with the alert's and not
+with the search: while the switch is off the search route answers 404, so
+no search ran ahead of its notice. The switch
+(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default, and no code turns
+it on. Whether a deployment turns it on is decided on #817. Two things this
+subsection describes are not on `main` yet. The embedder on our own
+inference server: on `main` the vectors are made by
 whichever `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` names -- `fake` by
 default, which is no model at all, or `local`, KURE-v1 loaded in the API's
 own process. Neither sends a text anywhere. And of the nine formats listed
 below `main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
 `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`) are not read on `main` yet and are
-refused. Each of those three changes -- the alert, the embedder on the
-inference server, the six formats -- removes its own sentence from this
-paragraph. The tool that hands excerpts to the chatbot's model
+refused. Each of those two changes -- the embedder on the inference
+server, the six formats -- removes its own sentence from this paragraph.
+The tool that hands excerpts to the chatbot's model
 (`extraction.find_materials`) is on `main` too and answers nothing: its
 switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by default and
 stays off until the later change this subsection names is approved.
@@ -271,6 +270,19 @@ approver's acknowledgement deletes the row, and who acknowledged is not
 recorded. In a small team the time of an attempt can point at one person,
 which is why the row is short-lived: unacknowledged, it is deleted 30 days
 after it was written, by the task that deletes materials past their window.
+
+For the same reason an approver here is a holder of the `any` scope and
+nobody with a narrower one (the layer's owner on #1201, 2026-10-12). The
+agent layer looks for rows nobody was told of once an hour
+(`autune.agent.periodic.tell_material_alarms`), and reads module B's rows
+through B's `tools.py` only -- four functions that are in neither `TOOLS`
+nor `ACTIONS`, so no model can read an alarm and an acknowledgement is in
+no run. The row also holds when the approvers were sent their message
+(`told_at`), so that one stopped upload is told once. That is a time: not
+who was messaged, not how many, not whether Slack delivered. It goes when
+the row goes -- on an acknowledgement, or 30 days after the row was
+written, told or not. The task's log line holds counts and no team, person
+or alarm id.
 
 The check reads words, not meaning, and only in those places: a marking
 that exists only in the body, or only as a picture, is not seen.
@@ -829,9 +841,11 @@ the feature needs.
   number read in two rows is refused. Queued work expires after 120 seconds.
   Its only switch is the agent's key, and #392's rule holds for it as for B:
   on the dev site, the team's own meetings only.
-- **A stopped upload's alert (#817).** On Slack, the approvers' DM about a
-  stopped file carries a count and a link. No file name, no time, no kind of
-  marking, no person.
+- **A stopped upload's alert (#817, #1201).** On Slack, the approvers' DM
+  about a stopped file carries a count and a link. No file name, no time, no
+  kind of marking, no person. It goes to the holders of `any`, once for a
+  stopped file, and is not taken back when the row is acknowledged or
+  deleted.
 - What was delivered can outlive its source, for different reasons per
   destination, which is why each carries only what it needs:
   - **What names a row in each copy (module B, 2026-10-09):** an action

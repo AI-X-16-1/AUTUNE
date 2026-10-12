@@ -419,12 +419,12 @@ class ExtractionSettings(BaseSettings):
     """Take a file uploaded to a team's 자료 and keep its masked text (#817,
     ``materials.store_upload``).
 
-    **Off by default, and stays off until the rest has landed.** Off, the
+    **Off by default, and no code turns it on.** Off, the
     upload route answers the framework's bare 404, as a route that does not
     exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
-    screen draws no control. The order agreed on #817: it is not switched on
-    anywhere before the approvers' alert (#1201) is in, because without the
-    alert a stopped file is told to nobody but the member who sent it."""
+    screen draws no control. Whether a deployment turns it on is decided on
+    #817. A stopped file is told to the team's approvers by the agent
+    layer's alert (#1201)."""
 
     material_embedder_impl: str = "fake"
     """Which embedder makes an uploaded material's vectors and a search

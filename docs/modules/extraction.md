@@ -1433,9 +1433,11 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   anonymous: a name in a sentence stays. A file marked confidential is
   refused and leaves one alarm row that names no person. The only model
   that reads the text is the embedder, in this process, on the masked
-  pieces; the upload stays off
-  (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) until the approvers' alert (#1201)
-  is in.
+  pieces. The upload switch (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`): off by
+  default, and no code turns it on. Whether a deployment turns it on is
+  decided on #817. A stopped file is told to the team's approvers by the
+  agent layer (#1201), which reads the alarm rows through four functions
+  of `tools.py` that are in neither `TOOLS` nor `ACTIONS`.
 - A search of the uploads (`material_search.search_materials`, #817) masks
   the question with `mask_document` before it is embedded or looked at
   further, and neither form of it is stored, logged or returned -- the log
