@@ -424,10 +424,7 @@ class ExtractionSettings(BaseSettings):
     exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
     screen draws no control. The order agreed on #817: it is not switched on
     anywhere before the approvers' alert (#1201) is in, because without the
-    alert a stopped file is told to nobody but the member who sent it, nor
-    before the day the legal notice's amendment applies (``AMENDED_ON`` in
-    ``apps/web/src/app/legal/consents.ts``): the notice says uploads are
-    not offered before it, and nothing here compares the two."""
+    alert a stopped file is told to nobody but the member who sent it."""
 
     material_embedder_impl: str = "fake"
     """Which embedder makes an uploaded material's vectors and a search

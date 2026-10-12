@@ -10,17 +10,18 @@
  * one nobody has agreed to, so everyone is asked again the next time they open
  * the app -- which is the point, and also why a typo fix should not bump it.
  * While the documents are a draft the versions say so; the first published
- * text takes its effective date as its version.
+ * text takes its effective date as its version. A text whose wording changes
+ * again with the same effective date keeps that date and counts after a dot
+ * -- `2026-10-12.2` is the second text effective 2026-10-12 -- so the version
+ * still names the day the documents carry, and reads and sorts as the later
+ * one.
  *
- * **An amended text takes the day it applies as its version.** The first
- * amendment is the one for a team's uploaded documents (#817; the owner,
- * 2026-10-12). It is announced in the documents themselves (`./content`, 개정
- * 안내) and applies from `AMENDED_ON`, at least seven days after the page
- * carrying it is on the site. Both documents changed, so both versions move
- * to that day and every member is asked again -- before the day, reading the
- * text with its 개정 안내. `AMENDED_ON` is empty until the day the page goes
- * up is known; the versions stay the first text's until then, and
- * `content.test.ts` fails: the amendment does not merge with the day unset.
+ * `2026-10-12.2` (the owner, 2026-10-12): the sentences about a team's
+ * uploaded documents (#817) came into both documents on the effective day
+ * itself, as part of the first text and with no amendment notice. But
+ * `2026-10-12` had been on `main` with this page for some hours by then, and
+ * a person who agreed to it agreed to a text without those sentences. The
+ * version moves so that they are asked again, whichever was deployed first.
  *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
@@ -39,17 +40,9 @@ export interface RequiredConsent {
   version: string;
 }
 
-/** The day the first published text took effect, and its version. */
-const FIRST = "2026-10-12";
-
-/** YYYY-MM-DD the amended text applies from; "" while the day is not set. */
-export const AMENDED_ON: string = "";
-
-const VERSION = AMENDED_ON === "" ? FIRST : AMENDED_ON;
-
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: VERSION },
-  { document: "privacy", version: VERSION },
+  { document: "terms", version: "2026-10-12.2" },
+  { document: "privacy", version: "2026-10-12.2" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

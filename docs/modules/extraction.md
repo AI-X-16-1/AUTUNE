@@ -1435,7 +1435,7 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   that reads the text is the embedder, in this process, on the masked
   pieces; the upload stays off
   (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) until the approvers' alert (#1201)
-  is in and the day the legal notice's amendment applies has come.
+  is in.
 - A search of the uploads (`material_search.search_materials`, #817) masks
   the question with `mask_document` before it is embedded or looked at
   further, and neither form of it is stored, logged or returned -- the log
