@@ -192,11 +192,20 @@
  * - voice data is stored only where the operator turned it on (제10조 ④).
  * - retention counts from the upload or the live start, not the meeting's
  *   date (제3조).
+ * - a team's uploaded document (#817) is kept as masked text only: the bytes
+ *   end with the upload request, and no row says who uploaded, deleted or was
+ *   refused. It belongs to the team, so a member's own deletion (탈퇴, 발화
+ *   삭제) does not reach it -- 제2조, 제3조, 제4조 and terms 제10조 say so. Off
+ *   unless the operator turns uploads on. These sentences came in as an
+ *   amendment: each document says so at its head (`amendment`) and in its
+ *   dating clause (처리방침 제15조 ①, the two 부칙).
  * A sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
  * User-facing copy is Korean; this file's comments stay English.
  */
+
+import { AMENDED_ON } from "./consents";
 
 export interface Blank {
   blank: string;
@@ -229,6 +238,12 @@ export interface Section {
 export interface LegalDocument {
   id: "privacy" | "terms" | "security";
   title: string;
+  /**
+   * The notice of an amendment (개정 안내), shown above everything else:
+   * what changed, the day it was announced and the day it applies. Worded
+   * to stay true after that day, so it is not taken down on it.
+   */
+  amendment?: Line;
   /** The preamble, for a document that has one. */
   lead?: Line;
   sections: readonly Section[];
@@ -260,6 +275,30 @@ const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
 const EFFECTIVE = "2026년 10월 12일";
 
+// The amendment for a team's uploaded documents (#817; the owner,
+// 2026-10-12: announced in the documents themselves, seven days).
+// ANNOUNCED_ON is the day the page carrying it is on the site -- the
+// deploy, not the merge. AMENDED_ON (./consents, where it is also the
+// version a person agrees to) is at least seven days after it (처리방침
+// 제15조 ②). Both are YYYY-MM-DD and both are empty until that day is known:
+// an empty one shows as "확정 전" and content.test.ts fails, so this does
+// not merge unset. If the change waits past the day written here, move
+// both. Nothing in code holds AUTUNE_EXTRACTION_MATERIAL_UPLOAD to
+// AMENDED_ON: the head paragraphs promise it, and the operator keeps it.
+const ANNOUNCED_ON: string = "";
+export const AMENDMENT_DAYS = {
+  announced: ANNOUNCED_ON,
+  applies: AMENDED_ON,
+} as const;
+const day = (iso: string, label: string): Inline => {
+  if (iso === "") return blank(label);
+  const [year, month, date] = iso.split("-").map(Number);
+  return `${year}년 ${month}월 ${date}일`;
+};
+const ANNOUNCED = day(ANNOUNCED_ON, "개정 공지일");
+const AMENDED = day(AMENDED_ON, "개정 시행일");
+const AMENDMENT_HEAD: Inline = { strong: "개정 안내" };
+
 /**
  * Shown above the documents. Their text cannot be selected on the page (the
  * user, 2026-10-02), and a customer is owed a copy of the terms on request, so
@@ -274,6 +313,16 @@ export const COPY_NOTICE: Line = [
 const PRIVACY: LegalDocument = {
   id: "privacy",
   title: "개인정보 처리방침",
+  amendment: [
+    AMENDMENT_HEAD,
+    " (",
+    ANNOUNCED,
+    " 공지, ",
+    AMENDED,
+    " 시행) 팀 구성원이 팀의 자료에 올린 문서 파일의 처리에 관한 사항을 새로 정하였습니다. 변경된 조항은 제1조, 제2조 제1항 및 제5항, 제3조 제2항, 제4조 제2항, 제8조 제2항이며, 아래 본문에 반영되어 있습니다. 변경된 조항은 ",
+    AMENDED,
+    "부터 적용되고, 회사는 그 전까지 문서 파일을 올리는 기능을 제공하지 않으므로 시행일 전에는 문서 자료에 관한 개인정보를 수집하거나 보관하지 않습니다. 그 밖의 내용은 변경되지 않았습니다.",
+  ],
   lead: [
     OPERATOR,
     '(이하 "회사")는 「개인정보 보호법」 제30조에 따라 정보주체의 개인정보를 보호하고 이와 관련한 고충을 신속하고 원활하게 처리할 수 있도록 다음과 같이 개인정보 처리방침을 수립·공개합니다.',
@@ -289,6 +338,7 @@ const PRIVACY: LegalDocument = {
           "회원 가입 및 관리: Google 계정을 통한 본인 식별·인증, 회원 자격의 유지·관리, 각종 고지·통지",
           "회의 기록 서비스의 제공: 회의 음성의 전사, 화자 구분, 전사문에 포함된 개인정보의 가림 처리, 회의 기록의 열람 제공",
           "회의 분석 서비스의 제공: 할 일 및 결정 사항의 추출, 논의되지 않은 항목의 탐지, 이전 회의와의 연결, 팀 단위 지표의 산출",
+          "팀 자료의 보관: 팀 구성원이 팀의 자료에 올린 문서 파일의 글을 가림 처리하여 보관",
           "외부 서비스 연동: 이용자 또는 이용자가 속한 팀이 연결한 외부 서비스로의 결과 전달",
           "고충 처리: 민원인의 신원 확인, 민원 사항의 확인, 처리 결과의 통보",
         ),
@@ -336,6 +386,16 @@ const PRIVACY: LegalDocument = {
           [
             "분석 결과",
             "할 일(담당자 및 기한 포함), 결정 사항, 논의되지 않은 항목, 회의에서 추출한 주제의 명칭(발화에서 추출하므로 성명이 포함될 수 있음), 참석자별 주제 발언 여부, 회의 간 연결 정보, 결정의 이전 논의에서 발언하였으나 결정이 바뀐 회의에서는 발언하지 않은 팀 구성원(회의에 참석하였더라도 발언하지 않은 경우를 포함하며, 결정의 이력에 기록되고 결정이 바뀐 회의가 삭제되면 함께 삭제됩니다), 팀 단위 지표",
+            "서비스 이용 과정에서 생성",
+          ],
+          [
+            "팀이 올린 문서 자료",
+            "팀 구성원이 팀의 자료에 올린 문서 파일에서 읽은 글(가림 처리된 것), 구성원이 입력한 자료의 제목, 올린 일시. 파일의 원본, 파일의 이름 및 올린 사람은 저장하지 않습니다(회사가 해당 기능을 활성화한 경우에 한함)",
+            "팀 구성원의 업로드",
+          ],
+          [
+            "받지 않은 문서 파일의 기록",
+            "기밀 표시가 있어 받지 않은 파일에 대하여 해당 팀, 일시 및 표시의 종류. 파일의 이름, 제목, 내용 및 올린 사람은 기록하지 않습니다",
             "서비스 이용 과정에서 생성",
           ],
           ["동의 확인 기록", "회의별 동의 확인자, 확인 일시", "이용자의 입력"],
@@ -387,6 +447,9 @@ const PRIVACY: LegalDocument = {
         ),
         p(
           "④ 회사는 음성 녹음 및 전사문을 인공지능 모델의 학습 목적으로 보관하거나 이용하지 않습니다.",
+        ),
+        p(
+          "⑤ 회사는 팀 구성원이 팀의 자료에 올린 문서 파일을 그 요청을 처리하는 동안에만 읽으며, 파일의 원본은 저장하지 않습니다. 파일에서 읽은 글은 전화번호, 전자우편 주소, 주민등록번호, 계좌번호 및 신용카드번호를 가림 처리한 뒤에 저장하며, 가림 처리 전의 글은 저장하지 않습니다. 성명과 그 밖에 문장으로 적힌 내용은 가림 처리 대상에 포함되지 않으므로, 보관되는 글에 남을 수 있습니다. 자료에는 올린 사람을 기록하지 않습니다. 회사는 이 글을 외부 서비스에 전송하지 않으며, 인공지능 모델의 학습 목적으로 이용하지 않습니다.",
         ),
       ],
     },
@@ -440,6 +503,11 @@ const PRIVACY: LegalDocument = {
             "초대 대상자의 전자우편 주소",
             "초대가 수락되거나, 7일이 지나 만료되거나, 같은 주소로 다시 초대하여 교체되거나, 팀 또는 초대한 회원이 삭제되거나, 해당 주소의 회원이 탈퇴하는 때 중 먼저 오는 때까지",
           ],
+          [
+            "팀이 올린 문서 자료(가림 처리된 글 및 제목)",
+            '올린 때에 정해지는 삭제일까지. 삭제일은 올린 날에 그날의 해당 팀 보유 기간(90일을 기본으로 하며, 팀이 30일, 90일, 180일, 365일 중에서 정한 기간)을 더한 날이며, 팀이 그 뒤에 보유 기간을 바꾸더라도 이미 올린 자료의 삭제일은 달라지지 않습니다. 팀이 자료 화면에서 "팀이 지울 때까지 보관"을 선택한 동안에는 삭제일이 지나도 삭제하지 않고, 팀 구성원이 삭제하거나 팀이 삭제될 때까지 보관합니다. 팀이 그 선택을 되돌리면 각 자료에 정해져 있던 삭제일이 다시 적용되며, 삭제일이 이미 지난 자료는 삭제됩니다.',
+          ],
+          ["받지 않은 문서 파일의 기록", "기록한 날부터 30일"],
         ),
         p(
           "③ 과거에 진행된 회의의 음성을 나중에 업로드하는 경우 보유 기간은 업로드한 날부터 기산합니다.",
@@ -456,8 +524,9 @@ const PRIVACY: LegalDocument = {
         ol(
           "음성 녹음은 전사가 종료되는 즉시 삭제합니다. 삭제되지 않고 남은 임시 파일이 있는지 1시간마다 점검하여 삭제합니다.",
           "보유 기간이 만료된 회의는 1시간마다 확인하여 해당 회의에 부속된 자료 일체와 함께 삭제합니다.",
+          "삭제일이 지난 팀의 문서 자료는 1시간마다 확인하여 가림 처리된 글과 함께 삭제합니다. 팀 구성원은 누구나 언제든지 팀의 문서 자료를 삭제할 수 있으며, 삭제하면 가림 처리된 글이 즉시 함께 삭제되고 복구할 수 없습니다. 회원의 탈퇴 또는 본인 발화의 삭제로는 팀의 문서 자료가 삭제되지 않습니다.",
           "회원이 탈퇴하면 해당 회원의 발화, 음성 특징정보 및 회원 정보를 삭제합니다.",
-          "팀에 남은 구성원이 한 명뿐인 경우 그 구성원은 팀을 삭제할 수 있습니다. 팀을 삭제하면 해당 팀, 팀의 모든 회의 및 그 회의에 부속된 자료 일체를 삭제하며, 여기에는 먼저 팀에서 나간 구성원이 그 팀의 회의에서 한 발화가 포함됩니다. 회사는 팀의 삭제를 먼저 팀에서 나간 구성원에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 팀을 삭제할 수 없습니다.",
+          "팀에 남은 구성원이 한 명뿐인 경우 그 구성원은 팀을 삭제할 수 있습니다. 팀을 삭제하면 해당 팀, 팀의 모든 회의 및 그 회의에 부속된 자료 일체와 팀의 문서 자료를 삭제하며, 여기에는 먼저 팀에서 나간 구성원이 그 팀의 회의에서 한 발화가 포함됩니다. 회사는 팀의 삭제를 먼저 팀에서 나간 구성원에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 팀을 삭제할 수 없습니다.",
           "팀의 구성원은 그 팀의 회의를 삭제할 수 있습니다. 회의를 삭제하면 해당 회의 및 그 회의에 부속된 자료 일체를 삭제하며, 여기에는 다른 사람(먼저 팀에서 나간 구성원을 포함합니다)이 그 회의에서 한 발화가 포함됩니다. 회사는 회의의 삭제를 그 회의에서 발언한 다른 사람에게 따로 알리지 않습니다. 전사가 진행 중이거나 실시간 회의가 열려 있는 동안에는 그 회의를 삭제할 수 없습니다.",
         ),
         p(
@@ -675,6 +744,10 @@ const PRIVACY: LegalDocument = {
             "본인 발화 비율의 열람",
             "본인만 열람할 수 있습니다. 팀 관리자를 포함한 다른 사람은 열람할 수 없습니다.",
           ],
+          [
+            "팀의 문서 자료의 삭제",
+            "팀의 자료 화면에서 직접 삭제합니다. 팀 구성원 누구나 할 수 있으며, 삭제된 자료는 복구할 수 없습니다.",
+          ],
         ),
         p(
           "③ 제2항 외의 권리 행사는 「개인정보 보호법 시행령」 제41조 제1항에 따라 서면, 전자우편 등을 통하여 할 수 있으며, 회사는 이에 대하여 지체 없이 조치합니다.",
@@ -816,7 +889,13 @@ const PRIVACY: LegalDocument = {
     {
       heading: "제15조(개인정보 처리방침의 변경)",
       blocks: [
-        p(["① 이 개인정보 처리방침은 ", EFFECTIVE, "부터 적용됩니다."]),
+        p([
+          "① 이 개인정보 처리방침은 ",
+          EFFECTIVE,
+          "부터 적용됩니다. 다만, 팀의 문서 자료에 관한 조항(제1조, 제2조 제1항 및 제5항, 제3조 제2항, 제4조 제2항, 제8조 제2항 중 해당 부분)은 ",
+          AMENDED,
+          "부터 적용됩니다.",
+        ]),
         p(
           "② 회사는 이 개인정보 처리방침을 변경하는 경우 변경 내용과 시행일을 시행일 7일 전부터 서비스 화면에 공지합니다. 다만, 정보주체의 권리에 중대한 변경이 있는 경우에는 시행일 30일 전부터 공지합니다.",
         ),
@@ -828,6 +907,16 @@ const PRIVACY: LegalDocument = {
 const TERMS: LegalDocument = {
   id: "terms",
   title: "서비스 이용약관",
+  amendment: [
+    AMENDMENT_HEAD,
+    " (",
+    ANNOUNCED,
+    " 공지, ",
+    AMENDED,
+    ' 시행) 개정 사유: 팀 구성원이 팀의 자료에 문서 파일을 올려 그 글을 보관하는 기능을 새로 제공하기 위한 것입니다. 개정 내용: 제2조("콘텐츠"의 정의에 팀의 문서 자료의 글을 더함), 제8조(서비스의 내용에 팀의 문서 자료의 보관을 더함), 제10조 제4항(문서 자료의 보관과 삭제를 새로 정함), 제15조 제2항 제1호(올려서는 안 되는 것에 문서를 더함). 개정 내용은 아래 본문에 반영되어 있으며, ',
+    AMENDED,
+    "부터 적용되고 그 전까지는 개정 전의 내용이 적용됩니다. 회사는 적용일자 전까지 문서 파일을 올리는 기능을 제공하지 않습니다. 개정 약관에 동의하지 않는 이용자는 제17조에 따라 이용계약을 해지할 수 있습니다.",
+  ],
   sections: [
     {
       chapter: "제1장 총칙",
@@ -848,7 +937,7 @@ const TERMS: LegalDocument = {
           '"서비스"란 회의 음성을 전사하고, 전사문에 포함된 개인정보를 가림 처리하며, 할 일과 결정 사항을 추출하고, 논의되지 않은 항목과 이전 회의와의 연결을 제시하는 Autune의 기능 일체를 말합니다.',
           '"이용자"란 이 약관에 동의하고 서비스를 이용하는 자를 말합니다.',
           '"팀"이란 회의 기록을 공유하는 이용자의 단위를 말합니다.',
-          '"콘텐츠"란 이용자가 업로드하거나 실시간 회의 기능으로 전송한 음성과, 그로부터 생성된 전사문 및 분석 결과를 말합니다.',
+          '"콘텐츠"란 이용자가 업로드하거나 실시간 회의 기능으로 전송한 음성과, 그로부터 생성된 전사문 및 분석 결과, 그리고 팀 구성원이 팀의 자료에 올린 문서 파일에서 읽어 가림 처리한 글을 말합니다.',
           '"외부 서비스"란 Slack, Notion, Jira, Google Calendar, Gmail 등 회사가 아닌 자가 제공하는 서비스로서 이용자 또는 팀이 서비스에 연결한 것을 말합니다.',
         ),
       ],
@@ -926,6 +1015,7 @@ const TERMS: LegalDocument = {
           "회의에서 논의되지 않은 항목의 탐지",
           "이전 회의와의 연결 및 팀 단위 지표의 제공",
           "외부 서비스로의 결과 전달",
+          "팀이 올린 문서 자료의 보관(가림 처리된 글에 한합니다)",
           "그 밖에 회사가 추가로 개발하여 제공하는 기능",
         ),
       ],
@@ -958,6 +1048,9 @@ const TERMS: LegalDocument = {
         ),
         p(
           "③ 이용자는 언제든지 서비스 내에서 자신의 발화 및 음성 특징정보를 삭제할 수 있습니다.",
+        ),
+        p(
+          "④ 팀의 자료에 올린 문서 파일은 원본을 보관하지 않으며, 회사는 그 원본을 다시 제공할 수 없습니다. 가림 처리된 글은 올린 때에 정해진 삭제일(올린 날에 그날의 팀 보유 기간을 더한 날)이 지나면 삭제되며, 팀이 그 뒤에 보유 기간을 바꾸어도 이미 올린 자료의 삭제일은 달라지지 않습니다. 팀이 지울 때까지 보관하도록 정한 동안에는 팀 구성원이 삭제하거나 팀이 삭제될 때까지 보관됩니다. 팀 구성원은 언제든지 이를 삭제할 수 있으며, 삭제된 자료는 복구할 수 없습니다.",
         ),
       ],
     },
@@ -1024,7 +1117,7 @@ const TERMS: LegalDocument = {
         ),
         p("② 이용자는 다음 각 호의 행위를 하여서는 안 됩니다."),
         ol(
-          "업로드할 권한이 없는 음성 또는 법령이나 소속 조직의 규정이 금지하는 음성을 업로드하는 행위",
+          "업로드할 권한이 없는 음성 또는 문서, 법령이나 소속 조직의 규정이 금지하는 음성 또는 문서를 업로드하는 행위",
           "다른 사람의 발화량이나 발언 성향을 파악하거나 평가할 목적으로 서비스를 이용하는 행위",
           "자신이 속하지 않은 팀의 기록에 접근하거나 접근을 시도하는 행위",
           "다른 사람의 계정을 도용하는 행위",
@@ -1106,7 +1199,16 @@ const TERMS: LegalDocument = {
     },
     {
       heading: "부칙",
-      blocks: [p(["이 약관은 ", EFFECTIVE, "부터 시행합니다."])],
+      blocks: [
+        p(["이 약관은 ", EFFECTIVE, "부터 시행합니다."]),
+        p([
+          "(",
+          ANNOUNCED,
+          " 개정) 제2조, 제8조, 제10조 제4항 및 제15조 제2항 제1호의 개정 규정은 ",
+          AMENDED,
+          "부터 시행합니다.",
+        ]),
+      ],
     },
   ],
 };
@@ -1114,6 +1216,16 @@ const TERMS: LegalDocument = {
 const SECURITY: LegalDocument = {
   id: "security",
   title: "정보보호 정책",
+  amendment: [
+    AMENDMENT_HEAD,
+    " (",
+    ANNOUNCED,
+    " 공지, ",
+    AMENDED,
+    " 시행) 제8조에 제5항(팀의 자료에 올린 문서 파일의 처리)을 새로 두었습니다. 이 항은 ",
+    AMENDED,
+    "부터 적용됩니다.",
+  ],
   sections: [
     {
       heading: "제1조(목적)",
@@ -1212,6 +1324,9 @@ const SECURITY: LegalDocument = {
           "③ 외부로 전송되는 요청은 전송 직전에 검사하며, 가림 처리되지 않은 전화번호, 전자우편 주소 또는 계좌번호가 포함된 요청은 전송하지 않습니다.",
         ),
         p("④ 음성 녹음은 어떠한 외부 서비스에도 전송하지 않습니다."),
+        p(
+          "⑤ 팀의 자료에 올린 문서 파일은 요청을 처리하는 동안 메모리에서만 읽으며, 임시 파일, 저장소, 로그 및 작업 대기열에 기록하지 않습니다. 파일의 글은 전체를 가림 처리한 뒤에 나누어 저장하고, 저장하기 전에 가림 처리되었는지 다시 검사합니다. 파일의 이름 또는 글의 첫머리에 기밀 표시가 있는 파일은 저장하지 않습니다.",
+        ),
       ],
     },
     {
@@ -1288,7 +1403,10 @@ const SECURITY: LegalDocument = {
     },
     {
       heading: "부칙",
-      blocks: [p(["이 정책은 ", EFFECTIVE, "부터 시행합니다."])],
+      blocks: [
+        p(["이 정책은 ", EFFECTIVE, "부터 시행합니다."]),
+        p(["(", ANNOUNCED, " 개정) 제8조 제5항은 ", AMENDED, "부터 시행합니다."]),
+      ],
     },
   ],
 };

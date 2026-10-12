@@ -1433,7 +1433,7 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   refused and leaves one alarm row that names no person. No model, search
   or agent tool reads the text yet; the upload stays off
   (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) until the approvers' alert (#1201)
-  and the legal notice's sentences are in.
+  is in and the day the legal notice's amendment applies has come.
 - Text a person types is screened when it is saved and refused if it
   reads as personal data (`typed_text.refuse_personal_data`; decided on
   #1130, `privacy.md` section 6). Ten checks behind eight routes: an action

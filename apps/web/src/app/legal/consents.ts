@@ -12,6 +12,16 @@
  * While the documents are a draft the versions say so; the first published
  * text takes its effective date as its version.
  *
+ * **An amended text takes the day it applies as its version.** The first
+ * amendment is the one for a team's uploaded documents (#817; the owner,
+ * 2026-10-12). It is announced in the documents themselves (`./content`, 개정
+ * 안내) and applies from `AMENDED_ON`, at least seven days after the page
+ * carrying it is on the site. Both documents changed, so both versions move
+ * to that day and every member is asked again -- before the day, reading the
+ * text with its 개정 안내. `AMENDED_ON` is empty until the day the page goes
+ * up is known; the versions stay the first text's until then, and
+ * `content.test.ts` fails: the amendment does not merge with the day unset.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -29,9 +39,17 @@ export interface RequiredConsent {
   version: string;
 }
 
+/** The day the first published text took effect, and its version. */
+const FIRST = "2026-10-12";
+
+/** YYYY-MM-DD the amended text applies from; "" while the day is not set. */
+export const AMENDED_ON: string = "";
+
+const VERSION = AMENDED_ON === "" ? FIRST : AMENDED_ON;
+
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "2026-10-12" },
-  { document: "privacy", version: "2026-10-12" },
+  { document: "terms", version: VERSION },
+  { document: "privacy", version: VERSION },
 ];
 
 /** The required consents this person has not given, in the page's order. */

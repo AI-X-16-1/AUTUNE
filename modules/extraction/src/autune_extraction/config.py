@@ -423,9 +423,11 @@ class ExtractionSettings(BaseSettings):
     upload route answers the framework's bare 404, as a route that does not
     exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
     screen draws no control. The order agreed on #817: it is not switched on
-    anywhere before the approvers' alert (#1201) and the legal notice's
-    sentences are in, because without the alert a stopped file is told to
-    nobody but the member who sent it."""
+    anywhere before the approvers' alert (#1201) is in, because without the
+    alert a stopped file is told to nobody but the member who sent it, nor
+    before the day the legal notice's amendment applies (``AMENDED_ON`` in
+    ``apps/web/src/app/legal/consents.ts``): the notice says uploads are
+    not offered before it, and nothing here compares the two."""
 
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod
