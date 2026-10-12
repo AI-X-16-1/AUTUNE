@@ -154,22 +154,21 @@ and the two hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
 file, what is kept of it, for how long, and who deletes it. It does not say
 yet that the kept text is searched: those sentences arrive with the
-approvers' alert. Three things this subsection describes are not on `main`
+approvers' alert. Two things this subsection describes are not on `main`
 yet. The approvers' alert in the agent layer (#1201): until it is in, a
 refused file leaves its `ext_material_alarms` row and nobody but the member
 who brought it is told, and the notice does not name the search. The switch
 (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned on
 anywhere before the alert is in; while it is off the search route answers
-404, so no search runs ahead of its notice. The
-embedder on our own inference server: on `main` the vectors are made by
-whichever `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` names -- `fake` by
-default, which is no model at all, or `local`, KURE-v1 loaded in the API's
-own process. Neither sends a text anywhere. And of the nine formats listed
+404, so no search runs ahead of its notice. And of the nine formats listed
 below `main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
 `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`) are not read on `main` yet and are
-refused. Each of those three changes -- the alert, the embedder on the
-inference server, the six formats -- removes its own sentence from this
-paragraph. The tool that hands excerpts to the chatbot's model
+refused. Each of those two changes -- the alert, the six formats -- removes
+its own sentence from this paragraph. Which embedder makes the vectors is a
+setting (`AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL`): `hosted` is KURE-v1 on
+our own inference server, which is sent the masked text and nothing else;
+`local` is the same model loaded in the API's own process, and `fake`, the
+default, is no model at all -- neither sends a text anywhere. The tool that hands excerpts to the chatbot's model
 (`extraction.find_materials`) is on `main` too and answers nothing: its
 switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by default and
 stays off until the later change this subsection names is approved.
