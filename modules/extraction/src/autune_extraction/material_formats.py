@@ -92,6 +92,17 @@ this (#1199); a longer text is refused, not cut. ``material_reading.read_file``
 holds every format to it once a file is read; the zipped formats' readers also
 stop at it while they read (``_Package.counted``)."""
 
+MAX_DEPTH = 256
+"""The most elements an element of a zipped file's part may sit inside. An
+open element is held until it closes, with every element it sits inside, so a
+part of nothing but elements that open -- three bytes each -- is held whole
+however it is read: one nested 2.4 million deep under ``MAX_PARSED`` took 800
+MB. The deepest element in the Office files this was measured on sat inside
+14 (a table cell's text colour on a slide); a table in a cell adds three and a
+group of shapes one, so this is eighty tables inside one another. A part with
+an element deeper is refused as ``too_deep`` when that element opens
+(``_Package.events``), within the piece being parsed."""
+
 FOOT_LINES = 2
 """How many lines from the bottom of a PDF page are its footer: a marking and
 a page number under it."""
@@ -112,6 +123,7 @@ Reason = Literal[
     "encoding",  # a text file in neither UTF-8 nor CP949
     "empty",
     "too_long",
+    "too_deep",  # an element inside more than MAX_DEPTH others
     "damaged",
     "protected",  # password-protected or encrypted
     "no_text_layer",  # a PDF of pictures: a scan
@@ -265,7 +277,11 @@ class _Package:
         An element that has closed is taken out of the one above it when the
         caller comes back for the next, so the part is never in memory as a
         tree. **Whatever a caller needs of an element it takes then**: its
-        children are gone by the time it closes, and it is gone after."""
+        children are gone by the time it closes, and it is gone after.
+
+        An element that is still open cannot be let go, nor can any it sits
+        inside, so one that opens inside more than ``MAX_DEPTH`` others ends
+        the read (``too_deep``)."""
         # Entities are refused in ``open``. Only elements are asked for, so an
         # element is all an event carries.
         parser: ElementTree.XMLPullParser[ElementTree.Element] = ElementTree.XMLPullParser(
@@ -282,6 +298,8 @@ class _Package:
                 for event, element in cast("Iterator[tuple[str, Any]]", parser.read_events()):
                     tag = _short(element.tag)
                     if event == "start":
+                        if len(above) > MAX_DEPTH:
+                            raise RefusedError("too_deep")
                         if opening:
                             yield event, tag, element, len(above)
                         above.append(element)
