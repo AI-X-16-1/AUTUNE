@@ -85,8 +85,10 @@ class Recording(FakeEmbedder):
 def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake counts shared characters, so its scores mean nothing on the
     real embedder's scale: these tests set the floor themselves -- none, here,
-    and a chosen one where the floor is what is tested."""
+    and a chosen one where the floor is what is tested. The cut relative to
+    the best material is on that scale too, and is off here the same way."""
     monkeypatch.setattr(get_settings(), "material_search_min_similarity", -1.0)
+    monkeypatch.setattr(get_settings(), "material_search_max_below_best", 2.0)
 
 
 def set_floor(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
@@ -721,3 +723,199 @@ def test_the_tool_answers_nothing_close_enough_as_the_search_does(
     assert result["ok"] is True
     assert result["items"] == [] and result["evidence"] == []
     assert result["summary"] == NOTHING_CLOSE
+
+
+# --- the relative cut -------------------------------------------------------------
+THIRD = "회의실 예약은 사내 캘린더에서 한다. 한 번에 두 시간까지 잡는다.\n"
+ASKED = "출시 일정 점검"
+
+
+def set_cut(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
+    monkeypatch.setattr(get_settings(), "material_search_max_below_best", value)
+
+
+def three(session: Session) -> tuple[list[str], list[float]]:
+    """Three materials at three distances from ``ASKED``: their ids and scores,
+    nearest first, as the search answers with no floor and no cut."""
+    upload(session, LAUNCH * 3, title="출시 계획")
+    upload(session, BUDGET * 3, title="예산")
+    upload(session, THIRD * 3, title="회의실")
+    hits = search_materials(session, TEAM, ASKED).hits
+    scores = [hit.score for hit in hits]
+    assert len(hits) == 3 and scores[0] > scores[1] > scores[2]
+    return [hit.material_id for hit in hits], scores
+
+
+def test_the_cut_has_a_default_for_the_real_embedder_and_reads_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    field = ExtractionSettings.model_fields["material_search_max_below_best"]
+    assert field.default == 0.05
+
+    monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MAX_BELOW_BEST", "0.1")
+    assert ExtractionSettings().material_search_max_below_best == 0.1
+    for refused in ("-0.01", "2.5"):
+        monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MAX_BELOW_BEST", refused)
+        with pytest.raises(PydanticValidationError):
+            ExtractionSettings()
+
+
+def test_a_material_further_below_the_best_than_the_cut_is_not_a_hit(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, scores = three(session)
+    set_cut(monkeypatch, (scores[0] - scores[1]) / 2)
+
+    answer = search_materials(session, TEAM, ASKED)
+
+    assert [hit.material_id for hit in answer.hits] == ids[:1]
+    assert answer.more is False and answer.notice is None
+
+
+def test_a_material_within_the_cut_of_the_best_stays_and_the_next_one_does_not(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, scores = three(session)
+    set_cut(monkeypatch, scores[0] - (scores[1] + scores[2]) / 2)
+
+    answer = search_materials(session, TEAM, ASKED)
+
+    assert [hit.material_id for hit in answer.hits] == ids[:2]
+
+
+def test_the_cut_is_measured_from_the_best_material_not_from_the_one_before(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The third material is nearer the second than the cut is wide, and
+    still further from the best than the cut allows."""
+    for n, share in enumerate((6, 4, 2)):
+        upload(session, LAUNCH * share + BUDGET * (6 - share) + THIRD, title=f"자료 {n}")
+    hits = search_materials(session, TEAM, ASKED).hits
+    scores = [hit.score for hit in hits]
+    assert len(hits) == 3 and scores[0] > scores[1] > scores[2]
+    cut = (scores[1] - scores[2] + scores[0] - scores[2]) / 2
+    assert max(scores[0] - scores[1], scores[1] - scores[2]) < cut < scores[0] - scores[2]
+    set_cut(monkeypatch, cut)
+
+    answer = search_materials(session, TEAM, ASKED)
+
+    assert [hit.material_id for hit in answer.hits] == [hit.material_id for hit in hits[:2]]
+
+
+def test_the_best_material_stays_however_narrow_the_cut(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, _ = three(session)
+    set_cut(monkeypatch, 0.0)
+
+    answer = search_materials(session, TEAM, ASKED)
+
+    assert [hit.material_id for hit in answer.hits] == ids[:1]
+    assert answer.notice is None
+
+
+def test_materials_as_near_as_the_best_all_stay_at_the_narrowest_cut(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for n in range(3):
+        upload(session, LAUNCH * 3, title=f"출시 계획 {n}")
+    upload(session, BUDGET * 3, title="예산")
+    set_cut(monkeypatch, 0.0)
+
+    answer = search_materials(session, TEAM, ASKED)
+
+    assert sorted(hit.title for hit in answer.hits) == ["출시 계획 0", "출시 계획 1", "출시 계획 2"]
+
+
+def test_the_widest_cut_removes_nothing(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, _ = three(session)
+    set_cut(monkeypatch, 2.0)
+
+    assert [hit.material_id for hit in search_materials(session, TEAM, ASKED).hits] == ids
+
+
+def test_more_counts_only_materials_within_the_cut(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Five alike fill the answer; a sixth beyond the cut is not more of them,
+    a sixth as near as they are is."""
+    for n in range(5):
+        upload(session, LAUNCH * 3, title=f"출시 계획 {n}")
+    upload(session, BUDGET * 3, title="예산")
+    set_cut(monkeypatch, 0.0)
+
+    answer = search_materials(session, TEAM, ASKED)
+    assert len(answer.hits) == 5 and answer.more is False
+
+    upload(session, LAUNCH * 3, title="출시 계획 5")
+    assert search_materials(session, TEAM, ASKED).more is True
+
+
+def test_the_floor_is_asked_first_and_the_cut_of_what_passed_it(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, scores = three(session)
+    set_floor(monkeypatch, (scores[1] + scores[2]) / 2)
+    assert [hit.material_id for hit in search_materials(session, TEAM, ASKED).hits] == ids[:2]
+
+    set_cut(monkeypatch, (scores[0] - scores[1]) / 2)
+    assert [hit.material_id for hit in search_materials(session, TEAM, ASKED).hits] == ids[:1]
+
+    set_floor(monkeypatch, 0.99)
+    answer = search_materials(session, TEAM, ASKED)
+    assert answer.hits == [] and answer.notice == NOTHING_CLOSE
+
+
+def test_the_cut_is_from_the_nearest_material_even_when_the_screen_drops_it(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A best material the screen refuses is not shown, and does not hand its
+    place to the next: what is far from it stays out."""
+    ids, scores = three(session)
+    best = session.get(ExtMaterial, ids[0])
+    assert best is not None
+
+    def screen(text: str) -> str:
+        if text == best.title:
+            raise PrivacyViolationError("refused")
+        return text
+
+    monkeypatch.setattr(material_search, "screen_output", screen)
+    set_cut(monkeypatch, (scores[0] - scores[1]) / 2)
+
+    answer = search_materials(session, TEAM, ASKED)
+
+    assert answer.hits == [] and answer.more is False
+    assert answer.notice == NOTHING_CLOSE
+
+
+@pytest.mark.usefixtures("enabled")
+def test_the_route_answers_within_the_cut_and_returns_no_score(
+    client: TestClient, session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, scores = three(session)
+    set_cut(monkeypatch, scores[0] - (scores[1] + scores[2]) / 2)
+
+    answer = client.post(SEARCH, json={"question": ASKED})
+
+    assert answer.status_code == 200
+    body = answer.json()
+    assert [hit["material_id"] for hit in body["hits"]] == ids[:2]
+    assert body["more"] is False and body["notice"] is None
+    assert all(set(hit) == {"material_id", "title", "excerpt", "position"} for hit in body["hits"])
+    assert "score" not in answer.text and "similar" not in answer.text
+
+
+@pytest.mark.usefixtures("tool_on")
+def test_the_tool_answers_within_the_cut_as_the_search_does(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids, scores = three(session)
+    set_cut(monkeypatch, (scores[0] - scores[1]) / 2)
+
+    result = tools.find_materials(session, TEAM, ASKED)
+
+    assert result["ok"] is True and result["evidence"] == ids[:1]
+    assert [item["id"] for item in result["items"]] == ids[:1]

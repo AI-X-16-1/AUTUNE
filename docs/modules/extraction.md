@@ -1473,6 +1473,13 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   is not a hit; with none left the answer is empty and says nothing close
   enough was found. 0.5 was measured for KURE-v1 on made-up documents, not
   on a team's materials, and no floor separates every unrelated question.
+  Of the materials over the floor, one more than
+  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MAX_BELOW_BEST` (0.05 by default) below
+  the best is not a hit either: on 200 made-up files that left 0.6
+  materials that do not answer beside an answer instead of 2.7, and kept
+  205 of 207 answers. The best one always stays, so this cut does nothing
+  for a question no material answers; and the search says which file, not
+  which line of a long one.
   An upload past its `expires_at` is not searched, even in the hour before
   the task deletes it; a team that keeps its uploads until deleted has
   none such, as the task passes it over.

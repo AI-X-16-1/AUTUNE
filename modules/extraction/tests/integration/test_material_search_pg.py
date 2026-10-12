@@ -45,8 +45,10 @@ def new_team(session: Session, name: str) -> str:
 @pytest.fixture(autouse=True)
 def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake embedder's scores mean nothing on the real embedder's scale,
-    so the floor is set here: none, except where it is what is tested."""
+    so the floor and the cut below the best are set here: none, except where
+    one is what is tested."""
     monkeypatch.setattr(extraction_settings(), "material_search_min_similarity", -1.0)
+    monkeypatch.setattr(extraction_settings(), "material_search_max_below_best", 2.0)
 
 
 @pytest.fixture
@@ -89,6 +91,23 @@ def test_the_floor_drops_a_material_pgvector_ranks_under_it(
     answer = search_materials(db_session, team_id, "출시 일정 점검")
 
     assert [hit.material_id for hit in answer.hits] == [launch]
+
+
+def test_the_cut_drops_a_material_pgvector_ranks_too_far_below_the_best(
+    db_session: Session, team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launch = upload(db_session, team_id, LAUNCH * 3, "출시 계획")
+    budget = upload(db_session, team_id, BUDGET * 3, "예산")
+    first, second = search_materials(db_session, team_id, "출시 일정 점검").hits
+    gap = first.score - second.score
+
+    monkeypatch.setattr(extraction_settings(), "material_search_max_below_best", gap / 2)
+    answer = search_materials(db_session, team_id, "출시 일정 점검")
+    assert [hit.material_id for hit in answer.hits] == [launch] and answer.more is False
+
+    monkeypatch.setattr(extraction_settings(), "material_search_max_below_best", gap * 2)
+    answer = search_materials(db_session, team_id, "출시 일정 점검")
+    assert [hit.material_id for hit in answer.hits] == [launch, budget]
 
 
 def test_a_deleted_material_and_a_deleted_team_leave_nothing_to_find(

@@ -483,11 +483,44 @@ class ExtractionSettings(BaseSettings):
     does not hold the answer scores like one the material answers (16 of 20
     passed): the vector says the subject is the same, not that the answer is
     there. And the share of unrelated questions that find something grows
-    with the number of materials -- 5% with five, 16% with thirty, not
-    measured past that. Raise it if unrelated materials still come back; each
-    step up loses real answers, short and reworded questions first (0.55
-    kept 76 of 90). The ``fake`` embedder counts shared characters, so its
-    scores mean nothing on this scale; its tests set this explicitly."""
+    with the number of materials -- 5% with five, 16% with thirty, 28% with
+    a hundred, 40% with two hundred (20 of 50; 2026-10-13, on a shelf that
+    also held tables, slides and look-alike reports). Raise it if unrelated
+    materials still come back; each step up loses real answers, short and
+    reworded questions first (0.55 kept 76 of 90). The ``fake`` embedder
+    counts shared characters, so its scores mean nothing on this scale; its
+    tests set this explicitly."""
+
+    material_search_max_below_best: float = Field(default=0.05, ge=0, le=2)
+    """A material over the floor is still not a hit when its nearest piece
+    is more than this far, in cosine similarity, below the best material's
+    (#817, ``material_search``). The floor asks whether anything is close
+    enough; this asks which of what passed is worth showing beside the best.
+    ``2`` turns it off: no two similarities are further apart.
+
+    **0.05 by default, measured once on made-up files and not on a team's
+    materials** (2026-10-13): KURE-v1, 200 invented Korean files -- prose,
+    real ``.xlsx`` tables, ``.pptx`` slides, long ``.pdf`` and ``.docx``
+    files, and families of look-alike weekly and monthly reports -- uploaded
+    and searched through this module, 220 questions one of them answers. At
+    200 files the floor alone kept 207 answers and showed 2.7 materials that
+    do not answer beside them; with this cut, 205 and 0.6. With 30 files:
+    87 of 90 either way, 1.5 and 0.1. The same margin held at every shelf
+    size tried (30, 78, 102, 151, 200): 0.04 kept the same answers, 0.03
+    lost four more of 220, 0.07 and 0.10 kept one more and showed 0.9 and
+    1.4. It dropped no answer on a table or a slide. Asked about one report
+    among twelve alike, the search returned 44 sibling reports over 12
+    questions without the cut and 6 with it, the right report every time.
+
+    **What it does not do.** The best material always stays, so a question
+    nothing answers is as likely to find something as before -- that is the
+    floor's work, and the floor lets more through as the shelf grows. An
+    answer that is not the best material and sits further below it than
+    this is lost: 2 of the 207 above. And it says which file, not which
+    line: asked about a 120-row table, a 48-entry list and a 90-row list,
+    the right file was found 18 times of 18 and the excerpt shown held the
+    answer 8 times. The ``fake`` embedder's scores mean nothing on this
+    scale; its tests turn this off."""
 
     material_search_tool: bool = False
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
