@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { MaskedText, Row, StatusDot } from "@/shared/ui";
 
+import type { CarriedGroup } from "../hooks/useCarriedAgenda";
 import type {
   AgendaItemRead,
   BriefMatchReason,
@@ -24,6 +25,12 @@ const MATCH_REASON: Record<BriefMatchReason, string> = {
   topic: "주제가 가까운 회의",
   latest: "가장 최근 회의",
 };
+
+/** How many entries of one carried source the draft lists; the count beside its name is of all. */
+export const DRAFT_SHOWN = 5;
+
+/** The name the brief's own Jira entries go under in the draft, beside the carried sources' names. */
+const JIRA_SOURCE = "열린 Jira 이슈";
 
 /** Korea keeps no daylight saving and no team timezone exists yet — same as `dates.py`. */
 const START_FORMAT = new Intl.DateTimeFormat("ko-KR", {
@@ -92,8 +99,49 @@ function AgendaRow({ item }: { item: AgendaItemRead }) {
   );
 }
 
-function BriefBody({ brief }: { brief: BriefRead }) {
+/**
+ * What other modules have for the agenda draft, under the brief's own Jira
+ * entries: each source's name with its count, then its entries as the source
+ * ordered them. Copied, not written — no model, no ranking, no summary.
+ */
+function CarriedEntries({ groups }: { groups: readonly CarriedGroup[] }) {
+  return (
+    <>
+      {groups.map((group) => (
+        <div key={group.label} className="mt-[var(--space-16)]">
+          <Muted>
+            {group.label} · {group.lines.length}건
+          </Muted>
+          {group.lines.slice(0, DRAFT_SHOWN).map((line, index) => (
+            <Row
+              // Two entries can read the same; position is the identity here.
+              key={index}
+              dot={<StatusDot variant="idle" hollow />}
+              title={<MaskedText>{line.title}</MaskedText>}
+              meta={line.detail ? <MaskedText>{line.detail}</MaskedText> : undefined}
+            />
+          ))}
+          {group.lines.length > DRAFT_SHOWN && (
+            <Muted>외 {group.lines.length - DRAFT_SHOWN}건</Muted>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function BriefBody({
+  brief,
+  carried,
+  carriedWaiting,
+}: {
+  brief: BriefRead;
+  carried: readonly CarriedGroup[] | undefined;
+  carriedWaiting: boolean;
+}) {
   const { recap } = brief;
+  const drafted = carried !== undefined;
+  const entries = brief.agenda.length + (carried ?? []).length;
   const starts = brief.starts_at
     ? START_FORMAT.format(new Date(brief.starts_at))
     : null;
@@ -186,16 +234,43 @@ function BriefBody({ brief }: { brief: BriefRead }) {
         )}
       </div>
 
-      <div>
-        <Heading>이번 회의에서 다룰 문제</Heading>
-        {brief.agenda.length > 0 ? (
-          brief.agenda.map((item, index) => (
-            <AgendaRow key={item.key ?? index} item={item} />
-          ))
-        ) : (
-          <Muted>이번 회의에 연결된 안건이 없습니다.</Muted>
-        )}
-      </div>
+      {drafted ? (
+        // The agenda draft (#1147): the same section, with every entry under
+        // the name of where it came from. The Jira entries are not drawn twice.
+        <section aria-label="어젠다 초안">
+          <Heading>이번 회의에서 다룰 문제</Heading>
+          <p
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-meta)" }}
+          >
+            어젠다 초안 · 모델을 쓰지 않고 아래 출처에서 그대로 가져왔습니다
+          </p>
+          {brief.agenda.length > 0 && (
+            <div className="mt-[var(--space-16)]">
+              <Muted>
+                {JIRA_SOURCE} · {brief.agenda.length}건
+              </Muted>
+              {brief.agenda.map((item, index) => (
+                <AgendaRow key={item.key ?? index} item={item} />
+              ))}
+            </div>
+          )}
+          <CarriedEntries groups={carried} />
+          {/* Not while a source is still out: "nothing" is said once it is known. */}
+          {entries === 0 && !carriedWaiting && <Muted>엮을 것이 없습니다.</Muted>}
+        </section>
+      ) : (
+        <div>
+          <Heading>이번 회의에서 다룰 문제</Heading>
+          {brief.agenda.length > 0 ? (
+            brief.agenda.map((item, index) => (
+              <AgendaRow key={item.key ?? index} item={item} />
+            ))
+          ) : (
+            <Muted>이번 회의에 연결된 안건이 없습니다.</Muted>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -212,13 +287,26 @@ function BriefBody({ brief }: { brief: BriefRead }) {
  * finished meeting never had one, a scheduled one gets it ten minutes before
  * the start) and nothing while it loads, so the tab does not jump for the
  * common meeting that has none.
+ *
+ * `carried` turns the last section into the agenda draft (#1147, B3): the
+ * brief's Jira entries and what other modules have for the earlier meeting,
+ * each under its source's name. It is always drawn when given — there is no
+ * switch, because a meeting has no field that could carry one. Without it the
+ * panel is what it was. A source that arrives later adds its entries below;
+ * nothing above moves. `carriedWaiting` says a source is still out: until it
+ * clears, an empty draft does not say "엮을 것이 없습니다." — the line showed
+ * for a moment and was then replaced by the entries (review of #1193).
  */
 export function BriefPanel({
   brief,
   error,
+  carried,
+  carriedWaiting = false,
 }: {
   brief: BriefRead | null;
   error: Error | null;
+  carried?: readonly CarriedGroup[];
+  carriedWaiting?: boolean;
 }) {
   if (error) {
     return (
@@ -230,5 +318,7 @@ export function BriefPanel({
       </p>
     );
   }
-  return brief ? <BriefBody brief={brief} /> : null;
+  return brief ? (
+    <BriefBody brief={brief} carried={carried} carriedWaiting={carriedWaiting} />
+  ) : null;
 }
