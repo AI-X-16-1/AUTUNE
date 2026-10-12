@@ -92,9 +92,10 @@ Plus the shared entities in `packages/core`, which A writes.
 | --- | --- | --- |
 | GET | `/teams` | The teams the caller may open a meeting for, the ones they pinned first and then in the order joined; the first is the default. Feeds `POST /meetings` |
 | PUT / DELETE | `/teams/{team_id}/pin` | Pin a team to the top of the caller's own list (at most three; a fourth is 409 `too_many_pinned_teams`) or take the pin off. Answers with the list as it now stands. The pin is on the caller's membership and shows in nobody else's list |
-| POST | `/meetings` | Open a meeting for a team, before there is any audio |
+| POST | `/meetings` | Open a meeting for a team, before there is any audio. A title that reads as personal data is refused as the rename below refuses one (#1161) |
 | GET | `/meetings` | The meetings of the caller's teams, newest first: id, title, status and start time, no counts. With `?team_id=` those of that one team, which is what the home screen asks for; a team the caller is not on is 403, not an empty list |
 | GET | `/meetings/{meeting_id}` | Title, status and the two privacy flags. What S12 polls |
+| PATCH | `/meetings/{meeting_id}` | Any member of the meeting's team gives it a new title (#1161), in the body (`{"title": ...}`, at most 400 characters); nothing else of the meeting changes. Answers with the id and status and does not repeat the title. Surrounding space is dropped, and the title it already has is not a write. Refused: 422 `validation_error` on `title` when it is empty, or when it reads as personal data -- then with `reason: "personal_data"` and the categories in the details, never the value (`meeting_title.py`, `privacy.md` section 6). No event is published: what was already sent keeps the old title |
 | POST | `/meetings/{meeting_id}/recording` | Upload a recording and queue transcription (202) |
 | GET | `/jobs/{job_id}` | Job status and progress (planned) |
 | GET | `/transcripts/{meeting_id}` | Full transcript, masked, for a member of the meeting's team |

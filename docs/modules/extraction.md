@@ -81,14 +81,22 @@ agreement, and sync the result to Notion and Jira.
    invents (a number that is no line, the commitment itself) is dropped.
    With `classifier_impl=llm` the sentence comes earlier and from the classifier
    (2026-10-06): its answer carries, beside the label, one line for each
-   commitment and decision, in the request that read the line. A line that
+   commitment and decision, in the request that read the line. The
+   instructions ask for it to start from what is to be done, without the one
+   who spoke as its subject (2026-10-09): the request carries no speaker, so a
+   subject the model writes names nobody, and who promised is the row's owner.
+   A line that
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
-   three said before it; no name mark left over, and none of 이거, 그거, 저거,
+   three said before it; no name mark left over; neither of the request's own
+   line markers, `[대상]` and `[문맥]` -- they say which lines to judge and are
+   no part of what anybody said, and a model wrote `[대상]` in place of what the
+   line was about (measured 2026-10-09); and none of 이거, 그거, 저거,
    이것, 그것, 저것 or their run-together forms (이건, 그걸, 그게, ...) -- a word
    that only points, which the instructions ask to be
-   replaced) is the description, and the resolver is asked only
-   about a commitment that has none. So a summary that kept such a word costs
+   replaced) is the description, and the resolver is asked about a
+   commitment only when it has none. So a summary that kept such a word or
+   marker costs
    that row one resolver request, and the row shows what the resolver filled
    in or, when it could not tell, the line as it was said. The classifier does not say what it
    drew on, so that is read off the line: of the three lines with text said
@@ -284,6 +292,25 @@ agreement, and sync the result to Notion and Jira.
    keeps it if there is exactly one (review of #754). A team without Notion
    connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
+   **The 내용 property.** The item and decision databases carry a text
+   property named 내용, for the sentence once a page's title is the short
+   title. A database the setup makes has it from its schema. One made before
+   it existed is given it once: at the team's next setup, or else at its next
+   sync or fill, which reads the database's properties and adds 내용 where it
+   is missing (`notion_setup.ensure_content`) -- so a team that never opens the
+   setup screen again gets it too, with no beat process. A property a person
+   made under that name with another type is left as it is. The answer is
+   kept per database on `ext_notion_targets`, and the name map a sync is given
+   names the property (`content`) only for a database recorded as having it
+   (`notion_setup.property_names`): Notion refuses a whole page for one
+   property its database lacks. Refused, the team's pages keep the shape they
+   had and Notion is not asked again until a setup; unanswered (busy, down),
+   nothing is recorded and the next sync asks. It never fails the sync. A
+   team whose own name map is in its connection's config keeps that map whole,
+   as before -- it names `content` itself or its pages go without -- and a
+   team on the local dev page, which has no `ext_notion_targets` row, is not
+   asked. What is sent is the database id and the fixed name; of Notion's
+   answer only that one property's type is read, and nothing of it is kept.
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
    (`ext_decision_refs`). A decision that stops being confirmed after that —
@@ -402,7 +429,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_calendar_polls` | When each person's calendar was last read back |
 | `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
 | `ext_external_cleanup` | A deleted item's Notion page or Jira issue the deleting request could not trash or close: team, system, page id or issue key, and Jira's site. Ids only. Retried by `drain_external_cleanup` every ten minutes; a team not connected now is kept, a transient failure counted up to five, a refusal or another site's key dropped (#692). `team_id` cascades |
-| `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
+| `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428). Also whether the item and the decision database have the 내용 property, and when Notion last answered that for both (`content_asked_at`; empty means not asked yet, and the next sync asks) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_sync_failures` | That an item's latest copy to Notion, Jira or a calendar failed: the system, one of four kinds (`privacy`, `reconnect`, `unreachable`, `rejected`) and the time (#680). Never the outside service's message, never what was being sent. Removed by the next copy that goes through; goes with the item |
 | `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |
@@ -1210,9 +1237,10 @@ A card and a decision row show twenty characters. With
 with "…" by the web (`features/actions/title.ts`). With `llm`,
 `title_meeting` asks a cloud model for a summary instead -- twenty characters
 or fewer, ended by a noun ("보고서 정리", not "보고서를 정리함") -- and stores
-it in `title` beside the sentence, never instead of it: `description` and
-`statement` are made as before and remain what Jira, Notion, Slack, a
-calendar, the minutes, the agent's tools and module D are given.
+it in `title` beside the sentence: `description` and `statement` are made
+as before and remain what the agent's tools and module D are given. Since
+2026-10-09 the title leads the copies that leave -- Jira, Notion, a
+calendar, a Slack line, a project's minutes (the last bullet below).
 
 - **Only a sentence the pipeline wrote is titled.** Not a row a person
   typed, an item whose description a person edited, or a decision a person
@@ -1225,11 +1253,16 @@ calendar, the minutes, the agent's tools and module D are given.
   no number and no date its sentence does not say; no person; no date at all
   on an item, which has a due date of its own; no word that only points
   (이거, 그거, 저거, 이것, 그것, 저것, with or without a particle, and 이건, 그걸,
-  그게 and the like); words that are the sentence's. A decision's title may carry a date that is in the statement
+  그게 and the like); words that are the sentence's, all but one
+  (`_own_words`: one word may be the model's -- "미루기로" said, "연기"
+  written -- and each other word has to begin, in its first two characters,
+  as some part of the sentence does; no masker reads the answer). A decision's title may carry a date that is in the statement
   in the same words, since the date can be what was decided ("출시일 10월
   20일"). A refused title is dropped, not cut to fit, and the row shows the
   cut sentence.
-- **One request a meeting**, after the extraction and outside it: a failed
+- **One request for up to twenty rows** -- one for a meeting of twenty rows
+  or fewer, more when a meeting has more rows or long sentences -- after the
+  extraction and outside it: a failed
   call, a privacy refusal and a refused title all leave the rows as they
   were shown before. A decision is sent without the "(담당 …, 기한 …)" it
   ends with. Rows extracted before the switch was on get a title when the
@@ -1239,6 +1272,22 @@ calendar, the minutes, the agent's tools and module D are given.
   no real meeting has been through it. Three of the 27 were accepted and
   weak: a decision about who presents became "발표 진행", since a title
   names nobody.
+- **The title leads the copies that leave** (the user, 2026-10-09;
+  `top_line.py`). Jira's summary, the Notion page's title and the calendar
+  event's title are the kind of row ("[할 일] " or "[결정] ", added by the
+  code and outside the twenty characters) and the title, with the sentence
+  in that copy's body: the issue's description, the page's 내용 property,
+  the event's description above its fixed line. A line of a Slack message
+  (due-date reminder, Monday's and the morning DM, the work-report draft,
+  the notice after a meeting) and of a project's minutes is the title alone,
+  unmarked -- `top_line.MARKED` is the one switch a copy. A row with no
+  title goes out as its sentence, and so does a decision a person reworded.
+  A Notion database with no 내용 property keeps the sentence in the page's
+  title (`notion_setup.property_names` says which map is in force). The
+  요약 tab shows the title with the sentence under it; "회의록 복사" has the
+  title. A copy already out changes at the row's next sync; nothing goes
+  back over the old ones. The confirmation DM and the agent's tools carry
+  the sentence as before.
 
 ## Privacy notes
 

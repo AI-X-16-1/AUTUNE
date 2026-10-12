@@ -1214,3 +1214,22 @@ def test_deleted_speech_owes_a_meeting_that_went_to_calendars_only(
 
     assert queued == [MEETING]
     assert _owed(session) is not None
+
+
+def test_a_row_with_a_short_title_is_listed_by_it(session: Session) -> None:
+    """Module B's owner, 2026-10-09: "Slack·회의록까지 전부". A line of the
+    minutes is the title alone, and takes no kind mark: it stands under a
+    heading that says the kind."""
+    row = session.get(ExtActionItem, "act_ok")
+    decision = session.get(ExtDecision, "dec_ok")
+    assert row is not None and decision is not None
+    row.title, decision.title = "릴리스 노트", "배포 금요일"
+    session.flush()
+
+    found, _ = project_send.minutes(session, MEETING)
+
+    autune = found[0]
+    assert autune.decisions == ("배포 금요일",)
+    assert autune.items == ("릴리스 노트 (담당 민경, 기한 2026-10-03)",)
+    assert "릴리스 노트 정리" not in autune.text and "배포는 금요일로 한다" not in autune.text
+    assert "[할 일]" not in autune.text and "[결정]" not in autune.text

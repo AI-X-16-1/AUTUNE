@@ -172,8 +172,7 @@ export default function LegalPage() {
         style={{ padding: "var(--space-page)" }}
       >
         <Band>
-          초안입니다. 법률 검토를 거치지 않았고, 〔 〕로 표시한 항목은 아직
-          확정되지 않았습니다.
+          초안입니다. 법률 검토를 거치지 않았습니다.
         </Band>
 
         <nav

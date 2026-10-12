@@ -112,3 +112,23 @@ describe("ActionDetailDrawer, a status change that confirms", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+describe("ActionDetailDrawer, an item closed without being finished", () => {
+  // It sits in 완료 on the board (#856); the window's header must not call it
+  // 완료 while the card says 닫힘 and the history says 끝내지 않고 닫힘.
+  it("says it was closed without being finished, and a finished one says 완료", () => {
+    render(
+      <ActionDetailDrawer
+        item={{ ...ITEM, status: "done", closed_unfinished: true } as ActionItemRead}
+        onClose={vi.fn()}
+      />,
+    );
+    const header = screen.getByRole("banner");
+    expect(within(header).getByText("끝내지 않고 닫힘")).toBeTruthy();
+    expect(within(header).queryByText("완료")).toBeNull();
+    cleanup();
+
+    render(<ActionDetailDrawer item={{ ...ITEM, status: "done" } as ActionItemRead} onClose={vi.fn()} />);
+    expect(within(screen.getByRole("banner")).getByText("완료")).toBeTruthy();
+  });
+});
