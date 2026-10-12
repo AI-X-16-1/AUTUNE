@@ -144,24 +144,35 @@ item quotes readable around it.
 
 ### Uploaded documents are masked before storage, and the original is not kept (#817)
 
-**Status: storage is on `main`, off by default; search and the alert are
+**Status: storage and search are on `main`, off by default; the alert is
 not.** `main` has what this subsection says is kept and how it goes: the
-uploaded rows of `ext_materials`, `ext_material_chunks`,
-`ext_material_alarms`, the team's keeping setting
-(`ext_material_settings`), the upload route, the delete of an uploaded
-material and the two hourly tasks. The legal notice
+uploaded rows of `ext_materials`, `ext_material_chunks` with a vector for
+each piece, `ext_material_alarms`, the team's keeping setting
+(`ext_material_settings`), the upload route, the search of a team's
+materials by a question a member types, the delete of an uploaded material
+and the two hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
-file, what is kept of it, for how long, and who deletes it. Two things this
-subsection describes are not on `main` yet: the vector for each piece, with
-the search over them, and the approvers' alert in the agent layer (#1201).
-Until the alert is in, a refused file leaves its `ext_material_alarms` row
-and nobody but the member who brought it is told. The switch
-(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned
-on anywhere before the alert is in. And of the nine formats listed below
-`main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
+file, what is kept of it, for how long, and who deletes it. It does not say
+yet that the kept text is searched: those sentences arrive with the
+approvers' alert. Three things this subsection describes are not on `main`
+yet. The approvers' alert in the agent layer (#1201): until it is in, a
+refused file leaves its `ext_material_alarms` row and nobody but the member
+who brought it is told, and the notice does not name the search. The switch
+(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned on
+anywhere before the alert is in; while it is off the search route answers
+404, so no search runs ahead of its notice. The
+embedder on our own inference server: on `main` the vectors are made by
+whichever `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` names -- `fake` by
+default, which is no model at all, or `local`, KURE-v1 loaded in the API's
+own process. Neither sends a text anywhere. And of the nine formats listed
+below `main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
 `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`) are not read on `main` yet and are
-refused. Each of those three changes -- search, the alert, the six formats
--- removes its own sentence from this paragraph.
+refused. Each of those three changes -- the alert, the embedder on the
+inference server, the six formats -- removes its own sentence from this
+paragraph. The tool that hands excerpts to the chatbot's model
+(`extraction.find_materials`) is on `main` too and answers nothing: its
+switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by default and
+stays off until the later change this subsection names is approved.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.

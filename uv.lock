@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
     "sys_platform == 'win32'",
@@ -510,6 +510,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "holidays" },
     { name = "httpx" },
+    { name = "pgvector" },
     { name = "python-multipart" },
 ]
 
@@ -537,6 +538,7 @@ requires-dist = [
     { name = "holidays", specifier = ">=0.58" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
+    { name = "pgvector", specifier = ">=0.3" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.5" },
