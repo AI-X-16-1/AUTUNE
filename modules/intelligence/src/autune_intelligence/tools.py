@@ -31,7 +31,7 @@ authenticated route and is not offered to any agent.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import sqlalchemy as sa
@@ -424,7 +424,14 @@ def meeting_report_body(session: Session, team_id: str, meeting_id: str) -> dict
     No item when the meeting has no report yet.
     """
     meeting = session.get(Meeting, meeting_id)
-    if meeting is None or meeting.team_id != team_id:
+    # Past its retention window it is as good as gone, though the hourly sweep
+    # has not deleted it yet: not "no report yet".
+    expired = (
+        meeting is not None
+        and meeting.expires_at is not None
+        and meeting.expires_at <= datetime.now(UTC)
+    )
+    if meeting is None or meeting.team_id != team_id or expired:
         return _refused("meeting not found", "회의를 찾을 수 없습니다.")
     found = service.team_meeting_report(session, team_id, meeting_id)
     if found is not None:
