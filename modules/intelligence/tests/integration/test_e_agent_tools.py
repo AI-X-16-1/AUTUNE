@@ -375,6 +375,32 @@ def test_search_reports_leaves_out_a_meeting_past_its_window(
     assert [i["meeting_id"] for i in found] == [kept]
 
 
+def test_meeting_reports_leaves_out_a_meeting_past_its_window(
+    db_session: Session, team: str
+) -> None:
+    """As the search does: the dashboard card and the chat list read the same rows."""
+    now = datetime.now(UTC)
+    _reported(db_session, team, "지난 회의", BODY, expires_at=now - timedelta(hours=1))
+    kept = _reported(db_session, team, "남은 회의", BODY, expires_at=now + timedelta(days=1))
+
+    found = tools.meeting_reports(db_session, team)["items"]
+
+    assert [i["meeting_id"] for i in found] == [kept]
+
+
+def test_meeting_report_body_refuses_a_meeting_past_its_window(
+    db_session: Session, team: str
+) -> None:
+    gone = _reported(
+        db_session, team, "지난 회의", BODY, expires_at=datetime.now(UTC) - timedelta(hours=1)
+    )
+
+    result = tools.meeting_report_body(db_session, team, gone)
+
+    assert result["ok"] is False and result["reason"] == "meeting not found"
+    assert result["items"] == []
+
+
 def test_search_reports_shows_three_and_says_more_matched(db_session: Session, team: str) -> None:
     for n in range(4):
         _reported(db_session, team, f"회의 {n}", BODY)

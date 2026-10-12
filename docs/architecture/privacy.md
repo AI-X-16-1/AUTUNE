@@ -144,24 +144,35 @@ item quotes readable around it.
 
 ### Uploaded documents are masked before storage, and the original is not kept (#817)
 
-**Status: storage is on `main`, off by default; search and the alert are
+**Status: storage and search are on `main`, off by default; the alert is
 not.** `main` has what this subsection says is kept and how it goes: the
-uploaded rows of `ext_materials`, `ext_material_chunks`,
-`ext_material_alarms`, the team's keeping setting
-(`ext_material_settings`), the upload route, the delete of an uploaded
-material and the two hourly tasks. The legal notice
+uploaded rows of `ext_materials`, `ext_material_chunks` with a vector for
+each piece, `ext_material_alarms`, the team's keeping setting
+(`ext_material_settings`), the upload route, the search of a team's
+materials by a question a member types, the delete of an uploaded material
+and the two hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
-file, what is kept of it, for how long, and who deletes it. Two things this
-subsection describes are not on `main` yet: the vector for each piece, with
-the search over them, and the approvers' alert in the agent layer (#1201).
-Until the alert is in, a refused file leaves its `ext_material_alarms` row
-and nobody but the member who brought it is told. The switch
-(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned
-on anywhere before the alert is in. And of the nine formats listed below
-`main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
+file, what is kept of it, for how long, and who deletes it. It does not say
+yet that the kept text is searched: those sentences arrive with the
+approvers' alert. Three things this subsection describes are not on `main`
+yet. The approvers' alert in the agent layer (#1201): until it is in, a
+refused file leaves its `ext_material_alarms` row and nobody but the member
+who brought it is told, and the notice does not name the search. The switch
+(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned on
+anywhere before the alert is in; while it is off the search route answers
+404, so no search runs ahead of its notice. The
+embedder on our own inference server: on `main` the vectors are made by
+whichever `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` names -- `fake` by
+default, which is no model at all, or `local`, KURE-v1 loaded in the API's
+own process. Neither sends a text anywhere. And of the nine formats listed
+below `main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
 `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`) are not read on `main` yet and are
-refused. Each of those three changes -- search, the alert, the six formats
--- removes its own sentence from this paragraph.
+refused. Each of those three changes -- the alert, the embedder on the
+inference server, the six formats -- removes its own sentence from this
+paragraph. The tool that hands excerpts to the chatbot's model
+(`extraction.find_materials`) is on `main` too and answers nothing: its
+switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by default and
+stays off until the later change this subsection names is approved.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.
@@ -1226,9 +1237,9 @@ the feature needs.
     logged as an error with the meeting's id (`gap_followup_refused`), apart
     from Google not answering.
   - **Slack, S20's team notices (module C, #824):** three kinds of message
-    to the channel of the team that held the meeting, each once per press,
-    with the team's connection, and one more when Follow-up's meeting is
-    approved -- the meeting's title, when the follow-up starts, the open
+    to the channel of the team that held the meeting, on each press, with
+    the team's connection, and one more when Follow-up's meeting is approved
+    -- the meeting's title, when the follow-up starts, the open
     gaps' titles and questions and the approver's display name, once per
     meeting. Nobody is sent a DM about it: a DM to the meeting's members is a
     new kind of message and waits for the team's decision after 10/12
@@ -1243,7 +1254,10 @@ the feature needs.
     three, one message each: the gap's title and suggested question, the
     meeting's title and the presser's display name, mentioning nobody; when
     there are more, one line counts them and links to the meeting's report
-    on Autune.
+    on Autune. Once E has posted the meeting's report, the cards and "담당자
+    지정해 질문" reply in its thread: C keeps where it is
+    (`gap_report_threads`: the channel id and the message `ts`, nothing the
+    message says), and the row goes with the meeting.
     Titles and C's own questions are stored masked, and a question a
     member rewrote is pattern-checked (below); every value is escaped so it
     cannot become a mention or a link, and no utterance, score or
