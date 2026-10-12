@@ -429,19 +429,31 @@ class ExtractionSettings(BaseSettings):
     material_embedder_impl: str = "fake"
     """Which embedder makes an uploaded material's vectors and a search
     question's vector (#817): ``local`` (KURE-v1 in this process; checkpoint
-    and device from ``embedder_checkpoint`` and ``embedder_device``) or
-    ``fake``. Its own switch, apart from ``embedder_impl``: the resolver's
-    fake makes 64-wide vectors it only compares with each other, and a
-    material's are stored in a ``vector(1024)`` column
+    and device from ``embedder_checkpoint`` and ``embedder_device``),
+    ``hosted`` (the same model on our own inference server, at
+    ``material_embedder_endpoint``; ``embedder_checkpoint`` is recorded as its
+    version) or ``fake``. Its own switch, apart from ``embedder_impl``: the
+    resolver's fake makes 64-wide vectors it only compares with each other,
+    and a material's are stored in a ``vector(1024)`` column
     (``models.MATERIAL_EMBEDDING_DIM``).
 
     ``fake`` by default, which finds by shared characters rather than meaning
-    -- enough for tests and a dev stack, not for a team. No ``hosted`` yet: the
-    rule (``privacy.md``) names KURE-v1 on our own inference server, and B has
-    no client for it. Nothing here sends a material's text or a question out
-    of this process. A search finds only pieces embedded by the embedder it
-    asks with, so switching this leaves earlier uploads unfound until they
-    are uploaded again (``material_search``)."""
+    -- enough for tests and a dev stack, not for a team. ``hosted`` is where
+    the rule (``privacy.md``) says a material's vectors are made; it is given
+    masked text only, and nothing else here sends a material's text or a
+    question out of this process. A search finds only pieces embedded by the
+    embedder it asks with, so switching between implementations that record
+    different versions leaves earlier uploads unfound until they are uploaded
+    again (``material_search``)."""
+
+    material_embedder_endpoint: str = ""
+    """Our own inference server, required when ``material_embedder_impl=hosted``.
+
+    **Nothing here checks whose server the address names.** Every masked
+    piece of an upload and every masked question is posted to it, and
+    ``privacy.md`` ("to nothing outside Autune's own servers") and the legal
+    notice (제4조 ⑤) are true only while it is a server Autune runs. Pointing
+    it at an outside embedding service is a change to both, not a setting."""
 
     material_search_min_similarity: float = Field(default=0.4, ge=-1, le=1)
     """Below this cosine similarity to the masked question, an uploaded
@@ -450,8 +462,8 @@ class ExtractionSettings(BaseSettings):
     close enough was found, rather than the nearest unrelated ones.
 
     **0.4 by default, a starting point and not a measurement.** It is set
-    for the embedder a team would run, KURE-v1 (``local``), a fine-tune of
-    bge-m3: in that family unrelated Korean text still lands around 0.2 to
+    for the embedder a team would run, KURE-v1 (``local`` or ``hosted``), a
+    fine-tune of bge-m3: in that family unrelated Korean text still lands around 0.2 to
     0.4 -- the vectors share a direction, so the scale does not start at 0 --
     while a question and the passage that answers it usually land at 0.5 or
     above. 0.4 cuts the clearly unrelated band and leaves a margin under the

@@ -14,7 +14,7 @@ from autune_extraction.models import MATERIAL_EMBEDDING_DIM
 
 from .base import Classifier, Embedder, NliModel, ReferenceResolver
 from .classifier import ENSEMBLE_SEPARATOR, FakeClassifier, HostedDeberta, LocalDeberta
-from .embedder import FakeEmbedder, LocalKureEmbedder
+from .embedder import FakeEmbedder, HostedKureEmbedder, LocalKureEmbedder
 from .nli import FakeNli, HostedNli, LocalNli
 from .resolver import FakeResolver, HostedResolver, LlmResolver, LocalQwenResolver
 from .summary import LlmSummarizer
@@ -48,7 +48,13 @@ _EMBEDDERS: dict[str, str] = {
     "local": "weights in this process",
     "fake": "deterministic, for tests",
 }
-"""No ``hosted`` yet -- see ``pipeline.embedder``."""
+"""No ``hosted`` for the resolver's check -- see ``pipeline.embedder``."""
+
+_MATERIAL_EMBEDDERS: dict[str, str] = {
+    **_EMBEDDERS,
+    "hosted": "our own inference server, masked text only",
+}
+"""The resolver's two, and ``hosted`` for uploaded materials (#817)."""
 
 
 @lru_cache
@@ -290,21 +296,36 @@ def get_embedder() -> Embedder:
 @lru_cache
 def get_material_embedder() -> Embedder:
     """The embedder for uploaded materials and the questions asked of them
-    (#817, ``material_search``). Same two implementations as ``get_embedder``;
-    the fake is as wide as the stored column. A vector of another width is
-    refused where it is used, not here: ``LocalKureEmbedder`` knows its width
-    only once it has loaded."""
+    (#817, ``material_search``). The two implementations of ``get_embedder``
+    and ``hosted``; the fake is as wide as the stored column. A vector of
+    another width is refused where it is used (``materials.embedded``), and
+    ``hosted`` refuses one itself: ``LocalKureEmbedder`` knows its width only
+    once it has loaded, the server only once it has answered."""
     settings = get_settings()
     impl = settings.material_embedder_impl
+    if impl in ("local", "hosted") and not settings.embedder_checkpoint:
+        # Both record it with every material as ``embedding_model``, and a
+        # search reads only vectors of the version it asks with.
+        raise ValueError(
+            f"AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL={impl} needs "
+            "AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT"
+        )
     if impl == "local":
-        if not settings.embedder_checkpoint:
-            raise ValueError(
-                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local needs "
-                "AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT"
-            )
         return LocalKureEmbedder(settings.embedder_checkpoint, device=settings.embedder_device)
+    if impl == "hosted":
+        if not settings.material_embedder_endpoint:
+            raise ValueError(
+                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=hosted needs "
+                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_ENDPOINT"
+            )
+        return HostedKureEmbedder(
+            settings.material_embedder_endpoint,
+            settings.embedder_checkpoint,
+            dim=MATERIAL_EMBEDDING_DIM,
+        )
     if impl == "fake":
         return FakeEmbedder(dim=MATERIAL_EMBEDDING_DIM)
     raise ValueError(
-        f"unknown AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL={impl!r}; known: {sorted(_EMBEDDERS)}"
+        f"unknown AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL={impl!r}; "
+        f"known: {sorted(_MATERIAL_EMBEDDERS)}"
     )
