@@ -8,11 +8,15 @@ import type {
   Approvers,
   ApproverScope,
   ChatReply,
+  DecidedAction,
   PendingAction,
   RejectReason,
 } from "./types";
 
 export const listPending = () => api.agent<PendingAction[]>("/pending");
+
+/** What was approved, rejected or failed lately, newest first (#1215). */
+export const listDecided = () => api.agent<DecidedAction[]>("/decided");
 
 export const approvePending = (id: string) =>
   api.agent<PendingAction>(`/pending/${encodeURIComponent(id)}/approve`, {
