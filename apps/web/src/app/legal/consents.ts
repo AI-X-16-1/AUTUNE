@@ -23,6 +23,12 @@
  * a person who agreed to it agreed to a text without those sentences. The
  * version moves so that they are asked again, whichever was deployed first.
  *
+ * `2026-10-12.3` (the owner, 2026-10-12): searching a team's uploaded
+ * documents (#817) joined the purposes in both documents, with a sentence on
+ * the question a person types to search. A person who agreed to the earlier
+ * text agreed to keeping those documents and not to searching them, so the
+ * version moves and they are asked again.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -41,8 +47,8 @@ export interface RequiredConsent {
 }
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "2026-10-12.2" },
-  { document: "privacy", version: "2026-10-12.2" },
+  { document: "terms", version: "2026-10-12.3" },
+  { document: "privacy", version: "2026-10-12.3" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

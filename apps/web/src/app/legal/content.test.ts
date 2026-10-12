@@ -34,6 +34,22 @@ describe("legal documents", () => {
     }
   });
 
+  // Searching a team's uploaded documents (#817) is a purpose of its own: a
+  // person who agreed to keeping them had not agreed to searching them. Both
+  // documents name it, and the privacy policy says what happens to the
+  // question a person types (the owner, 2026-10-12).
+  it("name the search of a team's uploaded documents as a purpose", () => {
+    const text = (id: string) => JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === id));
+    expect(text("terms")).toContain("팀이 올린 문서 자료의 보관 및 검색");
+    expect(text("privacy")).toContain("팀 자료의 보관 및 검색");
+    expect(text("privacy")).toContain(
+      "입력한 질문은 같은 방법으로 가림 처리한 뒤 자료를 찾는 데에만 이용하며, 저장하거나 로그에 기록하지 않습니다.",
+    );
+    for (const { document, version } of REQUIRED_CONSENTS) {
+      expect(version, document).not.toBe("2026-10-12.2");
+    }
+  });
+
   // The server refuses any other shape (`autune_core.consents._VERSION`),
   // and a version it refuses leaves every person at the consent page.
   it("are asked for under a version the server takes", () => {
