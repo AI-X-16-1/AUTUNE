@@ -15,6 +15,7 @@ import { useMeetingTitle } from "../hooks/useMeetingTitle";
 import { useMicrophone, type Microphone } from "../hooks/useMicrophone";
 import { forgetPlannedEnd } from "../plannedEnd";
 import type { RecordingState } from "../types";
+import { readableError } from "../readableError";
 import { LiveResearchPanel } from "./LiveResearchPanel";
 import { LiveTopBar } from "./LiveTopBar";
 import { LiveTranscript } from "./LiveTranscript";
@@ -166,7 +167,7 @@ export function LiveMeetingScreen({
       await attestConsent(meetingId);
       setConsented(true);
     } catch (caught) {
-      setConsentError(caught instanceof Error ? caught.message : "동의를 기록하지 못했습니다.");
+      setConsentError(readableError(caught, "동의를 기록하지 못했습니다."));
     } finally {
       setConsentPending(false);
     }

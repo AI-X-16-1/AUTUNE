@@ -861,3 +861,19 @@ def test_the_settings_screen_is_told_whether_this_server_sends_it(
         lambda: ExtractionSettings(_env_file=None),  # type: ignore[call-arg]
     )
     assert router._reminder_setting(True).work_report_here is False
+
+
+def test_a_row_with_a_short_title_is_reported_by_it(session: Session) -> None:
+    """Module B's owner, 2026-10-09: what was finished and what is carried
+    are both named by the title where the row has one."""
+    for row_id, title in (("act_a", "보고서"), ("act_late", "늦은 일 제목")):
+        row = session.get(ExtActionItem, row_id)
+        assert row is not None
+        row.title = title
+    session.flush()
+    move(session, "act_a", ActionStatus.DONE)
+
+    report = work_report.report_content(session, kim(), now=now())
+
+    assert said(report.done) == ["보고서"]
+    assert said(report.late) == ["늦은 일 제목"]

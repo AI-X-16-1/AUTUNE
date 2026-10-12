@@ -3,15 +3,17 @@
 - By default an upload keeps the team's retention window, counted from the
   upload (``teams.retention_days``), and the hourly task deletes it after,
   with its text.
-- A team may switch to keeping uploads until a member deletes them; switching
-  back gives every existing upload its window again, counted from its own
-  upload.
+- The day is written on the row at the upload (``expires_at``) and the team
+  changing its window later moves it neither way (the owner, 2026-10-12).
+- A team may switch to keeping uploads until a member deletes them; every
+  upload keeps its day meanwhile, and switching back applies it again.
 - A Drive link keeps no text and has no window.
 - One team's setting is never another's; the setting records no person.
 - Any member reads and switches it; nobody else.
 
-Time is passed in (``now=``), and an upload's ``created_at`` is set, so
-nothing here waits on the clock. Every value is invented.
+Time is passed in (``now=``), and an upload is moved back in time with the
+day ``store_upload`` gave it (``aged``), so nothing here waits on the clock.
+Every value is invented.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, inspect, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 from structlog.testing import capture_logs
@@ -66,6 +68,16 @@ def upload(session: Session, team: str = TEAM, *, age: timedelta, title: str = "
         session, team, title=title, file_name="plan.txt", data=BODY.encode()
     )
     row.created_at = NOW - age
+    return aged(session, row)
+
+
+def aged(session: Session, row: ExtMaterial) -> ExtMaterial:
+    """The upload as it would be had it been made at ``row.created_at``: the
+    day ``store_upload`` wrote moves back by as much as ``created_at`` just
+    did, so the window it holds is the one the upload really got."""
+    (made,) = inspect(row).attrs.created_at.history.deleted
+    assert row.expires_at is not None
+    row.expires_at += row.created_at - made
     session.flush()
     return row
 
@@ -93,19 +105,41 @@ def test_by_default_an_upload_expires_its_teams_window_after_the_upload(
 ) -> None:
     row = upload(session, age=timedelta(days=10))
 
-    window = materials.upload_window(session, TEAM)
-
-    assert window == timedelta(days=90)
-    assert materials.read(row, window).expires_at == NOW + timedelta(days=80)
+    assert row.expires_at == NOW + timedelta(days=80)
+    assert materials.read(row).expires_at == NOW + timedelta(days=80)
 
 
 def test_the_window_is_the_teams_own_retention_days(session: Session) -> None:
     session.get(Team, TEAM).retention_days = 30  # type: ignore[union-attr]
     row = upload(session, age=timedelta(days=0))
 
-    assert materials.read(row, materials.upload_window(session, TEAM)).expires_at == (
+    assert materials.read(row).expires_at == NOW + timedelta(days=30)
+
+
+def test_shortening_the_window_later_leaves_an_earlier_upload_its_day(session: Session) -> None:
+    row = upload(session, age=timedelta(days=50))
+
+    session.get(Team, TEAM).retention_days = 30  # type: ignore[union-attr]
+    session.flush()
+
+    assert materials.read(row).expires_at == NOW + timedelta(days=40)
+    assert materials.forget_expired_uploads(session, now=NOW) == 0
+    assert ids(session) == {row.id}
+    assert upload(session, age=timedelta(days=0), title="새").expires_at == (
         NOW + timedelta(days=30)
     )
+
+
+def test_lengthening_the_window_later_does_not_keep_what_was_to_go(session: Session) -> None:
+    session.get(Team, TEAM).retention_days = 30  # type: ignore[union-attr]
+    row = upload(session, age=timedelta(days=31))
+
+    session.get(Team, TEAM).retention_days = 365  # type: ignore[union-attr]
+    session.flush()
+
+    assert materials.read(row).expires_at == NOW - timedelta(days=1)
+    assert materials.forget_expired_uploads(session, now=NOW) == 1
+    assert ids(session) == set()
 
 
 def test_an_upload_past_its_window_is_deleted_with_its_text(session: Session) -> None:
@@ -123,8 +157,9 @@ def test_keep_until_deleted_keeps_every_upload_and_answers_no_day(session: Sessi
     row = upload(session, age=timedelta(days=400))
     materials.set_keep_until_deleted(session, TEAM, True)
 
-    assert materials.upload_window(session, TEAM) is None
-    assert materials.read(row, None).expires_at is None
+    assert materials.keeps_until_deleted(session, TEAM) is True
+    assert materials.read(row, kept=True).expires_at is None
+    assert row.expires_at == NOW - timedelta(days=310)  # the row keeps its day
     assert materials.forget_expired_uploads(session, now=NOW) == 0
     assert ids(session) == {row.id}
 
@@ -137,17 +172,44 @@ def test_switching_back_makes_old_uploads_expire_from_their_upload(session: Sess
 
     materials.set_keep_until_deleted(session, TEAM, False)
 
-    window = materials.upload_window(session, TEAM)
-    assert materials.read(young, window).expires_at == NOW + timedelta(days=85)
+    kept = materials.keeps_until_deleted(session, TEAM)
+    assert materials.read(young, kept=kept).expires_at == NOW + timedelta(days=85)
     assert materials.forget_expired_uploads(session, now=NOW) == 1
     assert ids(session) == {young.id}
     assert materials.material_text(session, old.id) == []
 
 
+def test_the_setting_counts_what_switching_back_would_delete(session: Session) -> None:
+    materials.set_keep_until_deleted(session, TEAM, True)
+    upload(session, age=timedelta(days=120), title="오래된")
+    upload(session, age=timedelta(days=91), title="막 지난")
+    upload(session, age=timedelta(days=5), title="새")
+    link(session, age=timedelta(days=1000))
+    upload(session, OTHER, age=timedelta(days=400), title="남의 것")
+
+    assert materials.settings_read(session, TEAM, now=NOW).uploads_past_their_day == 2
+    assert materials.settings_read(session, OTHER, now=NOW).uploads_past_their_day == 1
+
+    materials.set_keep_until_deleted(session, TEAM, False)
+    assert materials.forget_expired_uploads(session, now=NOW) == 3
+    assert materials.settings_read(session, TEAM, now=NOW).uploads_past_their_day == 0
+
+
+def test_the_count_is_a_number_and_names_nothing(session: Session) -> None:
+    materials.set_keep_until_deleted(session, TEAM, True)
+    row = upload(session, age=timedelta(days=120), title="김민수 평가")
+
+    answer = materials.settings_read(session, TEAM, now=NOW).model_dump()
+
+    assert answer == {"keep_until_deleted": True, "retention_days": 90, "uploads_past_their_day": 1}
+    assert row.id not in str(answer) and "김민수" not in str(answer)
+
+
 def test_a_link_never_expires(session: Session) -> None:
     row = link(session, age=timedelta(days=1000))
 
-    assert materials.read(row, materials.upload_window(session, TEAM)).expires_at is None
+    assert row.expires_at is None
+    assert materials.read(row).expires_at is None
     assert materials.forget_expired_uploads(session, now=NOW) == 0
     assert ids(session) == {row.id}
 
@@ -271,12 +333,20 @@ def client(session: Session, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_a_member_reads_and_switches_the_setting(client: TestClient, session: Session) -> None:
-    assert client.get(SETTINGS).json() == {"keep_until_deleted": False, "retention_days": 90}
+    assert client.get(SETTINGS).json() == {
+        "keep_until_deleted": False,
+        "retention_days": 90,
+        "uploads_past_their_day": 0,
+    }
 
     answer = client.put(SETTINGS, json={"keep_until_deleted": True})
 
     assert answer.status_code == 200
-    assert answer.json() == {"keep_until_deleted": True, "retention_days": 90}
+    assert answer.json() == {
+        "keep_until_deleted": True,
+        "retention_days": 90,
+        "uploads_past_their_day": 0,
+    }
     assert client.get(SETTINGS).json()["keep_until_deleted"] is True
     assert materials.keeps_until_deleted(session, OTHER) is False
 

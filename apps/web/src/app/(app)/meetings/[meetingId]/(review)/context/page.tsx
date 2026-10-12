@@ -1,4 +1,4 @@
-import { ContextTab } from "@/features/context";
+import { MeetingContext } from "./MeetingContext";
 
 /** The gutter the design files put under the tab row; see ../layout.tsx. */
 const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as const;
@@ -9,7 +9,8 @@ const TAB_BODY = { padding: "20px var(--space-page) var(--space-page)" } as cons
  *
  * Assembly only: the tab and everything it knows about a decision's history live
  * in `features/context`, which module D owns. This file exists because a feature
- * cannot give itself a route.
+ * cannot give itself a route. `MeetingContext` beside it joins the tab to what
+ * the brief's agenda draft carries from another module (#1147).
  *
  * Until now the only way to this tab was `/dev-context`, which asks a person to
  * type a meeting id and 404s outside development. The tab takes its meeting from
@@ -26,7 +27,7 @@ export default async function MeetingContextPage({
 
   return (
     <div style={TAB_BODY}>
-      <ContextTab meetingId={meetingId} />
+      <MeetingContext meetingId={meetingId} />
     </div>
   );
 }

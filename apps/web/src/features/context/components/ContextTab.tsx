@@ -3,6 +3,7 @@
 import { BriefPanel } from "./BriefPanel";
 import { TopicLinkRow } from "./TopicLinkRow";
 import { useBrief } from "../hooks/useBrief";
+import { useCarriedAgenda, type CarriedSource } from "../hooks/useCarriedAgenda";
 import { useTopicLinks } from "../hooks/useTopicLinks";
 
 /**
@@ -11,12 +12,27 @@ import { useTopicLinks } from "../hooks/useTopicLinks";
  *
  * The brief draws nothing for a meeting without one, so a finished meeting's
  * tab reads exactly as it did before briefs existed.
+ *
+ * `agendaSources` is what other modules have for the brief's agenda draft
+ * (#1147); the route supplies it, and with none the brief is drawn as before.
  */
-export function ContextTab({ meetingId }: { meetingId: string }) {
+export function ContextTab({
+  meetingId,
+  agendaSources,
+}: {
+  meetingId: string;
+  agendaSources?: readonly CarriedSource[];
+}) {
   const { brief, error } = useBrief(meetingId);
+  const carried = useCarriedAgenda(brief, agendaSources);
   return (
     <div style={{ display: "grid", gap: "var(--space-page)" }}>
-      <BriefPanel brief={brief} error={error} />
+      <BriefPanel
+        brief={brief}
+        error={error}
+        carried={agendaSources === undefined ? undefined : carried.groups}
+        carriedWaiting={carried.waiting}
+      />
       <TopicLinks meetingId={meetingId} quietWhenEmpty={brief !== null} />
     </div>
   );

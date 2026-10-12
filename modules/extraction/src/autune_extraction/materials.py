@@ -33,13 +33,19 @@ storage, and the original is not kept":
   to ``ext_material_chunks``.
 - **Kept for the team's retention window, counted from the upload**
   (``teams.retention_days``, 90 days by default; the owner, 2026-10-11).
+  **The day is fixed at the upload**: ``store_upload`` writes
+  ``ext_materials.expires_at``, that moment plus the team's window of that
+  day, and nothing moves it afterwards -- a team that later shortens or
+  lengthens its window changes what its next uploads get, not what an earlier
+  one was given, as with a meeting (the owner, 2026-10-12).
   ``forget_expired_uploads`` -- hourly, ``tasks.forget_expired_material_uploads``
   -- deletes an upload past it with its text. A team may switch to keeping
   its uploads until a member deletes them (``set_keep_until_deleted``,
-  ``ext_material_settings``); switching back gives every existing upload its
-  window again, counted from its own upload. Any member deletes a material at
-  once, and its text goes in the same transaction; everything goes with the
-  team (``ON DELETE CASCADE``). A Drive link keeps no text and has no window.
+  ``ext_material_settings``); an upload keeps its ``expires_at`` under either
+  choice, so switching back leaves every existing upload the day it was
+  given. Any member deletes a material at once, and its text goes in the same
+  transaction; everything goes with the team (``ON DELETE CASCADE``). A Drive
+  link keeps no text and has no day.
 
 **For both: a row names no person.** Any member of the team registers,
 uploads and deletes, as with the team's projects; there is no admin role
@@ -189,13 +195,15 @@ def keeps_until_deleted(session: Session, team_id: str) -> bool:
     )
 
 
-def upload_window(session: Session, team_id: str) -> timedelta | None:
-    """How long the team's uploads are kept from their upload: the team's
-    retention window, or None when the team keeps them until deleted."""
-    if keeps_until_deleted(session, team_id):
-        return None
+def upload_deadline(session: Session, team_id: str, *, now: datetime) -> datetime:
+    """When an upload made at ``now`` is deleted: ``now`` plus the team's
+    retention window as it is today. Written on the row and not worked out
+    again --
+    the team changing its window later moves no upload already made. Set
+    whether or not the team keeps its uploads until deleted, so that
+    switching back finds every upload with its day."""
     days = session.scalar(select(Team.retention_days).where(Team.id == team_id))
-    return timedelta(days=days if days is not None else 90)
+    return now + timedelta(days=days if days is not None else 90)
 
 
 def _aware(moment: datetime) -> datetime:
@@ -203,17 +211,18 @@ def _aware(moment: datetime) -> datetime:
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
-def expires_at(row: ExtMaterial, window: timedelta | None) -> datetime | None:
-    """When an upload is deleted: its upload plus ``window``. None for a link,
-    which keeps no text, and for a team that keeps uploads until deleted."""
-    if row.source != "upload" or window is None:
+def expires_at(row: ExtMaterial, *, kept: bool) -> datetime | None:
+    """When an upload is deleted: the day it was given at its upload. None for
+    a link, which keeps no text, and while the team keeps uploads until
+    deleted (``kept``) -- the row holds its day all the same."""
+    if row.source != "upload" or kept or row.expires_at is None:
         return None
-    return _aware(row.created_at) + window
+    return _aware(row.expires_at)
 
 
-def read(row: ExtMaterial, window: timedelta | None = None) -> MaterialRead:
-    """The row as the screen gets it. ``window`` is ``upload_window`` of the
-    row's team; without it ``expires_at`` is null."""
+def read(row: ExtMaterial, *, kept: bool = False) -> MaterialRead:
+    """The row as the screen gets it. ``kept`` is ``keeps_until_deleted`` of
+    the row's team; an upload of such a team answers no ``expires_at``."""
     return MaterialRead(
         id=row.id,
         team_id=row.team_id,
@@ -222,23 +231,48 @@ def read(row: ExtMaterial, window: timedelta | None = None) -> MaterialRead:
         drive_file_id=row.drive_file_id,
         drive_kind=row.drive_kind,  # type: ignore[arg-type]  # the table's check constraint
         created_at=row.created_at,
-        expires_at=expires_at(row, window),
+        expires_at=expires_at(row, kept=kept),
     )
 
 
-def settings_read(session: Session, team_id: str) -> MaterialSettingsRead:
+def uploads_past_their_day(session: Session, team_id: str, *, now: datetime) -> int:
+    """How many of the team's uploads are past the day they were given. While
+    the team keeps uploads until deleted these stay; they are what switching
+    back to the window deletes at the next hourly run, which the settings
+    screen says before the switch is saved. A count -- no id, no title."""
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(ExtMaterial)
+            .where(
+                ExtMaterial.team_id == team_id,
+                ExtMaterial.source == "upload",
+                ExtMaterial.expires_at <= now,
+            )
+        )
+        or 0
+    )
+
+
+def settings_read(
+    session: Session, team_id: str, *, now: datetime | None = None
+) -> MaterialSettingsRead:
     days = session.scalar(select(Team.retention_days).where(Team.id == team_id))
     return MaterialSettingsRead(
         keep_until_deleted=keeps_until_deleted(session, team_id),
         retention_days=days if days is not None else 90,
+        uploads_past_their_day=uploads_past_their_day(
+            session, team_id, now=now or datetime.now(UTC)
+        ),
     )
 
 
 def set_keep_until_deleted(session: Session, team_id: str, keep: bool) -> None:
     """Switch whether the team keeps its uploads until a member deletes them.
-    Takes no user: the change records when, never who. Switching back to the
-    window applies at once to every existing upload, counted from its own
-    upload -- the next hourly run deletes those already past it."""
+    Takes no user: the change records when, never who. No upload's
+    ``expires_at`` is touched either way: switching back to the window
+    applies at once to every existing upload, each with the day it was given
+    -- the next hourly run deletes those already past it."""
     row = session.get(ExtMaterialSetting, team_id)
     if row is None:
         # Two members switching at once both find no row; the second insert
@@ -404,8 +438,14 @@ def store_upload(
     # text or path goes to a task (#817).
     embedder = get_material_embedder()
     vectors = embedded(embedder, pieces)
+    now = datetime.now(UTC)
     row = ExtMaterial(
-        team_id=team_id, title=clean, source="upload", embedding_model=embedder.model_version
+        team_id=team_id,
+        title=clean,
+        source="upload",
+        created_at=now,
+        expires_at=upload_deadline(session, team_id, now=now),
+        embedding_model=embedder.model_version,
     )
     session.add(row)
     session.flush()
@@ -475,38 +515,28 @@ def acknowledge_alarm(session: Session, team_id: str, alarm_id: str) -> None:
 
 
 def forget_expired_uploads(session: Session, *, now: datetime, limit: int | None = None) -> int:
-    """Delete at most ``limit`` (``FORGET_BATCH``) uploads past their team's
-    window, with their text, the oldest of each team first. A team that keeps
-    uploads until deleted is passed over, and a link is never touched. Returns
-    how many went; the caller commits and calls again while a call returns
-    the whole batch."""
+    """Delete at most ``limit`` (``FORGET_BATCH``) uploads past the day they
+    were given (``expires_at``), with their text, the earliest day first. The
+    team's window of today is not read: it was counted in at the upload. A
+    team that keeps uploads until deleted is passed over, and a link is never
+    touched. Returns how many went; the caller commits and calls again while
+    a call returns the whole batch."""
     if limit is None:
         limit = FORGET_BATCH
     kept = select(ExtMaterialSetting.team_id).where(ExtMaterialSetting.keep_until_deleted)
-    teams = session.execute(
-        select(Team.id, Team.retention_days)
-        .where(
-            Team.id.in_(select(ExtMaterial.team_id).where(ExtMaterial.source == "upload")),
-            Team.id.not_in(kept),
-        )
-        .order_by(Team.id)
-    ).all()
-    gone: list[tuple[str, str]] = []
-    for team_id, days in teams:
-        if len(gone) >= limit:
-            break
-        cutoff = now - timedelta(days=days)
-        ids = session.scalars(
-            select(ExtMaterial.id)
+    gone = [
+        (team_id, material_id)
+        for team_id, material_id in session.execute(
+            select(ExtMaterial.team_id, ExtMaterial.id)
             .where(
-                ExtMaterial.team_id == team_id,
                 ExtMaterial.source == "upload",
-                ExtMaterial.created_at <= cutoff,
+                ExtMaterial.expires_at <= now,
+                ExtMaterial.team_id.not_in(kept),
             )
-            .order_by(ExtMaterial.created_at, ExtMaterial.id)
-            .limit(limit - len(gone))
-        ).all()
-        gone.extend((team_id, material_id) for material_id in ids)
+            .order_by(ExtMaterial.expires_at, ExtMaterial.id)
+            .limit(limit)
+        )
+    ]
     if not gone:
         return 0
     ids = [material_id for _, material_id in gone]

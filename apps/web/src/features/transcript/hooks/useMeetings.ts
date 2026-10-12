@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { listMeetings } from "../api";
+import { readableError } from "../readableError";
 import type { MeetingSummary } from "../types";
 
 export type MeetingsState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; retry: () => void }
   | { status: "ready"; meetings: MeetingSummary[] };
 
 /**
@@ -36,6 +37,12 @@ export function useMeetings(teamId?: string): MeetingsState {
   // next team -- the effect that clears it has not run yet -- and that list
   // would be drawn once under the new team's name (review of #839).
   const [answer, setAnswer] = useState<Answer>({ teamId, state: LOADING });
+  // Bumped by `retry` after a failed read: the same list, asked for again.
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => {
+    setAnswer({ teamId, state: LOADING });
+    setAttempt((n) => n + 1);
+  }, [teamId]);
 
   useEffect(() => {
     let current = true;
@@ -45,12 +52,10 @@ export function useMeetings(teamId?: string): MeetingsState {
         if (current) setAnswer({ teamId, state: { status: "ready", meetings } });
       })
       .catch((error: unknown) => {
-        // The message, never the body: an API error can quote what it refused.
-        const message =
-          error instanceof Error
-            ? error.message
-            : "회의 목록을 불러오지 못했습니다";
-        if (current) setAnswer({ teamId, state: { status: "error", message } });
+        // Never the server's text: it is English, and can quote what it
+        // refused (#1176).
+        const message = readableError(error, "회의 목록을 불러오지 못했습니다.");
+        if (current) setAnswer({ teamId, state: { status: "error", message, retry } });
       });
 
     return () => {
@@ -58,7 +63,7 @@ export function useMeetings(teamId?: string): MeetingsState {
     };
     // Another team is another list: asked for again, and an answer for the
     // team just left is dropped by `current`.
-  }, [teamId]);
+  }, [teamId, attempt, retry]);
 
   // An answer for another team is not this team's: until this one's lands,
   // the list is loading.

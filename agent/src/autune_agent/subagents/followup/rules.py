@@ -100,6 +100,31 @@ def decide(open_gaps: ToolResult, recurring: ToolResult, questions: ToolResult) 
     return Verdict(carried=carried, heavy=heavy)
 
 
+def why_not(open_gaps: ToolResult, questions: ToolResult) -> str:
+    """Why neither rule fired, from the counts ``decide`` looked at (#1189).
+
+    A sentence the chat answer can carry as it is: gap counts and whether a
+    question was asked, nothing about a person and no question's text (spec
+    section 6). Only for a verdict that does not fire, so nothing was carried
+    over from the previous meeting -- a carried item fires on its own."""
+    total = len(open_gaps.items)
+    high = sum(1 for item in open_gaps.items if getattr(item, "severity", None) == "high")
+    asked = bool(questions.items)
+    # C sends five rows at most, riskiest first; a cut list is "five or more",
+    # never "five" (the result's ``truncated``).
+    counted = f"{total}건 이상 가운데" if open_gaps.truncated else f"{total}건 중"
+    if total == 0:
+        gaps = "열린 갭이 없고"
+    elif high >= MIN_HIGH_GAPS and not asked:
+        gaps = f"열린 갭 {counted} 높음이 {high}건이지만 미해결 질문이 없고"
+    else:
+        gaps = (
+            f"열린 갭 {counted} 높음이 {high}건이라 "
+            f"기준(높음 {MIN_HIGH_GAPS}건 이상과 미해결 질문)에 못 미치고"
+        )
+    return f"{gaps}, 직전 회의에서 이어서 열린 항목도 없습니다."
+
+
 def cited(open_gaps: ToolResult, verdict: Verdict) -> list[Finding]:
     """The gaps a proposal rests on, in its evidence's order, for the chat answer."""
     by_id = {i: item for item in open_gaps.items if (i := _id(item))}

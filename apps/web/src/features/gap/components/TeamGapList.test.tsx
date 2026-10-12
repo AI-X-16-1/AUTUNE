@@ -16,7 +16,8 @@ const row = (overrides: Partial<TeamGap>): TeamGap => ({
   gap_id: "gap_1",
   meeting_id: "mtg_new",
   meeting_title: "검색 개편 회의",
-  meeting_date: "2026-10-03T09:00:00Z",
+  // 08:30 on the 3rd in Seoul: the row shows 2026-10-03, not the UTC day (#231).
+  meeting_date: "2026-10-02T23:30:00Z",
   category: "technical_spec",
   title: "성능 요구사항이 정해지지 않았습니다",
   severity: "high",
