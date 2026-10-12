@@ -381,6 +381,7 @@ Where that token comes from, and the two ways to give it to the browser:
 | `AUTUNE_CONTEXT_RERANK_TOP_K` | D | Kept after re-ranking. Default `10` |
 | `AUTUNE_CONTEXT_RRF_K` | D | Reciprocal-rank-fusion constant. Default `60` |
 | `AUTUNE_CONTEXT_LINK_SIMILARITY_THRESHOLD` | D | Assert a topic link at or above this dense segment similarity (cosine). Default `0.74`, tuned in eval |
+| `AUTUNE_CONTEXT_BRIEF_SIMILARITY_THRESHOLD` | D | The pre-meeting brief recaps a past meeting by topic at or above this dense similarity to its title and agenda. Default `0.60`, set on the brief-selection eval |
 | `AUTUNE_CONTEXT_LINK_CONFIDENCE_THRESHOLD` | D | Also assert at or above this re-ranker score. Default `0.6` |
 | `AUTUNE_CONTEXT_LINEAGE_MATCH_THRESHOLD` | D | Decision-to-thread match cutoff (cosine). Default `0.65`, tuned in eval |
 | `AUTUNE_CONTEXT_PUBLISH_TIMEOUT_S` | D | Wait for B before publishing. Default `600` |

@@ -188,6 +188,13 @@ class ContextSettings(BaseSettings):
     otherwise post one message per topic and flood the channel."""
 
     # --- pre-meeting brief ---
+    brief_similarity_threshold: float = 0.60
+    """Dense similarity at or above which the pre-meeting brief asserts that a
+    past meeting is the one this meeting follows (``briefs._topic_match``).
+    Not ``link_similarity_threshold``: the query is a title and its agenda, not
+    a topic segment, and scores lower against the same meeting. Set on the
+    brief-selection dev set, where no unrelated meeting scored above 0.560
+    (docs/modules/context-evaluations/02-brief-selection.md)."""
     brief_lead_minutes: int = 10
     """How long before a scheduled meeting's ``started_at`` its brief goes to
     the team channel. ``autune.context.periodic.send_due_briefs`` runs every

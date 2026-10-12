@@ -31,7 +31,7 @@ def _result(
         past_ids=("m0", "m1", "m2"),
         expected=expected,
         related=frozenset(related),
-        latest="m2",
+        newest_first=("m2", "m1", "m0"),
         chosen=chosen,
         reason=reason,
         scored=scored,
@@ -64,14 +64,14 @@ def test_outcome(
 
 def test_choice_at_follows_the_topic_step_rule() -> None:
     result = _result(
-        expected="m0",
-        related={"m0"},
-        chosen="m0",
+        expected="m1",
+        related={"m0", "m1"},
+        chosen="m1",
         reason=briefs.TOPIC,
         scored=(Scored("m0", 0.70, 0.40), Scored("m1", 0.60, 0.80)),
     )
 
-    # Either signal makes a candidate confident; the stronger of the two picks.
+    # Either signal makes a candidate confident; the most recent of them picks.
     assert result.choice_at(0.65, 0.90) == ("m0", briefs.TOPIC)
     assert result.choice_at(0.65, 0.75) == ("m1", briefs.TOPIC)
     assert result.choice_at(0.95, 0.95) == ("m2", briefs.LATEST)

@@ -10,8 +10,8 @@ choice, not ``store_team_agenda``.
 The topic step's retriever and re-ranker are wrapped, not replaced, to record
 the score each candidate got -- what the case lines print and the threshold
 sweep re-decides on. The sweep re-implements the topic step's rule
-(``briefs._topic_match``); the report says so if its answer at the configured
-thresholds ever disagrees with the real one.
+(``briefs._topic_match`` and the most-recent pick after it); the report says
+so if its answer at the configured thresholds ever disagrees with the real one.
 
 Needs what ``eval.topic_linking.runner`` needs: a migrated Postgres and the
 configured embedder and re-ranker (``*_local`` impls to run without the
@@ -67,7 +67,8 @@ class CaseResult:
     """In dataset order, to print as ``#index``."""
     expected: str | None
     related: frozenset[str]
-    latest: str
+    newest_first: tuple[str, ...]
+    """The past meetings, most recent first -- the order the topic step picks in."""
     chosen: str | None
     reason: str | None
     scored: tuple[Scored, ...] = field(default=())
@@ -99,18 +100,17 @@ class CaseResult:
 
     def choice_at(self, similarity: float, rerank: float) -> tuple[str | None, str | None]:
         """What the choice would have been at these thresholds -- the topic
-        step's rule over the recorded scores. A series answer does not depend
-        on them."""
+        step's rule over the recorded scores: the most recent confident
+        meeting, else the latest. A series answer does not depend on them."""
         if self.reason == briefs.SERIES:
             return self.chosen, self.reason
-        confident = [
-            (max(s.similarity, s.rerank), s.meeting_id)
-            for s in self.scored
-            if s.similarity >= similarity or s.rerank >= rerank
-        ]
-        if confident:
-            return max(confident)[1], briefs.TOPIC
-        return self.latest, briefs.LATEST
+        confident = {
+            s.meeting_id for s in self.scored if s.similarity >= similarity or s.rerank >= rerank
+        }
+        for meeting_id in self.newest_first:
+            if meeting_id in confident:
+                return meeting_id, briefs.TOPIC
+        return self.newest_first[0], briefs.LATEST
 
     def index(self, meeting_id: str | None) -> str:
         return f"#{self.past_ids.index(meeting_id)}" if meeting_id in self.past_ids else "-"
@@ -181,14 +181,19 @@ def run_case(case: BriefCase) -> CaseResult:
             Scored(c.linked_meeting_id, c.similarity, score)
             for c, score in zip(reranked, recording.scores, strict=False)
         )
-        latest = min(zip(case.past_meetings, past_ids, strict=True), key=lambda p: p[0].days_ago)
+        newest_first = [
+            meeting_id
+            for _, meeting_id in sorted(
+                zip(case.past_meetings, past_ids, strict=True), key=lambda p: p[0].days_ago
+            )
+        ]
         return CaseResult(
             case_id=case.id,
             category=case.category,
             past_ids=tuple(past_ids),
             expected=past_ids[case.expected] if case.expected is not None else None,
             related=frozenset(past_ids[i] for i in case.related),
-            latest=latest[1],
+            newest_first=tuple(newest_first),
             chosen=chosen,
             reason=reason,
             scored=scored,
@@ -266,7 +271,7 @@ def report(results: list[CaseResult]) -> str:
         "",
         accuracy_line("brief selection accuracy", correct, total),
         accuracy_line("  lenient (any meeting on the subject)", lenient, total),
-        f"link_similarity_threshold = {settings.link_similarity_threshold}, "
+        f"brief_similarity_threshold = {settings.brief_similarity_threshold}, "
         f"link_confidence_threshold (rerank) = {settings.link_confidence_threshold}, "
         f"rerank_top_k = {settings.rerank_top_k}",
         "",
@@ -289,7 +294,7 @@ def report(results: list[CaseResult]) -> str:
     drifted = [
         r.case_id
         for r in results
-        if r.choice_at(settings.link_similarity_threshold, settings.link_confidence_threshold)
+        if r.choice_at(settings.brief_similarity_threshold, settings.link_confidence_threshold)
         != (r.chosen, r.reason)
     ]
     if drifted:
@@ -300,9 +305,9 @@ def report(results: list[CaseResult]) -> str:
         ]
     lines += [
         "",
-        "threshold sweep (accuracy if link_similarity_threshold were t,",
+        "threshold sweep (accuracy if brief_similarity_threshold were t,",
         " link_confidence_threshold held as configured; series answers do not move):",
-        *_sweep(results, settings.link_similarity_threshold, settings.link_confidence_threshold),
+        *_sweep(results, settings.brief_similarity_threshold, settings.link_confidence_threshold),
     ]
     return "\n".join(lines)
 
@@ -314,7 +319,8 @@ def _right(results: list[CaseResult]) -> str:
 def _expected_step(r: CaseResult) -> str:
     if r.expected is None:
         return briefs.LATEST
-    return briefs.SERIES if r.category.startswith("series") else briefs.TOPIC
+    series = r.category.startswith("series") or r.category == "numbered_series"
+    return briefs.SERIES if series else briefs.TOPIC
 
 
 def _paths(results: list[CaseResult]) -> list[str]:
