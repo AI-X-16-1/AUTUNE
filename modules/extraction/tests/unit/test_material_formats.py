@@ -1059,5 +1059,75 @@ def test_what_is_read_only_for_the_marking_counts_toward_the_length(
     assert refused.value.reason == "too_long"
 
 
+# --- how much of a zipped file is parsed ----------------------------------------------
+
+NOT_XML = b"<" + b"x" * 64
+"""A part no parser takes: a file that reaches it is refused as damaged, so a
+refusal for length shows the part was never parsed."""
+
+
+def test_a_zipped_file_whose_read_parts_hold_too_much_is_refused_before_they_are_parsed() -> None:
+    limit = material_formats.MAX_PARSED
+    over = package({"word/document.xml": NOT_XML.ljust(limit + 1, b"x")})
+    at = package({"word/document.xml": NOT_XML.ljust(limit, b"x")})
+    assert len(over) < 1024 * 1024, "a small upload: the size that counts is the unpacked one"
+
+    with pytest.raises(UnreadableFileError) as refused:
+        read_file("a.docx", over)
+    with pytest.raises(UnreadableFileError) as parsed:
+        read_file("a.docx", at)
+
+    assert refused.value.reason == "too_long"
+    assert parsed.value.reason == "damaged", "a part at the limit is unpacked and parsed"
+
+
+def test_the_parts_read_count_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    parts: dict[str, str | bytes] = {
+        "xl/workbook.xml": workbook(("가", "visible"), ("나", "visible")),
+        "xl/worksheets/sheet1.xml": sheet(
+            '<row r="1"><c t="inlineStr"><is><t>첫 시트</t></is></c></row>'
+        ),
+        "xl/worksheets/sheet2.xml": NOT_XML,
+    }
+    first_two = len(str(parts["xl/workbook.xml"]).encode()) + len(
+        str(parts["xl/worksheets/sheet1.xml"]).encode()
+    )
+
+    monkeypatch.setattr(material_formats, "MAX_PARSED", first_two + len(NOT_XML) - 1)
+    with pytest.raises(UnreadableFileError) as refused:
+        read("a.xlsx", parts)
+    monkeypatch.setattr(material_formats, "MAX_PARSED", first_two + len(NOT_XML))
+    with pytest.raises(UnreadableFileError) as parsed:
+        read("a.xlsx", parts)
+
+    assert refused.value.reason == "too_long", "neither sheet is over the limit alone"
+    assert parsed.value.reason == "damaged"
+
+
+def test_a_part_that_is_not_read_does_not_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    parts: dict[str, str | bytes] = {
+        "word/document.xml": word("그림이 큰 문서입니다."),
+        "word/media/image1.png": b"\x89PNG" + bytes(4096),
+    }
+    monkeypatch.setattr(
+        material_formats, "MAX_PARSED", len(str(parts["word/document.xml"]).encode())
+    )
+
+    found = read("a.docx", parts)
+
+    assert found.text == "그림이 큰 문서입니다." and found.not_read == ("pictures",)
+
+
+def test_a_part_read_twice_counts_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    parts: dict[str, str | bytes] = {"word/document.xml": word("한 번만 셉니다.")}
+    data = package(parts)
+    monkeypatch.setattr(
+        material_formats, "MAX_PARSED", len(str(parts["word/document.xml"]).encode())
+    )
+    opened = material_formats._Package(data)
+
+    assert opened.read("word/document.xml") == opened.read("word/document.xml")
+
+
 def test_the_list_of_formats_is_what_the_readers_take() -> None:
     assert SUFFIXES == (".txt", ".md", ".csv", ".docx", ".xlsx", ".pptx", ".pdf", ".xls", ".ppt")

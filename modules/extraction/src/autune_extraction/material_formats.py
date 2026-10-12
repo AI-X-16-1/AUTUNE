@@ -73,6 +73,15 @@ MAX_PDF_PAGES = 300
 MAX_UNPACKED = 80 * 1024 * 1024
 """The most a zipped file may unpack to: a small archive can unpack huge."""
 
+MAX_PARSED = 16 * 1024 * 1024
+"""The most the parts read from a zipped file may hold between them, unpacked.
+A part is parsed whole, and its tree takes many times its size in memory --
+some 9 to 25 times, measured on made-up files -- while a file of a few
+hundred kilobytes can unpack to tens of megabytes of XML. Pictures and other
+parts that are not read do not count. Text of the length that is kept is a few
+megabytes of such parts; a file with more is refused as ``too_long`` before
+the part that passes the limit is unpacked."""
+
 FOOT_LINES = 2
 """How many lines from the bottom of a PDF page are its footer: a marking and
 a page number under it."""
@@ -191,11 +200,15 @@ class _Package:
         self.names = sorted(self.archive.namelist(), key=_natural)
         if sum(info.file_size for info in self.archive.infolist()) > MAX_UNPACKED:
             raise RefusedError("too_large")
+        self.parsed: dict[str, int] = {}  # each part read, and its unpacked size
 
     def matching(self, pattern: str) -> list[str]:
         return [name for name in self.names if re.fullmatch(pattern, name)]
 
     def read(self, name: str) -> bytes:
+        self.parsed[name] = self.archive.getinfo(name).file_size
+        if sum(self.parsed.values()) > MAX_PARSED:
+            raise RefusedError("too_long")
         part = self.archive.read(name)
         # These formats declare no entities, and a part that does is refused
         # before a parser expands them. The two words are looked for as
