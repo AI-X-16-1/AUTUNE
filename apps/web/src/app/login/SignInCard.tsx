@@ -202,7 +202,7 @@ export function SignInCard({ redirectTo = "/" }: { redirectTo?: string }) {
         className="mt-4 text-ink-muted"
         style={{ fontSize: "var(--text-metaSmall)", lineHeight: "var(--text-metaSmall-leading)" }}
       >
-        계속하면{" "}
+        로그인한 뒤{" "}
         <Link href="/legal#terms" className="underline underline-offset-2">
           이용약관
         </Link>
@@ -210,7 +210,7 @@ export function SignInCard({ redirectTo = "/" }: { redirectTo?: string }) {
         <Link href="/legal#privacy" className="underline underline-offset-2">
           개인정보 처리방침
         </Link>
-        에 동의하는 것입니다. 녹음 원본은 서버에 보관되지 않습니다.
+        을 열어 보고 동의하는 단계가 있습니다. 녹음 원본은 서버에 보관되지 않습니다.
       </p>
     </div>
   );
