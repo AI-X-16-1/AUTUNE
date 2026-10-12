@@ -284,6 +284,25 @@ agreement, and sync the result to Notion and Jira.
    keeps it if there is exactly one (review of #754). A team without Notion
    connected is skipped. Not
    part of the extraction run: nothing the model drafted is confirmed yet (#246).
+   **The 내용 property.** The item and decision databases carry a text
+   property named 내용, for the sentence once a page's title is the short
+   title. A database the setup makes has it from its schema. One made before
+   it existed is given it once: at the team's next setup, or else at its next
+   sync or fill, which reads the database's properties and adds 내용 where it
+   is missing (`notion_setup.ensure_content`) -- so a team that never opens the
+   setup screen again gets it too, with no beat process. A property a person
+   made under that name with another type is left as it is. The answer is
+   kept per database on `ext_notion_targets`, and the name map a sync is given
+   names the property (`content`) only for a database recorded as having it
+   (`notion_setup.property_names`): Notion refuses a whole page for one
+   property its database lacks. Refused, the team's pages keep the shape they
+   had and Notion is not asked again until a setup; unanswered (busy, down),
+   nothing is recorded and the next sync asks. It never fails the sync. A
+   team whose own name map is in its connection's config keeps that map whole,
+   as before -- it names `content` itself or its pages go without -- and a
+   team on the local dev page, which has no `ext_notion_targets` row, is not
+   asked. What is sent is the database id and the fixed name; of Notion's
+   answer only that one property's type is read, and nothing of it is kept.
    A decision goes the same way when a person confirms it (or adds it), to the
    team's decision database, in the wording they confirmed
    (`ext_decision_refs`). A decision that stops being confirmed after that —
@@ -402,7 +421,7 @@ confirmation DM's quotation is #586's second part.
 | `ext_calendar_polls` | When each person's calendar was last read back |
 | `ext_calendar_cleanup` | Due-date events still to take off a person's calendar after their meeting expired; queued by the meeting hook, removed by `drain_calendar_cleanup` with the owner's grant (#588). No meeting key; `user_id` cascades |
 | `ext_external_cleanup` | A deleted item's Notion page or Jira issue the deleting request could not trash or close: team, system, page id or issue key, and Jira's site. Ids only. Retried by `drain_external_cleanup` every ten minutes; a team not connected now is kept, a transient failure counted up to five, a refusal or another site's key dropped (#692). `team_id` cascades |
-| `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428) |
+| `ext_notion_targets` | The page and three databases a team's Notion sync writes to, one row per team (#428). Also whether the item and the decision database have the 내용 property, and when Notion last answered that for both (`content_asked_at`; empty means not asked yet, and the next sync asks) |
 | `ext_confirmations` | Every ambiguous agreement, the DM once sent, and the response |
 | `ext_sync_failures` | That an item's latest copy to Notion, Jira or a calendar failed: the system, one of four kinds (`privacy`, `reconnect`, `unreachable`, `rejected`) and the time (#680). Never the outside service's message, never what was being sent. Removed by the next copy that goes through; goes with the item |
 | `ext_sync_retries` | When "다시 시도" was last pressed for an item; a second press within 30 seconds is refused (429) rather than running Notion, Jira and the calendar again. One time per item; goes with the item |

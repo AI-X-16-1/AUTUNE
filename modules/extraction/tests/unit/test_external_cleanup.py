@@ -25,7 +25,12 @@ from autune_core.integrations_config import IntegrationConfig
 from autune_core.oauth.atlassian import JiraReconnectRequiredError
 from autune_extraction import tasks
 from autune_extraction.jira_sync import DELETED_NOTE
-from autune_extraction.models import ExtActionItem, ExtExternalCleanup, ExtExternalRef
+from autune_extraction.models import (
+    ExtActionItem,
+    ExtExternalCleanup,
+    ExtExternalRef,
+    ExtNotionTarget,
+)
 from autune_integrations import PermanentIntegrationError, TransientIntegrationError
 
 from .conftest import CLOSE_JIRA_ISSUE, TRASH_NOTION_PAGE
@@ -46,6 +51,8 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Iterator[Session]:
         ExtActionItem.__table__,
         ExtExternalRef.__table__,
         ExtExternalCleanup.__table__,
+        # A retire is given the name map in force, which the team's row decides.
+        ExtNotionTarget.__table__,
     ]
     Base.metadata.create_all(engine, tables=tables)
     with Session(engine) as s:
