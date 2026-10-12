@@ -28,15 +28,20 @@ class FakeEmbedder:
     """
 
     model_version = "fake"
-    _DIM = 64
+
+    def __init__(self, dim: int = 64) -> None:
+        # 64 for the resolver's check, which compares two vectors it made
+        # itself; a material's vectors are stored in a fixed-width column and
+        # the fake has to fill it (``models.MATERIAL_EMBEDDING_DIM``).
+        self._dim = dim
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [self._vector(text) for text in texts]
 
     def _vector(self, text: str) -> list[float]:
-        vector = [0.0] * self._DIM
+        vector = [0.0] * self._dim
         for ch in text:
-            vector[ord(ch) % self._DIM] += 1.0
+            vector[ord(ch) % self._dim] += 1.0
         norm = sum(v * v for v in vector) ** 0.5 or 1.0
         return [v / norm for v in vector]
 
