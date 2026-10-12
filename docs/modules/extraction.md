@@ -81,14 +81,22 @@ agreement, and sync the result to Notion and Jira.
    invents (a number that is no line, the commitment itself) is dropped.
    With `classifier_impl=llm` the sentence comes earlier and from the classifier
    (2026-10-06): its answer carries, beside the label, one line for each
-   commitment and decision, in the request that read the line. A line that
+   commitment and decision, in the request that read the line. The
+   instructions ask for it to start from what is to be done, without the one
+   who spoke as its subject (2026-10-09): the request carries no speaker, so a
+   subject the model writes names nobody, and who promised is the row's owner.
+   A line that
    passes the checks (`llm.usable_summary`: one line; every `[사람N]` put back
    as the name it stood for; no number or name that is not in the line or the
-   three said before it; no name mark left over, and none of 이거, 그거, 저거,
+   three said before it; no name mark left over; neither of the request's own
+   line markers, `[대상]` and `[문맥]` -- they say which lines to judge and are
+   no part of what anybody said, and a model wrote `[대상]` in place of what the
+   line was about (measured 2026-10-09); and none of 이거, 그거, 저거,
    이것, 그것, 저것 or their run-together forms (이건, 그걸, 그게, ...) -- a word
    that only points, which the instructions ask to be
-   replaced) is the description, and the resolver is asked only
-   about a commitment that has none. So a summary that kept such a word costs
+   replaced) is the description, and the resolver is asked about a
+   commitment only when it has none. So a summary that kept such a word or
+   marker costs
    that row one resolver request, and the row shows what the resolver filled
    in or, when it could not tell, the line as it was said. The classifier does not say what it
    drew on, so that is read off the line: of the three lines with text said
