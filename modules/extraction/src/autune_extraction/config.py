@@ -475,7 +475,8 @@ class ExtractionSettings(BaseSettings):
     brought about two materials that do not answer it; small talk found
     nothing (0 of 20), and 8 of 30 workplace questions on a subject no
     material covers still found one. At 0.4, the default before, half of the
-    materials passed for any question.
+    materials passed for a question one of them answers, and a quarter for
+    a question none does.
 
     **What it does not do.** A question on the subject of a material that
     does not hold the answer scores like one the material answers (16 of 20
