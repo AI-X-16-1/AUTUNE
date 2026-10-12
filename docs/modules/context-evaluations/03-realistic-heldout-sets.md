@@ -81,7 +81,7 @@ reads them can be measured against the current behaviour on the same cases.
 
 | Category | Cases | What it holds |
 | --- | --- | --- |
-| `terse_unchanged` / `terse_modified` / `terse_reversed` | 5 / 6 / 5 | the statement leaves out what it is about ("B안으로 확정한다", "2주 미루기로 했다", "없던 걸로 한다"); only the context says it |
+| `terse_unchanged` / `terse_modified` / `terse_reversed` | 5 / 6 / 5 | the statement leaves out what it is about ("2번 시안으로 정한다", "2주 미루기로 했다", "없던 걸로 한다"); only the context says it |
 | `terse_new` | 6 | the same kind of statement, but the context is about something else: reading it must not invent a thread |
 | `unchanged` / `modified` / `reversed` | 6 / 8 / 8 | full statements, as in earlier sets |
 | `new_same_domain` | 6 | full statements, a different decision in the same area |
