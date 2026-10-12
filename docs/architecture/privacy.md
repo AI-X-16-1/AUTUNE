@@ -152,12 +152,15 @@ each piece, `ext_material_alarms`, the team's keeping setting
 materials by a question a member types, the delete of an uploaded material
 and the two hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
-file, what is kept of it, that it is searched, for how long it is kept, and
-who deletes it. Three things this subsection describes are not on `main`
+file, what is kept of it, for how long, and who deletes it. It does not say
+yet that the kept text is searched: those sentences arrive with the
+approvers' alert. Three things this subsection describes are not on `main`
 yet. The approvers' alert in the agent layer (#1201): until it is in, a
 refused file leaves its `ext_material_alarms` row and nobody but the member
-who brought it is told. The switch (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is
-off by default and is not turned on anywhere before the alert is in. The
+who brought it is told, and the notice does not name the search. The switch
+(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned on
+anywhere before the alert is in; while it is off the search route answers
+404, so no search runs ahead of its notice. The
 embedder on our own inference server: on `main` the vectors are made by
 whichever `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL` names -- `fake` by
 default, which is no model at all, or `local`, KURE-v1 loaded in the API's
