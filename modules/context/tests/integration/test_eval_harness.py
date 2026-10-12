@@ -104,7 +104,9 @@ def test_a_lineage_case_with_context_cites_it_as_source_utterances(
             )
         ],
         current_meeting=LineageMeeting(
-            days_ago=0, decision="B안으로 확정한다.", context=["B안은 두 개예요.", "B안으로 하죠."]
+            days_ago=0,
+            decision="2번 시안으로 정한다.",
+            context=["2번 시안은 두 개예요.", "2번 시안으로 하죠."],
         ),
         expected_thread_source=0,
         expected_change_type="modified",

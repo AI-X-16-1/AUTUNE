@@ -4,7 +4,7 @@
 **Module:** Meeting Context Engine (`autune_context`) · **Status:** sets frozen, nothing
 run on them yet
 
-Two real meetings, run through the engine in `classic` mode, showed five weaknesses
+Two development meetings, run through the engine in `classic` mode, showed five weaknesses
 that the existing evaluation sets do not catch. The sets are short, synthetic and mostly
 one topic per meeting. This document describes two new held-out sets written to measure
 fixes for those weaknesses. It also covers the harness changes they need and the rules
@@ -12,32 +12,33 @@ for using them. Results go here as each fix is measured.
 
 ## 1. What the two meetings showed
 
-A team's first and second meeting on the same project were fed through module A's own
+A team's first and second meeting on the same project were run through module A's
 masking, persistence and payload code (`TranscriptReady`), then through the engine.
 Every topic of the second meeting was linked to the first, which is right: it is a
-follow-up. But the reasons were weak:
+follow-up. But the reasons were weak. Nothing said in those meetings is quoted here, and
+no score from them is reported; the examples below are made up to show each weakness.
 
-1. **Labels.** About a third of the segment labels were a person's name, an interjection
-   or a filler noun. A label is the first noun phrase of the segment, and in speech that
-   is often a name ("<name> 님, …") or "다행".
-2. **Openings and closings.** The closing of each meeting ("다음 회의는 … 같은 시간입니다")
-   became a segment of its own. The two closings linked each other with the highest score
-   of the run (re-ranker 1.000).
-3. **The re-ranker is near zero on real segments.** Seven of eight asserted links had a
-   re-rank score of 0.000–0.012 and were asserted on dense similarity alone. The
-   cross-encoder answers "does this passage answer this query". A status update is not an
-   answer to the plan it follows, so the score stays near zero. A probe with the same
-   model gave 1.000 for a question and 0.998 for a short topic phrase against the same
-   past passage, and 0.000 for the current segment.
+1. **Labels.** Many segment labels were a person's name, an interjection or a filler
+   noun. A label is the first noun phrase of the segment, and in speech that is often a
+   name ("<name> 님, …") or a word like "그나마".
+2. **Openings and closings.** Each meeting's closing (for example "오늘은 여기까지
+   하고 목요일에 뵙겠습니다") became a segment of its own, and the two closings linked
+   each other more strongly than any two real topics did.
+3. **The re-ranker is near zero on real segments.** Most asserted links had a re-rank
+   score close to zero and were asserted on dense similarity alone. The cross-encoder
+   answers "does this passage answer this query". A status update ("예약 알림 문자는
+   테스트 발송까지 끝났습니다") is not an answer to the plan it follows ("예약 알림 문자를
+   다음 주까지 테스트 발송한다"), so the score stays near zero. A question or a short
+   topic phrase against the same past passage scores high with the same model.
 4. **Permissive similarity.** Two long meetings of one team sit well above
    `link_similarity_threshold` (0.74) on almost any pair of segments. With a single past
    meeting this could not show a false link, but it cannot separate topics either.
-5. **Terse decisions do not thread.** "온보딩은 B안으로 확정한다" did not join the earlier
-   onboarding decision (similarity 0.616 against the 0.65 threshold). What "B안" means is
-   in the utterances the decision was settled in, not in the statement.
+5. **Terse decisions do not thread.** A short statement such as "2번 시안으로 정한다"
+   does not join the earlier decision it settles, because what "2번 시안" means is in the
+   utterances the decision was settled in, not in the statement.
 
 These two meetings are the development examples for the fixes. Neither held-out set
-contains them or a paraphrase of them (section 4).
+contains what was said in them or a paraphrase of it (section 4).
 
 ## 2. `topic_linking_heldout_v4.json`: series of real-length meetings
 
@@ -98,14 +99,17 @@ reading the context breaks.
 
   | File | `git hash-object` |
   | --- | --- |
-  | `topic_linking/fixtures/topic_linking_heldout_v4.json` | `89ef975975926b0836d382430317d5d8ecf31a4e` |
-  | `decision_lineage/fixtures/decision_lineage_heldout_v6.json` | `d5460c76ae920106e4abb625e6829e2d9d4e4a93` |
+  | `topic_linking/fixtures/topic_linking_heldout_v4.json` | `97de44a08a197be1594d2e12e6ff57ad95d5494d` |
+  | `decision_lineage/fixtures/decision_lineage_heldout_v6.json` | `438ea5b11f728a94f03bdae7af52d986c5665618` |
 
 - **No overlap.** A script compared every statement, context line and tagged line with
   every earlier fixture, and with the two development meetings, using character bigrams.
   It flagged three near-copies of earlier lineage sets, which were rewritten. A first
   draft had one series and ten lineage cases built on the development meetings; they were
-  rewritten in other domains before freezing.
+  rewritten in other domains before freezing. In review two more kinds of line were found
+  close to the development meetings: one terse decision in v6 and the closing formula
+  three teams of v4 used. Both were reworded, still before any run, and the sets were
+  frozen again at the hashes above.
 - **No teammate names.** The names in the text are made up.
 - **Not independent.** The engine's author wrote both sets, knowing the five problems
   above. Owner changes, cue words and openings appear because the author chose them, not

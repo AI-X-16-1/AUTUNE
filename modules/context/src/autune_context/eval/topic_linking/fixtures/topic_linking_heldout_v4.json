@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "_about": "Held-out v4 (2026-10-12). Written before any model was run on it, and frozen: no rule, prompt or threshold may be chosen by looking at its failures. Unlike v1-v3 it is a set of series (file version 2): six teams, seven meetings each, oldest first, every meeting from the second on scored with all earlier ones as its history (36 scored meetings, 126 meeting pairs, 44 of them expected links). Meetings are 8-18 utterances in a spoken register, two topics each (8 of 42 have one), with the openings, closings and small talk real meetings have -- near-identical from one meeting of a team to the next -- tagged null. Names of the people present occur in the text. What a meeting should link to is derived from the block tags: the earlier meetings that share a topic with it. In every team two meetings share no topic with any earlier one (12 of the 36 scored), and words of one topic appear inside another's blocks (a delivery query in a chatbot block, a server in a safety check) as they do in speech. Written by the engine's author after reading where classic fails on two real meetings (labels, openings and closings, the re-ranker near zero, permissive similarity); not independently labelled.",
+  "_about": "Held-out v4 (2026-10-12). Written before any model was run on it, and frozen: no rule, prompt or threshold may be chosen by looking at its failures. Unlike v1-v3 it is a set of series (file version 2): six teams, seven meetings each, oldest first, every meeting from the second on scored with all earlier ones as its history (36 scored meetings, 126 meeting pairs, 44 of them expected links). Meetings are 8-18 utterances in a spoken register, two topics each (8 of 42 have one), with the openings, closings and small talk real meetings have -- near-identical from one meeting of a team to the next -- tagged null. Names of the people present occur in the text. What a meeting should link to is derived from the block tags: the earlier meetings that share a topic with it. In every team two meetings share no topic with any earlier one (12 of the 36 scored), and words of one topic appear inside another's blocks (a delivery query in a chatbot block, a server in a safety check) as they do in speech. Written by the engine's author after reading where classic fails on two development meetings (labels, openings and closings, the re-ranker near zero, permissive similarity); not independently labelled. Reworded on 2026-10-12, still before any run, so that no line comes close to the development meetings (review of #1258).",
   "series": [
     {
       "id": "s1_game",
@@ -65,7 +65,7 @@
               "topic": null,
               "lines": [
                 "좋습니다. 그 외에 공유할 거 있으신 분?",
-                "없으면 다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "없으면 오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -108,7 +108,7 @@
               "topic": null,
               "lines": [
                 "네, 오늘은 여기까지 할게요.",
-                "다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -156,7 +156,7 @@
             {
               "topic": null,
               "lines": [
-                "다른 거 없으시죠? 다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "다른 거 없으시죠? 오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -187,7 +187,7 @@
               "topic": null,
               "lines": [
                 "그럼 계주로 신청하겠습니다.",
-                "다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -227,7 +227,7 @@
             {
               "topic": null,
               "lines": [
-                "좋습니다. 다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "좋습니다. 오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -266,7 +266,7 @@
             {
               "topic": null,
               "lines": [
-                "다른 거 없으시죠? 다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "다른 거 없으시죠? 오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -306,7 +306,7 @@
               "topic": null,
               "lines": [
                 "네, 오늘은 여기까지 할게요.",
-                "다음 회의는 다음 주 같은 시간입니다. 수고하셨습니다."
+                "오늘은 여기까지 하고 목요일에 뵙겠습니다. 수고하셨습니다."
               ]
             }
           ]
@@ -380,7 +380,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -421,7 +421,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -459,7 +459,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -498,7 +498,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -537,7 +537,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -576,7 +576,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -613,7 +613,7 @@
               "topic": null,
               "lines": [
                 "다른 안건 없으시면 마치겠습니다.",
-                "다음 운영 회의는 2주 뒤 같은 시간입니다. 고생하셨습니다."
+                "운영 회의는 2주 뒤 월요일 오전에 다시 모입니다. 고생하셨습니다."
               ]
             }
           ]
@@ -1261,7 +1261,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]
@@ -1299,7 +1299,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]
@@ -1337,7 +1337,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]
@@ -1381,7 +1381,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]
@@ -1409,7 +1409,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]
@@ -1446,7 +1446,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]
@@ -1484,7 +1484,7 @@
             {
               "topic": null,
               "lines": [
-                "다음 미팅은 다음 주 화요일 같은 시간이에요. 다들 수고했어요."
+                "화요일 오후 세 시에 다시 봬요. 다들 수고했어요."
               ]
             }
           ]

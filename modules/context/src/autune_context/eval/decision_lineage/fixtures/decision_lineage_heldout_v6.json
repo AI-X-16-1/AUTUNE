@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_about": "Held-out v6 (2026-10-12). Written before any model was run on it, and frozen: no rule, prompt or threshold may be chosen by looking at its failures. Every meeting carries `context`, the utterances its decision was settled in, which the runner stores and the decision cites as `source_utterance_ids` -- so a change that reads them can be measured, while the code as it stands ignores them. 22 of 60 cases are `terse_*`: the statement B would write leaves out what it is about (\"B안으로 확정한다\", \"2주 미루기로 했다\", \"없던 걸로 한다\") and only the context says it; `terse_new` pairs such a statement with a past decision it does not continue, so reading the context must not invent a thread. The other 38 have full statements (unchanged, modified, reversed, new_same_domain, distractor, chain), to catch what reading the context would break. Labels follow dataset.py. No statement repeats one in an earlier set. Written by the engine's author after reading a real meeting where \"온보딩은 B안으로 확정한다\" did not thread; the cases built on that meeting were rewritten in other domains. Not independently labelled.",
+  "_about": "Held-out v6 (2026-10-12). Written before any model was run on it, and frozen: no rule, prompt or threshold may be chosen by looking at its failures. Every meeting carries `context`, the utterances its decision was settled in, which the runner stores and the decision cites as `source_utterance_ids` -- so a change that reads them can be measured, while the code as it stands ignores them. 22 of 60 cases are `terse_*`: the statement B would write leaves out what it is about (\"2번 시안으로 정한다\", \"2주 미루기로 했다\", \"없던 걸로 한다\") and only the context says it; `terse_new` pairs such a statement with a past decision it does not continue, so reading the context must not invent a thread. The other 38 have full statements (unchanged, modified, reversed, new_same_domain, distractor, chain), to catch what reading the context would break. Labels follow dataset.py. No statement repeats one in an earlier set. Written by the engine's author after a development meeting in which a terse decision did not thread; the cases first drafted from that meeting were rewritten in other domains. Not independently labelled. Reworded on 2026-10-12, still before any run, so that no line comes close to the development meetings (review of #1258).",
   "cases": [
     {
       "id": "h6_tu_messenger",
@@ -141,11 +141,11 @@
       ],
       "current_meeting": {
         "days_ago": 0,
-        "decision": "B안으로 확정한다.",
+        "decision": "2번 시안으로 정한다.",
         "context": [
-          "배너 시안 두 개 중에 B안 클릭률이 높았어요.",
-          "B안은 세 개가 아니라 두 개만 순환하는 안이에요.",
-          "그럼 홈 화면 배너는 두 개 순환하는 B안으로 확정할게요."
+          "배너 시안 두 개 중에 2번 시안 클릭률이 높았어요.",
+          "2번 시안은 세 개가 아니라 두 개만 순환하는 안이에요.",
+          "그럼 홈 화면 배너는 두 개 순환하는 2번 시안으로 정할게요."
         ]
       },
       "expected_thread_source": 0,
@@ -1259,7 +1259,7 @@
       ],
       "current_meeting": {
         "days_ago": 0,
-        "decision": "B안으로 최종 확정한다.",
+        "decision": "B안을 최종안으로 한다.",
         "context": [
           "회원 등급 개편안 중에 B안으로 가죠.",
           "B안은 네 단계를 세 단계로 줄인 안이에요."
