@@ -3,10 +3,11 @@
  * policy, as data -- in the form such documents take: articles (조), numbered
  * paragraphs (①), items, and a supplementary provision (부칙).
  *
- * DRAFT, not reviewed by a lawyer. Every `blank(...)` is a value only the
- * operator can give -- its name, the hosting provider, the privacy officer,
- * the security contact, the effective date. The page marks each as "확정 전".
- * Do not publish while one is left.
+ * Not reviewed by a lawyer. The values only the operator can give -- its
+ * name, the hosting, the privacy officer, the security contact, the effective
+ * date -- were filled on 2026-10-11. `blank(...)` stays for a value a later
+ * change cannot fill yet: the page marks one as "확정 전", and nothing is
+ * published while one is left.
  *
  * The wording follows the article-form text the team keeps as a document
  * (2026-10-02). That text also makes choices that are assumptions until a
@@ -229,7 +230,7 @@ export interface LegalDocument {
   sections: readonly Section[];
 }
 
-const blank = (label: string, proposed?: string): Blank => ({
+export const blank = (label: string, proposed?: string): Blank => ({
   blank: label,
   proposed,
 });
@@ -245,10 +246,15 @@ const table = (head: string[], ...rows: Line[][]): Block => ({
   rows,
 });
 
-const OPERATOR = blank("운영자 명칭");
-const HOSTING = blank("호스팅 사업자");
-const OFFICER_EMAIL = blank("전자우편 주소");
-const EFFECTIVE = blank("시행일");
+// Filled by module B's owner on 2026-10-11. The service runs on a server the
+// team operates; Cloudflare, Inc. carries the connection to it (a tunnel), so
+// it is the one processor of the hosting row and is listed under 제7조.
+const OPERATOR = "AI-X-16-1 팀";
+const RELAY = "Cloudflare, Inc.";
+const OFFICER_NAME = "강민구";
+const OFFICER_TITLE = "팀원";
+const OFFICER_EMAIL = "kjfcvx12@gmail.com";
+const EFFECTIVE = "2026년 10월 12일";
 
 /**
  * Shown above the documents. Their text cannot be selected on the page (the
@@ -362,9 +368,9 @@ const PRIVACY: LegalDocument = {
           [
             "자동 생성 정보",
             [
-              "쿠키(세션 식별자). 접속 일시 및 접속 IP 주소는 서비스의 데이터베이스에 저장하지 않으나, 서버 운영 환경(",
-              HOSTING,
-              ")의 접속 기록에 남을 수 있습니다",
+              "쿠키(세션 식별자). 접속 일시 및 접속 IP 주소는 서비스의 데이터베이스에 저장하지 않으나, 회사가 운영하는 서버와 접속을 중계하는 ",
+              RELAY,
+              "의 접속 기록에 남을 수 있습니다",
             ],
             "서비스 이용 과정에서 자동 생성",
           ],
@@ -539,9 +545,9 @@ const PRIVACY: LegalDocument = {
         table(
           ["수탁자", "위탁하는 업무의 내용", "위탁하는 개인정보의 항목"],
           [
-            HOSTING,
-            "서비스 제공을 위한 서버 운영 및 데이터 보관",
-            "서비스가 보관하는 자료 전부. 음성 녹음은 전사하는 동안에만 처리되며 보관되지 않습니다.",
+            RELAY,
+            "서비스 접속의 중계. 서비스가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며, 그 보관은 위탁하지 않습니다.",
+            "이용자와 서비스 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시. 통신 내용은 전송하는 동안에만 처리되며 보관되지 않습니다. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있습니다.",
           ],
           [
             "Google LLC (Gemini API)",
@@ -549,7 +555,7 @@ const PRIVACY: LegalDocument = {
             "가림 처리된 회의 문장(해당 발화와 그 전후 문장). 모호한 동의 발화의 판정의 경우 분류에서 모호하다고 판단된 발화에 한합니다. 회의 요약 작성의 경우 분석에 동의한 화자의 가림 처리된 회의 문장 전체와 그 회의에서 추출된 결정 사항 및 할 일. 짧은 제목 작성의 경우 서비스가 회의에서 추출하여 작성한 할 일 및 결정 사항의 문장에 한하며, 이용자가 직접 입력하거나 수정한 문장은 전송하지 않습니다",
           ],
           [
-            blank("회의 간 연결 판단에 쓰는 언어 모델 제공자"),
+            "Google LLC (Gemini API)",
             "언어 모델을 이용한 회의 간 연결 판단",
             "가림 처리된 주제 발췌문 및 결정 사항의 문장(두 회의의 것을 한 쌍으로)",
           ],
@@ -600,6 +606,14 @@ const PRIVACY: LegalDocument = {
             "제5조 및 제6조에 기재한 항목",
             "본인 인증, 일정 등록, 팀 초대 메일의 발송, 언어 모델을 이용한 분석 및 AI 비서 응답 생성",
             "제5조 및 제6조에 기재한 기간",
+          ],
+          [
+            RELAY,
+            "미국 및 Cloudflare 네트워크가 있는 국가",
+            "이용자가 서비스에 접속하는 때마다 정보통신망을 통하여 전송",
+            "이용자와 서비스 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시",
+            "서비스 접속의 중계",
+            "통신 내용은 전송하는 동안에만 처리하며 보관하지 않음. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있음",
           ],
           [
             "Slack Technologies, LLC",
@@ -763,8 +777,8 @@ const PRIVACY: LegalDocument = {
         ),
         table(
           ["구분", "내용"],
-          ["성명", blank("성명")],
-          ["직책", blank("직책")],
+          ["성명", OFFICER_NAME],
+          ["직책", OFFICER_TITLE],
           ["연락처", OFFICER_EMAIL],
         ),
         p(
@@ -1231,7 +1245,7 @@ const SECURITY: LegalDocument = {
       blocks: [
         p([
           "① 서비스의 보안 취약점을 발견한 자는 다음 연락처로 신고할 수 있습니다: ",
-          blank("보안 문의 전자우편 주소"),
+          OFFICER_EMAIL,
         ]),
         p(
           "② 회사는 신고를 접수한 날부터 3영업일 이내에 접수 사실을 회신합니다.",
