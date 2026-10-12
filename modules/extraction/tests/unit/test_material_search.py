@@ -121,7 +121,7 @@ def session() -> Iterator[Session]:
 def upload(session: Session, body: str, *, team: str = TEAM, title: str = "자료") -> ExtMaterial:
     return materials.store_upload(
         session, team, title=title, file_name="plan.txt", data=body.encode()
-    )
+    ).row
 
 
 # --- vectors ----------------------------------------------------------------------
