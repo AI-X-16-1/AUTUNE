@@ -29,7 +29,14 @@ from __future__ import annotations
 
 from autune_core.errors import ValidationError
 
-from .material_formats import READERS, FileText, Reason, RefusedError, top_of
+from .material_formats import (
+    MAX_TEXT_CHARS,
+    READERS,
+    FileText,
+    Reason,
+    RefusedError,
+    top_of,
+)
 
 TEXT_SUFFIXES = (".txt", ".md", ".csv")
 
@@ -38,11 +45,6 @@ SUFFIXES = (*TEXT_SUFFIXES, *READERS)
 
 MAX_BYTES = 10 * 1024 * 1024
 """Ten megabytes a file (#817; ``docs/architecture/privacy.md``)."""
-
-MAX_TEXT_CHARS = 300_000
-"""The most text a file may hold once read, what is read only for the marking
-check counted with it. The masker has no limit of its own and was timed up to
-this (#1199); a longer text is refused, not cut."""
 
 
 class UnreadableFileError(ValidationError):
