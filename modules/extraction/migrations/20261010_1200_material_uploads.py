@@ -19,7 +19,7 @@ Owner: 강민구. Apply with `alembic upgrade heads` (plural).
 See docs/engineering/migrations.md.
 
 Revision ID: 5d1a7c3e9b24
-Revises: 9e2b6d4f8a13
+Revises: 3f8d1a6c5b27
 Create Date: 2026-10-10 12:00:00.000000
 """
 
@@ -31,7 +31,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "5d1a7c3e9b24"
-down_revision: str | None = "9e2b6d4f8a13"  # extraction: a short title beside the sentence
+down_revision: str | None = "3f8d1a6c5b27"  # extraction: the Notion content property
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

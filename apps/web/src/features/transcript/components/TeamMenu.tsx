@@ -121,6 +121,9 @@ export function TeamMenu() {
         aria-haspopup="dialog"
         aria-expanded={making}
         aria-label="새 팀 만들기"
+        // A bare "+" beside "팀" read as either "add a team" or "choose one"
+        // (#1176); the tooltip says which.
+        title="새 팀 만들기"
         onClick={() => {
           setAt(null);
           setMaking((open) => !open);

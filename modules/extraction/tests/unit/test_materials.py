@@ -130,6 +130,7 @@ def test_a_row_names_no_person() -> None:
         "drive_kind",
         "embedding_model",
         "created_at",
+        "expires_at",
     }
 
 

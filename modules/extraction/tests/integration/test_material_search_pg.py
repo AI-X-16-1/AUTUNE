@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from autune_core import Team, get_settings
 from autune_extraction import materials
 from autune_extraction.config import get_settings as extraction_settings
 from autune_extraction.material_search import search_materials
-from autune_extraction.models import ExtMaterialChunk
+from autune_extraction.models import ExtMaterial, ExtMaterialChunk
 
 PHONE = "010-2345-6789"
 LAUNCH = "출시 일정은 11월 둘째 주로 잡는다. 출시 전 점검은 QA 팀이 맡는다.\n"
@@ -109,6 +110,34 @@ def test_a_deleted_material_and_a_deleted_team_leave_nothing_to_find(
     assert search_materials(db_session, team_id, "출시").hits == []
 
 
+def test_an_upload_is_left_out_from_the_moment_of_its_day(
+    db_session: Session, team_id: str
+) -> None:
+    """On real ``timestamptz`` values, and at the moment the hourly task
+    starts to take the upload -- not a moment later."""
+    past = upload(db_session, team_id, LAUNCH, "지난 자료")
+    live = upload(db_session, team_id, LAUNCH, "남은 자료")
+    day = db_session.get_one(ExtMaterial, past).expires_at
+    assert day is not None and day.tzinfo is not None
+    db_session.get_one(ExtMaterial, live).expires_at = day + timedelta(days=1)
+    db_session.flush()
+
+    def found(now: datetime) -> set[str]:
+        answer = search_materials(db_session, team_id, "출시", now=now)
+        return {hit.material_id for hit in answer.hits}
+
+    assert found(day - timedelta(microseconds=1)) == {past, live}
+    assert found(day) == {live}
+    assert materials.forget_expired_uploads(db_session, now=day) == 1
+    assert set(db_session.scalars(sa.select(ExtMaterial.id))) == {live}
+
+    # A team that keeps its uploads until deleted still finds one past its day.
+    materials.set_keep_until_deleted(db_session, team_id, True)
+    assert found(day + timedelta(days=2)) == {live}
+    materials.set_keep_until_deleted(db_session, team_id, False)
+    assert found(day + timedelta(days=2)) == set()
+
+
 def test_the_assistants_run_keeps_the_tools_name_and_ids_and_not_the_question(
     db_session: Session, team_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -163,7 +192,7 @@ def test_the_vector_revision_comes_off_and_goes_back_on(db_engine: sa.Engine) ->
     root = repo_root()
     assert "embedding" in column_names("ext_material_chunks")
 
-    subprocess.run([*ALEMBIC, "downgrade", "3b8f1d6a2c47"], check=True, cwd=root)
+    subprocess.run([*ALEMBIC, "downgrade", "c6e1f4a9d2b8"], check=True, cwd=root)
     assert "embedding" not in column_names("ext_material_chunks")
     assert "embedding_model" not in column_names("ext_materials")
     assert "text" in column_names("ext_material_chunks")

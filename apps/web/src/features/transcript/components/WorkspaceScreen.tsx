@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button, ChipToggle } from "@/shared/ui";
 
 import { createTeam } from "../api";
+import { readableError } from "../readableError";
 import { TeamInvite } from "./TeamInvite";
 
 /**
@@ -66,7 +67,7 @@ export function WorkspaceScreen() {
       const team = await createTeam({ name: trimmed, ...(chosenRole ? { role: chosenRole } : {}) });
       setCreated({ teamId: team.team_id, name: team.name });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "워크스페이스를 만들지 못했습니다.");
+      setError(readableError(caught, "워크스페이스를 만들지 못했습니다."));
       setSubmitting(false);
     }
   };

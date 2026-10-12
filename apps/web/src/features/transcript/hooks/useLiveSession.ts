@@ -7,6 +7,7 @@ import type { Utterance } from "@autune/contracts";
 import { getLiveTicket, getToken, liveIsCrossOrigin, liveSocketUrl, uploadRecording } from "../api";
 import { recordingToSave, saveRecordingFile, serverHasRecording } from "../recordingFile";
 import type { LiveRow } from "../types";
+import { readableError } from "../readableError";
 
 export type LivePhase =
   | "idle"
@@ -169,7 +170,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
         setPhase("done");
         return;
       }
-      setError(caught instanceof Error ? caught.message : "업로드에 실패했습니다.");
+      setError(readableError(caught, "업로드에 실패했습니다."));
       setPhase("upload_failed");
     }
   }, [meetingId]);
@@ -226,7 +227,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
         token = await getLiveTicket(meetingId);
       } catch (caught) {
         if (stale()) return;
-        setError(caught instanceof Error ? caught.message : "실시간 전사에 연결하지 못했습니다.");
+        setError(readableError(caught, "실시간 전사에 연결하지 못했습니다."));
         setPhase("error");
         return;
       }
@@ -302,7 +303,7 @@ export function useLiveSession(meetingId: string, stream: MediaStream | null): L
       // close-originated rejection, stale or not.
       if (stale()) return;
       const code = closeCodeOf(caught);
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const message = readableError(caught, "실시간 전사에 연결하지 못했습니다.");
       if (code !== undefined && REFUSAL_CODES.has(code)) {
         // Not authorised, or the meeting refused this session outright: stop
         // the recording rather than keep one nobody will ever see.

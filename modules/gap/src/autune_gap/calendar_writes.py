@@ -510,8 +510,9 @@ def _timed_events(
     client: CalendarClient, calendar_id: str, start: datetime, end: datetime, limit: int
 ) -> list[CalendarEvent]:
     """Events between two instants, recurring ones expanded, asked of Google
-    for ``LIST_FIELDS`` only. ``CalendarClient.list_events`` asks for whole
-    events, so it is not used here (#877)."""
+    for ``LIST_FIELDS`` only. ``CalendarClient.list_events`` is narrowed at
+    Google too since #884, but its ``EVENT_FIELDS`` also carry each event's
+    private properties, which nothing here reads, so this asks for less."""
     body = client.request(
         "GET",
         f"/calendars/{calendar_id}/events",

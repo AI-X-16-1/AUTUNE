@@ -114,7 +114,7 @@ def test_a_confirmed_item_becomes_one_issue_assigned_and_dated(session: Session)
     task = jira.tasks["AUT-1"]
     assert task == {
         "project": "AUT",
-        "summary": "스펙 초안 공유",
+        "summary": "[할 일] 스펙 초안 공유",
         "description": "",
         "due": date(2026, 10, 7),
         "assignee": "acc-me",
@@ -148,7 +148,7 @@ def test_an_item_moved_back_keeps_its_issue_and_the_issue_follows_its_text(
 
     assert ref is not None and ref.external_id == "AUT-1"
     assert list(jira.tasks) == ["AUT-1"], "no second issue for a draft"
-    assert jira.tasks["AUT-1"]["summary"] == "삭제된 발화에서 만든 항목"
+    assert jira.tasks["AUT-1"]["summary"] == "[할 일] 삭제된 발화에서 만든 항목"
     assert "스펙 초안 공유" not in str(jira.tasks)
     assert jira.categories["AUT-1"] == "new", "the status is left where the team has it"
 
@@ -205,7 +205,7 @@ def test_edits_rewrite_the_same_issue_and_move_its_status(session: Session) -> N
     row.due_date = date(2026, 10, 9)
     row.status = "in_progress"
     sync(session, jira, row)
-    assert jira.tasks["AUT-1"]["summary"] == "스펙 최종본 공유"
+    assert jira.tasks["AUT-1"]["summary"] == "[할 일] 스펙 최종본 공유"
     assert jira.tasks["AUT-1"]["due"] == date(2026, 10, 9)
     assert jira.categories["AUT-1"] == "indeterminate"
 
@@ -232,7 +232,7 @@ def test_an_update_rewrites_the_description_create_wrote(session: Session) -> No
     sync(session, jira, row)
 
     task = jira.tasks["AUT-1"]
-    assert (task["summary"], task["description"]) == ("삭제된 발화에서 만든 항목", "")
+    assert (task["summary"], task["description"]) == ("[할 일] 삭제된 발화에서 만든 항목", "")
     assert "공유 폴더" not in str(jira.tasks)
 
 
@@ -402,8 +402,8 @@ def test_choosing_a_new_project_brings_every_confirmed_item_back(
 
     assert counts == {"synced": 2, "failed": 0}
     assert sorted(t["summary"] for t in fake.tasks.values()) == [
-        "보내지 못했던 작업",
-        "이미 보냈던 작업",
+        "[할 일] 보내지 못했던 작업",
+        "[할 일] 이미 보냈던 작업",
     ]
     assert all(t["project"] == "NEW" for t in fake.tasks.values())
     refs = {r.action_item_id: r.external_id for r in wired.scalars(select(ExtExternalRef))}
@@ -553,3 +553,38 @@ def test_the_summary_is_one_line_within_jiras_limit(session: Session) -> None:
     summary = jira.tasks["AUT-1"]["summary"]
     assert "\n" not in summary
     assert len(summary) == 255 and summary.endswith("…")
+
+
+def test_a_short_title_heads_the_issue_and_the_sentence_goes_below(session: Session) -> None:
+    """Module B's owner, 2026-10-09: the short title leads every copy that has
+    a title of its own, behind the mark that says what kind of row it is. The
+    sentence it stands for goes into the issue's description -- and an edit,
+    which takes the title away, leaves no earlier sentence behind there."""
+    jira = FakeJira(accounts={"me@example.com": "acc-me"})
+    row = item(session)
+    row.title = "스펙 공유"
+    session.flush()
+
+    sync(session, jira, row)
+
+    task = jira.tasks["AUT-1"]
+    assert (task["summary"], task["description"]) == ("[할 일] 스펙 공유", "스펙 초안 공유")
+
+    row.description = "스펙 최종본 공유"  # a person's own sentence has no title
+    sync(session, jira, row)
+
+    task = jira.tasks["AUT-1"]
+    assert (task["summary"], task["description"]) == ("[할 일] 스펙 최종본 공유", "")
+    assert "초안" not in str(jira.tasks)
+
+
+def test_a_title_that_is_the_sentence_itself_puts_nothing_below(session: Session) -> None:
+    jira = FakeJira(accounts={"me@example.com": "acc-me"})
+    row = item(session)
+    row.title = "스펙 초안 공유"
+    session.flush()
+
+    sync(session, jira, row)
+
+    task = jira.tasks["AUT-1"]
+    assert (task["summary"], task["description"]) == ("[할 일] 스펙 초안 공유", "")

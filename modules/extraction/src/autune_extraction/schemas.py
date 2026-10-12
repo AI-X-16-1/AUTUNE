@@ -450,10 +450,12 @@ class MaterialRead(BaseModel):
     - ``upload``: a title over the masked text of a file a member sent. The
       text is not in this answer, and there is no original to open.
 
-    No person. ``expires_at`` is when an upload is deleted: its upload plus the
-    team's retention window (``teams.retention_days``). Null for an upload of a
-    team that keeps uploads until a member deletes them, and for a link, which
-    keeps no text (the owner, 2026-10-11). ``not_read`` is what a file held
+    No person. ``expires_at`` is when an upload is deleted: the day fixed at
+    its upload, that moment plus the team's retention window of that day
+    (``teams.retention_days``); the team changing its window later does not
+    move it. Null for an upload of a team that keeps uploads until a member
+    deletes them, and for a link, which keeps no text (the owner, 2026-10-11,
+    2026-10-12). ``not_read`` is what a file held
     that was not read, said only in the answer to the upload; the plain-text
     formats read today have nothing unread, so it is empty.
     """
@@ -471,12 +473,20 @@ class MaterialRead(BaseModel):
 
 class MaterialSettingsRead(BaseModel):
     """How the team keeps its uploaded materials (the owner, 2026-10-11).
-    ``keep_until_deleted`` false -- the default -- deletes an upload
-    ``retention_days`` after it was uploaded; true keeps every upload until a
-    member deletes it. No person: who last changed it is not recorded."""
+    ``keep_until_deleted`` false -- the default -- deletes each upload on
+    the day it was given; true keeps every upload until a member deletes it.
+    ``retention_days`` is the team's window today, which is what an upload
+    made now is given -- an earlier upload keeps its own day
+    (``MaterialRead.expires_at``). ``uploads_past_their_day`` is how many
+    of the team's uploads are already past their day: none stay so under the
+    default beyond the hourly run, and under ``keep_until_deleted`` they are
+    what switching back deletes within the hour -- the screen says the number
+    before the switch is saved. A count only. No person: who last changed it
+    is not recorded."""
 
     keep_until_deleted: bool
     retention_days: int
+    uploads_past_their_day: int = 0
 
 
 class MaterialSettingsWrite(BaseModel):
@@ -582,6 +592,11 @@ class SummaryDecision(BaseModel):
 
     summary: str | None = None
     """``ReviewDecision.summary``: what was said, shown beneath the statement."""
+
+    title: str | None = None
+    """``ReviewDecision.title``: the model's short title, which the page of
+    minutes leads the row with (2026-10-09). ``None`` for a decision a person
+    reworded, and for one without a title."""
 
 
 MAX_NOTE_CHARS = 2000

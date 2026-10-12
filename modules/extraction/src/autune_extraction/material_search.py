@@ -10,6 +10,12 @@ bind this step (10(b), 2026-10-08):
   delete leaves nothing to find. Only uploads of the asking team, embedded by
   the embedder this process asks with, are read. A Drive link is never a hit:
   nothing of it was read.
+- **An upload past its day is not read.** Its ``expires_at`` was written at
+  the upload (``materials.upload_deadline``); from that moment on it is no
+  hit, though the hourly task (``materials.forget_expired_uploads``) may not
+  have deleted it yet. The two use one rule -- gone at ``expires_at <= now``,
+  unless the team keeps its uploads until deleted -- so nothing the task
+  would delete is ever an answer.
 - **The question is a person's words, and it is used to search and for
   nothing else.** It is masked with the document masker before it is
   embedded or looked at further; the masked form is what the embedder gets
@@ -49,7 +55,7 @@ from autune_integrations.document_masking import mask_document, screen_output
 from autune_integrations.privacy import MASK_CHAR
 
 from .config import get_settings
-from .materials import embedded, upload_window
+from .materials import embedded, keeps_until_deleted
 from .models import ExtMaterial, ExtMaterialChunk
 from .pipeline.base import Embedder
 from .pipeline.registry import get_material_embedder
@@ -143,13 +149,15 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 def _nearest(
-    session: Session, team_id: str, vector: list[float], model: str
+    session: Session, team_id: str, vector: list[float], model: str, *, now: datetime
 ) -> list[tuple[str, str, int, str, float]]:
     """The team's pieces nearest ``vector``: (material id, title, position,
     text, similarity), nearest first. PostgreSQL ranks by pgvector's cosine
     operator under its index; another database (the unit suite's SQLite)
-    ranks the team's pieces here. An upload past the team's window is not
-    read, though the hourly task may not have deleted it yet."""
+    ranks the team's pieces here. An upload whose ``expires_at`` is ``now``
+    or earlier is not read, though the hourly task may not have deleted it
+    yet -- unless the team keeps its uploads until deleted, as that task
+    passes such a team over."""
     base = (
         select(ExtMaterial.id, ExtMaterial.title, ExtMaterialChunk.position, ExtMaterialChunk.text)
         .join(ExtMaterial, ExtMaterial.id == ExtMaterialChunk.material_id)
@@ -160,9 +168,8 @@ def _nearest(
             ExtMaterialChunk.embedding.is_not(None),
         )
     )
-    window = upload_window(session, team_id)
-    if window is not None:
-        base = base.where(ExtMaterial.created_at > datetime.now(UTC) - window)
+    if not keeps_until_deleted(session, team_id):
+        base = base.where(ExtMaterial.expires_at > now)
     if session.get_bind().dialect.name == "postgresql":
         distance = ExtMaterialChunk.embedding.cosine_distance(vector)
         rows = session.execute(
@@ -304,6 +311,7 @@ def search_materials(
     *,
     limit: int = MAX_HITS,
     embedder: Embedder | None = None,
+    now: datetime | None = None,
 ) -> MaterialAnswer:
     """The team's uploaded materials nearest ``query``, best first: one hit per
     material, its nearest piece as an excerpt. **The caller has checked that
@@ -313,7 +321,8 @@ def search_materials(
 
     ``query`` is masked before anything else is done with it and is kept
     nowhere; a blank or too long one raises ``ValidationError`` naming the
-    field. ``limit`` is pulled into 1..``MAX_HITS``."""
+    field. ``limit`` is pulled into 1..``MAX_HITS``. ``now`` is the moment an
+    upload's day is compared with -- this moment, unless a caller names one."""
     clean = checked_question(query)
     try:
         masked = mask_document(clean)
@@ -332,7 +341,7 @@ def search_materials(
     seen: set[str] = set()
     dropped = 0
     for material_id, title, position, text, score in _nearest(
-        session, team_id, vector, model.model_version
+        session, team_id, vector, model.model_version, now=now or datetime.now(UTC)
     ):
         if score < floor:
             # Nearest first: everything after this is further still.

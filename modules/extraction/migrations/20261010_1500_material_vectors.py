@@ -16,11 +16,15 @@ and is not found by a search. Upload has been off by default everywhere
 ``ctx_embeddings`` does, so the extension exists whichever branch runs first.
 The downgrade drops the vectors and the model name; the masked text stays.
 
+It comes after the revision that gives an upload its day
+(``c6e1f4a9d2b8``), which landed first, so the module keeps one head. The
+two touch different columns and neither reads the other's.
+
 Owner: 강민구. Apply with `alembic upgrade heads` (plural).
 See docs/engineering/migrations.md.
 
 Revision ID: 7b3e9d2f5a61
-Revises: 3b8f1d6a2c47
+Revises: c6e1f4a9d2b8
 Create Date: 2026-10-10 15:00:00.000000
 """
 
@@ -33,7 +37,7 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 
 revision: str = "7b3e9d2f5a61"
-down_revision: str | None = "3b8f1d6a2c47"  # extraction: material settings
+down_revision: str | None = "c6e1f4a9d2b8"  # extraction: material expires_at
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = "aad0ea392ddc"  # core: enable_pgvector
 
