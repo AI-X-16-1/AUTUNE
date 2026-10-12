@@ -5,12 +5,16 @@
 - ``GET /runs`` -- a team's run timeline, newest first.
 - ``GET /research`` -- a meeting's research documents, by who may see which.
 - ``GET /pending`` -- L2 proposals waiting for a decision the caller may make.
+- ``GET /decided`` -- the ones already decided that the caller may decide, newest first (#1215).
 - ``POST /pending/{id}/approve`` -- approve one; the action runs.
 - ``POST /pending/{id}/reject`` -- reject one, with a reason from a fixed list.
 - ``GET /approvers`` -- a team's members and the approver scopes each holds.
 - ``GET /meeting-label`` -- the title of a meeting the caller may read, for S34's header.
 - ``/live/{meeting_id}/detect``, ``/research``, ``/documents`` -- live research (``live/routes``).
 - ``PUT /approvers/{user_id}`` -- replace one member's scopes (``main/approvers``).
+- ``GET /material-alarms`` -- uploads stopped for a confidentiality marking, for the
+  team's approvers (``main/material_alarms``, #1201).
+- ``POST /material-alarms/{id}/acknowledge`` -- an approver has seen one; it is deleted.
 
 Every route needs a signed-in member of the team it names. The layer answers on
 behalf of a team, so a non-member gets 403 rather than someone else's work.
@@ -19,10 +23,10 @@ behalf of a team, so a non-member gets 403 rather than someone else's work.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
@@ -40,6 +44,7 @@ from autune_integrations.errors import TransientIntegrationError
 from .config import get_agent_settings
 from .live import deletion as _live_deletion  # noqa: F401  (registers the speech hook)
 from .live.routes import router as live_router
+from .main import material_alarms
 from .main.actions import collect_actions
 from .main.approvers import SCOPE_ORDER, can_manage, list_members, set_scopes
 from .main.gemini import GeminiRouter, gemini_tools_from_settings
@@ -190,6 +195,16 @@ def _read(session: Session, row: AgentPendingAction) -> PendingRead:
             started = started.replace(tzinfo=UTC)
         fields["meeting_started_at"] = started
     return PendingRead(**fields)
+
+
+class DecidedRead(PendingRead):
+    decided_by_name: str | None = None
+    """Who decided, read when the list is read; ``None`` once that account is gone."""
+
+
+DECIDED_DAYS = 30
+DECIDED_LIMIT = 50
+"""The decided list is a look back, not an archive: a bounded window, newest first."""
 
 
 class Unfinished(BaseModel):
@@ -362,6 +377,22 @@ class RejectRequest(BaseModel):
     reason: Literal["wrong_evidence", "not_now", "handled_elsewhere", "other"]
 
 
+def _decider_scopes(session: Session, user_id: str, team_id: str | None) -> dict[str, set[str]]:
+    """The scopes the caller decides for, per team: in ``team_id``, or in every team."""
+    if team_id is not None:
+        _require_member(session, team_id, user_id)
+        team_ids = [team_id]
+    else:
+        team_ids = list(
+            session.scalars(
+                select(AgentApprover.team_id).where(AgentApprover.user_id == user_id).distinct()
+            )
+        )
+    # approver_scopes counts only current members, so a removed member keeps nothing.
+    scopes = {t: approver_scopes(session, t, user_id) for t in team_ids}
+    return {t: s for t, s in scopes.items() if s}
+
+
 @router.get("/pending", response_model=list[PendingRead])
 def list_pending(
     user: CurrentUser, session: SessionDep, team_id: str | None = None
@@ -371,18 +402,7 @@ def list_pending(
     Also an approval that was interrupted -- ``approved`` with no outcome, see
     ``main/pending.approve`` -- marked ``needs_check``, so it is not hidden.
     """
-    if team_id is not None:
-        _require_member(session, team_id, user.id)
-        team_ids = [team_id]
-    else:
-        team_ids = list(
-            session.scalars(
-                select(AgentApprover.team_id).where(AgentApprover.user_id == user.id).distinct()
-            )
-        )
-    # approver_scopes counts only current members, so a removed member keeps nothing.
-    scopes = {t: approver_scopes(session, t, user.id) for t in team_ids}
-    scopes = {t: s for t, s in scopes.items() if s}
+    scopes = _decider_scopes(session, user.id, team_id)
     if not scopes:
         return []
     rows = session.scalars(
@@ -400,6 +420,51 @@ def list_pending(
         .order_by(AgentPendingAction.created_at.desc())
     ).all()
     return [_read(session, r) for r in rows if can_decide(scopes[r.team_id], r)]
+
+
+@router.get("/decided", response_model=list[DecidedRead])
+def list_decided(
+    user: CurrentUser, session: SessionDep, team_id: str | None = None
+) -> list[DecidedRead]:
+    """Proposals a person decided in the last ``DECIDED_DAYS``, newest first (#1215).
+
+    The waiting list's rule: only what the caller may decide now. A row the
+    layer retired (``superseded``) was decided by nobody and is not listed. The
+    card is built as the waiting card was, so nothing is shown that was not
+    shown before the decision.
+    """
+    scopes = _decider_scopes(session, user.id, team_id)
+    if not scopes:
+        return []
+    visible = [
+        AgentPendingAction.team_id == t
+        if "any" in s
+        else and_(AgentPendingAction.team_id == t, AgentPendingAction.scope.in_(s))
+        for t, s in scopes.items()
+    ]
+    since = datetime.now(UTC) - timedelta(days=DECIDED_DAYS)
+    rows = session.scalars(
+        select(AgentPendingAction)
+        .where(
+            or_(*visible),
+            AgentPendingAction.status.in_(("approved", "rejected", "failed")),
+            AgentPendingAction.decided_by.is_not(None),
+            AgentPendingAction.decided_at >= since,
+        )
+        .order_by(AgentPendingAction.decided_at.desc(), AgentPendingAction.id)
+        .limit(DECIDED_LIMIT)
+    ).all()
+    deciders = {r.decided_by for r in rows if r.decided_by}
+    names = {
+        uid: name
+        for uid, name in session.execute(
+            select(User.id, User.display_name).where(User.id.in_(deciders))
+        )
+    }
+    return [
+        DecidedRead(**_read(session, r).model_dump(), decided_by_name=names.get(r.decided_by or ""))
+        for r in rows
+    ]
 
 
 @router.post("/pending/{pending_id}/approve", response_model=PendingRead)
@@ -468,3 +533,47 @@ def put_approver(
     session.commit()
     name = session.scalar(select(User.display_name).where(User.id == user_id)) or ""
     return ApproverMember(user_id=user_id, name=name, scopes=scopes)
+
+
+class MaterialAlarmRead(BaseModel):
+    """An upload module B stopped for a confidentiality marking: when, and
+    which kind. There is no file name, title or person to add -- module B
+    kept none (#817)."""
+
+    id: str
+    team_id: str
+    marking: str
+    created_at: datetime
+
+
+@router.get("/material-alarms", response_model=list[MaterialAlarmRead])
+def list_material_alarms(
+    user: CurrentUser, session: SessionDep, team_id: str | None = None
+) -> list[MaterialAlarmRead]:
+    """Stopped uploads the caller may see, in ``team_id`` or in every team
+    where they are an approver -- ``/pending``'s shape, for the same page.
+
+    A member who is not an approver gets an empty list, which is also
+    what a team with no stopped upload gives.
+    """
+    if team_id is not None:
+        _require_member(session, team_id, user.id)
+        team_ids = [team_id]
+    else:
+        team_ids = material_alarms.teams_of(session, user.id)
+    return [
+        MaterialAlarmRead(
+            id=row.id, team_id=row.team_id, marking=row.marking, created_at=row.created_at
+        )
+        for row in material_alarms.waiting(session, team_ids, user.id)
+    ]
+
+
+@router.post("/material-alarms/{alarm_id}/acknowledge", status_code=status.HTTP_204_NO_CONTENT)
+def acknowledge_material_alarm(
+    alarm_id: str, user: CurrentUser, session: SessionDep, team_id: str
+) -> None:
+    """An approver has seen it; the row is deleted and who did it is not kept."""
+    _require_member(session, team_id, user.id)
+    material_alarms.acknowledge(session, team_id, alarm_id, user.id)
+    session.commit()

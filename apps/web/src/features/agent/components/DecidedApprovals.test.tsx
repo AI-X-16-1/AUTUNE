@@ -1,0 +1,85 @@
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import * as api from "../api";
+import type { DecidedAction } from "../types";
+import { ApprovalsScreen } from "./ApprovalsScreen";
+import { decidedResult, decidedWhen } from "./DecidedApprovals";
+
+// #1215: a second tab on /approvals lists what was decided and how it went.
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+
+const BASE: DecidedAction = {
+  id: "pend_1",
+  team_id: "team_1",
+  meeting_id: null,
+  subagent: "workload",
+  kind: "reassign",
+  tool: "extraction.reassign_action_item",
+  status: "approved",
+  reject_reason: null,
+  result_ok: true,
+  created_at: "2026-10-10T00:00:00Z",
+  decided_at: "2026-10-11T05:05:00Z",
+  title: "할 일 재배정",
+  body: "API 문서 → 박지영",
+  needs_check: false,
+  decided_by_name: "팀장",
+};
+
+describe("decidedResult", () => {
+  it("says what happened to each kind of decision", () => {
+    expect(decidedResult(BASE).label).toBe("승인됨 · 실행됨");
+    expect(
+      decidedResult({ ...BASE, status: "failed", result_ok: false }).label,
+    ).toBe("승인됨 · 실행 못 함");
+    expect(
+      decidedResult({ ...BASE, result_ok: null, needs_check: true }).label,
+    ).toMatch(/^확인 필요/);
+    expect(
+      decidedResult({
+        ...BASE,
+        status: "rejected",
+        result_ok: null,
+        reject_reason: "not_now",
+      }).label,
+    ).toBe("거절됨 · 지금은 아님");
+  });
+});
+
+describe("decidedWhen", () => {
+  it("reads the time in Korea", () => {
+    expect(decidedWhen("2026-10-11T05:05:00Z")).toBe("10월 11일(일) 14:05");
+  });
+});
+
+describe("ApprovalsScreen tabs", () => {
+  it("reads the decided list only when its tab is opened", async () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([]);
+    const decided = vi.spyOn(api, "listDecided").mockResolvedValue([BASE]);
+
+    render(<ApprovalsScreen />);
+    expect(decided).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("tab", { name: "처리한 승인" }));
+
+    expect(await screen.findByText("승인됨 · 실행됨")).toBeTruthy();
+    expect(screen.getByText("할 일 재배정")).toBeTruthy();
+    expect(screen.getByText(/팀장 · 10월 11일\(일\) 14:05/)).toBeTruthy();
+  });
+
+  it("says when nothing was decided lately", async () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([]);
+    vi.spyOn(api, "listDecided").mockResolvedValue([]);
+
+    render(<ApprovalsScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: "처리한 승인" }));
+
+    expect(
+      await screen.findByText("최근 30일 동안 처리한 제안이 없습니다."),
+    ).toBeTruthy();
+  });
+});

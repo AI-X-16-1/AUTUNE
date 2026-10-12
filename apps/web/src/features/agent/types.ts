@@ -20,6 +20,12 @@ export type PendingAction = {
   meeting_started_at?: string | null;
 };
 
+/** A proposal a person already decided (`GET /api/agent/decided`, #1215). */
+export type DecidedAction = PendingAction & {
+  /** Who decided; null once that account is gone. */
+  decided_by_name: string | null;
+};
+
 export type RejectReason =
   "wrong_evidence" | "not_now" | "handled_elsewhere" | "other";
 
@@ -65,6 +71,18 @@ export type ChatReply = {
   pending: PendingAction[];
   /** L1 actions that did not go through, each with why (#862). */
   unfinished?: ChatUnfinished[];
+};
+
+/**
+ * An upload stopped for a confidentiality marking, as the team's approvers
+ * see it (`GET /api/agent/material-alarms`): when, and which kind. The
+ * server keeps nothing else of it -- no file name, no title, no person.
+ */
+export type MaterialAlarm = {
+  id: string;
+  team_id: string;
+  marking: "korean_marking" | "english_marking";
+  created_at: string;
 };
 
 /** An L1 action that did not go through: its title and the reason in words. */

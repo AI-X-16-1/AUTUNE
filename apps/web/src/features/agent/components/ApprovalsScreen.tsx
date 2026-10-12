@@ -5,26 +5,15 @@ import { useEffect, useRef, useState } from "react";
 
 import { ApiError } from "@/shared/api/client";
 import { Button } from "@/shared/ui/Button";
+import { Tabs } from "@/shared/ui/Tabs";
 
 import { approvePending, listPending, rejectPending } from "../api";
+import { REASONS, SUBAGENT_LABEL } from "../approvalLabels";
 import { meetingLabel } from "../meetingLabel";
 import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
-
-const SUBAGENT_LABEL: Record<string, string> = {
-  research: "리서치",
-  workload: "업무 분배",
-  followup: "후속 회의",
-  report: "리포트",
-  tracker: "할 일 챙김",
-};
-
-const REASONS: { value: RejectReason; label: string }[] = [
-  { value: "wrong_evidence", label: "근거가 틀림" },
-  { value: "not_now", label: "지금은 아님" },
-  { value: "handled_elsewhere", label: "다른 곳에서 처리함" },
-  { value: "other", label: "기타" },
-];
+import { DecidedApprovals } from "./DecidedApprovals";
+import { MaterialAlarms } from "./MaterialAlarms";
 
 const RESULT_LABEL: Record<PendingAction["status"], string> = {
   pending: "처리했습니다",
@@ -71,12 +60,48 @@ function merge(
   return [...fresh.filter((i) => !keptIds.has(i.id)), ...kept];
 }
 
+type Tab = "waiting" | "decided";
+
+const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
+  { id: "waiting", label: "승인 대기" },
+  { id: "decided", label: "처리한 승인" },
+];
+
+/**
+ * 승인 — two tabs: what still waits (below) and what was decided
+ * (`DecidedApprovals`, #1215).
+ */
+export function ApprovalsScreen() {
+  const [tab, setTab] = useState<Tab>("waiting");
+  return (
+    <main className="mx-auto max-w-[800px] p-[var(--space-page)]">
+      <h1
+        className="text-[var(--color-ink-strong)]"
+        style={{
+          fontSize: "var(--text-title)",
+          fontWeight: "var(--text-title-weight)",
+        }}
+      >
+        승인
+      </h1>
+      <div className="mt-4">
+        <Tabs tabs={TABS} active={tab} onChange={setTab} />
+      </div>
+      {/* Both stay mounted, so a card settled here keeps its result on a tab switch. */}
+      <div hidden={tab !== "waiting"}>
+        <WaitingApprovals />
+      </div>
+      {tab === "decided" ? <DecidedApprovals /> : null}
+    </main>
+  );
+}
+
 /**
  * 승인 대기 — every L2 proposal the signed-in person may decide, across their
  * teams. Approving runs it at once; the card then shows the result and leaves.
  * What a card shows is built by the server at read time; nothing here is stored.
  */
-export function ApprovalsScreen() {
+function WaitingApprovals() {
   const [items, setItems] = useState<PendingAction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Cards that are settled (decided, or found already decided) and what to say.
@@ -175,16 +200,7 @@ export function ApprovalsScreen() {
   }
 
   return (
-    <main className="mx-auto max-w-[800px] p-[var(--space-page)]">
-      <h1
-        className="text-[var(--color-ink-strong)]"
-        style={{
-          fontSize: "var(--text-title)",
-          fontWeight: "var(--text-title-weight)",
-        }}
-      >
-        승인 대기
-      </h1>
+    <>
       {error ? (
         <p role="alert" style={{ color: "var(--color-signal-critical)" }}>
           {error}
@@ -322,6 +338,7 @@ export function ApprovalsScreen() {
           );
         })}
       </ul>
-    </main>
+      <MaterialAlarms />
+    </>
   );
 }

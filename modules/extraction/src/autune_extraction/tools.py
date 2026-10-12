@@ -39,7 +39,7 @@ internally (L0) and must not post them anywhere without a person's review.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -52,7 +52,7 @@ from autune_core import Meeting, TeamMember, User, Utterance, session_scope
 from autune_core.errors import ValidationError
 from autune_integrations.privacy import find_unmasked
 
-from . import days_off, material_search, service, tasks
+from . import days_off, material_search, materials, service, tasks
 from .config import get_settings
 from .models import ExtActionItem, ExtDecision, ExtProject
 from .pipeline.base import give_roster
@@ -1149,6 +1149,67 @@ def _bad_question() -> dict[str, Any]:
         evidence=[],
         confidence=0.0,
     )
+
+
+@dataclass(frozen=True)
+class StoppedUpload:
+    """One upload stopped for a confidentiality marking, as the agent layer's
+    approvers' alert reads it (#1201): which team, when, which kind of marking,
+    and whether the team's approvers have been told of it. Nothing else exists
+    to hand over -- no file name, no title, no person (``ExtMaterialAlarm``)."""
+
+    id: str
+    team_id: str
+    marking: str
+    created_at: datetime
+    told: bool
+
+
+def stopped_uploads(session: Session, team_id: str) -> list[StoppedUpload]:
+    """The team's stopped uploads nobody has acknowledged, the oldest first.
+
+    Not a tool the model calls -- none of the four below is in ``TOOLS`` or
+    ``ACTIONS`` -- but the one way the agent layer reads module B's alarm rows
+    (the layer's owner, #1201: ``main/`` reads a module through its
+    ``tools.py``, as it reads A's ``consent_attested``). **The caller has
+    checked that the reader is one of the team's approvers**; module B cannot
+    read ``agent_approvers`` and opens no route to this.
+    """
+    return [
+        StoppedUpload(
+            id=row.id,
+            team_id=row.team_id,
+            marking=row.marking,
+            created_at=row.created_at,
+            told=row.told_at is not None,
+        )
+        for row in materials.pending_alarms(session, team_id)
+    ]
+
+
+def acknowledge_stopped_upload(session: Session, team_id: str, alarm_id: str) -> None:
+    """An approver has seen it: the row is deleted; the caller commits. Takes
+    no user, so who acknowledged cannot be recorded. Another team's row, or
+    none, is not found (404). **The caller has checked the approver.** Not in
+    ``ACTIONS``: an action is recorded in a run, and this must leave no record
+    of who."""
+    materials.acknowledge_alarm(session, team_id, alarm_id)
+
+
+def teams_with_untold_stopped_uploads(session: Session) -> list[str]:
+    """The teams holding a stopped upload whose approvers have not been told,
+    for the agent layer's hourly task. Not a tool the model calls."""
+    return materials.teams_with_untold_alarms(session)
+
+
+def mark_stopped_uploads_told(
+    session: Session, team_id: str, alarm_ids: Collection[str], *, now: datetime | None = None
+) -> int:
+    """The team's approvers were told of these; returns how many were newly
+    marked, and the caller commits. By id, so an upload stopped after the
+    caller counted stays untold. Who was told is not a parameter. Not a tool
+    the model calls."""
+    return materials.mark_alarms_told(session, team_id, alarm_ids, now=now)
 
 
 TOOLS = [
