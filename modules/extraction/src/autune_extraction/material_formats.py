@@ -17,6 +17,9 @@ module's ``pyproject.toml``: ``pypdf`` (``.pdf``), ``xlrd`` (``.xls``) and
   sensitivity label), slide masters and layouts, a sheet's print header and
   footer.
 - never read: who wrote it -- author, last editor, comment authors, company.
+  The one exception is a cell note's author in an Excel file: Excel opens a
+  note's own text with that name, so it is read to drop that line and kept
+  nowhere (``_without_writers`` has the exact rule).
 - not read, and said so by kind (``not_read``): pictures, charts, files
   embedded in the file. A marking that exists only as a picture is not seen.
 
@@ -56,7 +59,7 @@ import logging
 import re
 import struct
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, cast
@@ -361,15 +364,44 @@ def _xlsx(data: bytes | bytearray) -> FileText:
                 found.marks.append(element.text or "")
         found.text.append("\n".join(rows))
         found.opens_on("\n".join(rows))
-    for part in package.matching(r"xl/comments\d*\.xml") + package.matching(
-        r"xl/drawings/drawing\d+\.xml"
-    ):
+    notes = [package.tree(part) for part in package.matching(r"xl/comments\d*\.xml")]
+    found.text += _without_writers(
+        [
+            "".join(t.text or "" for t in comment.iter() if _local(t.tag) == "t")
+            for tree in notes
+            for comment in tree.iter()
+            if _local(comment.tag) == "comment"
+        ],
+        (
+            author.text or ""
+            for tree in notes
+            for author in tree.iter()
+            if _local(author.tag) == "author"
+        ),
+    )
+    for part in package.matching(r"xl/drawings/drawing\d+\.xml"):
         found.text.append(package.runs(part))
     for part in package.matching(r"xl/threadedComments/[^/]+\.xml"):
         found.text.append(package.runs(part, text=frozenset({"text"})))
     found.marks.append(package.properties())
     package.besides("xl", found)
     return found.done()
+
+
+def _without_writers(notes: list[str], authors: Iterable[str]) -> list[str]:
+    """Cell notes without the line Excel opens a new note with: its writer's
+    name and a colon, which stays in the note's own text unless the writer
+    deletes it. A note's first line is dropped only when it is exactly one of
+    the file's note authors and a colon. A name anywhere else in a note -- on
+    the same line as its text, or of somebody the file does not list as a
+    note's author -- is the note's text and stays, like a name in a cell. The
+    authors are compared here and go nowhere else."""
+    opening = {f"{author.strip()}:" for author in authors if author.strip()}
+    kept: list[str] = []
+    for note in notes:
+        first, _, rest = note.lstrip().partition("\n")
+        kept.append(rest if first.strip() in opening else note)
+    return kept
 
 
 _SLIDE_TEXT = frozenset({"t", "text"})
@@ -427,12 +459,12 @@ def _pdf(data: bytes | bytearray) -> FileText:
     with_text = only_a_picture = 0
     for page in reader.pages:
         text = page.extract_text() or ""
-        pictures = _pdf_pictures(page)
-        if pictures and len("".join(text.split())) < MIN_PAGE_CHARS:
+        pictured = _pdf_pictured(page)
+        if pictured and len("".join(text.split())) < MIN_PAGE_CHARS:
             only_a_picture += 1  # nothing beside the picture, or only a page number
         elif text.strip():
             with_text += 1
-        if pictures:
+        if pictured:
             found.not_read.add("pictures")
         found.text.append(text)
         found.opens_on(text)
@@ -451,12 +483,39 @@ def _pdf(data: bytes | bytearray) -> FileText:
     return found.done()
 
 
-def _pdf_pictures(page: object) -> int:
-    try:
-        things = page["/Resources"]["/XObject"].get_object()  # type: ignore[index]
-        return sum(1 for thing in things.values() if thing.get_object().get("/Subtype") == "/Image")
-    except Exception:  # noqa: BLE001 -- a page with no resources has no pictures
-        return 0
+def _pdf_pictured(page: Any) -> bool:
+    """Whether a page holds a picture: an image object in its resources or in
+    a form object those hold, however deep, or an image written inline into
+    its content or into such a form's. A scanned page is often one of the
+    last two. Nothing is decoded, so no imaging package is needed. Not looked
+    at: a picture in an annotation's appearance or in a pattern."""
+    from pypdf.generic import ContentStream, DictionaryObject, StreamObject
+
+    def held(owner: Any, key: str) -> Any:
+        value = owner.get(key)
+        value = value.get_object() if value is not None else None
+        return value if isinstance(value, DictionaryObject) else {}
+
+    def inline(content: Any) -> bool:
+        return content is not None and any(
+            operator == b"INLINE IMAGE" for _, operator in content.operations
+        )
+
+    forms: dict[int, Any] = {}  # by identity: a form may hold itself
+    waiting: list[Any] = [page]
+    while waiting:
+        for thing in held(held(waiting.pop(), "/Resources"), "/XObject").values():
+            thing = thing.get_object()
+            if not isinstance(thing, StreamObject):
+                continue
+            if thing.get("/Subtype") == "/Image":
+                return True
+            if thing.get("/Subtype") == "/Form" and id(thing) not in forms:
+                forms[id(thing)] = thing
+                waiting.append(thing)
+    return inline(page.get_contents()) or any(
+        inline(ContentStream(form, page.pdf)) for form in forms.values()
+    )
 
 
 # --- the old binary formats: .xls .ppt ---------------------------------------------
@@ -473,6 +532,7 @@ def _xls(data: bytes | bytearray) -> FileText:
         # Which of the reader's complaints this is, and nothing else of it.
         raise RefusedError("protected" if "ncrypt" in str(exc) else "damaged") from None
     found.text.append("\n".join(sheet.name for sheet in book.sheets()))  # hidden ones too
+    authors = [note.author for sheet in book.sheets() for note in sheet.cell_note_map.values()]
     for sheet in book.sheets():
         rows: list[str] = []
         for number in range(sheet.nrows):
@@ -485,7 +545,9 @@ def _xls(data: bytes | bytearray) -> FileText:
                 rows.append("\t".join(cells))
         found.text.append("\n".join(rows))
         found.opens_on("\n".join(rows))
-        found.text += [note.text for note in sheet.cell_note_map.values()]  # not their authors
+        found.text += _without_writers(
+            [note.text for note in sheet.cell_note_map.values()], authors
+        )
     return found.done()
 
 
