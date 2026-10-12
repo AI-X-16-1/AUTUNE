@@ -205,12 +205,16 @@ x-python: &python
     # use if they are not in it.
     #
     # WHAT LEAVES THIS SERVER because of it: nothing of a material's text and
-    # nothing of a question; both are masked and embedded here. One message
-    # does: when a file is refused for a confidentiality marking, the team's
+    # nothing of a question; both are masked and embedded here. Two things
+    # do. When a file is refused for a confidentiality marking, the team's
     # approvers with the '전체' scope get one Slack DM -- how many refused
     # uploads wait and a link to the approvals page; no file name, time, kind
     # of marking or person -- if the team connected Slack and the approver
-    # linked their own account.
+    # linked their own account. And each time the api loads the model it asks
+    # huggingface.co about the model's files: requests that name the model
+    # and its revision -- nothing of a material, a question or a team. The
+    # weights come from there too, only when the `models` volume does not
+    # hold them yet.
     #
     # NOT TURNED ON, and not to be without its own decision:
     # AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL, which would hand masked excerpts
