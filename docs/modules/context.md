@@ -621,6 +621,12 @@ while the worker was down stays missed rather than arriving mid-meeting.
    or decisions; the app, which shows `match_reason` beside it, carries the
    full recap.
 
+How often this picks the right meeting is measured by the `brief-selection`
+evaluation suite: on its first set the series step was right 10 of 10 and no
+unrelated meeting was recapped, but the topic step asserted only 7 of 27 related
+meetings under a different title. See
+[`context-evaluations/02-brief-selection.md`](context-evaluations/02-brief-selection.md).
+
 "Analyzed" means `ctx_meeting_status.topic_linking_done`, and every candidate
 passes `visible_meeting_clauses` — a meeting past its retention window is never
 recapped.

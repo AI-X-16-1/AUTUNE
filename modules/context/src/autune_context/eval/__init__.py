@@ -1,7 +1,7 @@
 """Evaluation harness — this module's product KPIs, and the thresholds its own
 config docstrings promised to tune against.
 
-Two independent suites, each with its own hand-labeled dataset versioned next
+Three independent suites, each with its own hand-labeled dataset versioned next
 to the code that scores it (see each suite's own ``dataset.py`` and
 docs/engineering/testing.md, "Evaluation"):
 
@@ -13,6 +13,10 @@ docs/engineering/testing.md, "Evaluation"):
   embedder + NLI model together, on decision-statement text rather than
   generic KorNLI pairs — a different question from
   ``autune_context.training``'s KorNLI benchmark number.
+- ``brief_selection`` — whether the pre-meeting brief recaps the meeting the
+  upcoming one follows, or, when none is related, falls back to ``latest`` and
+  posts no content. Exercises the embedder + reranker through the brief's own
+  title-then-topic choice (``briefs.choose_previous_meeting``).
 
 Run every suite: ``uv run --package autune-context python -m autune_context.eval``
 Run one: ``uv run --package autune-context python -m autune_context.eval topic-linking``

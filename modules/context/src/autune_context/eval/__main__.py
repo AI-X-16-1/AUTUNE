@@ -18,10 +18,12 @@ import argparse
 
 from autune_context.eval._guard import refuse_real_meetings
 from autune_context.eval._mode import comparison, engine_mode, llm_usage_line
+from autune_context.eval.brief_selection import runner as brief_selection
 from autune_context.eval.decision_lineage import runner as decision_lineage
 from autune_context.eval.topic_linking import runner as topic_linking
 
 _SUITES = {
+    "brief-selection": brief_selection,
     "topic-linking": topic_linking,
     "decision-lineage": decision_lineage,
 }
