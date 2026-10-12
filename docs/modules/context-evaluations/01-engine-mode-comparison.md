@@ -334,7 +334,7 @@ shape, 202 calls (42,562 input, 3,919 output tokens). No unusable answers in any
 | Does `llm` fix the `reversed_alternative` gap on held-out v3? | **Answered: yes** — 10/10 against `classic`'s 0/10 (section 4) |
 | Pure `llm` on held-out topic linking | **Answered**: 0.96 (section 3.2) |
 | `hybrid` with `llm_pending_floor=0` on held-out v3 | **Answered** (2026-10-12): 0.93, 81/81 true links reach the user, one more pending question than `classic` (section 3.2) |
-| Is the LLM's lead real? | Neither lead is significant on v3 (p = 0.15 and 0.12). **On lineage, v4 establishes it**: 0.93 against 0.77, p = 0.001 (section 9.6); **v5 does not**: 0.87 against 0.82, p = 0.36 (section 10.7). The LLM is ahead on all three sets, by 6 to 16 cases. Topic linking has no second held-out set yet |
+| Is the LLM's lead real? | Neither lead is significant on v3 (p = 0.15 and 0.12). **On lineage, v4 establishes it**: 0.93 against 0.77, p = 0.001 (section 9.6); **v5 does not**: 0.87 against 0.82, p = 0.36 (section 10.7). The LLM is ahead on all three sets, by 6 to 20 cases. Topic linking has no second held-out set yet |
 | Does fixing `judge-v1`'s tendency to say `reversed` cost anything else? | A new prompt version, measured on a **new** held-out set |
 | Does combining the two modes beat either alone? | The same new set |
 | A stronger model than the lightest tier | the same runs on a paid tier |
@@ -751,7 +751,7 @@ cases), `modified_scope` 10/10 → **2/10**, `reversed_cancel` 11/12 → 12/12,
 `llm` against `classic`: 18 cases fixed, 12 broken (sign test, p = 0.36).
 
 - **v4's lead does not replicate at its size.** 28 to 8 there, 18 to 12 here. The LLM
-  is ahead on all three held-out sets (by 9, 16 and 6 cases on v3, v4 and v5), but only
+  is ahead on all three held-out sets (by 9, 20 and 6 cases on v3, v4 and v5), but only
   v4 establishes it, and `classic` is stronger on v5 than on v4 (0.82 against 0.76).
 - **The LLM's error doubled, and it is now its only error.** All 16 misses are a real
   modification read as `reversed`: 16 of 34 here, 8 of 34 on v4, 9 of 30 on v3. It
