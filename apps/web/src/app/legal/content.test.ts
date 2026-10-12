@@ -56,6 +56,13 @@ describe("legal documents", () => {
     expect(text("privacy")).toContain(
       "입력한 질문은 같은 방법으로 가림 처리한 뒤 자료를 찾는 데에만 이용하며, 저장하거나 로그에 기록하지 않습니다.",
     );
+    // Whoever agreed to either document without these sentences, or without
+    // the ones on the approvers' message, is asked again: neither version is
+    // the one `main` asked under before them.
+    const before: Record<string, string> = { terms: "2026-10-12.2", privacy: "2026-10-12.4" };
+    for (const { document, version } of REQUIRED_CONSENTS) {
+      expect(version, document).not.toBe(before[document]);
+    }
   });
 
   // The server refuses any other shape (`autune_core.consents._VERSION`),
