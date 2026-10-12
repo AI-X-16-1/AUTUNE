@@ -902,6 +902,34 @@ class JiraProjectIssues(BaseModel):
     more: bool = False
 
 
+class SinceLastMeeting(BaseModel):
+    """What moved on one team's board since its last analysed meeting
+    (``since_last_meeting``). Read at the request and stored nowhere.
+
+    **Item ids in parts and one team total -- no person in it.** Each part is a
+    list of action-item ids, and an id is in one part at most; the board draws
+    an id as the item's title and due date, without its owner. Nothing here is
+    grouped, counted or ordered by assignee, and adding an assignee to a part
+    would make the per-person completion record ADR 0003 forbids.
+
+    ``state`` is ``no_meeting`` for a team with no analysed meeting yet: there
+    is nothing to count from, and every part is empty. ``open`` is every open
+    item of the team, listed here or not."""
+
+    team_id: str
+    team_name: str
+    state: Literal["ok", "no_meeting"]
+    meeting_id: str | None = None
+    meeting_title: str | None = None
+    since: datetime | None = None
+    finished: list[str] = Field(default_factory=list)
+    closed: list[str] = Field(default_factory=list)
+    late: list[str] = Field(default_factory=list)
+    started: list[str] = Field(default_factory=list)
+    created: list[str] = Field(default_factory=list)
+    open: int = 0
+
+
 class CarriedOverItem(ActionItemRead):
     """An open item from an earlier meeting of the same team, with the meeting
     it was made in -- the popup says where each one came from."""

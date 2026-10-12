@@ -1,22 +1,26 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EARLIER_ITEMS_AGENDA, JIRA_AGENDA } from "./agendaSources";
-import type { ActionItemFilter, JiraIssue, JiraProjectIssues } from "./api";
+import { EARLIER_ITEMS_AGENDA, JIRA_AGENDA, SINCE_LAST_MEETING_AGENDA } from "./agendaSources";
+import type { ActionItemFilter, JiraIssue, JiraProjectIssues, SinceLastMeeting } from "./api";
 import type { ActionItemRead } from "./types";
 
 // Module B's sources for an agenda draft (#1147): the team's open Jira issues
-// for the new-meeting form, an earlier meeting's unfinished to-dos for the brief.
+// for the new-meeting form, an earlier meeting's unfinished to-dos for the brief,
+// and what moved on the board since the team's last meeting.
 
 const jira = vi.fn<() => Promise<JiraProjectIssues[]>>();
-const items = vi.fn<(filter: ActionItemFilter) => Promise<ActionItemRead[]>>();
+const items = vi.fn<(filter?: ActionItemFilter) => Promise<ActionItemRead[]>>();
+const since = vi.fn<(teamId?: string) => Promise<SinceLastMeeting[]>>();
 vi.mock("./api", () => ({
   listJiraOpenIssues: () => jira(),
-  listActionItems: (filter: ActionItemFilter) => items(filter),
+  listActionItems: (filter?: ActionItemFilter) => items(filter),
+  listSinceLastMeeting: (teamId?: string) => since(teamId),
 }));
 
 afterEach(() => {
   jira.mockReset();
   items.mockReset();
+  since.mockReset();
 });
 
 const issue = (overrides: Partial<JiraIssue>): JiraIssue => ({
@@ -144,5 +148,88 @@ describe("EARLIER_ITEMS_AGENDA", () => {
 
   it("is named for what the list is", () => {
     expect(EARLIER_ITEMS_AGENDA.label).toBe("지난 회의의 미완료 할 일");
+  });
+});
+
+const moved = (overrides: Partial<SinceLastMeeting>): SinceLastMeeting => ({
+  team_id: "team_1",
+  team_name: "검색팀",
+  state: "ok",
+  meeting_id: "mtg_last",
+  meeting_title: "주간 회의",
+  since: "2026-10-08T05:00:00Z",
+  finished: [],
+  closed: [],
+  late: [],
+  started: [],
+  created: [],
+  open: 0,
+  ...overrides,
+});
+
+describe("SINCE_LAST_MEETING_AGENDA", () => {
+  it("asks for the chosen team's answer, and is that team's alone", async () => {
+    since.mockResolvedValue([
+      moved({ finished: ["act_1"] }),
+      moved({ team_id: "team_2", finished: ["act_2"] }),
+    ]);
+    items.mockResolvedValue([item({ title: "하나" }), item({ id: "act_2", title: "남의 팀 일" })]);
+
+    expect(await SINCE_LAST_MEETING_AGENDA.lines("team_1")).toEqual([
+      { title: "하나", detail: "끝난 일" },
+    ]);
+    expect(since.mock.calls).toEqual([["team_1"]]);
+  });
+
+  it("runs part after part in the board's order, each line under its part's name", async () => {
+    since.mockResolvedValue([
+      moved({
+        created: ["act_5"],
+        started: ["act_4"],
+        late: ["act_3"],
+        closed: ["act_2"],
+        finished: ["act_1"],
+      }),
+    ]);
+    items.mockResolvedValue(
+      ["act_5", "act_4", "act_3", "act_2", "act_1"].map((id) => item({ id, title: id })),
+    );
+
+    expect(await SINCE_LAST_MEETING_AGENDA.lines("team_1")).toEqual([
+      { title: "act_1", detail: "끝난 일" },
+      { title: "act_2", detail: "끝내지 않고 닫힌 일" },
+      { title: "act_3", detail: "늦은 일" },
+      { title: "act_4", detail: "시작한 일" },
+      { title: "act_5", detail: "새로 생긴 일" },
+    ]);
+  });
+
+  it("is the title and the part: no assignee, no due date, no count", async () => {
+    since.mockResolvedValue([moved({ late: ["act_1"], open: 7 })]);
+    items.mockResolvedValue([item({})]);
+
+    const [line] = await SINCE_LAST_MEETING_AGENDA.lines("team_1");
+
+    expect(Object.keys(line ?? {})).toEqual(["title", "detail"]);
+    expect(JSON.stringify(line)).not.toContain("김담당");
+    expect(JSON.stringify(line)).not.toContain("2026-10-01");
+    expect(JSON.stringify(line)).not.toContain("user_kim");
+    expect(JSON.stringify(line)).not.toContain("7");
+  });
+
+  it("is nothing for a team with no analysed meeting, and skips an id the list does not hold", async () => {
+    items.mockResolvedValue([item({ title: "하나" })]);
+
+    since.mockResolvedValue([moved({ state: "no_meeting", meeting_id: null, since: null })]);
+    expect(await SINCE_LAST_MEETING_AGENDA.lines("team_1")).toEqual([]);
+
+    since.mockResolvedValue([moved({ finished: ["act_gone", "act_1"] })]);
+    expect(await SINCE_LAST_MEETING_AGENDA.lines("team_1")).toEqual([
+      { title: "하나", detail: "끝난 일" },
+    ]);
+  });
+
+  it("is named for what the list is", () => {
+    expect(SINCE_LAST_MEETING_AGENDA.label).toBe("지난 회의 이후 바뀐 할 일");
   });
 });

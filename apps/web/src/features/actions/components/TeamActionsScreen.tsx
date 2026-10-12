@@ -9,6 +9,7 @@ import { ActionDetailDrawer } from "./ActionDetailDrawer";
 import { JiraOpenIssues } from "./JiraOpenIssues";
 import { ProjectFilter } from "./ProjectFilter";
 import { ProjectProgressStrip } from "./ProjectProgressStrip";
+import { SinceLastMeetingSection } from "./SinceLastMeetingSection";
 import { bulkActionItems, listMyProjects, listMyTeams } from "../api";
 import { isOverdue, localToday } from "../dates";
 import {
@@ -59,8 +60,10 @@ import type { ActionItemRead, Project, TeamName } from "../types";
  * No add form: an item is added to a meeting, and this screen has none. That
  * stays on the meeting's own actions tab.
  *
- * Under the board, the open issues of the Jira projects the caller's teams
- * connected -- viewed on request and never imported (`JiraOpenIssues`).
+ * Under the board, what moved on it since each team's last meeting
+ * (`SinceLastMeetingSection`), and the open issues of the Jira projects the
+ * caller's teams connected -- viewed on request and never imported
+ * (`JiraOpenIssues`). Both are closed until asked for.
  */
 
 type Tab = "all" | "mine" | "overdue";
@@ -282,6 +285,7 @@ export function TeamActionsScreen({
           )}
         </div>
 
+        <SinceLastMeetingSection items={items} teamId={teamId} onOpen={setSelectedId} />
         <JiraOpenIssues teamId={teamId} />
       </div>
 
