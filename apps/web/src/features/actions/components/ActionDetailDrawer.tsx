@@ -193,7 +193,11 @@ export function ActionDetailDrawer({
               >
                 {isCandidate(item)
                   ? "후보"
-                  : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
+                  : // Sits in 완료 on the board, but was not finished (#856):
+                    // the window says what the card's 닫힘 and its history say.
+                    item.closed_unfinished
+                    ? "끝내지 않고 닫힘"
+                    : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
               </span>
               <span
                 className="text-[var(--color-ink-muted)]"

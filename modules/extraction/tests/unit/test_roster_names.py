@@ -160,7 +160,11 @@ def test_no_roster_name_appears_in_any_request(slept) -> None:
 
 
 def test_the_prompt_says_what_a_placeholder_is() -> None:
-    assert "[사람N]" in llm_module.INSTRUCTIONS
+    assert "[사람1]" in llm_module.INSTRUCTIONS
+    # By marks that can be on a line, never by the general form: a model wrote
+    # "[사람N]" back as the one who spoke, a person it is never told.
+    assert "사람N" not in llm_module.INSTRUCTIONS
+    assert "새로 만들지 마세요" in llm_module.INSTRUCTIONS
 
 
 def test_the_labels_still_map_back_to_the_original_utterances(slept) -> None:

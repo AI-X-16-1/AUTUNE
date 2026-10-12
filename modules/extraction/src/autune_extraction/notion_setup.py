@@ -9,6 +9,10 @@ with exactly the property names
 the sync uses -- ``service.NOTION_PROPERTIES``,
 ``service.DECISION_NOTION_PROPERTIES`` and ``MINUTES_NOTION_PROPERTIES`` below
 -- so the schema created here and the pages written later cannot drift apart.
+The first two also get 내용 (``ACTION_PROPERTIES``, ``DECISION_PROPERTIES``):
+a database made before it existed is given it once (``ensure_content``), and
+``property_names`` is the one place that says whether a team's pages may name
+it.
 
 **Why this is not in the dev route any more.** It started inside
 ``dev/routes.py`` (#402), the local-only page that connects Notion by hand.
@@ -37,7 +41,8 @@ decisions and items -- never a transcript.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 import httpx
 from sqlalchemy import text
@@ -69,6 +74,28 @@ names again."""
 
 _ACTION_STATUS_OPTIONS = list(NOTION_STATUS_LABELS.values())
 
+CONTENT_PROPERTY = "내용"
+"""The text property that holds an item's or a decision's sentence, once the
+page's title is its short title (the owner, 2026-10-09: "'내용' 칸을 추가")."""
+
+ACTION_PROPERTIES: Mapping[str, str] = {**NOTION_PROPERTIES, "content": CONTENT_PROPERTY}
+DECISION_PROPERTIES: Mapping[str, str] = {
+    **DECISION_NOTION_PROPERTIES,
+    "content": CONTENT_PROPERTY,
+}
+"""The sync's name maps with 내용 added: what a database made here has, and the
+map in force for a team whose database is known to have it (``property_names``).
+
+Not ``service``'s defaults themselves. A database made before the property
+existed does not have it, and Notion refuses a whole page for one property its
+database lacks -- so the default, which every team without a record gets, must
+not name it."""
+
+ContentKind = Literal["action", "decision"]
+CONTENT_KINDS: tuple[ContentKind, ...] = ("action", "decision")
+"""The databases that get 내용. Not 회의록: its pages are a project's minutes,
+written whole by ``project_send``."""
+
 HOME_TITLE = "Autune"
 HOME_INTRO = (
     "Autune이 회의에서 확정한 할 일과 결정을 이 페이지 아래 데이터베이스에 "
@@ -78,8 +105,8 @@ HOME_INTRO = (
 meeting content leaves here."""
 
 DATABASES: tuple[tuple[str, str, Mapping[str, str], bool], ...] = (
-    ("action_db_id", "할 일", NOTION_PROPERTIES, True),
-    ("decision_db_id", "결정", DECISION_NOTION_PROPERTIES, False),
+    ("action_db_id", "할 일", ACTION_PROPERTIES, True),
+    ("decision_db_id", "결정", DECISION_PROPERTIES, False),
     ("minutes_db_id", "회의록", MINUTES_NOTION_PROPERTIES, False),
 )
 """(config key, database title, property names, status as a select) for each
@@ -206,6 +233,67 @@ def retire_status_codes(client: httpx.Client, database_id: str) -> None:
     )
     if resp.status_code >= 400:
         log.info("extraction_notion_status_codes_kept", status=resp.status_code)
+
+
+def add_content_property(client: httpx.Client, database_id: str) -> bool | None:
+    """Give a database made before 내용 existed that property. ``True``: it has
+    it as text now -- added here, or already there. ``False``: Notion answered
+    and it does not -- the database is gone or unshared, the change was
+    refused, or a property of that name holds something other than text.
+    ``None``: no answer worth keeping (Notion down or busy); ask again.
+
+    Read before written: changing a property a person made under that name to
+    text would empty their column, so one that is there and is not text is
+    left alone and the team's pages keep today's shape. What is sent is the
+    database id and the fixed name; of the answer only that one property's
+    type is looked at, and nothing of it is kept or logged.
+    """
+    try:
+        resp = client.get(f"/databases/{database_id}")
+        if not _answered(resp):
+            return None
+        if resp.status_code >= 400:
+            log.info("extraction_notion_content_database_unreachable", status=resp.status_code)
+            return False
+        found = (resp.json().get("properties") or {}).get(CONTENT_PROPERTY)
+        if found is not None:
+            if found.get("type") != "rich_text":
+                log.info("extraction_notion_content_name_taken")
+            return bool(found.get("type") == "rich_text")
+        resp = client.patch(
+            f"/databases/{database_id}",
+            json={"properties": {CONTENT_PROPERTY: {"rich_text": {}}}},
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        # A timeout, or a proxy's page where Notion's JSON should be.
+        log.info("extraction_notion_content_unanswered", error=type(exc).__name__)
+        return None
+    if not _answered(resp):
+        return None
+    if resp.status_code >= 400:
+        log.info("extraction_notion_content_refused", status=resp.status_code)
+        return False
+    return True
+
+
+def _answered(resp: httpx.Response) -> bool:
+    """Whether Notion said something about the database, as opposed to being
+    busy (429) or broken (5xx) -- which says nothing and is asked again."""
+    return resp.status_code != 429 and resp.status_code < 500
+
+
+def content_of(
+    client: httpx.Client, config: Mapping[str, str], created: list[str]
+) -> dict[ContentKind, bool | None]:
+    """Whether each of a team's action and decision databases has 내용, for
+    ``save_targets``: one this setup made has it from its schema, a kept one is
+    asked and given it (``add_content_property``)."""
+    return {
+        kind: True
+        if f"{kind}_db_id" in created
+        else add_content_property(client, config[f"{kind}_db_id"])
+        for kind in CONTENT_KINDS
+    }
 
 
 def create_database(
@@ -374,8 +462,19 @@ def lock_setup(session: Session, team_id: str) -> None:
 
 
 def save_targets(
-    session: Session, team_id: str, config: Mapping[str, str], *, workspace_id: str | None
+    session: Session,
+    team_id: str,
+    config: Mapping[str, str],
+    *,
+    workspace_id: str | None,
+    content: Mapping[ContentKind, bool | None] | None = None,
 ) -> ExtNotionTarget:
+    """Record a team's databases, and what is known of their 내용 property.
+
+    ``content`` is ``content_of``'s answer for these databases. Without one, or
+    with a database Notion did not answer for, nothing is known: the row says
+    "not asked" and the team's next sync asks (``ensure_content``). The ids may
+    be new databases, so what an earlier row knew is never carried over."""
     target = session.get(ExtNotionTarget, team_id)
     if target is None:
         target = ExtNotionTarget(team_id=team_id)
@@ -385,5 +484,68 @@ def save_targets(
     target.action_db_id = config["action_db_id"]
     target.decision_db_id = config["decision_db_id"]
     target.minutes_db_id = config["minutes_db_id"]
+    _record_content(target, content or {})
     session.flush()
     return target
+
+
+def _record_content(target: ExtNotionTarget, content: Mapping[ContentKind, bool | None]) -> None:
+    answered = all(content.get(kind) is not None for kind in CONTENT_KINDS)
+    target.action_content = answered and bool(content["action"])
+    target.decision_content = answered and bool(content["decision"])
+    target.content_asked_at = datetime.now(UTC) if answered else None
+
+
+def ensure_content(session: Session, team_id: str, config: IntegrationConfig | None) -> None:
+    """Ask once whether the team's databases have 내용, adding it where it is
+    missing, and record the answer. Called where a page is about to be written.
+
+    **Why at a sync and not only at setup.** A team connected before the
+    property existed may never open the setup screen again; its databases get
+    the property at its next sync instead, with no beat process needed. The
+    record (``content_asked_at``) is what keeps every later sync from asking.
+
+    **It never fails the sync.** Refused, the answer is recorded as "does not
+    have it" and the team's pages keep today's shape until someone sets up
+    again. Unanswered, nothing is recorded and the next sync asks. A team with
+    no target row -- the local dev page, whose ids sit in the connection's
+    config -- has nowhere to keep the answer and is not asked.
+    """
+    target = current_target(session, team_id, config)
+    if target is None or target.content_asked_at is not None:
+        return
+    if config is None or not config.secret:
+        return
+    ids = {"action_db_id": target.action_db_id, "decision_db_id": target.decision_db_id}
+    with notion_client(config.secret) as client:
+        content = content_of(client, ids, created=[])
+    _record_content(target, content)
+    session.flush()
+    log.info(
+        "extraction_notion_content_asked",
+        team_id=team_id,
+        action=content["action"],
+        decision=content["decision"],
+    )
+
+
+def property_names(
+    session: Session, team_id: str, config: IntegrationConfig | None, kind: ContentKind
+) -> Mapping[str, str] | None:
+    """The name map in force for a team's item or decision pages; ``None`` is
+    ``service``'s default.
+
+    A team's own map (``action_properties`` / ``decision_properties`` in its
+    connection's config) replaces everything, as it always has: it names
+    ``content`` itself or its pages do without. Otherwise the default, with
+    내용 added only when the record says that database has it.
+    """
+    own = config.config.get(f"{kind}_properties") if config is not None else None
+    if own:
+        return own
+    target = current_target(session, team_id, config)
+    if target is None:
+        return None
+    if kind == "action":
+        return ACTION_PROPERTIES if target.action_content else None
+    return DECISION_PROPERTIES if target.decision_content else None

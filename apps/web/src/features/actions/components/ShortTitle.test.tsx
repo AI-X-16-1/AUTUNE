@@ -102,18 +102,20 @@ describe("a decision row's top line", () => {
     expect(within(list).queryByText(LONG)).toBeNull();
   });
 
-  it("opens to the whole statement when pressed, and closes again", () => {
+  it("opens the whole statement under the line when pressed, and closes again", () => {
     const list = decisions(decision("dec_1", LONG));
 
     fireEvent.click(within(list).getByRole("button", { name: SHOWN }));
 
-    const whole = within(list).getByRole("button", { name: LONG });
-    expect(whole.getAttribute("aria-expanded")).toBe("true");
-    expect(within(list).queryByText(SHOWN)).toBeNull();
+    // The line pressed stays the cut one (the user, 2026-10-09).
+    const line = within(list).getByRole("button", { name: SHOWN });
+    expect(line.getAttribute("aria-expanded")).toBe("true");
+    expect(within(list).getByText(LONG).tagName).toBe("P");
 
-    fireEvent.click(whole);
+    fireEvent.click(line);
 
     expect(within(list).getByRole("button", { name: SHOWN })).toBeTruthy();
+    expect(within(list).queryByText(LONG)).toBeNull();
   });
 
   it("leaves a short statement plain text, with nothing to press", () => {
@@ -129,7 +131,7 @@ describe("a decision row's top line", () => {
 
     fireEvent.click(within(list).getByRole("button", { name: SHOWN }));
 
-    expect(within(list).getByRole("button", { name: LONG })).toBeTruthy();
+    expect(within(list).getByText(LONG)).toBeTruthy();
     expect(within(list).queryByText(other)).toBeNull();
   });
 });

@@ -107,8 +107,13 @@ def set_up(team_id: str, page_id: str | None = None) -> dict[str, Any]:
             target, created = notion_setup.provision_databases(
                 client, page_id=page_id, stored=stored, home=home
             )
+            content = notion_setup.content_of(client, target, created)
         notion_setup.save_targets(
-            session, team_id, target, workspace_id=notion_setup.workspace_of(config)
+            session,
+            team_id,
+            target,
+            workspace_id=notion_setup.workspace_of(config),
+            content=content,
         )
 
     # After the commit, so the worker reads the databases just recorded.
