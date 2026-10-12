@@ -41,6 +41,7 @@ from . import (
     notion_connect,
     projects,
     service,
+    since_last_meeting,
     sync_log,
     sync_state,
     tasks,
@@ -88,6 +89,7 @@ from .schemas import (
     ProjectSendResult,
     ProjectWrite,
     ReviewDecision,
+    SinceLastMeeting,
     SyncLogRead,
     TeamRead,
 )
@@ -1009,6 +1011,26 @@ def jira_open_issues(
         teams = service.team_ids_of(session, reader.id)
     found = (jira_issues.project_issues(session, team) for team in teams)
     return [project for project in found if project is not None]
+
+
+@router.get("/since-last-meeting", response_model=list[SinceLastMeeting])
+def board_since_last_meeting(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> list[SinceLastMeeting]:
+    """What moved on a team's board since its last analysed meeting, read now
+    and stored nowhere (``since_last_meeting``). Named by a meeting or a team,
+    it answers for that team, members only (#189); without either, for every
+    team the caller is on, one answer each and never added together -- "the
+    last meeting" is a team's. Item ids in parts and a team total: nobody is
+    named and nothing is counted per person."""
+    if meeting_id or team_id:
+        teams = [_member_team(session, reader, meeting_id, team_id)]
+    else:
+        teams = service.team_ids_of(session, reader.id)
+    return [since_last_meeting.summary(session, team) for team in teams]
 
 
 @router.get("/notion/setup")
