@@ -129,6 +129,7 @@ def test_a_row_names_no_person() -> None:
         "drive_file_id",
         "drive_kind",
         "created_at",
+        "expires_at",
     }
 
 

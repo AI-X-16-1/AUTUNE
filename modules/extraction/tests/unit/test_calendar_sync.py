@@ -154,7 +154,9 @@ def test_a_confirmed_item_goes_on_its_assignees_own_calendar(session: Session) -
     assert list(calendars.events(ME)) == [ref.event_id]
     assert calendars.events(YOU) == {}  # team work is not copied to anyone else
     event = calendars.events(ME)[ref.event_id or ""]
-    assert event["summary"] == "[마감] 릴리스 노트 정리"
+    assert event["summary"] == "[마감] [할 일] 릴리스 노트 정리"
+    # No short title: the title holds the sentence, the body the fixed line.
+    assert event["description"] == calendar_sync.EVENT_DESCRIPTION
     assert event["day"] == date(2026, 10, 2)
     assert event["private"] == {TAG[0]: TAG[1], ITEM_KEY: row.id}
     assert SAID not in str(event)
@@ -1214,3 +1216,34 @@ def test_an_unreachable_calendar_never_blocks_a_deletion(
     monkeypatch.setattr(tasks, "refresh_access_token", refused)
 
     tasks.remove_calendar_event(row.id)  # must not raise
+
+
+def test_a_short_title_heads_the_event_and_the_sentence_is_in_its_body(session: Session) -> None:
+    """Module B's owner, 2026-10-09: "본문에 문장 넣기". With a title the
+    event's title is short, so the sentence it stands for goes above the fixed
+    line -- the same sentence, on the same calendar, that the title held."""
+    calendars = Calendars(ME, YOU)
+    row = item(session)
+    row.title = "릴리스 노트"
+    session.flush()
+
+    ref = sync(session, calendars, row)
+
+    assert ref is not None
+    event = calendars.events(ME)[ref.event_id or ""]
+    assert event["summary"] == "[마감] [할 일] 릴리스 노트"
+    assert event["description"] == f"릴리스 노트 정리\n\n{calendar_sync.EVENT_DESCRIPTION}"
+    assert SAID not in str(event)
+
+    sync(session, calendars, row)  # a later sync rewrites the event as it made it
+
+    event = calendars.events(ME)[ref.event_id or ""]
+    assert event["description"] == f"릴리스 노트 정리\n\n{calendar_sync.EVENT_DESCRIPTION}"
+
+    row.description = "릴리스 노트 초안 정리"  # edited: the title goes with the old sentence
+    session.flush()
+    sync(session, calendars, row)
+
+    event = calendars.events(ME)[ref.event_id or ""]
+    assert event["summary"] == "[마감] [할 일] 릴리스 노트 초안 정리"
+    assert event["description"] == calendar_sync.EVENT_DESCRIPTION

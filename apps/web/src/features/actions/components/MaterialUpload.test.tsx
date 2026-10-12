@@ -421,7 +421,9 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
     expect(group.textContent).toMatch(/보관 기간이 지나면 삭제 \(기본\)/);
     expect(group.textContent).toMatch(/올린 날부터 팀의 보관 기간\(45일\)이 지나면/);
     expect(group.textContent).toMatch(/팀 구성원이 직접 삭제할 때까지 보관합니다/);
-    expect(group.textContent).toMatch(/이미 올린 자료도 올린 날부터 다시 계산해/);
+    expect(group.textContent).toMatch(/팀의 보관 기간을 나중에 바꿔도 이미 올린 자료의 날은 달라지지 않습니다/);
+    expect(group.textContent).toMatch(/각각 올릴 때 정해진 지워지는 날이 다시 적용되어/);
+    expect(group.textContent).not.toMatch(/지금 이 방식으로/);
     expect(group.textContent).toMatch(/누가 바꿨는지는 기록하지 않습니다/);
     expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);
     expect(choice(group, /팀이 지울 때까지 보관/).checked).toBe(false);
@@ -443,6 +445,36 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
       ),
     );
     expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("says how many uploads switching back deletes, before anything is saved", async () => {
+    await open([uploaded({ expires_at: null })], RULES, { ...KEPT, uploads_past_their_day: 3 });
+
+    const group = await setting();
+    const back = choice(group, /보관 기간이 지나면 삭제/);
+    expect(back.checked).toBe(false);
+    expect(back.closest("label")?.textContent).toContain(
+      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 3건이 한 시간 안에 지워지며, 복구할 수 없습니다.",
+    );
+    expect(settingsSave).not.toHaveBeenCalled();
+  });
+
+  it("says nothing goes at once when no upload is past its day", async () => {
+    await open([uploaded({ expires_at: null })], RULES, { ...KEPT, uploads_past_their_day: 0 });
+
+    const group = await setting();
+    expect(group.textContent).toContain("지금 이 방식으로 바꿔도 곧바로 지워지는 자료는 없습니다.");
+    expect(group.textContent).not.toMatch(/\d+건이 한 시간 안에/);
+  });
+
+  it("gives no number, and no zero, when the server answers no count", async () => {
+    await open([uploaded({ expires_at: null })], RULES, KEPT);
+
+    const group = await setting();
+    expect(group.textContent).toContain(
+      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료는 한 시간 안에 지워지며, 복구할 수 없습니다.",
+    );
+    expect(group.textContent).not.toMatch(/곧바로 지워지는 자료는 없습니다/);
   });
 
   it("says so when the switch did not go through, and keeps the old choice", async () => {

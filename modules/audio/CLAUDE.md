@@ -61,6 +61,11 @@ Contract: `/docs/architecture/contracts.md`.
   open, and for a team anybody else is on. Do not let it run for a team of
   two, do not delete a row before its hooks, and do not catch what
   `storage.delete_orphan` raises there (`privacy.md` section 4).
+  Any member may delete one meeting (`meeting_deletion.delete_meeting`,
+  #1161), with its title typed: its hooks first, then its row. Refused while
+  a job of it is queued or running or a live session of it is open. The last
+  two "do not"s hold there as well, and so does one more: do not compare the
+  title before the row is locked.
 - `aud_speaker_names` — a name typed for a speaker with no account on the
   team, for that one meeting. No user id and no voice; it never reaches the
   published transcript. Cascades with the meeting.

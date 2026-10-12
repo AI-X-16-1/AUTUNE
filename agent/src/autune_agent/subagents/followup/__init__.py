@@ -17,8 +17,10 @@ from __future__ import annotations
 from autune_agent.main.subagents import Subagent
 from autune_contracts import INTELLIGENCE_COMPLETED
 
+from .card import card_hint
 from .choices import DateChoice, Picked, date_choices, picked_days
 from .graph import TOOLS, build
+from .stored import card_reason, storable
 
 SUBAGENT = Subagent(
     name="followup",
@@ -34,4 +36,13 @@ SUBAGENT = Subagent(
     triggers=(INTELLIGENCE_COMPLETED,),
 )
 
-__all__ = ["SUBAGENT", "DateChoice", "Picked", "date_choices", "picked_days"]
+__all__ = [
+    "SUBAGENT",
+    "DateChoice",
+    "Picked",
+    "card_hint",
+    "card_reason",
+    "date_choices",
+    "picked_days",
+    "storable",
+]

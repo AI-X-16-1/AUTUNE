@@ -346,6 +346,26 @@ class GapMeetingTemplate(Base, TimestampMixin):
     template_key: Mapped[str] = mapped_column(String(100), nullable=False)
 
 
+class GapReportThread(Base, TimestampMixin):
+    """Where E posted a meeting's report on the team's Slack channel, so C's
+    question cards and "담당자 지정해 질문" reply in its thread rather than
+    standing alone on the channel (#824, plan 3).
+
+    Told by E's ``autune.intelligence.meeting_report_posted``
+    (``MeetingReportPosted``), once per meeting. A Slack channel id and a
+    message ``ts``: where a message is, nothing of what it says. Goes with the
+    meeting, as everything else here does.
+    """
+
+    __tablename__ = "gap_report_threads"
+
+    meeting_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("meetings.id", ondelete="CASCADE"), primary_key=True
+    )
+    channel: Mapped[str] = mapped_column(String(64), nullable=False)
+    thread_ts: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
 class GapRelatedTopic(Base):
     """Which topics a gap was inferred from.
 

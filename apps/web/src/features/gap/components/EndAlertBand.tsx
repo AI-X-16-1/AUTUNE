@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { Band, Button, MaskedText } from "@/shared/ui";
 
+import { kstDay } from "../dates";
 import { END_ALERT, END_ALERT_SHOWN } from "../endAlert";
 import type { TeamGap } from "../types";
 
@@ -105,7 +106,7 @@ export function EndAlertBand({
                   className="block text-[var(--color-ink-muted)]"
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
-                  {gap.meeting_title} · {gap.meeting_date.slice(0, 10)}
+                  {gap.meeting_title} · {kstDay(gap.meeting_date)}
                 </span>
               </li>
             ))}

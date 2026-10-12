@@ -51,7 +51,7 @@ from autune_core import (
     new_id,
     session_scope,
 )
-from autune_core.deletion import on_speech_deleted
+from autune_core.deletion import on_meeting_deleted, on_speech_deleted
 from autune_core.errors import (
     ConflictError,
     NotFoundError,
@@ -1971,7 +1971,9 @@ def _report_read(
 def _team_reports_query(team_id: str) -> tuple[Any, Any]:
     """The select behind the team's report reads, and the expression for when each
     meeting was held. Both ``team_meeting_reports`` and ``team_meeting_report``
-    start from it, so a row reads the same either way."""
+    start from it, so a row reads the same either way. A meeting past its
+    ``expires_at`` is left out, as the search leaves it out, before the hourly
+    sweep deletes it."""
     held = func.coalesce(Meeting.started_at, Meeting.created_at)
     editor_user = aliased(User)
     corrector_user = aliased(User)
@@ -1980,7 +1982,7 @@ def _team_reports_query(team_id: str) -> tuple[Any, Any]:
         .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
         .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
         .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
-        .where(IntelMeetingReport.team_id == team_id)
+        .where(IntelMeetingReport.team_id == team_id, _not_expired(datetime.now(UTC)))
     )
     return query, held
 
@@ -2029,6 +2031,43 @@ def team_meeting_report(
         return None
     row, editor, corrector, at = found
     return _report_read(row, editor, corrector), row.draft_id, at
+
+
+@dataclass(frozen=True)
+class SearchableReport:
+    """A meeting report as ``tools.search_reports`` reads it: ``text`` is its
+    title line, its body and the correction under it -- not E's footer."""
+
+    meeting_id: str
+    title: str
+    text: str
+    posted: bool
+    held: datetime
+
+
+def searchable_reports(
+    session: Session, team_id: str, *, limit: int, now: datetime | None = None
+) -> list[SearchableReport]:
+    """The team's meeting reports as text to search, newest meeting first, at
+    most ``limit``. Read whole at question time, so a search sees each report
+    as it is now: edited, corrected, with a forgotten line replaced, or gone
+    with its meeting. A meeting past its ``expires_at`` is left out before the
+    hourly sweep deletes it. No membership check, as ``team_meeting_reports``.
+    """
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    rows = session.execute(
+        sa.select(IntelMeetingReport, held)
+        .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
+        .where(IntelMeetingReport.team_id == team_id, _not_expired(now or datetime.now(UTC)))
+        .order_by(held.desc(), IntelMeetingReport.meeting_id.desc())
+        .limit(limit)
+    ).all()
+    found = []
+    for row, at in rows:
+        title, body, _ = split_report_document(row.body_markdown)
+        text = "\n".join(part for part in (title, body, row.correction_body) if part)
+        found.append(SearchableReport(row.meeting_id, title, text, row.sent_at is not None, at))
+    return found
 
 
 def list_meeting_reports(
@@ -2525,4 +2564,31 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         texts_replaced=done.texts_replaced,
         topics_removed=done.topics_removed,
         reports_changed=done.reports_changed,
+    )
+
+
+# --- a meeting is deleted (#1161) -----------------------------------------------
+
+
+@on_meeting_deleted("intelligence")
+def forget_deleted_meeting(meeting_id: str) -> None:
+    """Before a meeting's row goes -- at its expiry, with its team, or by a
+    member's own act: E takes it out of the other meetings' rows that would
+    outlive it (``forget.forget_meeting``). E's own rows of the meeting go with
+    the row.
+
+    Registered from this file for the reason ``forget_deleted_speech`` is: a
+    member's and a team's deletion run in the API process, which imports every
+    router and no ``tasks`` module; an expiry runs in the worker, whose
+    ``tasks`` imports this file too. Opens its own session and commits before
+    the caller deletes; raises on failure, so the caller keeps the meeting.
+    Does not read the meeting's row and locks none of the caller's. Safe to
+    repeat. Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget.forget_meeting(session, meeting_id)
+    log.info(
+        "intelligence_meeting_forgotten",
+        meeting_id=meeting_id,
+        statements_cleared=done.statements_cleared,
     )

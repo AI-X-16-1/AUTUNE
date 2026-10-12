@@ -223,6 +223,46 @@ def test_a_recurring_meeting_recaps_its_last_occurrence(team_id: str) -> None:
     assert brief.match_reason == briefs.SERIES
 
 
+def test_a_numbered_meeting_recaps_the_round_before_it(team_id: str) -> None:
+    _analyzed(team_id, title="출시 준비 1차 회의", days_ago=14)
+    second = _analyzed(team_id, title="출시 준비 2차 회의", days_ago=7)
+    _analyzed(team_id, title="워크숍 기획", days_ago=1)
+    meeting = _scheduled(team_id, title="출시 준비 3차 회의")
+
+    brief = _compose(meeting)
+
+    assert brief is not None
+    assert brief.recap is not None and brief.recap.meeting_id == second
+    assert brief.match_reason == briefs.SERIES
+
+
+def test_an_exact_title_wins_over_a_numbered_one(team_id: str) -> None:
+    same = _analyzed(team_id, title="출시 준비 회의", days_ago=7)
+    _analyzed(team_id, title="출시 준비 2차 회의", days_ago=2)
+    meeting = _scheduled(team_id, title="출시 준비 회의")
+
+    brief = _compose(meeting)
+
+    assert brief is not None
+    assert brief.recap is not None and brief.recap.meeting_id == same
+
+
+def test_of_two_meetings_on_the_topic_the_newer_one_is_recapped(team_id: str) -> None:
+    # Both are confident; the older one scores higher (the same text as the
+    # title, so similarity 1.0, where the newer one clears only the re-rank
+    # threshold), and this meeting still follows the newer.
+    _analyzed(team_id, title="킥오프", days_ago=14, topics=("검색 정렬 개선",))
+    newer = _analyzed(team_id, title="중간 점검", days_ago=5, topics=("정렬 검색 개선",))
+    _analyzed(team_id, title="스프린트 4", days_ago=1, topics=("결제 모듈 출시",))
+    meeting = _scheduled(team_id, title="검색 정렬 개선")
+
+    brief = _compose(meeting)
+
+    assert brief is not None
+    assert brief.recap is not None and brief.recap.meeting_id == newer
+    assert brief.match_reason == briefs.TOPIC
+
+
 def test_a_new_title_recaps_the_meeting_that_discussed_its_topic(team_id: str) -> None:
     about_search = _analyzed(team_id, title="스프린트 3", days_ago=5, topics=("검색 정렬 개선",))
     _analyzed(team_id, title="스프린트 4", days_ago=1, topics=("결제 모듈 출시",))

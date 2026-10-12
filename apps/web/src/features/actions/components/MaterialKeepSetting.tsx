@@ -10,10 +10,13 @@ import type { MaterialSettings } from "../types";
  * a member deletes them. Shown only where the deployment takes uploads.
  *
  * Both choices are said in full before either is picked, including what
- * switching back does to what is already there: every upload is counted from
- * its own upload again, so the oldest go within the hour. Any member
- * switches it and the server keeps no name, so the screen asks no one's
- * permission and says who may.
+ * switching back does to what is already there: every upload has kept the
+ * day it was given at its upload, so those past it go within the hour. While
+ * the team keeps everything, the choice that would switch back says how many
+ * that is -- the server's count -- before it is picked, since picking saves
+ * (docs/architecture/privacy.md section 4; the owner, 2026-10-12). Any
+ * member switches it and the server keeps no name, so the screen asks no
+ * one's permission and says who may.
  */
 export function MaterialKeepSetting({
   settings,
@@ -40,17 +43,29 @@ export function MaterialKeepSetting({
     }
   };
 
+  const past = settings.uploads_past_their_day;
+  // What picking the window would delete, said only while it is the other
+  // choice that holds. A server that does not answer the count gets the
+  // sentence without a number rather than a guessed zero.
+  const switchingBack = !settings.keep_until_deleted
+    ? ""
+    : past === undefined
+      ? " 지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료는 한 시간 안에 지워지며, 복구할 수 없습니다."
+      : past > 0
+        ? ` 지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 ${past}건이 한 시간 안에 지워지며, 복구할 수 없습니다.`
+        : " 지금 이 방식으로 바꿔도 곧바로 지워지는 자료는 없습니다.";
+
   const choices = [
     {
       keep: false,
       label: "보관 기간이 지나면 삭제 (기본)",
-      detail: `올린 날부터 팀의 보관 기간(${settings.retention_days}일)이 지나면 개인정보를 가린 글을 자동으로 지웁니다. 목록에 지워지는 날이 적힙니다.`,
+      detail: `올린 날부터 팀의 보관 기간(${settings.retention_days}일)이 지나면 개인정보를 가린 글을 자동으로 지웁니다. 목록에 지워지는 날이 적힙니다. 지워지는 날은 올릴 때 정해지며, 팀의 보관 기간을 나중에 바꿔도 이미 올린 자료의 날은 달라지지 않습니다.${switchingBack}`,
     },
     {
       keep: true,
       label: "팀이 지울 때까지 보관",
       detail:
-        "기간이 지나도 지우지 않고, 팀 구성원이 직접 삭제할 때까지 보관합니다. 나중에 기간 삭제로 되돌리면 이미 올린 자료도 올린 날부터 다시 계산해, 기간이 지난 자료는 한 시간 안에 지워집니다.",
+        "기간이 지나도 지우지 않고, 팀 구성원이 직접 삭제할 때까지 보관합니다. 나중에 기간 삭제로 되돌리면 이미 올린 자료에도 각각 올릴 때 정해진 지워지는 날이 다시 적용되어, 그날이 지난 자료는 한 시간 안에 지워집니다.",
     },
   ] as const;
 

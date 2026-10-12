@@ -26,6 +26,7 @@ from . import (
     invitation_mail,
     invitations,
     masking_rules,
+    meeting_deletion,
     pii_report,
     service,
     storage,
@@ -46,7 +47,9 @@ from .schemas import (
     InvitationIssued,
     MaskingRule,
     MeetingCreate,
+    MeetingDeletion,
     MeetingDetail,
+    MeetingRename,
     MeetingState,
     MeetingSummary,
     MyData,
@@ -333,6 +336,10 @@ def create_meeting(body: MeetingCreate, user: CurrentUser, session: SessionDep) 
     Separate from the upload below because the live-microphone path needs a
     meeting before it has a recording, and because ``meetings`` is a shared
     entity only module A may write — one writer, one place.
+
+    A title that reads as personal data is refused with 422
+    ``validation_error`` (``details.reason`` ``personal_data``, the categories
+    and never the value) and no meeting is opened (#1161).
     """
     meeting = service.create_meeting(
         session,
@@ -342,6 +349,31 @@ def create_meeting(body: MeetingCreate, user: CurrentUser, session: SessionDep) 
         started_at=body.started_at,
     )
     return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.patch("/meetings/{meeting_id}", response_model=MeetingState)
+def rename_meeting(
+    meeting_id: str, body: MeetingRename, user: CurrentUser, session: SessionDep
+) -> MeetingState:
+    """Give a meeting a new title, for any member of its team (#1161). The
+    title is the only thing this route changes, and it is not echoed back.
+    Refused with 422 ``validation_error`` on ``title`` when it reads as
+    personal data or is only space; what was already sent keeps the old
+    title. See ``service.rename_meeting``."""
+    meeting = service.rename_meeting(session, meeting_id=meeting_id, member=user, title=body.title)
+    return MeetingState(meeting_id=meeting.id, status=meeting.status)
+
+
+@router.delete("/meetings/{meeting_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_meeting(
+    meeting_id: str, body: MeetingDeletion, user: CurrentUser, session: SessionDep
+) -> None:
+    """Delete a meeting and everything kept for it, for any member of its team
+    (#1161). The body carries the meeting's title as they typed it. Refused
+    with 409 ``meeting_in_progress`` while it is being transcribed or recorded,
+    or 422 ``meeting_title_mismatch``; see ``meeting_deletion.delete_meeting``
+    for what goes and in what order."""
+    meeting_deletion.delete_meeting(session, meeting_id=meeting_id, member=user, title=body.title)
 
 
 @router.post(

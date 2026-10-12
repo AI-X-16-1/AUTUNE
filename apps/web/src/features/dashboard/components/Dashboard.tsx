@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
+
 import { ActionCompletionRate } from "./ActionCompletionRate";
 import { AlignmentHeatmap } from "./AlignmentHeatmap";
+import { DashboardCard } from "./DashboardCard";
 import { GapDistributionBars } from "./GapDistributionBars";
 import { MeetingReportsCard } from "./MeetingReportsCard";
 import { PredictionCard } from "./PredictionCard";
@@ -39,8 +42,44 @@ export function Dashboard({ teamId }: { teamId: string }) {
     return null;
   }
 
+  // No meeting scored yet: every widget would say so on its own, so one card
+  // says it once, beside the one thing a member can set already (#1179).
+  if (dashboard.meeting_count === 0) {
+    return (
+      <div className="grid" style={gridStyle}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <DashboardCard title="대시보드">
+            <p style={{ ...metaStyle, color: "var(--color-ink-strong)" }}>
+              아직 분석된 회의가 없습니다.
+            </p>
+            <p style={{ ...metaStyle, marginTop: "var(--space-8)" }}>
+              회의를 분석하면 품질 점수, 갭 유형, 할 일 완료율, 회의 리포트가 여기에 나타납니다.
+              예측과 직무 쌍 얼라인먼트는 분석한 회의가 3회 이상 쌓여야 나타납니다.
+            </p>
+            <Link
+              href="/meetings/new"
+              style={{
+                display: "inline-block",
+                marginTop: "var(--space-12)",
+                fontSize: "var(--text-meta)",
+                color: "var(--color-accent-default)",
+              }}
+            >
+              회의 시작하기
+            </Link>
+          </DashboardCard>
+        </div>
+
+        <div style={{ gridColumn: "1 / -1" }}>
+          <WeeklyReportScheduleCard teamId={teamId} />
+        </div>
+      </div>
+    );
+  }
+
+  // Half-width cards come in pairs, so no row ends in an empty cell (#1179).
   return (
-    <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: "var(--space-12)" }}>
+    <div className="grid" style={gridStyle}>
       <QualityScoreCard dashboard={dashboard} />
       <AlignmentHeatmap cells={heatmap} />
 
@@ -48,15 +87,12 @@ export function Dashboard({ teamId }: { teamId: string }) {
         <GapDistributionBars distribution={dashboard.gap_distribution} titles={gapTitles} />
       </div>
 
-      <div style={{ gridColumn: "1 / -1" }}>
-        <ActionCompletionRate
-          rate={dashboard.action_item_completion_rate}
-          meetings={dashboard.action_completion_meeting_count}
-          overdue={dashboard.overdue_action_items}
-          asOf={dashboard.action_progress_as_of}
-        />
-      </div>
-
+      <ActionCompletionRate
+        rate={dashboard.action_item_completion_rate}
+        meetings={dashboard.action_completion_meeting_count}
+        overdue={dashboard.overdue_action_items}
+        asOf={dashboard.action_progress_as_of}
+      />
       <PredictionCard predictions={predictions} />
 
       <div style={{ gridColumn: "1 / -1" }}>
@@ -69,5 +105,7 @@ export function Dashboard({ teamId }: { teamId: string }) {
     </div>
   );
 }
+
+const gridStyle = { gridTemplateColumns: "1fr 1fr", gap: "var(--space-12)" };
 
 const metaStyle = { margin: 0, fontSize: "var(--text-meta)", color: "var(--color-ink-muted)" };

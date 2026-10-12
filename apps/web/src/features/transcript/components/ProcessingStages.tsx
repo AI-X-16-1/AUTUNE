@@ -254,15 +254,15 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
 
   return [
     {
-      label: "업로드 · 형식 검증",
+      label: "녹음 파일 확인",
       detail: recording
         ? "녹음이 끝나면 브라우저가 올립니다"
-        : "서버가 받았고, ffmpeg 가 16kHz mono 로 변환합니다",
+        : "올린 녹음 파일을 받아 글로 옮길 수 있게 준비합니다",
       state: recording ? "queued" : at === 0 && !failed ? "running" : at === 0 ? "failed" : "done",
     },
     {
       label: "음성 인식",
-      detail: "Whisper large-v3 · 한국어 · 회의 용어집 적용",
+      detail: "말한 내용을 글로 옮깁니다. 회의 용어집도 함께 참고합니다",
       state: state(1),
       progress: progress(1),
     },
@@ -274,7 +274,7 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
       // registered voices on the transcript afterwards and written only when
       // somebody confirms it (`UnidentifiedSpeaker`). So the row keeps
       // S12's "화자 분리" without "· 식별", and says where naming happens.
-      detail: "pyannote · 화자 1, 2 … 로 나누고, 이름은 처리 후 전사 화면에서 확인을 받아 붙입니다",
+      detail: "목소리로 말한 사람을 구분합니다. 이름은 처리가 끝난 뒤 전사 화면에서 확인하고 붙입니다",
       state: state(2),
       progress: progress(2),
     },
@@ -285,15 +285,15 @@ function stagesFor(meeting: MeetingDetail): Stage[] {
     },
     {
       label: "개인정보 마스킹 · 저장",
-      detail: "전화 · 이메일 · 주민번호 · 계좌 · 카드 — 저장 전에 마스킹",
+      detail: "전화번호 · 이메일 · 주민등록번호 · 계좌번호 · 카드 번호는 저장하기 전에 가립니다",
       state: state(3, 4),
       progress: progress(3, 4),
     },
     {
-      label: "구조화 · 갭 · 맥락 분석",
+      label: "회의 내용 분석",
       detail: finished
-        ? "B · C · D 에 전달됨 — 결과는 각 탭에서 확인합니다"
-        : "전사가 끝나면 B · C · D 가 병렬로 시작합니다",
+        ? "분석을 시작했습니다. 결과는 할 일 · 분석 · 컨텍스트 탭에서 볼 수 있습니다"
+        : "전사가 끝나면 할 일, 빠진 논의, 이전 회의와의 관계를 정리합니다",
       state: finished ? "done" : "queued",
     },
   ];

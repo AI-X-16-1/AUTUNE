@@ -2,15 +2,18 @@
 
 What the unit suite cannot show on SQLite: that the batch delete takes every
 piece of masked text by ``ON DELETE CASCADE`` as well as by its own delete,
-that the window compares real ``timestamptz`` values, and that the setting
-row goes with its team.
+that the day compares real ``timestamptz`` values, that the table refuses
+an upload without a day and a link with one, and that the setting row goes
+with its team.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from autune_core import Team
@@ -33,6 +36,15 @@ def upload(session: Session, team_id: str, age: timedelta) -> ExtMaterial:
         session, team_id, title="계획", file_name="plan.txt", data=BODY.encode()
     ).row
     row.created_at = NOW - age
+    return aged(session, row)
+
+
+def aged(session: Session, row: ExtMaterial) -> ExtMaterial:
+    """The upload as it would be had it been made at ``row.created_at``: the
+    day ``store_upload`` wrote moves back by as much as ``created_at`` did."""
+    (made,) = sa.inspect(row).attrs.created_at.history.deleted
+    assert row.expires_at is not None
+    row.expires_at += row.created_at - made
     session.flush()
     return row
 
@@ -77,6 +89,40 @@ def test_a_team_that_keeps_until_deleted_loses_nothing_until_it_switches_back(
     materials.set_keep_until_deleted(db_session, ours, False)
     assert materials.forget_expired_uploads(db_session, now=NOW) == 1
     assert db_session.get(ExtMaterial, kept.id) is None
+
+
+def test_an_upload_keeps_its_day_when_the_team_shortens_its_window(
+    db_session: Session,
+) -> None:
+    ours = team(db_session, days=90)
+    row = upload(db_session, ours, timedelta(days=50))
+
+    db_session.execute(sa.update(Team).where(Team.id == ours).values(retention_days=30))
+
+    assert materials.forget_expired_uploads(db_session, now=NOW) == 0
+    assert materials.forget_expired_uploads(db_session, now=NOW + timedelta(days=40)) == 1
+    assert db_session.get(ExtMaterial, row.id) is None
+
+
+def test_the_table_refuses_an_upload_without_a_day_and_a_link_with_one(
+    db_session: Session,
+) -> None:
+    ours = team(db_session)
+    with pytest.raises(IntegrityError, match="ck_ext_materials_expires"), db_session.begin_nested():
+        db_session.add(ExtMaterial(team_id=ours, title="계획", source="upload"))
+        db_session.flush()
+    with pytest.raises(IntegrityError, match="ck_ext_materials_expires"), db_session.begin_nested():
+        db_session.add(
+            ExtMaterial(
+                team_id=ours,
+                title="링크",
+                source="drive_link",
+                drive_file_id="d" * 20,
+                drive_kind="file",
+                expires_at=NOW,
+            )
+        )
+        db_session.flush()
 
 
 def test_a_link_has_no_window(db_session: Session) -> None:
