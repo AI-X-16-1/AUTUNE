@@ -731,7 +731,7 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
     stopped for a marking has its alarm row committed before the refusal is
     answered -- the route's own rollback would otherwise take it."""
     try:
-        row = materials.store_upload(
+        row, not_read = materials.store_upload(
             session, team, title=upload.title, file_name=upload.file_name, data=upload.data
         )
     except materials.ConfidentialFileError:
@@ -739,7 +739,7 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
         raise
     response = materials.read(row, kept=materials.keeps_until_deleted(session, team))
     session.commit()
-    return response
+    return response.model_copy(update={"not_read": list(not_read)})
 
 
 @router.post("/materials/upload", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)

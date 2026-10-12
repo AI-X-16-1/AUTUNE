@@ -34,7 +34,7 @@ def team(session: Session, days: int = 90) -> str:
 def upload(session: Session, team_id: str, age: timedelta) -> ExtMaterial:
     row = materials.store_upload(
         session, team_id, title="계획", file_name="plan.txt", data=BODY.encode()
-    )
+    ).row
     row.created_at = NOW - age
     return aged(session, row)
 
