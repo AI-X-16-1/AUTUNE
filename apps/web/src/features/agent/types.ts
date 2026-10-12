@@ -20,6 +20,12 @@ export type PendingAction = {
   meeting_started_at?: string | null;
 };
 
+/** A proposal a person already decided (`GET /api/agent/decided`, #1215). */
+export type DecidedAction = PendingAction & {
+  /** Who decided; null once that account is gone. */
+  decided_by_name: string | null;
+};
+
 export type RejectReason =
   "wrong_evidence" | "not_now" | "handled_elsewhere" | "other";
 
