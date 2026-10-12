@@ -6,6 +6,7 @@ import { useState } from "react";
 
 import { Button, MaskedText, ScoreLabel, StatusDot } from "@/shared/ui";
 
+import { kstDay } from "../dates";
 import { useTeamGaps } from "../hooks/useTeamGaps";
 import { SEVERITY_LABELS } from "../types";
 import type { TeamGap } from "../types";
@@ -118,7 +119,7 @@ function MeetingGroup({ group }: { group: Group }) {
           {title}
         </span>
         <span className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-metaSmall)" }}>
-          {date.slice(0, 10)} · {gaps.length}건
+          {kstDay(date)} · {gaps.length}건
         </span>
       </Link>
       <ul className="border-t border-[var(--color-hairline)]">

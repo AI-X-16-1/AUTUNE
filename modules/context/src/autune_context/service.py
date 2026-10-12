@@ -52,7 +52,7 @@ from autune_core import (
     get_logger,
     session_scope,
 )
-from autune_core.deletion import on_speech_deleted
+from autune_core.deletion import on_meeting_deleted, on_speech_deleted
 from autune_core.errors import ConflictError, NotFoundError
 from autune_integrations import PermanentIntegrationError, SlackApi, assert_personal_delivery
 
@@ -752,9 +752,10 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
 
     Also runs the other two ``ctx_*`` retention sweeps (``sweep_stale_topic_labels``,
     ``sweep_dangling_previous_statements``) alongside the orphan sweep this
-    function has always run — global and idempotent, so exercising them on
-    every call closes real gaps ahead of #87 rather than leaving them for tests
-    to be the only caller.
+    function has always run — global and idempotent. A meeting's deletion
+    runs ``forget_deleted_meeting`` first (#1161); these find what that hook
+    cannot see, such as a statement this build copied while a deletion was
+    between its hook and its ``DELETE``.
     """
     settings = get_settings()
     embedder = get_embedder()
@@ -1970,7 +1971,7 @@ def get_decision_lineage(
     A walk from the root breaks the moment the chain's *first* version ages
     past the retention window without a later meeting having touched this
     thread since: nothing re-chains it until then (see docs/modules/context.md,
-    "Deletion" — accepted until #87's hook lands), so ``previous_version_id``
+    "Deletion"), so ``previous_version_id``
     on the surviving versions still points at a now-invisible row, and a walk
     that requires a visible root to start from would find none and lose the
     rest of the thread along with it. Ordering by meeting time instead only
@@ -2087,12 +2088,10 @@ def sweep_orphan_decision_threads(session: Session) -> int:
     its origin meeting reaching the retention window — but a thread whose *every*
     version was in a since-deleted meeting is now empty and must go.
 
-    Not yet wired into ``autune_core.deletion``: registering a meeting-deletion
-    hook that issues a real ``DELETE`` breaks ``packages/core``'s own unit tests,
-    which run before migrations on a clean CI database and iterate every
-    registered hook (see ADR 0008 and #87). Until #87 lands this is called
-    explicitly — by the integration test, and later by the retention sweep once
-    that exists. Global and idempotent.
+    ``forget_deleted_meeting`` deletes such a thread before the meeting's row
+    goes (#1161). This sweep is the second line: called at the end of every
+    lineage build, it finds a thread emptied any other way. Global and
+    idempotent.
     """
     # Correlated NOT EXISTS, not `id NOT IN (subquery)`: the latter deletes every
     # thread when the versions table is empty. A globally empty versions table
@@ -2121,8 +2120,9 @@ def sweep_dangling_previous_statements(session: Session) -> int:
     and ``confidence`` are untouched — the fact that something changed
     survives; only the deleted meeting's wording goes.
 
-    Not yet wired into ``autune_core.deletion``, same reason and same place as
-    ``sweep_orphan_decision_threads`` (ADR 0008, #87). Global and idempotent.
+    ``forget_deleted_meeting`` empties these before the meeting's row goes
+    (#1161); this sweep, called at the end of every lineage build, finds a copy
+    made or left any other way. Global and idempotent.
     """
     meeting_exists = (
         select(Meeting.id).where(Meeting.id == CtxDecisionVersion.previous_meeting_id).exists()
@@ -2163,8 +2163,10 @@ def sweep_stale_topic_labels(session: Session) -> int:
     retention sweep eventually deletes the rows and
     ``sweep_orphan_decision_threads`` removes the thread outright.
 
-    Not yet wired into ``autune_core.deletion``, same reason and same place as
-    ``sweep_orphan_decision_threads`` (ADR 0008, #87). Global and idempotent.
+    ``forget_deleted_meeting`` renames a thread before its head's meeting goes
+    (#1161); this sweep, called at the end of every lineage build, also covers
+    a head that merely aged out of its window, which deletes nothing and runs
+    no hook. Global and idempotent.
     """
     versions = session.scalars(
         select(CtxDecisionVersion)
@@ -2390,4 +2392,137 @@ def forget_deleted_speech(user_id: str, utterance_ids: Sequence[str]) -> None:
         links_deleted=done.links_deleted,
         statements_cleared=done.statements_cleared,
         agendas_dropped=done.agendas_dropped,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Deletion — a meeting about to go (#1161)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class MeetingForgotten:
+    """Counts only: what ``forget_meeting`` changed, safe to log."""
+
+    statements_cleared: int = 0
+    labels_refreshed: int = 0
+    threads_deleted: int = 0
+
+
+def forget_meeting(session: Session, meeting_id: str) -> MeetingForgotten:
+    """Take a meeting's decision text out of the rows that outlive it (#1161).
+
+    The cascade from ``meetings.id`` removes the meeting's own rows. A decision
+    thread is anchored on the team so that a lineage outlives one meeting, and
+    that is where a meeting's text is left behind. Three things, which the
+    three sweeps above do for a meeting already gone and this does for the one
+    about to go:
+
+    - **Another meeting's copy of its statement.** A version that follows one
+      of this meeting's keeps that statement in ``previous_statement``. It is
+      emptied. ``previous_meeting_id``, ``change_type``, ``nli_label`` and
+      ``confidence`` stay: that something changed, and how, is the later
+      meeting's (``sweep_dangling_previous_statements``).
+    - **A thread's label.** It is the statement of the thread's head. It is set
+      again from the head the thread has without this meeting -- the latest
+      version of a meeting still inside its retention window -- and to ``""``
+      when it has none (``sweep_stale_topic_labels``).
+    - **A thread only this meeting is in.** Deleted, and its versions with it
+      (``sweep_orphan_decision_threads``).
+
+    The sweeps look for a meeting that is not there, and this runs while the
+    row still is, so it works from the id instead. They stay as they are: they
+    are what closes the case this cannot, a lineage build that copies this
+    meeting's statement after the hook ran and before the row went.
+
+    Nothing else of a later version is rebuilt. ``key_stakeholders_absent`` is
+    left as ``_rethread`` last wrote it, and the chain is not re-read by a
+    model; the next lineage build of the team does both.
+
+    Safe to repeat: the second time there is nothing left to find.
+    """
+    statements_cleared = len(
+        session.scalars(
+            update(CtxDecisionVersion)
+            .where(
+                CtxDecisionVersion.previous_meeting_id == meeting_id,
+                # Its own versions go with it; leave them whole until then.
+                CtxDecisionVersion.meeting_id != meeting_id,
+                CtxDecisionVersion.previous_statement.is_not(None),
+            )
+            .values(previous_statement=None)
+            .returning(CtxDecisionVersion.id)
+        ).all()
+    )
+
+    in_meeting = set(
+        session.scalars(
+            select(CtxDecisionVersion.thread_id).where(CtxDecisionVersion.meeting_id == meeting_id)
+        )
+    )
+    if not in_meeting:
+        return MeetingForgotten(statements_cleared=statements_cleared)
+    kept = set(
+        session.scalars(
+            select(CtxDecisionVersion.thread_id).where(
+                CtxDecisionVersion.thread_id.in_(in_meeting),
+                CtxDecisionVersion.meeting_id != meeting_id,
+            )
+        )
+    )
+    only_here = in_meeting - kept
+    if only_here:
+        session.execute(delete(CtxDecision).where(CtxDecision.id.in_(only_here)))
+
+    head: dict[str, str] = {}
+    if kept:
+        for thread_id, statement in session.execute(
+            select(CtxDecisionVersion.thread_id, CtxDecisionVersion.current_statement)
+            .join(CtxDecision, CtxDecision.id == CtxDecisionVersion.thread_id)
+            .join(Meeting, Meeting.id == CtxDecisionVersion.meeting_id)
+            .where(
+                CtxDecisionVersion.thread_id.in_(kept),
+                CtxDecisionVersion.meeting_id != meeting_id,
+                *visible_meeting_clauses(CtxDecision.team_id),
+            )
+            .order_by(CtxDecisionVersion.thread_id, _meeting_time(), CtxDecisionVersion.id)
+        ):
+            head[thread_id] = statement  # last row wins
+    labels_refreshed = 0
+    if kept:
+        for thread in session.scalars(select(CtxDecision).where(CtxDecision.id.in_(kept))):
+            label = head.get(thread.id, "")[:400]
+            if thread.topic_label != label:
+                thread.topic_label = label
+                labels_refreshed += 1
+    session.flush()
+    return MeetingForgotten(
+        statements_cleared=statements_cleared,
+        labels_refreshed=labels_refreshed,
+        threads_deleted=len(only_here),
+    )
+
+
+@on_meeting_deleted("context")
+def forget_deleted_meeting(meeting_id: str) -> None:
+    """Before a meeting's row goes -- at its expiry, with its team, or by a
+    member's own act (#1161): ``forget_meeting``.
+
+    Registered from this file for the reason ``forget_deleted_speech`` is: the
+    API process, where a team and a meeting are deleted, imports every router
+    and no ``tasks`` module, and the worker, where a meeting expires, imports
+    this through ``tasks``. Raises on failure, so the caller keeps the meeting
+    and asks again rather than deleting it with its text left in another
+    meeting's row; commits in its own transaction before the caller deletes,
+    erring toward deleting more. Nothing is republished and nothing is sent.
+    Ids and counts only.
+    """
+    with session_scope() as session:
+        done = forget_meeting(session, meeting_id)
+    log.info(
+        "context_meeting_forgotten",
+        meeting_id=meeting_id,
+        statements_cleared=done.statements_cleared,
+        labels_refreshed=done.labels_refreshed,
+        threads_deleted=done.threads_deleted,
     )

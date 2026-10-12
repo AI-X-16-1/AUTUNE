@@ -68,6 +68,7 @@ from . import (
     days_off,
     jira_sync,
     leave_calendar,
+    materials,
     meeting_notice,
     notion_backfill,
     notion_setup,
@@ -127,6 +128,16 @@ PAUSE_FORGET_EVERY = timedelta(hours=1)
 
 HOLIDAY_REFRESH_EVERY = timedelta(hours=12)
 """``refresh_public_holidays``."""
+
+MATERIAL_ALARM_FORGET_EVERY = timedelta(hours=1)
+"""``forget_old_material_alarms``."""
+
+MATERIAL_EXPIRY_EVERY = timedelta(hours=1)
+"""``forget_expired_material_uploads``."""
+
+MATERIAL_EXPIRY_BATCHES = 50
+"""At most this many batches (``materials.FORGET_BATCH`` each) per run; what is
+left goes on the next."""
 
 # Before anything of module B is served or run: a configuration B refuses
 # (an unacknowledged cloud model, #392) stops the process that imports this,
@@ -400,7 +411,9 @@ def title_meeting(meeting_id: str) -> int:
     Its own task, after the run that built the rows: the rows are already
     there and already announced, and a title is a way of showing them. Reads,
     then calls the model with no session open, then writes -- only onto a row
-    that still says the sentence its title is of. A failed call, a refused
+    that still says the sentence its title is of, and onto none when a row of
+    the request was deleted or lost its line to a speech deletion meanwhile
+    (``service.store_titles``). A failed call, a refused
     title and a privacy refusal all leave the row without one, and the screen
     shows the sentence cut as it did before; logged by meeting id and counts,
     never the text.
@@ -1828,6 +1841,41 @@ def forget_ended_notification_pauses() -> int:
     return gone
 
 
+@shared_task(name="autune.extraction.periodic.forget_old_material_alarms")
+@periodic(MATERIAL_ALARM_FORGET_EVERY)
+def forget_old_material_alarms() -> int:
+    """Delete the stopped-upload alarm rows nobody acknowledged in 30 days
+    (``materials.forget_old_alarms``, #817). Alarm rows only; an upload past
+    its window is ``forget_expired_material_uploads``'s. Returns how many
+    went; counts only in the log."""
+    with session_scope() as session:
+        gone = materials.forget_old_alarms(session, now=datetime.now(tz=UTC))
+    if gone:
+        log.info("extraction_material_alarms_forgotten", count=gone)
+    return gone
+
+
+@shared_task(name="autune.extraction.periodic.forget_expired_material_uploads")
+@periodic(MATERIAL_EXPIRY_EVERY)
+def forget_expired_material_uploads() -> int:
+    """Delete every uploaded material past its team's retention window,
+    counted from its upload, with its masked text (the owner, 2026-10-11;
+    ``materials.forget_expired_uploads``). A team that keeps uploads until
+    deleted is passed over; a Drive link has no window. One transaction per
+    batch, so a long run holds no lock for long. Takes nothing -- no payload,
+    so no text, title or id travels -- and returns how many went."""
+    gone = 0
+    for _ in range(MATERIAL_EXPIRY_BATCHES):
+        with session_scope() as session:
+            batch = materials.forget_expired_uploads(session, now=datetime.now(tz=UTC))
+        gone += batch
+        if batch < materials.FORGET_BATCH:
+            break
+    if gone:
+        log.info("extraction_material_uploads_expired", count=gone)
+    return gone
+
+
 @shared_task(name="autune.extraction.periodic.remind_due_items")
 @periodic(SWEEP_EVERY)
 def remind_due_items() -> list[str]:
@@ -2006,12 +2054,13 @@ def sync_action_item(action_item_id: str) -> str:
                 team_id=meeting.team_id,
             )
             return COPY_NOT_CONNECTED
+        notion_setup.ensure_content(session, meeting.team_id, config)
         service.sync_action_item_to_notion(
             session,
             NotionClient(config.secret),
             action_item_id=action_item_id,
             database_id=database_id,
-            property_names=config.config.get("action_properties"),
+            property_names=notion_setup.property_names(session, meeting.team_id, config, "action"),
         )
     return COPY_SENT
 
@@ -2659,7 +2708,11 @@ def trash_notion_page(action_item_id: str) -> None:
                 return
             client = NotionClient(config.secret)
             try:
-                service.trash_item_page(client, owed[1], config.config.get("action_properties"))
+                service.trash_item_page(
+                    client,
+                    owed[1],
+                    notion_setup.property_names(session, meeting.team_id, config, "action"),
+                )
             finally:
                 client.close()
             log.info("extraction_notion_trashed_with_item", action_item_id=action_item_id)
@@ -3129,7 +3182,9 @@ def _clean_up_one(
             try:
                 # Retitled first, as at deletion (#768).
                 service.trash_item_page(
-                    notion, row.external_id, notion_config.config.get("action_properties")
+                    notion,
+                    row.external_id,
+                    notion_setup.property_names(session, row.team_id, notion_config, "action"),
                 )
             finally:
                 notion.close()
@@ -3211,12 +3266,15 @@ def _sync_decision_notion(decision_id: str) -> None:
                 team_id=meeting.team_id,
             )
             return
+        notion_setup.ensure_content(session, meeting.team_id, config)
         service.sync_decision_to_notion(
             session,
             NotionClient(config.secret),
             decision_id=decision_id,
             database_id=database_id,
-            property_names=config.config.get("decision_properties"),
+            property_names=notion_setup.property_names(
+                session, meeting.team_id, config, "decision"
+            ),
         )
 
 

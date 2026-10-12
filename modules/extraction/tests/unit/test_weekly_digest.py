@@ -223,3 +223,20 @@ def test_someone_who_turns_them_off_before_the_send_gets_nothing(session: Sessio
 def test_the_setting_is_off_by_default() -> None:
     assert ExtractionSettings(_env_file=None).weekly_digest is False  # type: ignore[call-arg]
     assert reminders.DIGEST_MAX_LINES == 10
+
+
+def test_a_row_with_a_short_title_is_named_by_it_in_the_digest(session: Session) -> None:
+    """Module B's owner, 2026-10-09: "Slack·회의록까지 전부" -- a line of a
+    message is the title alone, with no kind mark ("붙이지 않기")."""
+    row = session.get(ExtActionItem, "act_1")
+    assert row is not None
+    row.title = "로그인 수정"
+    session.flush()
+    slack = FakeSlack()
+    (first, _) = service.weekly_digests_to_send(session, now=MONDAY_10_KST)
+
+    assert service.send_weekly_digest(session, slack, first, now=MONDAY_10_KST) is True
+
+    _, text = slack.sent[0]
+    assert "• 로그인 수정" in text
+    assert "로그인 고치기" not in text and "[할 일]" not in text

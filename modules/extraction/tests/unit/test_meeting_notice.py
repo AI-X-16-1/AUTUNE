@@ -563,3 +563,21 @@ def test_a_notice_slack_did_not_take_stays_owed(
 
     assert session.query(ExtMeetingNotice).count() == 0
     assert owed(session) == [("mtg_team_1", "user_kim")]
+
+
+def test_a_confirmed_item_is_named_by_its_short_title_and_a_drafts_title_stays(
+    session: Session,
+) -> None:
+    """Module B's owner, 2026-10-09. The rule above holds for a title as for
+    the sentence it is of: a draft's does not reach the message."""
+    draft = item(session, "act_draft_1")
+    confirmed = item(session, "act_done_deal", status="todo", text="확정된 일", due=None)
+    draft.title, confirmed.title = "초안의 제목", "확정 제목"
+    session.flush()
+    slack = FakeSlack()
+
+    assert send_meeting_notice(session, slack, KIM, now=AT_10) is True  # type: ignore[arg-type]
+
+    ((_, text),) = slack.sent
+    assert "• 확정: 확정 제목" in text
+    assert "확정된 일" not in text and "초안의 제목" not in text and "[할 일]" not in text

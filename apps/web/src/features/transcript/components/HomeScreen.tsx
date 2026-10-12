@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/shared/ui/Button";
 import { ChipToggle } from "@/shared/ui/ChipToggle";
@@ -12,10 +12,12 @@ import { StatusDot } from "@/shared/ui/StatusDot";
 import { listTeams } from "../api";
 import { meetingDate } from "../format";
 import { useMeetings, type MeetingsState } from "../hooks/useMeetings";
+import { readableError } from "../readableError";
 import { onTeamChosen, onTeamsChanged, rememberTeam, teamsToList } from "../selectedTeam";
 import { STATUS_DOT, STATUS_LABEL, isBeingRecorded } from "../status";
 import type { MeetingSummary, TeamSummary } from "../types";
 
+import { LoadError } from "./LoadError";
 import { TeamMemberWindow } from "./TeamMemberWindow";
 import { below, TeamsWindow, type Place } from "./TeamsWindow";
 
@@ -109,6 +111,8 @@ function HomeTeams() {
   const [addingTo, setAddingTo] = useState<TeamSummary | null>(null);
   const add = useRef<HTMLSpanElement>(null);
   const closeAdding = useCallback(() => setAddingTo(null), []);
+  // Bumped by "다시 시도" after the teams could not be read.
+  const [attempt, setAttempt] = useState(0);
 
   const show = useCallback((id: string | null) => {
     setTeamId(id);
@@ -132,13 +136,12 @@ function HomeTeams() {
         if (asked !== null) setTeamId(asked);
       })
       .catch((caught: unknown) => {
-        if (current)
-          setFailed(caught instanceof Error ? caught.message : "팀 목록을 불러오지 못했습니다.");
+        if (current) setFailed(readableError(caught, "팀 목록을 불러오지 못했습니다."));
       });
     return () => {
       current = false;
     };
-  }, []);
+  }, [attempt]);
 
   // A team chosen anywhere on the page -- this row, the window, the sidebar --
   // is the team shown here.
@@ -149,18 +152,24 @@ function HomeTeams() {
 
   if (failed !== null)
     return (
-      <p role="alert" style={{ fontSize: "var(--text-meta)", color: "var(--color-signal-critical)" }}>
-        {failed}
-      </p>
+      <LoadError
+        message={failed}
+        onRetry={() => {
+          setFailed(null);
+          setAttempt((n) => n + 1);
+        }}
+      />
     );
   if (teams === null) return <p style={MUTED}>팀을 불러오는 중입니다…</p>;
   if (teams.length === 0) return <p style={MUTED}>속한 팀이 없습니다.</p>;
-  // "팀원 추가", at the right end of the row (the user, 2026-10-07): for the
-  // one team being shown. With 전체 there is no one team to invite to, so it
-  // is not offered until a team is chosen.
+  // "팀원 추가", at the right end (the user, 2026-10-07): for the one team
+  // being shown. With 전체 there is no one team to invite to, so it is not
+  // offered until a team is chosen. It sits on the list's heading line, not
+  // alone at the end of the chip row, where it read as floating in the middle
+  // of the page (#1176): the heading names the team's list it is for.
   const adding = (team: TeamSummary) => (
     <>
-      <span ref={add} className="ml-auto">
+      <span ref={add}>
         <Button
           tone="secondary"
           size="compact"
@@ -185,31 +194,22 @@ function HomeTeams() {
 
   const only = teams.length === 1 ? teams[0] : undefined;
   if (only !== undefined)
-    // One team: no row to choose from, and the button alone where it would be.
-    return (
-      <>
-        <div
-          className="flex max-w-[720px] items-center"
-          style={{ marginBottom: "var(--space-16)" }}
-        >
-          {adding(only)}
-        </div>
-        <Meetings teamId={only.team_id} />
-      </>
-    );
+    // One team: no row to choose from; the button on the list's heading.
+    return <Meetings teamId={only.team_id} action={adding(only)} />;
 
   // A team that is not in the list -- never theirs, or left since the
   // address was made or the choice was kept -- shows every team: it is not
   // asked for, so there is no answer about a team they may not read.
   const shown = teamId !== null && teams.some((team) => team.team_id === teamId) ? teamId : null;
+  const shownTeam = teams.find((one) => one.team_id === shown);
 
   return (
     <>
       <div
         role="group"
         aria-label="팀"
-        // As wide as the list under it, so the button at its end sits over
-        // the list's right edge.
+        // As wide as the list under it, so a row that wraps wraps where the
+        // list ends.
         className="flex max-w-[720px] flex-wrap items-center gap-1.5"
         style={{ marginBottom: "var(--space-16)" }}
       >
@@ -256,12 +256,8 @@ function HomeTeams() {
             onClose={close}
           />
         ) : null}
-        {(() => {
-          const team = teams.find((one) => one.team_id === shown);
-          return team === undefined ? null : adding(team);
-        })()}
       </div>
-      <Meetings teamId={shown ?? undefined} />
+      <Meetings teamId={shown ?? undefined} action={shownTeam && adding(shownTeam)} />
     </>
   );
 }
@@ -270,7 +266,7 @@ function HomeTeams() {
  * The meetings under the row: one team's, or with no team the latest `RECENT`
  * of every team the person is on. The first-meeting screen when there are none.
  */
-function Meetings({ teamId }: { teamId?: string }) {
+function Meetings({ teamId, action }: { teamId?: string; action?: ReactNode }) {
   const answer = useMeetings(teamId);
   const every = teamId === undefined;
   const state: MeetingsState =
@@ -282,7 +278,18 @@ function Meetings({ teamId }: { teamId?: string }) {
   // is no "최근 회의" to title and the first upload is the subject -- but
   // somebody on several teams must still be able to pick another one.
   if (state.status === "ready" && state.meetings.length === 0) {
-    return <FirstMeeting />;
+    // A team with no meetings yet can still be joined: the button keeps the
+    // right end of the list's width, over the first-meeting screen.
+    return (
+      <>
+        {action ? (
+          <div className="flex max-w-[720px] justify-end" style={{ marginBottom: "var(--space-16)" }}>
+            {action}
+          </div>
+        ) : null}
+        <FirstMeeting />
+      </>
+    );
   }
 
   return (
@@ -309,6 +316,7 @@ function Meetings({ teamId }: { teamId?: string }) {
             {state.meetings.length}
           </span>
         )}
+        {action ? <div className="ml-auto self-center">{action}</div> : null}
       </header>
 
       {body(state)}
@@ -328,17 +336,7 @@ function body(state: MeetingsState) {
   }
 
   if (state.status === "error") {
-    return (
-      <p
-        role="alert"
-        style={{
-          fontSize: "var(--text-meta)",
-          color: "var(--color-signal-critical)",
-        }}
-      >
-        {state.message}
-      </p>
-    );
+    return <LoadError message={state.message} onRetry={state.retry} />;
   }
 
   return (
