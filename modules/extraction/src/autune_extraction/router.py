@@ -631,8 +631,8 @@ def list_materials(team_id: str, session: SessionDep, reader: CurrentUser) -> li
     first. Members of the team only; anyone else gets the 404 an unknown team
     gets."""
     team = _member_team(session, reader, None, team_id)
-    window = materials.upload_window(session, team)
-    return [materials.read(row, window) for row in materials.team_materials(session, team)]
+    kept = materials.keeps_until_deleted(session, team)
+    return [materials.read(row, kept=kept) for row in materials.team_materials(session, team)]
 
 
 @router.post("/materials", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
@@ -644,7 +644,7 @@ def register_material(
     file itself is never read."""
     team = _member_team(session, reader, None, team_id)
     row = materials.register(session, team, title=payload.title, link=payload.link)
-    response = materials.read(row)  # a link has no window
+    response = materials.read(row)  # a link has no day
     session.commit()
     return response
 
@@ -700,7 +700,7 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
     except materials.ConfidentialFileError:
         session.commit()
         raise
-    response = materials.read(row, materials.upload_window(session, team))
+    response = materials.read(row, kept=materials.keeps_until_deleted(session, team))
     session.commit()
     return response
 

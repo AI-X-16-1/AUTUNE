@@ -138,11 +138,14 @@ class ExtMaterial(Base):
     **An upload** (``source='upload'``): no Drive columns. The file's text,
     masked before anything was written, is in ``ext_material_chunks``; the
     file itself was never written anywhere (``materials.store_upload``).
-    Kept for the team's retention window counted from ``created_at``
-    (``teams.retention_days``) and then deleted by the hourly
-    ``tasks.forget_expired_material_uploads`` -- unless the team keeps its
-    uploads until a member deletes them (``ext_material_settings``; the
-    owner, 2026-10-11). A link keeps no text and has no window.
+    ``expires_at`` is set at the upload, to that moment plus the team's
+    retention window of that day (``teams.retention_days``), and is not moved
+    afterwards -- as a meeting's is fixed when it is held (the owner,
+    2026-10-12). The hourly ``tasks.forget_expired_material_uploads`` deletes
+    an upload past it, unless the team keeps its uploads until a member
+    deletes them (``ext_material_settings``; the owner, 2026-10-11) -- the row
+    keeps its ``expires_at`` under either choice. A link keeps no text and has
+    no ``expires_at``.
 
     **Nothing here names a person**: no uploader, registrant or reader. The
     row says that this team keeps this under this title. ``title`` is typed,
@@ -165,6 +168,11 @@ class ExtMaterial(Base):
             " OR (source = 'upload' AND drive_file_id IS NULL AND drive_kind IS NULL)",
             name="ck_ext_materials_source",
         ),
+        CheckConstraint(
+            "(source = 'drive_link' AND expires_at IS NULL)"
+            " OR (source = 'upload' AND expires_at IS NOT NULL)",
+            name="ck_ext_materials_expires",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: new_id(MATERIAL))
@@ -179,6 +187,9 @@ class ExtMaterial(Base):
     drive_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
     )
 
 
