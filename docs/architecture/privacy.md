@@ -1108,10 +1108,14 @@ the feature needs.
     the statement is the turn that settled it as said and masked, with its
     owner and deadline (B's `original_statement`), so it can name the
     person it assigns; a person's rewording, or a decision a person typed,
-    is sent as typed, never through module A's masker, and screened only
-    by the outbound check before Slack. Issue titles are B's item
-    descriptions as stored. Meeting titles are values a person typed and
-    are sent as stored, as B's are. Apart from those statements no
+    is sent as typed, never through module A's masker: B screened it when
+    it was saved and refused it if the detector read personal data (#1165,
+    above), and the outbound check reads it again before Slack. One saved
+    before that rule was screened by the outbound check only. Issue titles
+    are B's item descriptions as stored. Meeting titles are values a person
+    typed, screened by A when the meeting is opened or renamed (#1161,
+    above; a title from before that was not), and are sent as stored, as
+    B's are. Apart from those statements no
     utterance is sent, and no participation figure. Every value is escaped
     so it cannot become a mention or a link, and clipped so the largest
     brief stays under the outbound size limit. The one link is built on
