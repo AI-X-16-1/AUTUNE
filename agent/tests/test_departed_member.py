@@ -239,6 +239,14 @@ DOORS: list[tuple[str, str, dict[str, Any]]] = [
         "/api/agent/approvers/{member}",
         {"params": {"team_id": "{team}"}, "json": {"scopes": ["any"]}},
     ),
+    # A stopped upload (#1201). With no team named the list is empty, as
+    # ``/pending`` is: test_material_alarms tries that against a real alarm.
+    ("GET", "/api/agent/material-alarms", {"params": {"team_id": "{team}"}}),
+    (
+        "POST",
+        "/api/agent/material-alarms/mal_any/acknowledge",
+        {"params": {"team_id": "{team}"}},
+    ),
 ]
 """The layer's other doors, beside the four above: each takes a team or a
 meeting, and each must ask the same question."""
@@ -290,6 +298,8 @@ def test_every_route_of_the_layer_is_one_of_the_doors_tried_here() -> None:
         ("GET", "/meeting-label"),
         ("GET", "/approvers"),
         ("PUT", "/approvers/{user_id}"),
+        ("GET", "/material-alarms"),
+        ("POST", "/material-alarms/{alarm_id}/acknowledge"),
     }
 
     served = {

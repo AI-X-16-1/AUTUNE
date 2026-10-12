@@ -36,6 +36,15 @@
  * it; they have been cleared on that deletion since #587. The terms did not
  * change, so theirs stays.
  *
+ * `2026-10-12.5` for the privacy policy and `2026-10-12.3` for the terms (the owner,
+ * 2026-10-12), one rise for two things. A refused upload is told to the
+ * team's approvers by Slack (#1201): the policy says what that message
+ * carries, that the record keeps the time it went, and when the record is
+ * deleted. And a team's uploaded documents are searched (#817): both
+ * documents name the search, and the policy says what happens to the
+ * question a person types. The search's sentences came in here and not
+ * with the search, which answers 404 while uploads are off.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -54,8 +63,8 @@ export interface RequiredConsent {
 }
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "2026-10-12.2" },
-  { document: "privacy", version: "2026-10-12.4" },
+  { document: "terms", version: "2026-10-12.3" },
+  { document: "privacy", version: "2026-10-12.5" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

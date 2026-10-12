@@ -13,6 +13,7 @@ import { meetingLabel } from "../meetingLabel";
 import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
 import { DecidedApprovals } from "./DecidedApprovals";
+import { MaterialAlarms } from "./MaterialAlarms";
 
 const RESULT_LABEL: Record<PendingAction["status"], string> = {
   pending: "처리했습니다",
@@ -337,6 +338,7 @@ function WaitingApprovals() {
           );
         })}
       </ul>
+      <MaterialAlarms />
     </>
   );
 }

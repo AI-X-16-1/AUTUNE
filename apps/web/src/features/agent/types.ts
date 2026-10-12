@@ -73,6 +73,18 @@ export type ChatReply = {
   unfinished?: ChatUnfinished[];
 };
 
+/**
+ * An upload stopped for a confidentiality marking, as the team's approvers
+ * see it (`GET /api/agent/material-alarms`): when, and which kind. The
+ * server keeps nothing else of it -- no file name, no title, no person.
+ */
+export type MaterialAlarm = {
+  id: string;
+  team_id: string;
+  marking: "korean_marking" | "english_marking";
+  created_at: string;
+};
+
 /** An L1 action that did not go through: its title and the reason in words. */
 export type ChatUnfinished = {
   title: string;
