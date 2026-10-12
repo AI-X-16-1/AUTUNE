@@ -447,7 +447,13 @@ class ExtractionSettings(BaseSettings):
     again (``material_search``)."""
 
     material_embedder_endpoint: str = ""
-    """Our own inference server, required when ``material_embedder_impl=hosted``."""
+    """Our own inference server, required when ``material_embedder_impl=hosted``.
+
+    **Nothing here checks whose server the address names.** Every masked
+    piece of an upload and every masked question is posted to it, and
+    ``privacy.md`` ("to nothing outside Autune's own servers") and the legal
+    notice (제4조 ⑤) are true only while it is a server Autune runs. Pointing
+    it at an outside embedding service is a change to both, not a setting."""
 
     material_search_min_similarity: float = Field(default=0.4, ge=-1, le=1)
     """Below this cosine similarity to the masked question, an uploaded
