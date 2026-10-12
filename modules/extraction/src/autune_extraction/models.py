@@ -274,6 +274,11 @@ class ExtMaterialAlarm(Base):
     ``materials.acknowledge_alarm``; who acknowledged is not recorded.
     Unacknowledged, a row is deleted 30 days after it was written
     (``tasks.forget_old_material_alarms``). Goes with the team.
+
+    ``told_at`` is when that layer sent the team's approvers their message
+    about this row, or null while it has not: one stopped upload is told
+    once. It is a time and names nobody -- not who was messaged, not how
+    many -- and it goes when the row goes.
     """
 
     __tablename__ = "ext_material_alarms"
@@ -294,6 +299,7 @@ class ExtMaterialAlarm(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
     )
+    told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ExtProjectSend(Base):

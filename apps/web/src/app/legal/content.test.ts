@@ -34,6 +34,37 @@ describe("legal documents", () => {
     }
   });
 
+  // A refused upload is told to the team's approvers by Slack (#1201). A new
+  // message that leaves the service is in the notice with what it carries
+  // and what it leaves out, and the record says nobody is written down.
+  it("say what the approvers' message about a refused upload carries, and that nobody is recorded", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("확인을 기다리는 받지 않은 파일의 건수 및 서비스 화면 링크");
+    expect(privacy).toContain("파일의 이름, 일시, 표시의 종류 및 올린 사람은 싣지 않습니다");
+    expect(privacy).toContain("알림을 받은 사람과 이 기록을 확인한 사람도 기록하지 않습니다");
+    expect(privacy).toContain("알림을 보낸 일시는 그 기록과 함께 삭제합니다");
+  });
+
+  // Searching a team's uploaded documents (#817) is a purpose of its own: a
+  // person who agreed to keeping them had not agreed to searching them. Both
+  // documents name it, and the privacy policy says what happens to the
+  // question a person types (the owner, 2026-10-12).
+  it("name the search of a team's uploaded documents as a purpose", () => {
+    const text = (id: string) => JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === id));
+    expect(text("terms")).toContain("팀이 올린 문서 자료의 보관 및 검색");
+    expect(text("privacy")).toContain("팀 자료의 보관 및 검색");
+    expect(text("privacy")).toContain(
+      "입력한 질문은 같은 방법으로 가림 처리한 뒤 자료를 찾는 데에만 이용하며, 저장하거나 로그에 기록하지 않습니다.",
+    );
+    // Whoever agreed to either document without these sentences, or without
+    // the ones on the approvers' message, is asked again: neither version is
+    // the one `main` asked under before them.
+    const before: Record<string, string> = { terms: "2026-10-12.2", privacy: "2026-10-12.4" };
+    for (const { document, version } of REQUIRED_CONSENTS) {
+      expect(version, document).not.toBe(before[document]);
+    }
+  });
+
   // The server refuses any other shape (`autune_core.consents._VERSION`),
   // and a version it refuses leaves every person at the consent page.
   it("are asked for under a version the server takes", () => {

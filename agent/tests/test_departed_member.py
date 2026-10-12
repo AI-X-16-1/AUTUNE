@@ -14,6 +14,7 @@ member. Tests only; no behaviour is changed by this file.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -182,6 +183,23 @@ def test_pending_lists_nothing_and_is_refused_for_the_team_by_name(
     assert waiting.id not in everywhere.text and waiting.id not in named.text
 
 
+def test_decided_lists_nothing_and_is_refused_for_the_team_by_name(
+    session: Session, team: dict[str, str], departed: str, waiting: AgentPendingAction
+) -> None:
+    """What was decided while they were a member is no longer theirs to look back on."""
+    waiting.status, waiting.decided_by = "rejected", departed
+    waiting.decided_at, waiting.reject_reason = datetime.now(UTC), "not_now"
+    session.commit()
+    client = _client(session, departed)
+
+    everywhere = client.get("/api/agent/decided")
+    named = client.get("/api/agent/decided", params={"team_id": team["team"]})
+
+    assert everywhere.status_code == 200 and everywhere.json() == []
+    assert named.status_code == 403
+    assert waiting.id not in everywhere.text and waiting.id not in named.text
+
+
 def test_approving_is_refused_and_nothing_runs(
     session: Session, team: dict[str, str], departed: str, waiting: AgentPendingAction
 ) -> None:
@@ -220,6 +238,14 @@ DOORS: list[tuple[str, str, dict[str, Any]]] = [
         "PUT",
         "/api/agent/approvers/{member}",
         {"params": {"team_id": "{team}"}, "json": {"scopes": ["any"]}},
+    ),
+    # A stopped upload (#1201). With no team named the list is empty, as
+    # ``/pending`` is: test_material_alarms tries that against a real alarm.
+    ("GET", "/api/agent/material-alarms", {"params": {"team_id": "{team}"}}),
+    (
+        "POST",
+        "/api/agent/material-alarms/mal_any/acknowledge",
+        {"params": {"team_id": "{team}"}},
     ),
 ]
 """The layer's other doors, beside the four above: each takes a team or a
@@ -264,6 +290,7 @@ def test_every_route_of_the_layer_is_one_of_the_doors_tried_here() -> None:
     tried = {
         ("POST", "/chat"),
         ("GET", "/pending"),
+        ("GET", "/decided"),
         ("POST", "/pending/{pending_id}/approve"),
         ("POST", "/pending/{pending_id}/reject"),
         ("GET", "/runs"),
@@ -271,6 +298,8 @@ def test_every_route_of_the_layer_is_one_of_the_doors_tried_here() -> None:
         ("GET", "/meeting-label"),
         ("GET", "/approvers"),
         ("PUT", "/approvers/{user_id}"),
+        ("GET", "/material-alarms"),
+        ("POST", "/material-alarms/{alarm_id}/acknowledge"),
     }
 
     served = {

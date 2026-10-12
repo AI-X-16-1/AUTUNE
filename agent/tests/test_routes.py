@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -681,3 +681,110 @@ def test_a_pending_card_about_no_meeting_names_none(
     got = member.get("/api/agent/pending").json()[0]
 
     assert (got["meeting_title"], got["meeting_started_at"]) == (None, None)
+
+
+def _decided(
+    session: Session,
+    team: dict[str, str],
+    status: str,
+    *,
+    days_ago: int = 0,
+    result_ok: bool | None = True,
+    scope: str = "research",
+) -> AgentPendingAction:
+    """A row as approve/reject leave it; each on its own meeting (one document each)."""
+    meeting = Meeting(team_id=team["team"], title=f"{status} 회의")
+    session.add(meeting)
+    session.flush()
+    row = _queue(session, team, scope=scope, meeting_id=meeting.id)
+    row.status, row.decided_by = status, team["member"]
+    row.decided_at = datetime.now(UTC) - timedelta(days=days_ago)
+    row.result_ok = None if status == "rejected" else result_ok
+    row.reject_reason = "not_now" if status == "rejected" else None
+    session.commit()
+    return row
+
+
+def test_decided_lists_what_was_approved_rejected_or_failed_newest_first(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    _approver(session, team, "research")
+    failed = _decided(session, team, "failed", days_ago=3, result_ok=False)
+    rejected = _decided(session, team, "rejected", days_ago=2)
+    approved = _decided(session, team, "approved", days_ago=1)
+    _queue(session, team)  # still waiting
+
+    got = member.get("/api/agent/decided").json()
+
+    assert [(d["id"], d["status"], d["reject_reason"]) for d in got] == [
+        (approved.id, "approved", None),
+        (rejected.id, "rejected", "not_now"),
+        (failed.id, "failed", None),
+    ]
+    assert {(d["title"], d["body"], d["decided_by_name"]) for d in got} == {
+        ("리서치 문서 공유", "본문", "팀원")
+    }
+
+
+def test_decided_marks_an_interrupted_approval_as_needing_a_check(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    _approver(session, team, "research")
+    _decided(session, team, "approved", result_ok=None)
+
+    (got,) = member.get("/api/agent/decided").json()
+
+    assert got["needs_check"] is True
+
+
+def test_decided_leaves_out_a_retired_row_and_one_past_the_window(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    _approver(session, team, "research")
+    _decided(session, team, "approved", days_ago=routes.DECIDED_DAYS + 1)
+    retired = _queue(session, team)
+    retired.status = "superseded"
+    session.commit()
+
+    assert member.get("/api/agent/decided").json() == []
+
+
+def test_decided_follows_the_waiting_lists_scope_rule(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    _approver(session, team, "research")
+    mine = _decided(session, team, "approved")
+    _decided(session, team, "rejected", scope="workload")
+
+    got = member.get("/api/agent/decided", params={"team_id": team["team"]}).json()
+
+    assert [d["id"] for d in got] == [mine.id]
+
+
+def test_decided_is_empty_for_a_member_who_cannot_decide(
+    member: TestClient, session: Session, team: dict[str, str]
+) -> None:
+    _decided(session, team, "approved")
+
+    assert member.get("/api/agent/decided").json() == []
+
+
+def test_decided_refuses_a_team_the_caller_is_not_in(
+    session: Session, team: dict[str, str]
+) -> None:
+    outsider = _client(session, team["outsider"], chat_router=FakeRouter())
+
+    reply = outsider.get("/api/agent/decided", params={"team_id": team["team"]})
+
+    assert reply.status_code == 403
+
+
+def test_decided_keeps_to_its_limit(
+    member: TestClient, session: Session, team: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _approver(session, team, "research")
+    newest = _decided(session, team, "approved", days_ago=1)
+    _decided(session, team, "approved", days_ago=2)
+    monkeypatch.setattr(routes, "DECIDED_LIMIT", 1)
+
+    assert [d["id"] for d in member.get("/api/agent/decided").json()] == [newest.id]
