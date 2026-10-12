@@ -22,6 +22,14 @@ Categories, by which step of ``briefs.choose_previous_meeting`` should answer:
 - ``unrelated``, ``same_domain``, ``shared_keyword`` -- nothing is related; the
   answer is ``latest``, under which the brief posts none of that meeting's
   content (``notify.build_pre_meeting_brief``, ``recap_is_related``).
+
+The held-out set adds two:
+
+- ``recent_related`` -- two past meetings on the subject; the newer one is the
+  answer.
+- ``numbered_trap`` -- titles that differ only in a bare number but name
+  different groups or subjects ("1팀"/"2팀", "고객사 1"/"고객사 2"); nothing is
+  related.
 """
 
 from __future__ import annotations
