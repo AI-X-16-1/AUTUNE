@@ -5,8 +5,9 @@
 run on them yet
 
 Two development meetings, run through the engine in `classic` mode, showed five weaknesses
-that the existing evaluation sets do not catch. The sets are short, synthetic and mostly
-one topic per meeting. This document describes two new held-out sets written to measure
+that the existing evaluation sets do not catch. Both were played from a made-up demo
+script, not a real conversation. The existing sets are short, synthetic and mostly one
+topic per meeting. This document describes two new held-out sets written to measure
 fixes for those weaknesses. It also covers the harness changes they need and the rules
 for using them. Results go here as each fix is measured.
 
