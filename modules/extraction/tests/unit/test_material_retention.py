@@ -179,6 +179,32 @@ def test_switching_back_makes_old_uploads_expire_from_their_upload(session: Sess
     assert materials.material_text(session, old.id) == []
 
 
+def test_the_setting_counts_what_switching_back_would_delete(session: Session) -> None:
+    materials.set_keep_until_deleted(session, TEAM, True)
+    upload(session, age=timedelta(days=120), title="오래된")
+    upload(session, age=timedelta(days=91), title="막 지난")
+    upload(session, age=timedelta(days=5), title="새")
+    link(session, age=timedelta(days=1000))
+    upload(session, OTHER, age=timedelta(days=400), title="남의 것")
+
+    assert materials.settings_read(session, TEAM, now=NOW).uploads_past_their_day == 2
+    assert materials.settings_read(session, OTHER, now=NOW).uploads_past_their_day == 1
+
+    materials.set_keep_until_deleted(session, TEAM, False)
+    assert materials.forget_expired_uploads(session, now=NOW) == 3
+    assert materials.settings_read(session, TEAM, now=NOW).uploads_past_their_day == 0
+
+
+def test_the_count_is_a_number_and_names_nothing(session: Session) -> None:
+    materials.set_keep_until_deleted(session, TEAM, True)
+    row = upload(session, age=timedelta(days=120), title="김민수 평가")
+
+    answer = materials.settings_read(session, TEAM, now=NOW).model_dump()
+
+    assert answer == {"keep_until_deleted": True, "retention_days": 90, "uploads_past_their_day": 1}
+    assert row.id not in str(answer) and "김민수" not in str(answer)
+
+
 def test_a_link_never_expires(session: Session) -> None:
     row = link(session, age=timedelta(days=1000))
 
@@ -307,12 +333,20 @@ def client(session: Session, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_a_member_reads_and_switches_the_setting(client: TestClient, session: Session) -> None:
-    assert client.get(SETTINGS).json() == {"keep_until_deleted": False, "retention_days": 90}
+    assert client.get(SETTINGS).json() == {
+        "keep_until_deleted": False,
+        "retention_days": 90,
+        "uploads_past_their_day": 0,
+    }
 
     answer = client.put(SETTINGS, json={"keep_until_deleted": True})
 
     assert answer.status_code == 200
-    assert answer.json() == {"keep_until_deleted": True, "retention_days": 90}
+    assert answer.json() == {
+        "keep_until_deleted": True,
+        "retention_days": 90,
+        "uploads_past_their_day": 0,
+    }
     assert client.get(SETTINGS).json()["keep_until_deleted"] is True
     assert materials.keeps_until_deleted(session, OTHER) is False
 

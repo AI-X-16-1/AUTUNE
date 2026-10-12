@@ -477,11 +477,16 @@ class MaterialSettingsRead(BaseModel):
     the day it was given; true keeps every upload until a member deletes it.
     ``retention_days`` is the team's window today, which is what an upload
     made now is given -- an earlier upload keeps its own day
-    (``MaterialRead.expires_at``). No person: who last changed it is not
-    recorded."""
+    (``MaterialRead.expires_at``). ``uploads_past_their_day`` is how many
+    of the team's uploads are already past their day: none stay so under the
+    default beyond the hourly run, and under ``keep_until_deleted`` they are
+    what switching back deletes within the hour -- the screen says the number
+    before the switch is saved. A count only. No person: who last changed it
+    is not recorded."""
 
     keep_until_deleted: bool
     retention_days: int
+    uploads_past_their_day: int = 0
 
 
 class MaterialSettingsWrite(BaseModel):

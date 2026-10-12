@@ -229,11 +229,35 @@ def read(row: ExtMaterial, *, kept: bool = False) -> MaterialRead:
     )
 
 
-def settings_read(session: Session, team_id: str) -> MaterialSettingsRead:
+def uploads_past_their_day(session: Session, team_id: str, *, now: datetime) -> int:
+    """How many of the team's uploads are past the day they were given. While
+    the team keeps uploads until deleted these stay; they are what switching
+    back to the window deletes at the next hourly run, which the settings
+    screen says before the switch is saved. A count -- no id, no title."""
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(ExtMaterial)
+            .where(
+                ExtMaterial.team_id == team_id,
+                ExtMaterial.source == "upload",
+                ExtMaterial.expires_at <= now,
+            )
+        )
+        or 0
+    )
+
+
+def settings_read(
+    session: Session, team_id: str, *, now: datetime | None = None
+) -> MaterialSettingsRead:
     days = session.scalar(select(Team.retention_days).where(Team.id == team_id))
     return MaterialSettingsRead(
         keep_until_deleted=keeps_until_deleted(session, team_id),
         retention_days=days if days is not None else 90,
+        uploads_past_their_day=uploads_past_their_day(
+            session, team_id, now=now or datetime.now(UTC)
+        ),
     )
 
 
