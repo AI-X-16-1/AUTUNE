@@ -27,7 +27,7 @@ describe("질문 카드 Slack 전송 — what the screen says", () => {
   });
 
   it("says why nothing was sent", () => {
-    expect(result(0, 0, "not_tried")).toBe("Slack으로 보낼 high 갭이 없습니다.");
+    expect(result(0, 0, "not_tried")).toBe("Slack으로 보낼 위험도 높은 갭이 없습니다.");
     expect(result(2, 0, "no_slack")).toBe(
       "팀 Slack 채널이 연결되어 있지 않아 질문 카드를 보내지 못했습니다.",
     );

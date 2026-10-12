@@ -1,0 +1,589 @@
+{
+  "version": 1,
+  "_about": "Held-out v1 (2026-10-12). Written after the v1 dev set's first run and before any fix to the brief's choice, and frozen: no model was run on it while it was written, and no rule or threshold may be chosen by looking at its failures. Same labels as v1. Two categories v1 lacks: `recent_related` (two meetings on the subject, the newer one the answer) and `numbered_trap` (titles that differ only in a bare number but name different groups or subjects, so nothing is related).",
+  "cases": [
+    {
+      "id": "h_se_standup",
+      "category": "series_exact",
+      "past_meetings": [
+        {"title": "개발팀 데일리", "days_ago": 2, "lines": ["검색 자동완성 API가 느리다는 제보가 있었다.", "인덱스를 다시 만들기로 했다.", "오늘 밤에 작업한다."]},
+        {"title": "개발팀 데일리", "days_ago": 1, "lines": ["검색 인덱스를 다시 만들었다.", "응답이 0.3초로 줄었다.", "모니터링을 하루 더 본다."]},
+        {"title": "파트너사 통화", "days_ago": 0, "lines": ["파트너사가 API 호출 한도를 늘려 달라고 했다.", "월 100만 건까지 올린다.", "계약서는 다음 주에 고친다."]}
+      ],
+      "upcoming": {"title": "개발팀 데일리", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_se_cs_review",
+      "category": "series_exact",
+      "past_meetings": [
+        {"title": "CS 주간 리뷰", "days_ago": 14, "lines": ["배송 지연 문의가 지난주보다 두 배 늘었다.", "택배사를 하나 더 쓰기로 했다.", "지연 안내 문자를 자동으로 보낸다."]},
+        {"title": "CS 주간 리뷰", "days_ago": 7, "lines": ["택배사를 추가한 뒤 지연 문의가 줄었다.", "이번에는 교환 문의가 많았다.", "교환 절차 안내 페이지를 고친다."]},
+        {"title": "브랜드 리뉴얼", "days_ago": 3, "lines": ["새 로고 시안 세 개를 봤다.", "두 번째 시안으로 정했다.", "패키지 디자인에도 적용한다."]}
+      ],
+      "upcoming": {"title": "CS 주간 리뷰", "agenda": ["교환 안내 페이지 개편"]},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_se_allhands",
+      "category": "series_exact",
+      "past_meetings": [
+        {"title": "전사 타운홀", "days_ago": 30, "lines": ["상반기 실적을 공유했다.", "하반기 채용 계획을 발표했다.", "질문은 익명으로 받았다."]},
+        {"title": "보안 점검", "days_ago": 5, "lines": ["외부 침투 테스트 결과를 받았다.", "취약점 두 건을 이번 주에 고친다.", "재점검은 한 달 뒤다."]}
+      ],
+      "upcoming": {"title": "전사 타운홀", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_se_english",
+      "category": "series_exact",
+      "past_meetings": [
+        {"title": "Growth Review", "days_ago": 14, "lines": ["추천인 보상 실험을 시작했다.", "보상은 포인트 3천 점이다.", "2주 뒤에 결과를 본다."]},
+        {"title": "Growth Review", "days_ago": 7, "lines": ["추천인 실험으로 가입이 12% 늘었다.", "보상을 5천 점으로 올려 본다.", "어뷰징 여부도 확인한다."]},
+        {"title": "Legal sync", "days_ago": 2, "lines": ["개인정보 처리방침 개정안을 봤다.", "위탁 업체 목록을 갱신한다.", "공지는 시행 7일 전에 한다."]}
+      ],
+      "upcoming": {"title": "Growth Review", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_sv_spacing",
+      "category": "series_variant",
+      "past_meetings": [
+        {"title": "인프라  주간 점검", "days_ago": 7, "lines": ["디스크 사용률이 85%를 넘었다.", "오래된 로그를 30일만 보관하기로 했다.", "알림 기준을 80%로 낮춘다."]},
+        {"title": "영업 전략", "days_ago": 2, "lines": ["공공기관 입찰을 준비한다.", "제안서는 다음 달 초까지 낸다.", "레퍼런스 고객 세 곳을 정리한다."]}
+      ],
+      "upcoming": {"title": "인프라 주간 점검", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_sv_case",
+      "category": "series_variant",
+      "past_meetings": [
+        {"title": "OKR Check-in", "days_ago": 14, "lines": ["유료 전환율 목표가 뒤처져 있다.", "무료 체험 기간을 7일로 줄여 본다.", "결과는 2주 뒤에 본다."]},
+        {"title": "사내 교육", "days_ago": 4, "lines": ["엑셀 교육을 두 번 연다.", "신청은 이번 주까지 받는다.", "강사는 외부에서 부른다."]}
+      ],
+      "upcoming": {"title": "okr check-in", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ns_round_session",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "신제품 네이밍 1회차 워크숍", "days_ago": 14, "lines": ["신제품 이름 후보를 스무 개 뽑았다.", "발음하기 쉬운 이름을 우선한다.", "상표 검색을 먼저 돌린다."]},
+        {"title": "신제품 네이밍 2회차 워크숍", "days_ago": 7, "lines": ["상표 검색을 통과한 후보가 여섯 개다.", "고객 설문으로 세 개까지 줄인다.", "설문은 이번 주 금요일에 끝난다."]},
+        {"title": "법인카드 정책", "days_ago": 2, "lines": ["법인카드 한도를 조정했다.", "택시비는 밤 10시 이후만 쓴다.", "영수증은 앱으로 올린다."]}
+      ],
+      "upcoming": {"title": "신제품 네이밍 3회차 워크숍", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_week_of_month",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "10월 1주차 운영 회의", "days_ago": 7, "lines": ["물류 창고 재고 실사 일정을 잡았다.", "재고 차이가 3% 넘으면 원인을 찾는다.", "실사는 토요일에 한다."]},
+        {"title": "디자인 크리틱", "days_ago": 3, "lines": ["결제 완료 화면 시안을 봤다.", "축하 애니메이션은 뺀다.", "다음 주에 최종본을 본다."]}
+      ],
+      "upcoming": {"title": "10월 2주차 운영 회의", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ns_sprint_english",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "Sprint 22 Planning", "days_ago": 28, "lines": ["알림 설정 화면을 이번 스프린트에 만든다.", "푸시와 이메일을 따로 끌 수 있게 한다.", "QA는 마지막 이틀에 한다."]},
+        {"title": "Sprint 23 Planning", "days_ago": 14, "lines": ["다크 모드 지원을 이번 스프린트 목표로 정했다.", "색상 토큰부터 정리한다.", "설정 화면에 토글을 단다."]},
+        {"title": "채용 브랜딩 회의", "days_ago": 1, "lines": ["채용 페이지 문구를 고쳤다.", "복지 항목을 위로 올린다.", "직원 인터뷰를 두 편 싣는다."]}
+      ],
+      "upcoming": {"title": "Sprint 24 Planning", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_quarter",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "2분기 사업 리뷰", "days_ago": 90, "lines": ["2분기 매출은 목표를 넘었다.", "해외 매출 비중이 20%가 됐다.", "3분기에는 일본 시장을 본다."]},
+        {"title": "3분기 사업 리뷰", "days_ago": 5, "lines": ["일본 시장 진출이 한 달 늦어졌다.", "현지 결제 수단 연동이 남았다.", "4분기 매출 목표를 조금 낮춘다."]},
+        {"title": "사내 카페 운영", "days_ago": 1, "lines": ["사내 카페 운영 시간을 늘린다.", "오후 간식을 추가한다.", "설문으로 메뉴를 정한다."]}
+      ],
+      "upcoming": {"title": "4분기 사업 리뷰", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_full_date",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "2026.09.30 경영진 회의", "days_ago": 14, "lines": ["신규 투자 유치 일정을 논의했다.", "시리즈 B는 내년 초로 미룬다.", "그동안 비용을 10% 줄인다."]},
+        {"title": "2026.10.07 경영진 회의", "days_ago": 7, "lines": ["비용 절감안을 부서별로 받았다.", "마케팅 외주를 줄이기로 했다.", "채용은 꼭 필요한 자리만 한다."]},
+        {"title": "고객 행사 리허설", "days_ago": 1, "lines": ["행사 진행 순서를 점검했다.", "발표 시간을 15분으로 줄인다.", "음향 장비를 한 번 더 확인한다."]}
+      ],
+      "upcoming": {"title": "2026.10.14 경영진 회의", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_slash_date_no_agenda",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "10/6 파트 리드 싱크", "days_ago": 8, "lines": ["다음 달 휴가자 일정을 맞췄다.", "연말에는 최소 인원을 남긴다.", "당직표를 공유한다."]},
+        {"title": "10/13 파트 리드 싱크", "days_ago": 1, "lines": ["신규 입사자 장비 지급이 늦었다.", "장비 신청을 입사 2주 전에 받는다.", "IT팀에 미리 알린다."]},
+        {"title": "광고 소재 리뷰", "days_ago": 0, "lines": ["숏폼 광고 소재 다섯 개를 봤다.", "두 개만 집행한다.", "다음 주에 성과를 본다."]}
+      ],
+      "upcoming": {"title": "10/20 파트 리드 싱크", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_nth",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "투자사 미팅 첫 번째", "days_ago": 20, "lines": ["투자사에 사업 계획을 소개했다.", "고객 유지율 자료를 추가로 요청받았다.", "다음 미팅까지 자료를 보낸다."]},
+        {"title": "투자사 미팅 두 번째", "days_ago": 6, "lines": ["고객 유지율 자료를 설명했다.", "투자사가 실사를 진행하기로 했다.", "실사 자료 목록을 받는다."]},
+        {"title": "사무용품 구매", "days_ago": 2, "lines": ["모니터 열 대를 산다.", "의자는 다음 달에 산다.", "구매는 총무팀이 한다."]}
+      ],
+      "upcoming": {"title": "투자사 미팅 세 번째", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_nth_numeric",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "고객 자문단 2번째 모임", "days_ago": 30, "lines": ["자문단이 모바일 앱 검색이 불편하다고 했다.", "필터를 첫 화면에 두기로 했다.", "다음 모임에서 시안을 보여준다."]},
+        {"title": "정산 시스템 점검", "days_ago": 4, "lines": ["판매자 정산이 하루 늦게 나갔다.", "배치 시간을 앞당긴다.", "늦은 판매자에게 사과 메일을 보낸다."]}
+      ],
+      "upcoming": {"title": "고객 자문단 3번째 모임", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ns_cha_nospace",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "물류센터 이전 1차회의", "days_ago": 21, "lines": ["물류센터를 이천으로 옮기는 안을 봤다.", "임대료는 지금보다 15% 싸다.", "운송 시간이 늘어나는지 확인한다."]},
+        {"title": "물류센터 이전 2차회의", "days_ago": 9, "lines": ["이천 센터 운송 시간은 평균 40분 늘어난다.", "수도권 당일 배송은 유지할 수 있다.", "이전은 내년 2월로 잡는다."]},
+        {"title": "홈페이지 개편", "days_ago": 3, "lines": ["메인 배너를 줄인다.", "고객 후기를 위로 올린다.", "다음 주에 배포한다."]}
+      ],
+      "upcoming": {"title": "물류센터 이전 3차회의", "agenda": ["이전 일정 확정"]},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_ns_month",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "9월 보안 월간 보고", "days_ago": 30, "lines": ["피싱 신고가 열두 건 들어왔다.", "의심 메일 신고 버튼을 메일함에 단다.", "보안 교육을 다시 한다."]},
+        {"title": "신규 서비스 기획", "days_ago": 6, "lines": ["반려동물 보험 서비스를 기획한다.", "보험사 두 곳과 이야기한다.", "시장 조사를 먼저 한다."]}
+      ],
+      "upcoming": {"title": "10월 보안 월간 보고", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ns_unnumbered_to_numbered",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "연말 행사 준비", "days_ago": 10, "lines": ["연말 행사 장소를 호텔 연회장으로 정했다.", "예산은 1500만 원이다.", "사회자는 외부에서 섭외한다."]},
+        {"title": "API 문서 정비", "days_ago": 2, "lines": ["외부 개발자용 API 문서를 고친다.", "예제 코드를 파이썬과 자바로 넣는다.", "다음 주에 공개한다."]}
+      ],
+      "upcoming": {"title": "연말 행사 준비 2차", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ns_hash_number",
+      "category": "numbered_series",
+      "past_meetings": [
+        {"title": "제품 리뷰 #11", "days_ago": 14, "lines": ["장바구니 공유 기능 초안을 봤다.", "링크로 공유하는 방식으로 한다.", "개인정보가 보이지 않게 가린다."]},
+        {"title": "제품 리뷰 #12", "days_ago": 7, "lines": ["장바구니 공유 링크 만료를 7일로 정했다.", "공유받은 사람은 수정할 수 없다.", "다음 주에 베타로 연다."]},
+        {"title": "팀 빌딩", "days_ago": 1, "lines": ["다음 달 팀 빌딩을 볼링으로 한다.", "저녁은 근처 식당에서 먹는다.", "참석 여부를 받는다."]}
+      ],
+      "upcoming": {"title": "제품 리뷰 #13", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_tr_refund",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "환불 정책 개정", "days_ago": 12, "lines": ["구독 환불을 7일 이내 전액으로 바꾸기로 했다.", "7일이 지나면 남은 기간만큼 돌려준다.", "약관 개정은 법무 검토 후 공지한다."]},
+        {"title": "서버 이중화", "days_ago": 3, "lines": ["데이터베이스를 이중화한다.", "장애 시 30초 안에 넘어가게 한다.", "다음 달에 훈련을 한다."]}
+      ],
+      "upcoming": {"title": "구독 환불 약관 공지 준비", "agenda": ["환불 약관 법무 검토 결과"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_recruit_event",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "대학 채용 설명회 기획", "days_ago": 15, "lines": ["다음 달 대학 세 곳에서 채용 설명회를 연다.", "현직 개발자 두 명이 발표한다.", "기념품으로 텀블러를 준다."]},
+        {"title": "회계 감사 대응", "days_ago": 4, "lines": ["외부 감사인이 다음 주에 온다.", "계약서 원본을 준비한다.", "재무팀이 응대한다."]}
+      ],
+      "upcoming": {"title": "캠퍼스 리크루팅 발표 자료 점검", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_churn",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "해지 사유 분석", "days_ago": 9, "lines": ["해지한 고객의 절반이 가격을 이유로 들었다.", "해지 직전에 할인 쿠폰을 보여주기로 했다.", "쿠폰은 한 번만 준다."]},
+        {"title": "디자인 시스템 버전업", "days_ago": 2, "lines": ["버튼 컴포넌트를 새 버전으로 바꾼다.", "기존 화면은 순서대로 옮긴다.", "문서를 같이 고친다."]}
+      ],
+      "upcoming": {"title": "해지 방어 쿠폰 효과 점검", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_mobile_release",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "안드로이드 앱 심사 반려 대응", "days_ago": 10, "lines": ["구글 플레이 심사에서 앱이 반려됐다.", "위치 권한 사용 이유 설명이 부족했다.", "설명 문구를 고쳐서 다시 낸다."]},
+        {"title": "파트너 계약 갱신", "days_ago": 3, "lines": ["파트너사 계약이 다음 달 끝난다.", "수수료율은 그대로 간다.", "계약 기간은 2년으로 한다."]}
+      ],
+      "upcoming": {"title": "플레이스토어 재심사 결과 공유", "agenda": ["위치 권한 안내 문구"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_warehouse_temp",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "냉장 배송 품질 이슈", "days_ago": 11, "lines": ["여름에 냉장 상품이 녹아서 도착한 사례가 있었다.", "아이스팩을 두 개로 늘린다.", "온도 기록 스티커를 붙여 본다."]},
+        {"title": "직원 복지 설문", "days_ago": 2, "lines": ["복지 설문 응답률이 60%였다.", "점심 지원을 가장 원했다.", "다음 분기에 반영한다."]}
+      ],
+      "upcoming": {"title": "콜드체인 포장 개선 결과", "agenda": ["아이스팩 추가 후 클레임 건수"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_partner_api",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "제휴사 연동 요구사항", "days_ago": 16, "lines": ["제휴 쇼핑몰이 주문 정보를 실시간으로 받고 싶어 한다.", "웹훅으로 주문 이벤트를 보내기로 했다.", "인증은 서명 헤더로 한다."]},
+        {"title": "사내 동아리 지원", "days_ago": 5, "lines": ["동아리 지원금을 분기 30만 원으로 한다.", "신청은 인사팀에 한다.", "활동 사진을 남긴다."]}
+      ],
+      "upcoming": {"title": "웹훅 서명 검증 이슈", "agenda": ["제휴 쇼핑몰 주문 이벤트 누락"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_conference",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "개발자 컨퍼런스 참가 결정", "days_ago": 25, "lines": ["11월 개발자 컨퍼런스에 부스를 내기로 했다.", "발표 세션도 하나 신청한다.", "부스 예산은 800만 원이다."]},
+        {"title": "모바일 결제 오류", "days_ago": 6, "lines": ["간편결제에서 중복 결제가 났다.", "중복 요청을 막는 키를 넣는다.", "피해 고객에게 환불한다."]}
+      ],
+      "upcoming": {"title": "컨퍼런스 부스 운영 계획", "agenda": ["발표 세션 리허설"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_tr_pricing",
+      "category": "topic_retitled",
+      "past_meetings": [
+        {"title": "요금제 개편안", "days_ago": 13, "lines": ["베이직 요금제를 없애고 두 가지로 줄이기로 했다.", "프로 요금제 가격은 월 1만 9천 원이다.", "기존 고객은 6개월간 기존 가격을 유지한다."]},
+        {"title": "출장 규정", "days_ago": 2, "lines": ["해외 출장 숙박비 한도를 올린다.", "출장 보고서는 일주일 안에 낸다.", "항공권은 이코노미로 한다."]}
+      ],
+      "upcoming": {"title": "프로 플랜 가격 공지 문안", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ga_tuesday",
+      "category": "generic_title",
+      "past_meetings": [
+        {"title": "결제 실패율 분석", "days_ago": 9, "lines": ["카드 결제 실패율이 4%로 올랐다.", "특정 카드사 점검 시간과 겹쳤다.", "점검 시간에는 다른 결제 수단을 먼저 보여준다."]},
+        {"title": "브랜드 영상 촬영", "days_ago": 3, "lines": ["브랜드 영상 촬영 장소를 정했다.", "배우는 두 명이다.", "다음 달 초에 찍는다."]}
+      ],
+      "upcoming": {"title": "주간 미팅", "agenda": ["카드사 점검 시간 결제 수단 안내"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ga_sync",
+      "category": "generic_title",
+      "past_meetings": [
+        {"title": "번역 품질 문제", "days_ago": 8, "lines": ["일본어 앱 화면 번역이 어색하다는 리뷰가 많다.", "현지 감수자를 두기로 했다.", "자주 쓰는 용어집을 만든다."]},
+        {"title": "서버 비용 리포트", "days_ago": 2, "lines": ["이번 달 서버 비용이 줄었다.", "예약 인스턴스로 바꾼 효과다.", "다음 달도 같은 방식으로 한다."]}
+      ],
+      "upcoming": {"title": "싱크", "agenda": ["일본어 용어집 감수"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ga_meeting",
+      "category": "generic_title",
+      "past_meetings": [
+        {"title": "회원 등급 제도", "days_ago": 12, "lines": ["회원 등급을 세 단계로 나눈다.", "골드 등급은 무료 배송을 준다.", "등급은 매달 1일에 다시 매긴다."]},
+        {"title": "개발 환경 개선", "days_ago": 4, "lines": ["로컬 빌드가 느리다.", "캐시를 공유하기로 했다.", "다음 주에 적용한다."]}
+      ],
+      "upcoming": {"title": "팀 회의", "agenda": ["골드 등급 무료 배송 비용 추정"]},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_ga_noagenda_none",
+      "category": "generic_title",
+      "past_meetings": [
+        {"title": "이메일 마케팅", "days_ago": 6, "lines": ["뉴스레터 오픈율이 18%였다.", "제목을 짧게 바꿔 본다.", "발송 시간을 오전 8시로 옮긴다."]}
+      ],
+      "upcoming": {"title": "주간 미팅", "agenda": []},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_di_logistics",
+      "category": "distractor",
+      "past_meetings": [
+        {"title": "반품 물류 개선", "days_ago": 18, "lines": ["반품 상품 회수가 평균 닷새 걸린다.", "편의점 반품 접수를 붙이기로 했다.", "회수 기사 배정을 자동으로 한다."]},
+        {"title": "배송비 정책", "days_ago": 9, "lines": ["무료 배송 기준을 3만 원으로 올린다.", "제주 지역은 추가 배송비를 받는다.", "다음 달 1일부터 적용한다."]},
+        {"title": "창고 인력 운영", "days_ago": 2, "lines": ["연말 물량에 대비해 단기 인력을 쓴다.", "야간 조를 하나 더 만든다.", "안전 교육을 먼저 한다."]}
+      ],
+      "upcoming": {"title": "편의점 반품 접수 오픈 점검", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_di_data",
+      "category": "distractor",
+      "past_meetings": [
+        {"title": "로그 수집 표준화", "days_ago": 15, "lines": ["앱 이벤트 로그 이름이 제각각이다.", "이벤트 이름 규칙을 동사_명사로 정했다.", "기존 이벤트는 다음 분기까지 바꾼다."]},
+        {"title": "A/B 테스트 플랫폼", "days_ago": 8, "lines": ["실험 플랫폼을 직접 만들지 않고 외부 도구를 쓴다.", "월 비용은 200만 원이다.", "다음 달부터 쓴다."]},
+        {"title": "BI 대시보드 권한", "days_ago": 2, "lines": ["대시보드 권한을 팀 단위로 나눈다.", "매출 대시보드는 경영진만 본다.", "요청은 데이터팀이 받는다."]}
+      ],
+      "upcoming": {"title": "실험 도구 도입 일정", "agenda": ["외부 A/B 테스트 도구 계약"]},
+      "expected": 1,
+      "related": [1]
+    },
+    {
+      "id": "h_di_large",
+      "category": "distractor",
+      "past_meetings": [
+        {"title": "연간 계획", "days_ago": 60, "lines": ["내년 목표를 세웠다.", "매출 두 배가 목표다.", "인력은 20% 늘린다."]},
+        {"title": "보험사 제휴", "days_ago": 45, "lines": ["보험사와 펫 보험 제휴를 맺기로 했다.", "앱에서 바로 가입하게 한다.", "수수료는 가입 건당 받는다."]},
+        {"title": "사내 위키 정리", "days_ago": 30, "lines": ["오래된 위키 문서를 지운다.", "팀마다 담당자를 둔다.", "분기마다 점검한다."]},
+        {"title": "고객센터 챗봇", "days_ago": 20, "lines": ["챗봇 답변 정확도가 70%다.", "자주 틀리는 질문을 다시 학습시킨다.", "상담원 연결 버튼을 크게 한다."]},
+        {"title": "보안 인증 갱신", "days_ago": 10, "lines": ["ISMS 인증 갱신 심사가 다음 달이다.", "자료 준비는 보안팀이 맡는다.", "모의 심사를 한 번 한다."]},
+        {"title": "오피스 좌석 배치", "days_ago": 3, "lines": ["자율 좌석제를 시작한다.", "팀별 고정석은 두 줄만 둔다.", "사물함을 늘린다."]}
+      ],
+      "upcoming": {"title": "펫 보험 앱 가입 화면 리뷰", "agenda": ["보험사 가입 API 연동"]},
+      "expected": 1,
+      "related": [1]
+    },
+    {
+      "id": "h_di_hr",
+      "category": "distractor",
+      "past_meetings": [
+        {"title": "재택근무 규정", "days_ago": 14, "lines": ["주 2일 재택을 허용한다.", "재택일은 팀장이 정한다.", "회의는 화상으로 한다."]},
+        {"title": "연봉 협상 일정", "days_ago": 8, "lines": ["연봉 협상을 12월에 한다.", "평가 결과를 먼저 공유한다.", "인상률 기준표를 만든다."]},
+        {"title": "온보딩 키트", "days_ago": 2, "lines": ["신규 입사자 키트에 노트북 파우치를 넣는다.", "웰컴 카드를 쓴다.", "첫날 점심은 팀이 같이 먹는다."]}
+      ],
+      "upcoming": {"title": "재택 근무일 조정 요청 검토", "agenda": []},
+      "expected": 0,
+      "related": [0]
+    },
+    {
+      "id": "h_rr_ads",
+      "category": "recent_related",
+      "past_meetings": [
+        {"title": "검색 광고 효율 점검", "days_ago": 21, "lines": ["검색 광고 클릭 단가가 30% 올랐다.", "브랜드 키워드 입찰가를 낮춘다.", "전환이 없는 키워드는 끈다."]},
+        {"title": "검색 광고 키워드 정리 결과", "days_ago": 7, "lines": ["전환 없는 검색 광고 키워드 120개를 껐다.", "클릭 단가가 10% 내려갔다.", "브랜드 키워드는 입찰가를 더 낮춰 본다."]},
+        {"title": "사내 행사", "days_ago": 2, "lines": ["창립 기념일 행사를 연다.", "장기 근속자를 시상한다.", "케이크를 주문한다."]}
+      ],
+      "upcoming": {"title": "검색 광고 입찰 전략 회의", "agenda": ["브랜드 키워드 입찰가"]},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_rr_migration",
+      "category": "recent_related",
+      "past_meetings": [
+        {"title": "클라우드 이전 검토", "days_ago": 30, "lines": ["온프레미스 서버를 클라우드로 옮기는 안을 봤다.", "비용은 첫해에 15% 더 든다.", "이전은 서비스별로 나눠서 한다."]},
+        {"title": "클라우드 이전 1단계 결과", "days_ago": 10, "lines": ["결제 서비스를 클라우드로 옮겼다.", "응답 시간은 그대로였다.", "다음은 검색 서비스를 옮긴다."]},
+        {"title": "디자인 채용", "days_ago": 3, "lines": ["디자이너 최종 면접을 봤다.", "한 명에게 제안한다.", "입사는 다음 달이다."]}
+      ],
+      "upcoming": {"title": "검색 서비스 클라우드 이전 준비", "agenda": []},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_rr_review_app",
+      "category": "recent_related",
+      "past_meetings": [
+        {"title": "앱 평점 하락 원인", "days_ago": 25, "lines": ["앱 평점이 4.5에서 4.1로 떨어졌다.", "로그인 오류 리뷰가 가장 많다.", "로그인 오류부터 고친다."]},
+        {"title": "인프라 비용", "days_ago": 15, "lines": ["CDN 계약을 갱신한다.", "단가를 5% 낮췄다.", "계약 기간은 1년이다."]},
+        {"title": "앱 평점 회복 점검", "days_ago": 5, "lines": ["로그인 오류를 고친 뒤 평점이 4.3으로 올랐다.", "이제는 알림이 너무 많다는 리뷰가 늘었다.", "알림 빈도를 줄인다."]}
+      ],
+      "upcoming": {"title": "앱 평점 리뷰 대응", "agenda": ["알림 빈도 조정"]},
+      "expected": 2,
+      "related": [0, 2]
+    },
+    {
+      "id": "h_rr_contract",
+      "category": "recent_related",
+      "past_meetings": [
+        {"title": "물류 대행사 입찰", "days_ago": 28, "lines": ["물류 대행사 네 곳에서 제안서를 받았다.", "단가와 배송 품질로 평가한다.", "두 곳을 최종 후보로 남긴다."]},
+        {"title": "물류 대행사 최종 선정", "days_ago": 12, "lines": ["물류 대행사 두 곳 중 한 곳을 골랐다.", "건당 단가는 2400원이다.", "계약서 초안을 받는다."]},
+        {"title": "유튜브 채널 운영", "days_ago": 3, "lines": ["회사 유튜브 채널을 연다.", "매주 한 편 올린다.", "편집은 외주로 한다."]}
+      ],
+      "upcoming": {"title": "물류 대행 계약서 검토", "agenda": ["건당 단가와 위약 조항"]},
+      "expected": 1,
+      "related": [0, 1]
+    },
+    {
+      "id": "h_un_party",
+      "category": "unrelated",
+      "past_meetings": [
+        {"title": "데이터베이스 인덱스 튜닝", "days_ago": 9, "lines": ["주문 조회 쿼리가 느리다.", "복합 인덱스를 추가한다.", "적용 후 실행 계획을 다시 본다."]},
+        {"title": "영업 파이프라인", "days_ago": 3, "lines": ["이번 달 계약 예정 건이 다섯 건이다.", "두 건은 다음 달로 밀릴 것 같다.", "제안서를 다시 보낸다."]}
+      ],
+      "upcoming": {"title": "송년회 장소 투표", "agenda": []},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_un_plants",
+      "category": "unrelated",
+      "past_meetings": [
+        {"title": "결제 실패율 분석", "days_ago": 7, "lines": ["카드 결제 실패율이 4%로 올랐다.", "특정 카드사 점검 시간과 겹쳤다.", "점검 시간에는 다른 결제 수단을 먼저 보여준다."]}
+      ],
+      "upcoming": {"title": "사무실 화분 관리 업체 선정", "agenda": ["월 관리비 비교"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_un_parking",
+      "category": "unrelated",
+      "past_meetings": [
+        {"title": "앱 온보딩 개편", "days_ago": 10, "lines": ["온보딩 화면을 두 장으로 줄인다.", "권한 요청은 나중에 한다.", "다음 주에 실험한다."]},
+        {"title": "세금계산서 발행", "days_ago": 4, "lines": ["세금계산서 발행을 자동화한다.", "월말에 일괄 발행한다.", "오류는 재무팀이 확인한다."]}
+      ],
+      "upcoming": {"title": "주차 지원 제도 논의", "agenda": []},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_un_volunteer",
+      "category": "unrelated",
+      "past_meetings": [
+        {"title": "검색 랭킹 개선", "days_ago": 6, "lines": ["검색 결과에 판매량 가중치를 넣는다.", "신상품은 일주일간 가산점을 준다.", "클릭률로 효과를 본다."]}
+      ],
+      "upcoming": {"title": "사내 봉사활동 일정", "agenda": ["연탄 나눔 참가자 모집"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sd_ads_vs_seo",
+      "category": "same_domain",
+      "past_meetings": [
+        {"title": "검색 광고 효율 점검", "days_ago": 8, "lines": ["검색 광고 클릭 단가가 30% 올랐다.", "브랜드 키워드 입찰가를 낮춘다.", "전환이 없는 키워드는 끈다."]}
+      ],
+      "upcoming": {"title": "블로그 SEO 콘텐츠 계획", "agenda": ["월 8편 발행 주제"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sd_db",
+      "category": "same_domain",
+      "past_meetings": [
+        {"title": "데이터베이스 인덱스 튜닝", "days_ago": 9, "lines": ["주문 조회 쿼리가 느리다.", "복합 인덱스를 추가한다.", "적용 후 실행 계획을 다시 본다."]}
+      ],
+      "upcoming": {"title": "데이터베이스 백업 정책", "agenda": ["백업 보관 기간"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sd_hr",
+      "category": "same_domain",
+      "past_meetings": [
+        {"title": "재택근무 규정", "days_ago": 7, "lines": ["주 2일 재택을 허용한다.", "재택일은 팀장이 정한다.", "회의는 화상으로 한다."]}
+      ],
+      "upcoming": {"title": "육아휴직 복귀 지원", "agenda": ["복귀자 단축 근무"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sd_payment",
+      "category": "same_domain",
+      "past_meetings": [
+        {"title": "결제 실패율 분석", "days_ago": 9, "lines": ["카드 결제 실패율이 4%로 올랐다.", "특정 카드사 점검 시간과 겹쳤다.", "점검 시간에는 다른 결제 수단을 먼저 보여준다."]}
+      ],
+      "upcoming": {"title": "해외 결제 통화 추가", "agenda": ["엔화 결제 지원"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sk_rate",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {"title": "결제 실패율 분석", "days_ago": 9, "lines": ["카드 결제 실패율이 4%로 올랐다.", "특정 카드사 점검 시간과 겹쳤다.", "점검 시간에는 다른 결제 수단을 먼저 보여준다."]}
+      ],
+      "upcoming": {"title": "채용 합격률 점검", "agenda": ["서류 합격률이 낮은 원인"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sk_index",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {"title": "데이터베이스 인덱스 튜닝", "days_ago": 9, "lines": ["주문 조회 쿼리가 느리다.", "복합 인덱스를 추가한다.", "적용 후 실행 계획을 다시 본다."]}
+      ],
+      "upcoming": {"title": "고객 만족 지수 발표", "agenda": ["만족 지수 조사 방식"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sk_level",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {"title": "회원 등급 제도", "days_ago": 12, "lines": ["회원 등급을 세 단계로 나눈다.", "골드 등급은 무료 배송을 준다.", "등급은 매달 1일에 다시 매긴다."]}
+      ],
+      "upcoming": {"title": "호텔 객실 등급 제휴", "agenda": ["출장 숙소 등급 기준"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_sk_launch",
+      "category": "shared_keyword",
+      "past_meetings": [
+        {"title": "로켓 발사 중계 이벤트", "days_ago": 8, "lines": ["누리호 발사 중계를 사내에서 함께 본다.", "간식을 준비한다.", "점심시간을 조정한다."]}
+      ],
+      "upcoming": {"title": "신제품 출시 런칭 일정", "agenda": ["출시일 확정"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_nt_team_number",
+      "category": "numbered_trap",
+      "past_meetings": [
+        {"title": "1팀 주간회의", "days_ago": 7, "lines": ["1팀은 쿠폰 시스템을 맡고 있다.", "쿠폰 중복 사용 버그를 고쳤다.", "다음 주에 쿠폰 통계를 만든다."]},
+        {"title": "사내 교육", "days_ago": 3, "lines": ["엑셀 교육을 두 번 연다.", "신청은 이번 주까지 받는다.", "강사는 외부에서 부른다."]}
+      ],
+      "upcoming": {"title": "2팀 주간회의", "agenda": ["정산 리포트 자동화"]},
+      "expected": null,
+      "related": []
+    },
+    {
+      "id": "h_nt_client_number",
+      "category": "numbered_trap",
+      "past_meetings": [
+        {"title": "고객사 1 미팅", "days_ago": 10, "lines": ["고객사가 대시보드 색을 바꿔 달라고 했다.", "회사 색으로 맞춘다.", "로고도 바꾼다."]},
+        {"title": "보안 교육", "days_ago": 2, "lines": ["피싱 메일 모의 훈련을 다음 달에 한다.", "전 직원이 대상이다.", "결과는 팀별로 공유한다."]}
+      ],
+      "upcoming": {"title": "고객사 2 미팅", "agenda": ["SSO 연동 요구사항"]},
+      "expected": null,
+      "related": []
+    }
+  ]
+}

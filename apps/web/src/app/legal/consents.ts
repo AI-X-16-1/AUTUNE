@@ -23,11 +23,10 @@
  * a person who agreed to it agreed to a text without those sentences. The
  * version moves so that they are asked again, whichever was deployed first.
  *
- * `2026-10-12.3` (the owner, 2026-10-12): searching a team's uploaded
- * documents (#817) joined the purposes in both documents, with a sentence on
- * the question a person types to search. A person who agreed to the earlier
- * text agreed to keeping those documents and not to searching them, so the
- * version moves and they are asked again.
+ * `2026-10-12.3`, the privacy policy alone: the lines about S20's messages on
+ * a team's Slack channel and the gaps "다음 회의 잡기" writes into a person's
+ * own calendar event (#824) came in after `2026-10-12.2`. The terms did not
+ * change, so theirs stays.
  *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
@@ -47,7 +46,7 @@ export interface RequiredConsent {
 }
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "2026-10-12.3" },
+  { document: "terms", version: "2026-10-12.2" },
   { document: "privacy", version: "2026-10-12.3" },
 ];
 

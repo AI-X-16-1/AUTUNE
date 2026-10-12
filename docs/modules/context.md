@@ -604,14 +604,21 @@ while the worker was down stays missed rather than arriving mid-meeting.
 **Which past meeting it recaps**, first match wins:
 
 1. `series` — the team's most recent analyzed meeting with the same title
-   (whitespace and case normalized). A recurring meeting is the common case,
-   and its title names the series rather than a topic, so retrieval alone
-   would miss it.
+   (whitespace and case normalized), or failing that, with the same title once
+   a round, a number or a date is taken out of both: "N차", "N회차", "N주차",
+   "N번째", "N분기", "N월", "M/D", "YYYY.MM.DD", "#N", and the number after
+   "스프린트"/"Sprint". A bare number elsewhere ("1팀", "고객사 2") and a
+   version ("v2.0") stay, because they name a different group or release. A
+   recurring meeting is the common case, and its title names the series rather
+   than a topic, so retrieval alone would miss it.
 2. `topic` — the title and agenda run through the same hybrid retrieval and
-   re-ranking as topic linking, and a candidate is asserted on the same rule a
-   topic link is: dense similarity ≥ `link_similarity_threshold` or re-rank
-   score ≥ `link_confidence_threshold`. The stronger of the two picks among
-   the confident candidates.
+   re-ranking as topic linking. A candidate is confident at dense similarity ≥
+   `brief_similarity_threshold` (0.60) or re-rank score ≥
+   `link_confidence_threshold`. The threshold is not topic linking's 0.74,
+   because a title and a few agenda lines score lower against the same meeting
+   than a topic segment does. Among the confident candidates the **most
+   recent** wins, not the best-scoring: of a kick-off and the check-in after
+   it, the meeting follows the check-in.
 3. `latest` — the team's most recent analyzed meeting. Also the fallback when
    a model call in step 2 fails: a brief retried until the meeting starts is
    one that never arrives.
@@ -620,6 +627,10 @@ while the worker was down stays missed rather than arriving mid-meeting.
    so the Slack brief names it as "팀의 최근 회의" and posts none of its topics
    or decisions; the app, which shows `match_reason` beside it, carries the
    full recap.
+
+How often this picks the right meeting is measured by the `brief-selection`
+evaluation suite; see
+[`context-evaluations/02-brief-selection.md`](context-evaluations/02-brief-selection.md).
 
 "Analyzed" means `ctx_meeting_status.topic_linking_done`, and every candidate
 passes `visible_meeting_clauses` — a meeting past its retention window is never
