@@ -1356,7 +1356,8 @@ unread text can be neither checked for a marking nor masked.
 
 Never read, in any format: who wrote it -- author, last editor, comment
 authors, company. One exception: an Excel cell note's author is read only to
-drop the note's first line when it is that name, and is kept nowhere.
+drop the note's first line when it is a note author's name and a colon, and is
+kept nowhere.
 
 **The gap no reader closes:** a marking or a phone number that exists only as
 a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not
