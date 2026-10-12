@@ -26,6 +26,9 @@ from autune_extraction.material_reading import UnreadableFileError, read_file
 from autune_extraction.materials import ConfidentialFileError
 
 from .test_material_formats import (
+    AUTHOR,
+    FIXTURES,
+    PHONE,
     POI,
     P,
     S,
@@ -407,28 +410,80 @@ def test_a_relationship_part_that_breaks_off_is_a_damaged_file() -> None:
     assert reason("a.xlsx", package(parts)) == "damaged"
 
 
+# --- a sheet's notes, under the two names writers give them ---------------------------
+
+OPENPYXL = FIXTURES / "openpyxl"
+
+
+def notes(*said: str) -> str:
+    """A sheet's notes, each written by ``AUTHOR``."""
+    each = "".join(
+        f'<comment ref="A{n}" authorId="0"><text><t>{text}</t></text></comment>'
+        for n, text in enumerate(said, 1)
+    )
+    return (
+        f"<comments {S}><authors><author>{AUTHOR}</author></authors>"
+        f"<commentList>{each}</commentList></comments>"
+    )
+
+
+def noted(name: str, *said: str) -> Parts:
+    """A workbook of one sheet that names its notes, kept under ``name``."""
+    beside = {
+        "xl/worksheets/_rels/sheet1.xml.rels": names(("comments", f"/{name}")),
+        name: notes(*said),
+    }
+    return book(("sheet1.xml", rows("일정"))) | beside
+
+
+def test_the_notes_of_a_workbook_openpyxl_wrote_are_read() -> None:
+    """Excel names a sheet's notes ``xl/comments1.xml`` and openpyxl names
+    them ``xl/comments/comment1.xml``. Under the second name they were left
+    unread without a word."""
+    data = (OPENPYXL / "notes.xlsx").read_bytes()
+    held = material_formats._Package(data).names
+    assert "xl/comments/comment1.xml" in held and "xl/comments/comment2.xml" in held
+
+    found = read_file("notes.xlsx", data)
+
+    assert found.text.split("\n") == [
+        "Plan",
+        "Budget",
+        "출시 일정",
+        "예산표",
+        "일정 확인 필요",
+        "둘째 시트의 메모",
+    ]
+
+
+@pytest.mark.parametrize(
+    "name", ["xl/comments1.xml", "xl/comments/comment1.xml", "xl/comments/comment12.xml"]
+)
+def test_a_note_is_read_the_same_under_either_name(name: str) -> None:
+    """The line that names a note's writer is dropped under either name, and
+    the writer is in nothing that is kept."""
+    found = read("a.xlsx", noted(name, f"{AUTHOR}:\n검토가 필요합니다", "둘째 메모"))
+
+    assert found.text == "시트0\n일정\n검토가 필요합니다\n둘째 메모"
+    assert AUTHOR not in found.text + found.head + found.foot + found.marks
+
+
+def test_a_note_under_openpyxls_name_is_masked_and_kept_like_any_other(
+    session: Session,  # noqa: F811 -- the fixture
+) -> None:
+    put_up(session, "a.xlsx", package(noted("xl/comments/comment1.xml", f"연락처 {PHONE} 로")))
+
+    assert "연락처" in stored(session) and PHONE not in stored(session)
+
+
 # --- what this does not reach --------------------------------------------------------
 
 
 def test_what_a_sheet_names_in_turn_is_not_looked_at() -> None:
     """A known limit, written down so that it is not taken for covered. Only
     what the workbook itself names is looked at. A sheet's notes are named by
-    the sheet, and openpyxl writes them to ``xl/comments/comment1.xml``, a
-    name the reader does not find: the workbook is taken and the note is in
-    nothing it is said to hold."""
-    note = (
-        f"<comments {S}><commentList><comment><text><t>메모 문구</t></text></comment>"
-        "</commentList></comments>"
-    )
-    usual = book(("sheet1.xml", rows("일정"))) | {
-        "xl/worksheets/_rels/sheet1.xml.rels": names(("comments", "../comments1.xml")),
-        "xl/comments1.xml": note,
-    }
-    as_openpyxl = book(("sheet1.xml", rows("일정"))) | {
-        "xl/worksheets/_rels/sheet1.xml.rels": names(("comments", "/xl/comments/comment1.xml")),
-        "xl/comments/comment1.xml": note,
-    }
+    the sheet: under a name that is neither Excel's nor openpyxl's the
+    workbook is taken, and the note is in nothing it is said to hold."""
+    found = read("a.xlsx", noted("xl/notes/note1.xml", "메모 문구"))
 
-    assert "메모 문구" in read("a.xlsx", usual).text
-    found = read("a.xlsx", as_openpyxl)
-    assert "메모 문구" not in found.text and found.not_read == ()
+    assert found.text == "시트0\n일정" and found.not_read == ()

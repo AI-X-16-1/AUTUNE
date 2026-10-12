@@ -1369,10 +1369,8 @@ master. **Not reached, and so still left unread in a file that is taken:**
 what a sheet, a slide or a master names in turn -- a sheet's cell notes and
 text boxes, a slide's speaker notes, comments and SmartArt, a master's
 layouts -- and the document properties, when one has another name than the
-usual. This happens with a common writer: openpyxl (3.1.5, tried
-2026-10-12) writes a sheet's cell notes to `xl/comments/comment1.xml`, so
-the notes of a workbook it wrote are not read, are not masked or kept, and
-are not told of.
+usual. One such name is known to be written and is read like the usual one:
+openpyxl (3.1.5) writes a sheet's cell notes to `xl/comments/comment1.xml`.
 
 **The gap no reader closes:** a marking or a phone number that exists only as
 a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not

@@ -55,7 +55,8 @@ headers, footers, notes and comments; sheets; slides and masters. It does not
 reach what a sheet, a slide or a master names in turn (a sheet's notes and
 text boxes, a slide's speaker notes, comments and SmartArt, a master's
 layouts) nor the document properties: one of those under another name is
-still left unread, and the file is taken.
+still left unread, and the file is taken. One such name is known to be
+written and is read: openpyxl's for a sheet's notes (``_xlsx``).
 
 **What a reader raises.** ``RefusedError`` for what it recognises, by reason
 code. Anything else -- its own or its library's -- is a damaged file, and
@@ -644,7 +645,9 @@ def _xlsx(data: bytes | bytearray) -> FileText:
         found.opens_on(rows)
     notes: list[str] = []
     authors: list[str] = []
-    for part in package.matching(r"xl/comments\d*\.xml"):
+    # Excel names a sheet's notes ``xl/comments1.xml``; openpyxl names them
+    # ``xl/comments/comment1.xml`` (#1252).
+    for part in package.matching(r"xl/comments(\d*|/comment\d+)\.xml"):
         notes += package.boxes(part, "comment")
         authors += package.texts(part, frozenset({"author"}))
     # Counted after the writers' lines are out: what is dropped is not text.
