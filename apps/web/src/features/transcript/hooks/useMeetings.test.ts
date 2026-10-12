@@ -1,6 +1,8 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "@/shared/api/client";
+
 import { useMeetings, type MeetingsState } from "./useMeetings";
 import type { MeetingSummary } from "../types";
 
@@ -95,10 +97,37 @@ describe("useMeetings", () => {
     const { result } = renderHook(() => useMeetings("team_search"));
 
     await waitFor(() =>
-      expect(result.current).toEqual({
+      expect(result.current).toMatchObject({
         status: "error",
-        message: "회의 목록을 불러오지 못했습니다",
+        message: "회의 목록을 불러오지 못했습니다.",
       }),
     );
+  });
+
+  // #1176: a 500 behind the proxy is "Internal Server Error", in English.
+  it("never hands on a server failure's own text", async () => {
+    listMeetings.mockRejectedValue(new ApiError(500, "unknown", "Internal Server Error"));
+    const { result } = renderHook(() => useMeetings("team_search"));
+
+    await waitFor(() =>
+      expect(result.current).toMatchObject({
+        status: "error",
+        message: "회의 목록을 불러오지 못했습니다.",
+      }),
+    );
+  });
+
+  it("asks again when retried", async () => {
+    listMeetings.mockRejectedValueOnce(new ApiError(500, "unknown", "Internal Server Error"));
+    listMeetings.mockResolvedValueOnce(PAY);
+    const { result } = renderHook(() => useMeetings("team_pay"));
+    await waitFor(() => expect(result.current.status).toBe("error"));
+
+    act(() => {
+      if (result.current.status === "error") result.current.retry();
+    });
+
+    await waitFor(() => expect(titles(result.current)).toEqual(["결제 장애 회고"]));
+    expect(listMeetings).toHaveBeenCalledTimes(2);
   });
 });

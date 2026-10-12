@@ -53,6 +53,25 @@ describe("ProcessingStages", () => {
     expect(stateOf("개인정보 마스킹 · 저장")).toBe("대기");
   });
 
+  // #1176: the steps are described to the person waiting, not to whoever
+  // runs the worker -- no tool names, sample rates or module letters.
+  it.each(["analyzing", "complete"] as const)(
+    "names no tools or modules while %s",
+    (status) => {
+      const { container } = render(
+        <ProcessingStages
+          meeting={meeting(status === "complete" ? { status, stage: null, stage_progress: null } : {})}
+        />,
+      );
+
+      const text = container.textContent ?? "";
+      for (const term of ["ffmpeg", "16kHz", "mono", "Whisper", "large-v3", "pyannote", "B · C · D", "갭"])
+        expect(text).not.toContain(term);
+      expect(text).toContain("말한 내용을 글로 옮깁니다");
+      expect(text).toContain("목소리로 말한 사람을 구분합니다");
+    },
+  );
+
   it("shows the original deleted once the running step reaches masking", () => {
     render(<ProcessingStages meeting={meeting({ stage: "masking", stage_progress: 0 })} />);
 

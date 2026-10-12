@@ -102,12 +102,14 @@ describe("NewMeetingScreen, a title the server refuses", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
-  it("still shows any other failure as it did", async () => {
+  // The server's own text is English (#1176), so any other refusal reads the
+  // screen's sentence for what did not happen.
+  it("says any other failure in Korean, not in the server's words", async () => {
     create.mockRejectedValue(new ApiError(403, "permission_denied", "you are not a member"));
     await typed();
 
     fireEvent.click(screen.getByRole("button", { name: "지금 녹음 시작" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("you are not a member");
+    expect((await screen.findByRole("alert")).textContent).toBe("회의를 만들지 못했습니다");
   });
 });

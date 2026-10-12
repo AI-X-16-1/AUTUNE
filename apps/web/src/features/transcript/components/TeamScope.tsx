@@ -16,6 +16,7 @@ import {
   teamToOpen,
 } from "../selectedTeam";
 import type { TeamSummary } from "../types";
+import { readableError } from "../readableError";
 
 import { below, TeamsWindow, type Place } from "./TeamsWindow";
 
@@ -95,7 +96,7 @@ export function TeamScope({ children }: { children: (teamId: string) => ReactNod
         setTeamId(teamToOpen(list));
       })
       .catch((caught: unknown) => {
-        if (current) setError(caught instanceof Error ? caught.message : "팀 목록을 불러오지 못했습니다.");
+        if (current) setError(readableError(caught, "팀 목록을 불러오지 못했습니다."));
       });
     return () => {
       current = false;
