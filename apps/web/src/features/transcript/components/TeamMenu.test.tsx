@@ -160,6 +160,8 @@ describe("TeamMenu", () => {
     expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
       "새 팀 만들기",
     ]);
+    // A bare "+" says what it does on hover too, not only to a screen reader (#1176).
+    expect(plus().title).toBe("새 팀 만들기");
   });
 
   it("shows nothing to somebody on no team, or when the list cannot be read", async () => {

@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { getMeeting } from "../api";
+import { readableError } from "../readableError";
 import type { MeetingDetail, MeetingStatus } from "../types";
 
 export type MeetingState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; retry: () => void }
   | { status: "ready"; meeting: MeetingDetail };
 
 /** Statuses the pipeline is still moving through; everything else is at rest. */
@@ -35,10 +36,14 @@ const POLL_MS = 3000;
  *
  * A failed poll keeps the last good meeting on screen rather than replacing it
  * with an error: a blip in the middle of a ten-minute transcription should not
- * turn the stages red. Only the first load reports an error.
+ * turn the stages red. Only the first load reports an error, in Korean
+ * (`readableError`), with `retry` to ask again (#1176).
  */
 export function useMeeting(meetingId: string): MeetingState {
   const [state, setState] = useState<MeetingState>({ status: "loading" });
+  // Bumped by `retry`: the same meeting, asked for again.
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
   useEffect(() => {
     let current = true;
@@ -61,11 +66,8 @@ export function useMeeting(meetingId: string): MeetingState {
                 timer = setTimeout(poll, POLL_MS);
               return previous;
             }
-            const message =
-              error instanceof Error
-                ? error.message
-                : "회의 정보를 불러오지 못했습니다";
-            return { status: "error", message };
+            const message = readableError(error, "회의 정보를 불러오지 못했습니다.");
+            return { status: "error", message, retry };
           });
         });
     };
@@ -75,7 +77,7 @@ export function useMeeting(meetingId: string): MeetingState {
       current = false;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [meetingId]);
+  }, [meetingId, attempt, retry]);
 
   return state;
 }

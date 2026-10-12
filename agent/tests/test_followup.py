@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from autune_agent.main import CallBudget, RunScope, Toolbox, collect_actions, collect_subagents
 from autune_agent.main.pending import arguments_ok
 from autune_agent.main.registry import Tool
+from autune_agent.results import Finding, ToolResult
 from autune_agent.subagents.followup import SUBAGENT, explain, graph, rules
 from autune_agent.subagents.followup.graph import (
     DUE_DATES,
@@ -281,6 +282,7 @@ def test_high_gaps_without_a_question_are_not_heavy(session, team) -> None:
 
     assert outcome.result.ok is True
     assert outcome.proposed == []
+    assert "열린 갭 2건 중 높음이 2건이지만 미해결 질문이 없고" in outcome.result.summary
 
 
 def test_one_high_gap_and_a_question_are_not_heavy(session, team) -> None:
@@ -313,34 +315,113 @@ def test_nothing_fires_and_the_open_item_read_is_not_spent(session, team) -> Non
 
     assert outcome.result.ok is True
     assert outcome.proposed == []
-    assert "필요해 보이지 않습니다" in outcome.result.summary
+    assert outcome.result.summary == (
+        "후속 회의가 필요해 보이지 않습니다. 열린 갭 1건 중 높음이 0건이라 "
+        "기준(높음 2건 이상과 미해결 질문)에 못 미치고, "
+        "직전 회의에서 이어서 열린 항목도 없습니다."
+    )
     assert OPEN_ITEM not in names(calls)
+
+
+def test_a_meeting_with_no_open_gap_says_so(session, team) -> None:
+    """#1189: "not needed" carries what it rests on, so the answer can say why."""
+    outcome = invoke(tools_for(), session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.proposed == []
+    assert "열린 갭이 없고, 직전 회의에서 이어서 열린 항목도 없습니다." in outcome.result.summary
+
+
+def test_a_cut_gap_list_is_counted_as_five_or_more() -> None:
+    """C sends five rows at most; the reason must not say there were five."""
+    gaps = ToolResult(
+        ok=True,
+        summary="갭",
+        items=[Finding.model_validate(gap(f"gap_{n}", "medium")) for n in range(5)],
+        truncated=True,
+    )
+    asked = ToolResult(ok=True, summary="질문", items=[Finding(title="질문")])
+
+    assert rules.why_not(gaps, asked).startswith("열린 갭 5건 이상 가운데 높음이 0건이라")
+
+
+def test_the_reason_names_no_question_and_no_gap_text(session, team) -> None:
+    tools = tools_for(gaps=[gap("gap_1")], questions=3)
+
+    summary = invoke(
+        tools, session=session, team_id=team["team"], meeting=team["meeting"]
+    ).result.summary
+
+    assert QUESTION_TEXT not in summary
+    assert "결제" not in summary
+    assert "높음이 1건" in summary
 
 
 def test_an_open_follow_up_item_stops_another_proposal(session, team) -> None:
     tools = tools_for(
         recurring=[carried("gap_1")],
-        open_items=[{"id": "act_followup", "title": "후속 회의 잡기"}],
+        open_items=[{"id": "act_followup", "title": "후속 회의 항목", "body": "in_progress"}],
     )
 
     outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
 
     assert outcome.result.ok is True
     assert outcome.proposed == []
-    assert "이미 열린" in outcome.result.summary
+    # #1189: where it stands, not only that it exists.
+    assert outcome.result.summary == (
+        "보드에 후속 회의 항목이 이미 열려 있어(진행 중) 새로 제안하지 않았습니다."
+    )
+    (item,) = outcome.result.items
+    assert (item.title, item.body) == ("후속 회의 항목", "진행 중")
+    assert item.model_extra["id"] == "act_followup"
+
+
+def test_an_open_item_in_a_status_the_board_does_not_name_is_said_without_one(
+    session, team
+) -> None:
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        open_items=[{"id": "act_followup", "title": "후속 회의 항목", "body": "unknown"}],
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.summary == (
+        "보드에 후속 회의 항목이 이미 열려 있어 새로 제안하지 않았습니다."
+    )
 
 
 def test_a_follow_up_meeting_ahead_stops_another_proposal(session, team) -> None:
     tools = tools_for(
         recurring=[carried("gap_1")],
-        upcoming=[{"title": "후속 회의", "meeting_id": "mtg_before", "day": "2026-10-08"}],
+        upcoming=[
+            {"title": "후속 회의", "meeting_id": "mtg_before", "day": "2026-10-08"},
+            {"title": "후속 회의", "meeting_id": "mtg_older", "day": "2026-10-20"},
+        ],
     )
 
     outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
 
     assert outcome.result.ok is True
     assert outcome.proposed == []
-    assert "이미 잡힌" in outcome.result.summary
+    # #1189: the day it is on, the soonest, so the person need not open a calendar.
+    assert outcome.result.summary == (
+        "10월 8일(목)에 후속 회의가 이미 잡혀 있어 새로 제안하지 않았습니다."
+    )
+    assert [(i.body, i.model_extra["meeting_id"]) for i in outcome.result.items] == [
+        ("10월 8일(목)", "mtg_before"),
+        ("10월 20일(화)", "mtg_older"),
+    ]
+
+
+def test_a_follow_up_meeting_whose_day_does_not_read_is_said_without_one(session, team) -> None:
+    tools = tools_for(
+        recurring=[carried("gap_1")],
+        upcoming=[{"title": "후속 회의", "meeting_id": "mtg_before", "day": "soon"}],
+    )
+
+    outcome = invoke(tools, session=session, team_id=team["team"], meeting=team["meeting"])
+
+    assert outcome.result.summary == "후속 회의가 이미 잡혀 있어 새로 제안하지 않았습니다."
 
 
 def test_an_unknown_follow_up_meeting_proposes_nothing(session, team) -> None:

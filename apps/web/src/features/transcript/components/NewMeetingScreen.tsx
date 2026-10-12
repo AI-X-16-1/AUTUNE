@@ -17,6 +17,7 @@ import { ACCEPTED_EXTENSIONS, acceptsRecording } from "../recordingFile";
 import { teamToOpen } from "../selectedTeam";
 import { titleRefusal } from "../titleRefusal";
 import type { TeamSummary } from "../types";
+import { readableError } from "../readableError";
 
 import { AgendaDraftRow, type AgendaSource } from "./AgendaDraftRow";
 
@@ -155,7 +156,7 @@ export function NewMeetingScreen({
       .catch((e: unknown) => {
         if (current)
           setError(
-            e instanceof Error ? e.message : "팀 목록을 불러오지 못했습니다",
+            readableError(e, "팀 목록을 불러오지 못했습니다"),
           );
       });
     return () => {
@@ -210,7 +211,7 @@ export function NewMeetingScreen({
     } catch (e: unknown) {
       setStep("idle");
       setError(
-        titleRefusal(e) ?? (e instanceof Error ? e.message : "회의를 만들지 못했습니다"),
+        titleRefusal(e) ?? readableError(e, "회의를 만들지 못했습니다"),
       );
     }
   }
@@ -243,7 +244,7 @@ export function NewMeetingScreen({
     } catch (e: unknown) {
       setStep("idle");
       setError(
-        titleRefusal(e) ?? (e instanceof Error ? e.message : "업로드에 실패했습니다"),
+        titleRefusal(e) ?? readableError(e, "업로드에 실패했습니다"),
       );
     }
   }
@@ -262,7 +263,7 @@ export function NewMeetingScreen({
     } catch (e: unknown) {
       setStep("idle");
       setError(
-        titleRefusal(e) ?? (e instanceof Error ? e.message : "회의를 만들지 못했습니다"),
+        titleRefusal(e) ?? readableError(e, "회의를 만들지 못했습니다"),
       );
     }
   }

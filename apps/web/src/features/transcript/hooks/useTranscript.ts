@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { getTranscript } from "../api";
+import { readableError } from "../readableError";
 import type { Utterance } from "../types";
 
 export type TranscriptState =
@@ -44,8 +45,9 @@ export function useTranscript(meetingId: string, version = 0): TranscriptState {
         if (current) setState({ status: "ready", utterances });
       })
       .catch((error: unknown) => {
-        // The message, never the body: an API error can quote what it refused.
-        const message = error instanceof Error ? error.message : "전사를 불러오지 못했습니다";
+        // Never the server's text: it is English, and can quote what it
+        // refused (#1176).
+        const message = readableError(error, "전사를 불러오지 못했습니다.");
         if (current) setState({ status: "error", message });
       });
 

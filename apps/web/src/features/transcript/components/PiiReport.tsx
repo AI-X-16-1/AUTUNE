@@ -6,6 +6,7 @@ import { Button, ChipToggle } from "@/shared/ui";
 
 import { reportPiiMiss } from "../api";
 import type { PiiCategory, PiiReported } from "../types";
+import { readableError } from "../readableError";
 
 /**
  * S30 — 개인정보 누락 신고 (#555).
@@ -160,7 +161,7 @@ export function PiiReportModal({
       );
     } catch (caught) {
       setError(
-        caught instanceof Error ? caught.message : "신고하지 못했습니다.",
+        readableError(caught, "신고하지 못했습니다."),
       );
       setPending(false);
     }
