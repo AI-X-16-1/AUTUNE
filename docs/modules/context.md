@@ -469,7 +469,14 @@ lineage view (S22), which reads to a user as a bug.
    stronger match later in the list. No thread above the threshold opens a new
    one, anchored on the meeting's team. One thread takes at most one of this
    meeting's decisions. A meeting past its retention window is excluded from
-   matching — see "Deletion".
+   matching — see "Deletion". The cosine is the higher of two: statement to
+   statement, and each side's statement embedded together with the utterances
+   it was settled in (`Decision.source_utterance_ids`; the thread head's own
+   stored ids). A terse statement — "2번 시안으로 정한다", "없던 걸로 한다" —
+   names no subject; its utterances do. They are read at match time, from
+   speakers who consent, so a deletion or a withdrawal takes effect without
+   re-deriving anything; a side with none readable falls back to its
+   statement. How a decision changed is still classified on the statements.
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and

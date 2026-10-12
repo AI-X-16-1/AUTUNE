@@ -862,15 +862,24 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
         # *later* meeting — this meeting may sit mid-thread.
         heads = _thread_heads(session, meeting.team_id, embedder)
         own_versions = session.execute(
-            select(CtxDecisionVersion.thread_id, CtxDecisionVersion.current_statement)
+            select(
+                CtxDecisionVersion.thread_id,
+                CtxDecisionVersion.current_statement,
+                CtxDecisionVersion.source_utterance_ids,
+            )
             .where(CtxDecisionVersion.meeting_id == result.meeting_id)
             .order_by(CtxDecisionVersion.id)
         ).all()
         if own_versions:
-            own_vectors = embedder.embed([statement for _, statement in own_versions])
+            own_vectors = embedder.embed([statement for _, statement, _ in own_versions])
+            own_context = _context_vectors(
+                session, embedder, [(statement, ids) for _, statement, ids in own_versions]
+            )
             heads += [
-                _ThreadHead(thread_id, vector, statement)
-                for (thread_id, statement), vector in zip(own_versions, own_vectors, strict=True)
+                _ThreadHead(thread_id, vector, statement, context)
+                for (thread_id, statement, _), vector, context in zip(
+                    own_versions, own_vectors, own_context, strict=True
+                )
             ]
         decisions = list(result.decisions)
         vectors = embedder.embed([d.statement for d in decisions]) if decisions else []
@@ -879,8 +888,11 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
                 [d.statement for d in decisions], vectors, heads, judge, settings
             )
         else:
+            context_vectors = _context_vectors(
+                session, embedder, [(d.statement, d.source_utterance_ids) for d in decisions]
+            )
             assignment = _assign_decisions_to_threads(
-                vectors, heads, settings.lineage_match_threshold
+                vectors, heads, settings.lineage_match_threshold, context_vectors
             )
 
         # Idempotency: now drop this meeting's old versions. The threads they
@@ -999,14 +1011,23 @@ class _ThreadHead:
     """A thread's most recent statement, embedded — the target
     ``_assign_decisions_to_threads`` scores a new decision against. ``statement``
     is the text behind ``vector``, for ``_assign_decisions_by_judge`` to show the
-    LLM; the cosine path never reads it."""
+    LLM; the cosine path never reads it. ``context_vector`` embeds the statement
+    together with the utterances it was settled in (``_with_sources``), or is
+    ``None`` when none can be read."""
 
-    __slots__ = ("statement", "thread_id", "vector")
+    __slots__ = ("context_vector", "statement", "thread_id", "vector")
 
-    def __init__(self, thread_id: str, vector: list[float], statement: str = "") -> None:
+    def __init__(
+        self,
+        thread_id: str,
+        vector: list[float],
+        statement: str = "",
+        context_vector: list[float] | None = None,
+    ) -> None:
         self.thread_id = thread_id
         self.vector = vector
         self.statement = statement
+        self.context_vector = context_vector
 
 
 def _meeting_time():
@@ -1050,14 +1071,56 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
         return []
     ordered = sorted(head_by_thread.items())
     vectors = embedder.embed([version.current_statement for _, version in ordered])
+    contexts = _context_vectors(
+        session,
+        embedder,
+        [(version.current_statement, version.source_utterance_ids) for _, version in ordered],
+    )
     return [
-        _ThreadHead(thread_id, vector, version.current_statement)
-        for (thread_id, version), vector in zip(ordered, vectors, strict=True)
+        _ThreadHead(thread_id, vector, version.current_statement, context)
+        for (thread_id, version), vector, context in zip(ordered, vectors, contexts, strict=True)
     ]
 
 
+def _context_vectors(
+    session: Session, embedder: Embedder, items: Sequence[tuple[str, Sequence[str] | None]]
+) -> list[list[float] | None]:
+    """Per ``(statement, source utterance ids)``: the statement and the text of
+    its source utterances embedded together, or ``None`` when no source
+    utterance can be read (none recorded, all deleted, none from a speaker who
+    consents).
+
+    What B writes as a decision is one sentence, and a terse one -- "2번
+    시안으로 정한다", "없던 걸로 한다" -- does not say what it is about: the
+    utterances it was settled in do. Read at match time, consented speech only,
+    the same line ``consented_utterance_ids`` draws when topics are cut, so a
+    deletion or a withdrawal takes effect without re-deriving anything.
+    """
+    wanted = {i for _, ids in items for i in ids or []}
+    if not wanted:
+        return [None] * len(items)
+    texts: dict[str, str] = {
+        utterance_id: text
+        for utterance_id, text in session.execute(
+            select(Utterance.id, Utterance.text)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.id.in_(wanted), Participant.consented.is_(True))
+        )
+    }
+    enriched: list[str | None] = []
+    for statement, ids in items:
+        lines = [texts[i] for i in ids or [] if i in texts]
+        enriched.append(" ".join([statement, *lines]) if lines else None)
+    todo = [text for text in enriched if text is not None]
+    vectors = iter(embedder.embed(todo) if todo else [])
+    return [next(vectors) if text is not None else None for text in enriched]
+
+
 def _assign_decisions_to_threads(
-    vectors: list[list[float]], heads: list[_ThreadHead], threshold: float
+    vectors: list[list[float]],
+    heads: list[_ThreadHead],
+    threshold: float,
+    context_vectors: Sequence[list[float] | None] | None = None,
 ) -> dict[int, _ThreadHead]:
     """Best-similarity-first assignment of decisions (by index into ``vectors``)
     to threads, each used at most once.
@@ -1077,9 +1140,23 @@ def _assign_decisions_to_threads(
     thread used at most once" is tracked by ``thread_id``, not by index into
     ``heads``: the two entries are candidates for the *same* slot, not two
     slots.
+
+    A pair scores the higher of two cosines: statement to statement, and each
+    side's statement together with its source utterances (``context_vectors``,
+    ``_ThreadHead.context_vector``; a side with none uses its statement). The
+    second is what threads a terse decision whose subject only its utterances
+    name, at the same ``threshold``.
     """
+    contexts = list(context_vectors) if context_vectors is not None else [None] * len(vectors)
     candidates = [
-        (_cosine(vector, head.vector), d_idx, h_idx)
+        (
+            max(
+                _cosine(vector, head.vector),
+                _cosine(contexts[d_idx] or vector, head.context_vector or head.vector),
+            ),
+            d_idx,
+            h_idx,
+        )
         for d_idx, vector in enumerate(vectors)
         for h_idx, head in enumerate(heads)
     ]
