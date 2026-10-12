@@ -81,6 +81,11 @@ CANDIDATES = 50
 are found among them unless one material holds nearly all of them."""
 
 QUESTION_MASKED = "질문에서 전화번호처럼 개인정보로 보이는 값은 가리고 찾았습니다."
+QUESTION_REFUSED = (
+    "질문에 개인정보로 보이는 값이 남아 있어 찾지 않았습니다. 그 값을 빼고 다시 질문해 주세요."
+)
+"""Said when the masker could not clear a question, so nothing was searched.
+Not ``QUESTION_MASKED``, which says a search was made."""
 ASKS_FOR_PERSONAL = (
     "전화번호처럼 형식이 정해진 개인정보는 보관할 때 가려 두었으므로 찾아서 보여 드릴 수 없습니다."
 )
@@ -329,7 +334,7 @@ def search_materials(
     except PrivacyViolationError:
         # The masker could not clear it: nothing of it goes to the embedder.
         log.info("extraction_material_search_refused", team_id=team_id)
-        return MaterialAnswer(hits=[], notice=QUESTION_MASKED, more=False)
+        return MaterialAnswer(hits=[], notice=QUESTION_REFUSED, more=False)
     del clean
     asks_personal = bool(_PERSONAL_KINDS.search(masked.text))
     model = embedder or get_material_embedder()
