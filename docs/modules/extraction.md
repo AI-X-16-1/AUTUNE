@@ -1434,8 +1434,12 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   owner, 2026-10-12). The list answers each upload's `expires_at`. Masked is not
   anonymous: a name in a sentence stays. A file marked confidential is
   refused and leaves one alarm row that names no person. The only model
-  that reads the text is the embedder, in this process, on the masked
-  pieces. The upload switch (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`): off by
+  that reads the text is the embedder, on the masked pieces: loaded in this
+  process (`AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local`) or, with
+  `hosted`, on our own inference server, which is posted the masked pieces
+  and nothing else. `docs/architecture/privacy.md` has the rule, and what
+  holds `hosted` back until #1250 is decided. The upload switch
+  (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`): off by
   default, and no code turns it on. Whether a deployment turns it on is
   decided on #817. A stopped file is told to the team's approvers by the
   agent layer (#1201), which reads the alarm rows through four functions
