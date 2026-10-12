@@ -127,10 +127,13 @@ def calendars(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 class FakeSlack:
-    """The team's channel: every message posted, as ``(channel, text, blocks)``."""
+    """The team's channel: every message posted, as ``(channel, text, blocks)``,
+    and every reply in a thread."""
 
     def __init__(self, fail_with: Exception | None = None) -> None:
         self.posted: list[tuple[str, str, list[dict[str, Any]]]] = []
+        self.replied: list[tuple[str, str, str]] = []
+        """Replies in a thread, as ``(channel, thread_ts, text)``."""
         self.fail_with = fail_with
 
     def post_message(self, channel: str, text: str, blocks: list[dict[str, Any]]) -> str:
@@ -138,6 +141,12 @@ class FakeSlack:
             raise self.fail_with
         self.posted.append((channel, text, blocks))
         return "1.0"
+
+    def reply_in_thread(self, channel: str, thread_ts: str, text: str) -> str:
+        if self.fail_with is not None:
+            raise self.fail_with
+        self.replied.append((channel, thread_ts, text))
+        return "1.1"
 
     def close(self) -> None:
         pass

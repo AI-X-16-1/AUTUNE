@@ -11,17 +11,21 @@ channel is ``test_calendar_writes``' fake.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from structlog.testing import capture_logs
 
+from autune_contracts import MeetingReportPosted
 from autune_core.errors import PrivacyViolationError
-from autune_gap import team_notice
-from autune_gap.models import GapGap
+from autune_gap import service, tasks, team_notice
+from autune_gap.models import GapGap, GapReportThread
 
-from .test_calendar_writes import TeamSlack, slack
+from .test_calendar_writes import TEAMMATE, TeamSlack, slack, teammate
 from .test_read_endpoints import (
     FOREIGN_MEETING,
     MEETING,
@@ -153,3 +157,89 @@ def test_another_teams_meeting_is_a_404_and_posts_nothing(
 
     assert response.status_code == 404
     assert channel.posted == []
+
+
+# --- in the thread of E's report (MeetingReportPosted) ------------------------
+
+
+@pytest.fixture
+def scoped(session: Session, monkeypatch: pytest.MonkeyPatch) -> Session:
+    """``record_report_thread`` opens its own ``session_scope``; here it is the
+    test's session."""
+
+    @contextmanager
+    def scope() -> Iterator[Session]:
+        yield session
+        session.flush()
+
+    monkeypatch.setattr(service, "session_scope", scope)
+    return session
+
+
+def report_posted(channel: str = "C_TEAM", meeting_id: str = MEETING) -> dict[str, str]:
+    return MeetingReportPosted(
+        meeting_id=meeting_id, channel=channel, thread_ts="111.222"
+    ).model_dump(mode="json")
+
+
+def test_once_e_posted_the_report_the_cards_reply_in_its_thread(
+    client: TestClient, session: Session, slack: TeamSlack, scoped: Session
+) -> None:
+    with_question(session, gap(session, "gap_1"), "<!here> 목표는 누가 정합니까?")
+    tasks.on_intelligence_meeting_report_posted(report_posted())
+    channel = slack.connect()
+
+    response = client.post(ROUTE)
+
+    assert response.json()["slack"] == "posted"
+    assert channel.posted == []
+    ((where, thread_ts, text),) = channel.replied
+    assert (where, thread_ts) == ("C_TEAM", "111.222")
+    assert "*갭 질문* · 주간 회의" in text
+    assert "&lt;!here&gt; 목표는 누가 정합니까?" in text
+    assert "<!here>" not in text
+
+
+def test_asking_a_member_replies_in_the_reports_thread_too(
+    client: TestClient, session: Session, slack: TeamSlack, scoped: Session, teammate: str
+) -> None:
+    gap(session, "gap_1")
+    tasks.on_intelligence_meeting_report_posted(report_posted())
+    slack.members[TEAMMATE] = "U_MATE"
+    channel = slack.connect()
+
+    client.post(f"{PREFIX}/gaps/gap_1/ask", json={"user_id": TEAMMATE})
+
+    ((_, thread_ts, text),) = channel.replied
+    assert thread_ts == "111.222"
+    assert "<@U_MATE>" in text
+
+
+def test_a_thread_on_a_channel_the_team_has_left_is_not_used(
+    client: TestClient, session: Session, slack: TeamSlack, scoped: Session
+) -> None:
+    gap(session, "gap_1")
+    tasks.on_intelligence_meeting_report_posted(report_posted(channel="C_OLD"))
+    channel = slack.connect()
+
+    client.post(ROUTE)
+
+    assert channel.replied == []
+    assert len(channel.posted) == 1
+
+
+def test_the_thread_is_kept_once_and_the_latest_wins(session: Session, scoped: Session) -> None:
+    tasks.on_intelligence_meeting_report_posted(report_posted())
+    tasks.on_intelligence_meeting_report_posted(report_posted(channel="C_NEW"))
+
+    rows = session.scalars(select(GapReportThread)).all()
+    assert [(r.meeting_id, r.channel, r.thread_ts) for r in rows] == [(MEETING, "C_NEW", "111.222")]
+
+
+def test_a_report_for_a_meeting_gone_since_keeps_nothing(session: Session, scoped: Session) -> None:
+    kept = service.record_report_thread(
+        MeetingReportPosted(meeting_id="mtg_gone", channel="C_TEAM", thread_ts="1.0")
+    )
+
+    assert kept is False
+    assert session.scalars(select(GapReportThread)).all() == []
