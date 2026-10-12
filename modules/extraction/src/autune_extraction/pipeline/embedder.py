@@ -93,6 +93,11 @@ class LocalKureEmbedder:
         return [list(vector) for vector in vectors]
 
 
+MODEL_NAME_SHOWN = 80
+"""How much of what a server calls itself goes into an error: a name, not a
+page of whatever the address answered."""
+
+
 def _embedder_client(endpoint: str) -> Any:
     """Our inference server, as a client the way every other one is written --
     see ``classifier._classifier_client``. A subclass rather than a reassigned
@@ -129,6 +134,8 @@ class HostedKureEmbedder:
     width is refused here with ``ValueError``: a vector of the wrong width
     cannot be stored in ``ext_material_chunks.embedding``, and it says the
     server runs a model other than the one recorded as ``model_version``.
+    Width alone does not tell two models of one width apart, so the server is
+    also asked for its model's name before the first text: ``confirm_model``.
 
     Requests are split to fit the outbound guard and each one is re-attempted
     on a transient failure, the way ``HostedDeberta`` does it -- see its
@@ -144,6 +151,47 @@ class HostedKureEmbedder:
     @property
     def model_version(self) -> str:
         return self._model_version
+
+    def confirm_model(self) -> None:
+        """Ask the server which model it runs, before any text is sent to it.
+
+        ``GET {endpoint}/info`` -> ``{"model_version", "dim"}``, the route the
+        self-hosted serving contract names (``docs/modules/context.md``). A
+        vector's width cannot tell KURE-v1 from the model it was tuned from:
+        both answer 1024. Vectors of two models stored under one
+        ``embedding_model`` would be searched as if they were comparable, and
+        nothing downstream could tell. So a server that names another model
+        than the checkpoint recorded here, or names none, is refused with
+        ``ValueError``; so is another ``dim`` when the server states one.
+
+        The comparison is string for string: the server must answer the value
+        of ``AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT`` exactly. It does not say
+        whose server this is -- any server can answer a name.
+
+        Not called by the constructor: ``registry.get_material_embedder`` calls
+        it, once a process since that is cached, and again on the next call
+        when this raised. The request carries no body."""
+        body = self._client.request("GET", "/info")
+        named = body.get("model_version") if isinstance(body, dict) else None
+        if not isinstance(named, str) or not named:
+            raise ValueError(
+                "the inference server's /info names no model_version; "
+                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=hosted is refused rather "
+                "than assume it runs AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT"
+            )
+        if named != self._model_version:
+            raise ValueError(
+                f"the inference server runs {named[:MODEL_NAME_SHOWN]!r}, not "
+                f"{self._model_version!r}: AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_ENDPOINT "
+                "must serve the model AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT names, "
+                "under exactly that name"
+            )
+        stated = body.get("dim")
+        if stated is not None and stated != self._dim:
+            raise ValueError(
+                f"the inference server states a width of {str(stated)[:MODEL_NAME_SHOWN]}, "
+                f"not {self._dim}, for {self._model_version!r}"
+            )
 
     def _post(self, batch: list[str], *, index: int) -> Any:
         """One batch, re-attempted while the failure is a transient one --
