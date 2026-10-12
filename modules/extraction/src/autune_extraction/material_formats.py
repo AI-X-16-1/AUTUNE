@@ -45,6 +45,18 @@ page says can be neither checked for a marking nor masked. A page with a
 picture and fewer than ``MIN_PAGE_CHARS`` characters beside it -- a scan that
 carries only its page number -- is such a page.
 
+**A zipped file that names a part these readers do not find is refused
+whole** (#1252). A sheet, a slide and a header are found here by their usual
+names; the file's own relationships may give one any name, and one under
+another name was left unread and unchecked without a word. It is still not
+read: the file is refused as ``damaged`` (``_Package.named_were_read``). This
+reaches what a document, a workbook and a presentation name themselves --
+headers, footers, notes and comments; sheets; slides and masters. It does not
+reach what a sheet, a slide or a master names in turn (a sheet's notes and
+text boxes, a slide's speaker notes, comments and SmartArt, a master's
+layouts) nor the document properties: one of those under another name is
+still left unread, and the file is taken.
+
 **What a reader raises.** ``RefusedError`` for what it recognises, by reason
 code. Anything else -- its own or its library's -- is a damaged file, and
 ``material_reading.read_file`` is the one place that says so: a library's
@@ -57,6 +69,7 @@ from __future__ import annotations
 import functools
 import io
 import logging
+import posixpath
 import re
 import struct
 import zipfile
@@ -314,6 +327,39 @@ class _Package:
                 if not piece:
                     return
 
+    def named_were_read(self, part: str, kinds: frozenset[str]) -> None:
+        """Refuse the file when ``part``'s own relationships name a part of
+        one of ``kinds`` that no reader read (#1252).
+
+        The readers below find a sheet, a slide or a header by its usual name.
+        A program that opens the file finds it by the relationships of the
+        part above it, which may name any part. One under another name was
+        left unread without a word -- kept out of the text, and out of the
+        marking check -- so a file that has one is refused whole
+        (``damaged``): it is not read here, only noticed. Called last, when
+        ``parsed`` holds every part that was read.
+
+        ``kinds`` are the last step of a relationship's type, which the Strict
+        flavour shares. A relationship part is a part like any other and is
+        read as one: looked through, counted toward ``MAX_PARSED``, an element
+        at a time. It is looked for whatever the case of its name, as a
+        package finds a part; the part it names must be one that was read,
+        letter for letter. A file without the relationship part names nothing,
+        and is read by name as before: a ``.docx`` with no header has no need
+        of one."""
+        folder, _, last = part.rpartition("/")
+        wanted = posixpath.join(folder, "_rels", f"{last}.rels").casefold()
+        read = set(self.parsed)
+        for relationships in [name for name in self.names if name.casefold() == wanted]:
+            for _, tag, element, _ in self.events(relationships):
+                if tag != "Relationship":
+                    continue
+                if element.get("Type", "").rsplit("/", 1)[-1] not in kinds:
+                    continue
+                target = posixpath.normpath(posixpath.join(folder, element.get("Target", "")))
+                if target.lstrip("/") not in read:
+                    raise RefusedError("damaged")
+
     def counted(self, said: str) -> str:
         """``said``, which is going into the file's text or its marks, counted
         toward ``MAX_TEXT_CHARS``: a file already past it is refused here and
@@ -446,6 +492,14 @@ def _footer_placeholder(tag: str, element: ElementTree.Element) -> bool:
 
 _WORD_TEXT = frozenset({"t", "delText"})
 
+_WORD_KINDS = frozenset({"header", "footer", "footnotes", "endnotes", "comments"})
+_BOOK_KINDS = frozenset({"worksheet"})
+_SHOW_KINDS = frozenset({"slide", "slideMaster", "notesMaster", "handoutMaster"})
+"""The kinds of part a document, a workbook and a presentation name in their
+own relationships that the readers below read, and so must have read
+(``_Package.named_were_read``). A chart sheet is a kind of its own and is not
+read; it is told of as a chart."""
+
 
 def _docx(data: bytes | bytearray) -> FileText:
     package, found = _Package(data), _Found()
@@ -470,6 +524,7 @@ def _docx(data: bytes | bytearray) -> FileText:
     found.foot += footers
     found.marks.append(package.properties())
     package.besides("word", found)
+    package.named_were_read("word/document.xml", _WORD_KINDS)
     return found.done()
 
 
@@ -600,6 +655,7 @@ def _xlsx(data: bytes | bytearray) -> FileText:
         found.text.append(package.runs(part, text=frozenset({"text"})))
     found.marks.append(package.properties())
     package.besides("xl", found)
+    package.named_were_read("xl/workbook.xml", _BOOK_KINDS)
     return found.done()
 
 
@@ -646,6 +702,7 @@ def _pptx(data: bytes | bytearray) -> FileText:
         found.marks += [package.runs(part) for part in package.matching(pattern)]
     found.marks.append(package.properties())
     package.besides("ppt", found)
+    package.named_were_read("ppt/presentation.xml", _SHOW_KINDS)
     return found.done()
 
 
