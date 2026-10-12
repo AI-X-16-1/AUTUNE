@@ -64,7 +64,7 @@ def session() -> Iterator[Session]:
 def upload(session: Session, team: str = TEAM, *, age: timedelta, title: str = "계획"):
     row = materials.store_upload(
         session, team, title=title, file_name="plan.txt", data=BODY.encode()
-    )
+    ).row
     row.created_at = NOW - age
     session.flush()
     return row

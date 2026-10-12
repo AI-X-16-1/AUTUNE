@@ -38,7 +38,7 @@ def rows(session: Session, model: type, **where: str) -> int:
 def upload(session: Session, team_id: str, title: str = "계획") -> ExtMaterial:
     return materials.store_upload(
         session, team_id, title=title, file_name="plan.txt", data=BODY.encode()
-    )
+    ).row
 
 
 def test_deleting_the_row_takes_its_text_by_cascade(db_session: Session, team_id: str) -> None:

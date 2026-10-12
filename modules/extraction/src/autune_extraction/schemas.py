@@ -455,7 +455,7 @@ class MaterialRead(BaseModel):
     team that keeps uploads until a member deletes them, and for a link, which
     keeps no text (the owner, 2026-10-11). ``not_read`` is what a file held
     that was not read, said only in the answer to the upload; the plain-text
-    formats read today have nothing unread, so it is empty.
+    formats have nothing unread; the others can: pictures, charts, embedded files.
     """
 
     id: str

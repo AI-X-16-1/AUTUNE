@@ -22,6 +22,14 @@ dependencies = [
     # into memory -- never UploadFile, which spools to disk (#817). Already in
     # the lock through module A and Starlette; declared here because B imports it.
     "python-multipart>=0.0.20",
+    # material_formats.py's readers of an uploaded file (#817): pure Python,
+    # no converter, no office suite, no OCR. pypdf (BSD-3-Clause) reads a
+    # PDF's text layer, xlrd (BSD-3-Clause) an old .xls, olefile
+    # (BSD-2-Clause) an old .ppt's container. .docx, .xlsx and .pptx need
+    # only the standard library.
+    "pypdf>=6.0",
+    "xlrd>=2.0.1",
+    "olefile>=0.47",
 ]
 
 [project.optional-dependencies]
