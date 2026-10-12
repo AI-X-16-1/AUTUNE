@@ -52,8 +52,10 @@ storage, and the original is not kept":
 **For both: a row names no person.** Any member of the team registers,
 uploads and deletes, as with the team's projects; there is no admin role
 (#592). Nothing goes out: no Slack, Notion, Jira or outside model sees a title,
-a file id or a piece of text. An upload's masked pieces are embedded in this
-process (``pipeline.registry.get_material_embedder``) and searched by
+a file id or a piece of text. An upload's masked pieces are embedded by the
+material embedder (``pipeline.registry.get_material_embedder``) -- in this
+process or, when it is set to ``hosted``, on our own inference server, which
+is posted the masked pieces and nothing else -- and searched by
 ``material_search``, whose excerpts are screened on the way out; the
 assistant's tool over it is off by default (``tools.find_materials``).
 
