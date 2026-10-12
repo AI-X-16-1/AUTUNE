@@ -144,26 +144,24 @@ item quotes readable around it.
 
 ### Uploaded documents are masked before storage, and the original is not kept (#817)
 
-**Status, 2026-10-09: the rule is written first.** On `main` today
-`ext_materials` exists for Drive links only (#1016: team, title, the file's
-id and kind, the time), and nothing of a file is read. What this subsection
-adds is not there yet: the columns that mark an uploaded row and give it a
-window, `ext_material_chunks`, `ext_material_alarms`, the team's keeping
-setting (`ext_material_settings`), the upload route, the delete of an
-uploaded material and the expiry task. They arrive in the changes listed on #817 -- the document masker in
-`packages/integrations`, module B's storage, the approvers' alert
-in the agent layer, search -- each built to this text and off by default,
-and none of them merges before this rule is approved. The legal notice
-(`apps/web/src/app/legal/content.ts`) speaks of voice only today -- what is
-collected, how long it is kept, what the terms of use call content -- and it
-is changed before upload is switched on anywhere: while the notice does not
-say what is read of an uploaded file and what is kept of it, the switch
-stays off. The notice's sentences go in with the storage change (2b), and
-they describe both what section 4 allows: by default a material is deleted
-when the team's retention window, counted from the upload, has passed, and
-a team may choose in its settings to keep its materials until a member
-deletes them. The storage change removes this paragraph, and that sentence
-stays until the notice has changed.
+**Status: storage is on `main`, off by default; search and the alert are
+not.** `main` has what this subsection says is kept and how it goes: the
+uploaded rows of `ext_materials`, `ext_material_chunks`,
+`ext_material_alarms`, the team's keeping setting
+(`ext_material_settings`), the upload route, the delete of an uploaded
+material and the two hourly tasks. The legal notice
+(`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
+file, what is kept of it, for how long, and who deletes it. Two things this
+subsection describes are not on `main` yet: the vector for each piece, with
+the search over them, and the approvers' alert in the agent layer (#1201).
+Until the alert is in, a refused file leaves its `ext_material_alarms` row
+and nobody but the member who brought it is told. The switch
+(`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`) is off by default and is not turned
+on anywhere before the alert is in. And of the nine formats listed below
+`main` reads three: `.txt`, `.md` and `.csv`. The other six (`.docx`,
+`.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`) are not read on `main` yet and are
+refused. Each of those three changes -- search, the alert, the six formats
+-- removes its own sentence from this paragraph.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.

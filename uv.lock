@@ -510,6 +510,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "holidays" },
     { name = "httpx" },
+    { name = "python-multipart" },
 ]
 
 [package.optional-dependencies]
@@ -536,6 +537,7 @@ requires-dist = [
     { name = "holidays", specifier = ">=0.58" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", marker = "extra == 'training'", specifier = ">=1.26" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0" },
     { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.5" },
     { name = "torch", marker = "extra == 'training'", specifier = ">=2.4" },
