@@ -244,7 +244,9 @@ def test_a_member_registers_lists_and_deletes(client: TestClient) -> None:
         "created_at",
         "expires_at",
         "not_read",
+        "already_kept",
     }
+    assert body["already_kept"] is False
     assert (body["source"], body["drive_file_id"], body["drive_kind"]) == (
         "drive_link",
         DOC_ID,

@@ -331,7 +331,7 @@ def test_uploads_and_links_share_the_cap(session: Session, monkeypatch: pytest.M
     upload(session)
 
     with pytest.raises(AutuneError) as refused:
-        upload(session, title="셋째")
+        upload(session, title="셋째", body=BODY + "덧붙인 줄.")
 
     assert refused.value.details == {"field": "file", "reason": "shelf_full"}
     assert count(session, ExtMaterial) == 2

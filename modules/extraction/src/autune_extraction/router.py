@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -733,7 +733,7 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
     stopped for a marking has its alarm row committed before the refusal is
     answered -- the route's own rollback would otherwise take it."""
     try:
-        row, not_read = materials.store_upload(
+        row, not_read, already_kept = materials.store_upload(
             session, team, title=upload.title, file_name=upload.file_name, data=upload.data
         )
     except materials.ConfidentialFileError:
@@ -741,12 +741,12 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
         raise
     response = materials.read(row, kept=materials.keeps_until_deleted(session, team))
     session.commit()
-    return response.model_copy(update={"not_read": list(not_read)})
+    return response.model_copy(update={"not_read": list(not_read), "already_kept": already_kept})
 
 
 @router.post("/materials/upload", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
 async def upload_material(
-    request: Request, team_id: str, session: SessionDep, reader: CurrentUser
+    request: Request, response: Response, team_id: str, session: SessionDep, reader: CurrentUser
 ) -> MaterialRead:
     """Keep the masked text of a file a member uploads: a form of exactly two
     parts, ``title`` and ``file`` (#817). Any member.
@@ -758,6 +758,11 @@ async def upload_material(
     masked and stored inside this one request -- no path and no byte goes to
     a task -- and the buffers are wiped in the ``finally`` on every path out.
     The answer says whether it was kept.
+
+    201 with the new row. When the team already keeps the same masked text,
+    200 with that earlier row and ``already_kept``: nothing was written, and
+    the title in the answer is the earlier upload's, not the one sent
+    (``materials.store_upload``).
 
     With ``AUTUNE_EXTRACTION_MATERIAL_UPLOAD`` off -- the default -- it answers
     the bare 404 of a route that does not exist."""
@@ -771,7 +776,10 @@ async def upload_material(
             request.headers.get("content-length"),
             request.stream(),
         )
-        return await run_in_threadpool(_stored_upload, session, team, upload)
+        stored = await run_in_threadpool(_stored_upload, session, team, upload)
+        if stored.already_kept:
+            response.status_code = status.HTTP_200_OK
+        return stored
     finally:
         if upload is not None:
             upload.wipe()

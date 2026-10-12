@@ -6,6 +6,7 @@ import {
   CONFIDENTIAL_REFUSAL,
   KEPT_UNTIL_DELETED,
   UNANSWERED,
+  alreadyKeptNote,
   deletionDay,
   fileRefusal,
   keepingLabel,
@@ -230,5 +231,34 @@ describe("how long a row's text is kept", () => {
 
     expect(keptNote(at.toISOString())).toBe("개인정보를 가린 글을 2027-01-07까지 보관합니다.");
     expect(keptNote(null)).toBe("개인정보를 가린 글을 팀이 지울 때까지 보관합니다.");
+  });
+});
+
+describe("an upload of a text the team already keeps", () => {
+  const at = new Date(2027, 0, 7, 0, 30, 0);
+  const kept = { title: "출장비 한도", expires_at: at.toISOString() };
+
+  it("names the earlier material, says nothing was stored, and gives that material's day", () => {
+    expect(alreadyKeptNote(kept, "출장비 한도 최종")).toBe(
+      "같은 내용이 이미 '출장비 한도' 자료로 올라와 있어 새로 저장하지 않았습니다. " +
+        "방금 입력한 제목은 저장되지 않았습니다. 그 자료는 2027-01-07까지 보관합니다.",
+    );
+  });
+
+  it("does not speak of the typed title when it is the earlier material's", () => {
+    expect(alreadyKeptNote(kept, " 출장비 한도 ")).toBe(
+      "같은 내용이 이미 '출장비 한도' 자료로 올라와 있어 새로 저장하지 않았습니다. " +
+        "그 자료는 2027-01-07까지 보관합니다.",
+    );
+  });
+
+  it("says a team that keeps uploads until deleted keeps that one so", () => {
+    expect(alreadyKeptNote({ ...kept, expires_at: null }, "출장비 한도")).toMatch(
+      /그 자료는 팀이 지울 때까지 보관합니다\.$/,
+    );
+  });
+
+  it("never reads as a second copy kept", () => {
+    expect(alreadyKeptNote(kept, "다른 제목")).not.toMatch(/자료를 올렸습니다/);
   });
 });

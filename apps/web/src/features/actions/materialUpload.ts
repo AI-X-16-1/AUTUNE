@@ -212,3 +212,26 @@ export function keptNote(expiresAt: string | null): string {
     ? "개인정보를 가린 글을 팀이 지울 때까지 보관합니다."
     : `개인정보를 가린 글을 ${localToday(at)}까지 보관합니다.`;
 }
+
+/**
+ * What the upload's note says when the server stored nothing because the team
+ * already keeps the same text (`already_kept`): which material that is and how
+ * long it stays. It must not read as a second copy kept, as the title just
+ * typed having been used, or as a window counted from today -- the earlier
+ * material keeps its own title and its own day.
+ */
+export function alreadyKeptNote(
+  kept: { title: string; expires_at: string | null },
+  typedTitle: string,
+): string {
+  const at = kept.expires_at === null ? null : new Date(kept.expires_at);
+  return [
+    `같은 내용이 이미 '${kept.title}' 자료로 올라와 있어 새로 저장하지 않았습니다.`,
+    typedTitle.trim() === kept.title ? null : "방금 입력한 제목은 저장되지 않았습니다.",
+    at === null || Number.isNaN(at.getTime())
+      ? "그 자료는 팀이 지울 때까지 보관합니다."
+      : `그 자료는 ${localToday(at)}까지 보관합니다.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}

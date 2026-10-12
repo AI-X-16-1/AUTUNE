@@ -20,7 +20,13 @@ import {
 } from "../api";
 import { localToday } from "../dates";
 import { questionLimit } from "../materialSearch";
-import { keepingLabel, keptNote, notReadNote, shelfFull } from "../materialUpload";
+import {
+  alreadyKeptNote,
+  keepingLabel,
+  keptNote,
+  notReadNote,
+  shelfFull,
+} from "../materialUpload";
 import { typedTextRefusal } from "../refusal";
 import type { Material, MaterialSettings, MaterialUploadRules } from "../types";
 import { MaterialKeepSetting } from "./MaterialKeepSetting";
@@ -238,6 +244,19 @@ function TeamMaterials({ teamId }: { teamId: string }) {
             // "자료를 올렸습니다" under a refusal would read as this file's.
             setNote(null);
             const saved = await uploadMaterial(teamId, draft);
+            if (saved.already_kept) {
+              // Nothing was stored: the row is one the list has. Where the
+              // list is behind, it is added -- never a second time.
+              setMaterials((list) =>
+                (list ?? []).some((row) => row.id === saved.id) ? list : [saved, ...(list ?? [])],
+              );
+              setNote(
+                [alreadyKeptNote(saved, draft.title), notReadNote(saved.not_read ?? [])]
+                  .filter(Boolean)
+                  .join(" "),
+              );
+              return;
+            }
             setMaterials((list) => [saved, ...(list ?? [])]);
             setNote(
               [

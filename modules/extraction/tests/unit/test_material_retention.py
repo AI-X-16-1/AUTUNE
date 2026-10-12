@@ -18,6 +18,7 @@ Every value is invented.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -63,9 +64,15 @@ def session() -> Iterator[Session]:
         yield s
 
 
+_nth = itertools.count(1)
+
+
 def upload(session: Session, team: str = TEAM, *, age: timedelta, title: str = "계획"):
+    # A text of its own each time: an upload of a text the team already keeps
+    # answers the earlier row and stores nothing (``test_material_same_text``).
+    body = f"{BODY}{next(_nth)}번째로 올린 자료"
     row = materials.store_upload(
-        session, team, title=title, file_name="plan.txt", data=BODY.encode()
+        session, team, title=title, file_name="plan.txt", data=body.encode()
     ).row
     row.created_at = NOW - age
     return aged(session, row)
