@@ -415,6 +415,73 @@ class ExtractionSettings(BaseSettings):
     not serve an unauthenticated route that stores any team's Notion token
     (lsh2217, review of #402). Off unless someone asks for it by name."""
 
+    material_upload: bool = False
+    """Take a file uploaded to a team's 자료 and keep its masked text (#817,
+    ``materials.store_upload``).
+
+    **Off by default, and stays off until the rest has landed.** Off, the
+    upload route answers the framework's bare 404, as a route that does not
+    exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
+    screen draws no control. The order agreed on #817: it is not switched on
+    anywhere before the approvers' alert (#1201) is in, because without the
+    alert a stopped file is told to nobody but the member who sent it."""
+
+    material_embedder_impl: str = "fake"
+    """Which embedder makes an uploaded material's vectors and a search
+    question's vector (#817): ``local`` (KURE-v1 in this process; checkpoint
+    and device from ``embedder_checkpoint`` and ``embedder_device``),
+    ``hosted`` (the same model on our own inference server, at
+    ``material_embedder_endpoint``; ``embedder_checkpoint`` is recorded as its
+    version) or ``fake``. Its own switch, apart from ``embedder_impl``: the
+    resolver's fake makes 64-wide vectors it only compares with each other,
+    and a material's are stored in a ``vector(1024)`` column
+    (``models.MATERIAL_EMBEDDING_DIM``).
+
+    ``fake`` by default, which finds by shared characters rather than meaning
+    -- enough for tests and a dev stack, not for a team. ``hosted`` is where
+    the rule (``privacy.md``) says a material's vectors are made; it is given
+    masked text only, and nothing else here sends a material's text or a
+    question out of this process. A search finds only pieces embedded by the
+    embedder it asks with, so switching between implementations that record
+    different versions leaves earlier uploads unfound until they are uploaded
+    again (``material_search``)."""
+
+    material_embedder_endpoint: str = ""
+    """Our own inference server, required when ``material_embedder_impl=hosted``.
+
+    **Nothing here checks whose server the address names.** Every masked
+    piece of an upload and every masked question is posted to it, and
+    ``privacy.md`` ("to nothing outside Autune's own servers") and the legal
+    notice (제4조 ⑤) are true only while it is a server Autune runs. Pointing
+    it at an outside embedding service is a change to both, not a setting."""
+
+    material_search_min_similarity: float = Field(default=0.4, ge=-1, le=1)
+    """Below this cosine similarity to the masked question, an uploaded
+    material's nearest piece is not a hit (#817, ``material_search``). A
+    search with nothing at or above it answers no materials and says nothing
+    close enough was found, rather than the nearest unrelated ones.
+
+    **0.4 by default, a starting point and not a measurement.** It is set
+    for the embedder a team would run, KURE-v1 (``local`` or ``hosted``), a
+    fine-tune of bge-m3: in that family unrelated Korean text still lands around 0.2 to
+    0.4 -- the vectors share a direction, so the scale does not start at 0 --
+    while a question and the passage that answers it usually land at 0.5 or
+    above. 0.4 cuts the clearly unrelated band and leaves a margin under the
+    related one, so a weak but real hit is kept rather than lost. Nobody has
+    run it on a team's materials yet: tune it on real questions with known
+    answers before trusting it, and raise it if unrelated materials still
+    come back. The ``fake`` embedder counts shared characters, so its scores
+    mean nothing on this scale; its tests set this explicitly."""
+
+    material_search_tool: bool = False
+    """Let the assistant's ``extraction.find_materials`` tool answer (#817).
+
+    **Off by default.** Off, the tool searches nothing and says it is off. On,
+    it hands masked excerpts to whatever model the agent layer runs, and
+    ``privacy.md`` ("Uploaded documents are masked before storage") says no
+    language model is given a material's text until a change to that section
+    is approved on its own. Switch it on only after that change."""
+
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod
     def _blank_similarity_means_unset(cls, value: object) -> object:

@@ -20,6 +20,7 @@ from sqlalchemy import delete, exists, func, nulls_last, select
 from autune_contracts.enums import GapSeverity
 from autune_contracts.events import GAP_COMPLETED
 from autune_contracts.gap import Gap, GapReport, Participation, Topic
+from autune_contracts.intelligence import MeetingReportPosted
 from autune_core import (
     Meeting,
     Participant,
@@ -50,6 +51,7 @@ from autune_gap.models import (
     GapMeetingTemplate,
     GapParticipation,
     GapRelatedTopic,
+    GapReportThread,
     GapScoring,
     GapTopic,
     GapTopicEdge,
@@ -1801,6 +1803,32 @@ def publish_report(meeting_id: str) -> GapReport:
         gaps=len(report.gaps),
     )
     return report
+
+
+def record_report_thread(posted: MeetingReportPosted) -> bool:
+    """Keep where E posted the meeting's report, so the question cards and
+    "담당자 지정해 질문" reply in its thread (#824). Returns whether it was
+    kept: a meeting deleted since has nothing to reply under.
+
+    E sends this once per meeting; a second one replaces the first, so
+    running the task twice keeps one row."""
+    with session_scope() as session:
+        if session.get(Meeting, posted.meeting_id) is None:
+            log.info("gap_report_thread_no_meeting", meeting_id=posted.meeting_id)
+            return False
+        row = session.get(GapReportThread, posted.meeting_id)
+        if row is None:
+            session.add(
+                GapReportThread(
+                    meeting_id=posted.meeting_id,
+                    channel=posted.channel,
+                    thread_ts=posted.thread_ts,
+                )
+            )
+        else:
+            row.channel, row.thread_ts = posted.channel, posted.thread_ts
+    log.info("gap_report_thread_kept", meeting_id=posted.meeting_id)
+    return True
 
 
 def republish_report(meeting_id: str) -> GapReport | None:

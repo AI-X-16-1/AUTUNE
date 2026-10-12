@@ -1971,7 +1971,9 @@ def _report_read(
 def _team_reports_query(team_id: str) -> tuple[Any, Any]:
     """The select behind the team's report reads, and the expression for when each
     meeting was held. Both ``team_meeting_reports`` and ``team_meeting_report``
-    start from it, so a row reads the same either way."""
+    start from it, so a row reads the same either way. A meeting past its
+    ``expires_at`` is left out, as the search leaves it out, before the hourly
+    sweep deletes it."""
     held = func.coalesce(Meeting.started_at, Meeting.created_at)
     editor_user = aliased(User)
     corrector_user = aliased(User)
@@ -1980,7 +1982,7 @@ def _team_reports_query(team_id: str) -> tuple[Any, Any]:
         .join(Meeting, Meeting.id == IntelMeetingReport.meeting_id)
         .outerjoin(editor_user, editor_user.id == IntelMeetingReport.edited_by)
         .outerjoin(corrector_user, corrector_user.id == IntelMeetingReport.corrected_by)
-        .where(IntelMeetingReport.team_id == team_id)
+        .where(IntelMeetingReport.team_id == team_id, _not_expired(datetime.now(UTC)))
     )
     return query, held
 

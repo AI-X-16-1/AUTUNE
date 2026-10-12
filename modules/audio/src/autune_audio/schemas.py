@@ -138,6 +138,14 @@ class MeetingRename(BaseModel):
     title: str = Field(max_length=400)
 
 
+class MeetingDeletion(BaseModel):
+    """The meeting's title, typed by the person deleting it (#1161). In the
+    body, never the address, as ``TeamDeletion`` carries a team's name.
+    Whether it is the meeting's title is the service's to say."""
+
+    title: str = Field(max_length=400)
+
+
 class MeetingState(BaseModel):
     """The id and where the meeting has got to. Returned by the write routes.
 

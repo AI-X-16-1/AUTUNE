@@ -26,6 +26,7 @@ domain template, and score the risk of each missing item.
 | Source | Contract |
 | --- | --- |
 | A | `TranscriptReady` via `autune.transcript.ready` |
+| E | `MeetingReportPosted` via `autune.intelligence.meeting_report_posted`: where a meeting's report went out on Slack, so S20's cards reply in its thread (#824) |
 | `packages/core` | `meetings`, `participants`, `utterances` (read-only) |
 
 ## Outputs
@@ -886,6 +887,7 @@ gaps off a transcript nothing was read out of.
 | PostgreSQL `gap_scorings` | A digest of who counted as one person when a meeting's gaps were last scored |
 | PostgreSQL `gap_agenda_events` | Which event on whose own Google Calendar holds a gap's line (S20 "다음 회의 잡기", #824), so the line can be taken out again, and the day that event starts. Read by the cleanup, and by `gap.next_meeting_days` for each picked day and the display name of who picked it |
 | PostgreSQL `gap_followup_events` | The follow-up meeting an approver had C put on their own calendar when they approved Follow-up's proposal (`tools.schedule_followup_meeting`): one row per meeting, written before Google is asked so a second approval makes no second event, with the approver, the event and the day it starts. Nothing else of the event |
+| PostgreSQL `gap_report_threads` | Where E posted a meeting's report on Slack -- the channel id and the message `ts`, nothing it says -- so the question cards and "담당자 지정해 질문" reply in its thread (#824). One row per meeting, gone with it |
 | PostgreSQL `gap_agenda_cleanup` | Lines still to take off their owners' calendars, drained by the worker: those of a deleted or expired meeting, and those of an owner who left the meeting's team (#937). Keyed by the owner, not the meeting |
 | PostgreSQL `gap_templates` | Domain templates and their items — **not built, and not needed**, see below |
 
@@ -1233,6 +1235,7 @@ polls them every five seconds while the rail says `analysed: false`.
 | Task | Trigger | Queue |
 | --- | --- | --- |
 | `autune.gap.on_transcript_ready` | `autune.transcript.ready` | `cpu_heavy` |
+| `autune.gap.on_intelligence_meeting_report_posted` | `autune.intelligence.meeting_report_posted`: keeps the report's channel and `ts` in `gap_report_threads` | `cpu_heavy` |
 | `autune.gap.publish_report` | `PUT /templates/{meeting_id}`, `POST`/`DELETE /gaps/{id}/dismiss` | `cpu_heavy` |
 | `autune.gap.periodic.rescore_changed_people` | every 10 minutes | `cpu_heavy` |
 | `autune.gap.periodic.drain_agenda_cleanup` | every 10 minutes: queues the lines of an owner no longer on the meeting's team, then takes queued lines out with each owner's grant | `cpu_heavy` |
@@ -1258,9 +1261,15 @@ polls them every five seconds while the rail says `analysed: false`.
   are more, one last message counts them and links to the report. Nobody is
   mentioned, and a gap sent on to the next meeting is still open. The first
   card Slack does not take stops the rest, and the screen says how many went
-  before it. The cards are separate messages on the channel for now: putting
-  them under E's report thread (`MeetingReportPosted`) and the S21 buttons on
-  the card are the next steps.
+  before it.
+- Once E has posted the meeting's report (`MeetingReportPosted`, kept in
+  `gap_report_threads`), the cards, the line after them and "담당자 지정해
+  질문" reply in the report's thread instead of standing alone on the
+  channel. A thread reply carries text only (`SlackClient.reply_in_thread`),
+  so there a card is its lines as one message. A thread on a channel the
+  team has since left is not used. Pressed before the report is posted --
+  E's report waits for an approval -- they go on the channel as before. The
+  S21 buttons on the card are the next step.
 
 ## AI stack
 

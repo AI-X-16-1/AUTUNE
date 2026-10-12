@@ -442,16 +442,105 @@ class MaterialWrite(BaseModel):
 
 
 class MaterialRead(BaseModel):
-    """One of a team's materials (``ext_materials``): a title and which Drive
-    file it is. No address -- the screen builds Google's from the id and the
-    kind -- and no person."""
+    """One row of a team's 자료 screen (``ext_materials``), told apart by
+    ``source``:
+
+    - ``drive_link``: a title and which Drive file it is. No address -- the
+      screen builds Google's from the id and the kind.
+    - ``upload``: a title over the masked text of a file a member sent. The
+      text is not in this answer, and there is no original to open.
+
+    No person. ``expires_at`` is when an upload is deleted: the day fixed at
+    its upload, that moment plus the team's retention window of that day
+    (``teams.retention_days``); the team changing its window later does not
+    move it. Null for an upload of a team that keeps uploads until a member
+    deletes them, and for a link, which keeps no text (the owner, 2026-10-11,
+    2026-10-12). ``not_read`` is what a file held
+    that was not read, said only in the answer to the upload; the plain-text
+    formats have nothing unread; the others can: pictures, charts, embedded files.
+    """
 
     id: str
     team_id: str
     title: str
-    drive_file_id: str
-    drive_kind: Literal["file", "document", "presentation", "spreadsheets"]
+    source: Literal["drive_link", "upload"]
+    drive_file_id: str | None
+    drive_kind: Literal["file", "document", "presentation", "spreadsheets"] | None
     created_at: datetime
+    expires_at: datetime | None = None
+    not_read: list[Literal["pictures", "charts", "embedded_files"]] = Field(default_factory=list)
+
+
+class MaterialSettingsRead(BaseModel):
+    """How the team keeps its uploaded materials (the owner, 2026-10-11).
+    ``keep_until_deleted`` false -- the default -- deletes each upload on
+    the day it was given; true keeps every upload until a member deletes it.
+    ``retention_days`` is the team's window today, which is what an upload
+    made now is given -- an earlier upload keeps its own day
+    (``MaterialRead.expires_at``). ``uploads_past_their_day`` is how many
+    of the team's uploads are already past their day: none stay so under the
+    default beyond the hourly run, and under ``keep_until_deleted`` they are
+    what switching back deletes within the hour -- the screen says the number
+    before the switch is saved. A count only. No person: who last changed it
+    is not recorded."""
+
+    keep_until_deleted: bool
+    retention_days: int
+    uploads_past_their_day: int = 0
+
+
+class MaterialSettingsWrite(BaseModel):
+    """A member switches how the team keeps its uploads."""
+
+    keep_until_deleted: bool
+
+
+class MaterialUploadRules(BaseModel):
+    """What the server takes as an upload, in its own numbers, and whether it
+    takes one at all (``AUTUNE_EXTRACTION_MATERIAL_UPLOAD``). ``search`` says
+    whether ``POST /materials/search`` answers -- it does exactly when uploads
+    are on -- and ``max_question_chars`` the longest question it takes."""
+
+    enabled: bool
+    max_bytes: int
+    suffixes: list[str]
+    max_title_chars: int
+    max_materials: int
+    search: bool = False
+    max_question_chars: int = 0
+
+
+class MaterialQuestion(BaseModel):
+    """A question for the team's uploaded materials (#817). In the body, not
+    the address: it is a person's words, and an address is logged by what it
+    passes through. No length in the schema -- the framework's refusal would
+    repeat the value -- so ``material_search.checked_question`` refuses it
+    by the rule alone."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    question: str
+
+
+class MaterialHit(BaseModel):
+    """One uploaded material that answers a question: its title, and an
+    excerpt of the masked text that was kept, screened on the way out. A
+    Drive link is never one. No original behind it to open."""
+
+    material_id: str
+    title: str
+    excerpt: str
+    position: int
+    """Which stored piece of the material the excerpt is from, from 0."""
+
+
+class MaterialAnswer(BaseModel):
+    """At most five materials, best first. ``notice`` is a sentence of the
+    server's own, never the question; ``more`` says more materials answered."""
+
+    hits: list[MaterialHit]
+    notice: str | None
+    more: bool
 
 
 class ProjectPlacement(BaseModel):
