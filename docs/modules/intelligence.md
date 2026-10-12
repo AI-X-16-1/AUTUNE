@@ -438,6 +438,40 @@ uv run --package autune-intelligence --extra local-models python -m autune_intel
 # optionally: --dense-model nlpai-lab/KURE-v1
 ```
 
+## Report search
+
+`search_reports(query)` answers "결제 API 얘기한 리포트 찾아줘" in the Report
+subagent's chat. Nothing of a report is indexed or stored. Each question reads
+the team's newest 200 meeting reports and its weekly reports. A team with more
+has its older meeting reports left unsearched, and the answer says so and is
+marked `truncated`. A meeting report is read as its title line, its body and
+the correction under it; E's footer is left out. They are ranked in memory with
+BM25 over the glossary's tokens, and at most three come back, each with the
+line that matched (160 characters). So a report is searched as it is at that
+moment: edited, corrected, with a forgotten line replaced, or gone with its
+meeting. A meeting past its `expires_at` is left out before the hourly sweep
+deletes it. The query is the short search string of the agent layer's rule 1:
+300 characters at most. A longer one is refused by naming the limit, never by
+repeating the words.
+
+The IDF is Lucene's, `ln(1 + (N - n + 0.5) / (n + 0.5))`, not the glossary's
+`BM25Okapi`. `BM25Okapi`'s IDF falls to zero or below for a word found in half
+the texts or more, so it would find nothing for a team with one or two
+reports. A team has tens of reports. A team with many more would need a stored
+index, under the conditions in the E agent spec's section 8.
+
+A word Kiwi cannot read is also matched by its syllable pairs
+(`retrieval.unread_pairs`). Kiwi lacks loanwords such as 온보딩: it cuts that
+word into 온 / 보 / 딩, keeps none of it in a question, and cuts it differently
+in a report. 목업 comes out as two one-syllable pieces. When a word of the
+question keeps no piece of two syllables or more, its pairs (온보, 보딩; 목업)
+are counted where they are written in each report. Words that are grammar
+(찾아줘, 있어) or a pronoun get no pairs, so an ordinary question gains no
+noise. Of 45 product and engineering loanwords tried, Kiwi kept 34 whole and
+cut the rest. Most of those keep a piece of two syllables or more (엔드 /
+포인트), which a report cuts the same way. The pairs cover the three that keep
+none (온보딩, 온콜, 목업). 지라 is read as 지 + 이다 and still matches only on 지.
+
 ## Metric
 
 Prediction calibration, reported by the owner. Dashboard metrics are descriptive
@@ -563,6 +597,30 @@ exactly what a surveillance feature looks like. Read
     itself are replaced where quoted; the rest stays. A copy already posted to
     Slack is outside Autune and is not recalled.
   - The weekly report holds counts and pattern names only and needs nothing.
+- **A deleted meeting is taken out of the other meetings' rows (#1161).**
+  Every table E keeps per meeting goes with the meeting's row by cascade.
+  `@on_meeting_deleted("intelligence")` (registered in `service.py`) runs
+  `forget.forget_meeting` before the row goes -- at an expiry, with a team, or
+  by a member's own deletion -- for what the cascade does not reach:
+  - D's copy in another meeting: a decision change that followed one of the
+    deleted meeting has its `previous_statement` emptied in
+    `intel_completion.context_payload`. `previous_meeting_id`, `change_type`,
+    `nli_label` and `confidence` stay, as in D's own rows. D does not
+    republish the other meeting, so nothing else takes the copy out.
+  - A report's text is not searched for the meeting (lsh2217 on #1161,
+    2026-10-10): a meeting's name a person wrote into a report or a
+    correction stays. The Report template's line that names another meeting
+    by its title ("🔗 이어지는 회의") is written by nothing yet, because D
+    passes no `meeting_title`; when D does, that line is dealt with here, and
+    not by the title's characters -- two meetings can share a title and a
+    title can be changed.
+  - Not touched: the topic link to the meeting in another meeting's copy of
+    D's result (its id and date, none of its words), the meeting's id in a
+    weekly report's `source_meeting_ids`, and the numbers a weekly report
+    counted it in.
+  - The meeting's own rows are left whole until the cascade takes them, and a
+    hook that fails stops the deletion. A copy already posted to Slack is
+    outside Autune and is not recalled.
 
 ## Open questions
 

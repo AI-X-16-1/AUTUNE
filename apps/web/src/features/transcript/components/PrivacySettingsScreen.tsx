@@ -18,6 +18,7 @@ import {
   setTeamRetention,
 } from "../api";
 import type { MaskingRule, MyData, RetentionDays } from "../types";
+import { readableError } from "../readableError";
 import { TeamScope } from "./TeamScope";
 
 /**
@@ -145,7 +146,7 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
     getTeamPrivacy(teamId)
       .then((body) => current && setRetention(body.retention_days))
       .catch((caught: unknown) => {
-        if (current) setError(caught instanceof Error ? caught.message : "보관 기간을 불러오지 못했습니다.");
+        if (current) setError(readableError(caught, "보관 기간을 불러오지 못했습니다."));
       });
     return () => {
       current = false;
@@ -159,7 +160,7 @@ function WorkspacePolicy({ teamId }: { teamId: string }) {
     try {
       setRetention((await setTeamRetention(teamId, days)).retention_days);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "보관 기간을 바꾸지 못했습니다.");
+      setError(readableError(caught, "보관 기간을 바꾸지 못했습니다."));
     } finally {
       setSaving(false);
     }
@@ -231,7 +232,7 @@ function TeamRules({ teamId }: { teamId: string }) {
     listMaskingRules(teamId)
       .then((list) => current && setRules(list))
       .catch((caught: unknown) => {
-        if (current) setError(caught instanceof Error ? caught.message : "규칙을 불러오지 못했습니다.");
+        if (current) setError(readableError(caught, "규칙을 불러오지 못했습니다."));
       });
     return () => {
       current = false;
@@ -243,7 +244,7 @@ function TeamRules({ teamId }: { teamId: string }) {
     try {
       setRules(await deleteMaskingRule(teamId, ruleId));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "규칙을 지우지 못했습니다.");
+      setError(readableError(caught, "규칙을 지우지 못했습니다."));
     }
   };
 
@@ -285,7 +286,7 @@ function MyDataSection() {
     getMyData()
       .then(setData)
       .catch((caught: unknown) =>
-        setError(caught instanceof Error ? caught.message : "내 데이터를 불러오지 못했습니다."),
+        setError(readableError(caught, "내 데이터를 불러오지 못했습니다.")),
       );
   }, []);
 
@@ -297,7 +298,7 @@ function MyDataSection() {
     try {
       await downloadMyData();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "내려받지 못했습니다.");
+      setError(readableError(caught, "내려받지 못했습니다."));
     } finally {
       setDownloading(false);
     }
@@ -399,7 +400,7 @@ function deletionError(caught: unknown): string {
     return "회의 하나가 다시 처리되는 중이라 지금은 지울 수 없습니다. 처리가 끝난 뒤 다시 시도해 주세요.";
   if (caught instanceof ApiError && caught.status >= 500)
     return "삭제를 끝내지 못했습니다. 잠시 후 다시 시도해 주세요.";
-  return caught instanceof Error ? caught.message : "삭제하지 못했습니다.";
+  return readableError(caught, "삭제하지 못했습니다.");
 }
 
 const TITLES: Record<Pending, string> = {

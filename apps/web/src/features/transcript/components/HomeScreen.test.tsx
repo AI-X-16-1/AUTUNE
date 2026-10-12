@@ -311,7 +311,7 @@ describe("HomeScreen, 팀원 추가", () => {
     expect(addButton()).toBeNull();
   });
 
-  it("is at the end of the row once a team is shown, and opens a window for that team", async () => {
+  it("is at the end of the list's heading once a team is shown, and opens a window for that team", async () => {
     open([SEARCH, PAY]);
     await screen.findByText("첫째 회의");
     fireEvent.click(screen.getByRole("button", { name: "결제 스쿼드" }));
@@ -319,8 +319,11 @@ describe("HomeScreen, 팀원 추가", () => {
 
     const button = addButton();
     expect(button).not.toBeNull();
-    expect(row().contains(button)).toBe(true);
-    expect(row().lastElementChild?.contains(button)).toBe(true);
+    // On the heading line of the list it is for, not alone at the end of the
+    // chip row (#1176).
+    const heading = screen.getByRole("heading", { name: "최근 회의" }).parentElement!;
+    expect(row().contains(button)).toBe(false);
+    expect(heading.lastElementChild?.contains(button)).toBe(true);
     expect(windowOpen()).toBeNull();
 
     fireEvent.click(button!);
@@ -407,5 +410,51 @@ describe("HomeScreen, 팀원 추가", () => {
     fireEvent.mouseDown(screen.getByTestId("team-invite"));
 
     expect(windowOpen()).not.toBeNull();
+  });
+
+  // #1176: the button sits on the list's heading, and a team with no meetings
+  // yet has no heading -- it must still be offered there.
+  it("is still offered for a team with no meetings, over the first-meeting screen", async () => {
+    open([SEARCH, OPS]);
+    await screen.findByText("첫째 회의");
+    fireEvent.click(chip("운영 스쿼드"));
+    await waitFor(() => expect(listMeetings).toHaveBeenLastCalledWith("team_ops"));
+
+    expect(await screen.findByRole("button", { name: "팀원 추가" })).toBeTruthy();
+  });
+});
+
+// #1176: a 500 behind the proxy reads "Internal Server Error". The screen says
+// what did not happen, in Korean, and asks again on "다시 시도".
+describe("HomeScreen, a read that fails", () => {
+  it("says the meetings could not be read and asks again on 다시 시도", async () => {
+    listTeams.mockResolvedValue([SEARCH]);
+    listMeetings.mockRejectedValueOnce(new Error("Internal Server Error"));
+    listMeetings.mockResolvedValue(SEARCH_MEETINGS);
+    render(<HomeScreen />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("회의 목록을 불러오지 못했습니다.");
+    expect(alert.textContent).not.toContain("Internal Server Error");
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+    expect(await screen.findByText("검색 주간 회의")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("says the teams could not be read and asks again on 다시 시도", async () => {
+    listTeams.mockRejectedValueOnce(new Error("Internal Server Error"));
+    listTeams.mockResolvedValue([SEARCH]);
+    listMeetings.mockResolvedValue(SEARCH_MEETINGS);
+    render(<HomeScreen />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("팀 목록을 불러오지 못했습니다.");
+    expect(alert.textContent).not.toContain("Internal Server Error");
+
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+    expect(await screen.findByText("검색 주간 회의")).toBeTruthy();
   });
 });

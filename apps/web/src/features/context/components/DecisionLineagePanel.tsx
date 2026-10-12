@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Row, StatusDot } from "@/shared/ui";
 
 import { DecisionTimeline } from "./DecisionTimeline";
+import { kstDay } from "../dates";
 import { useDecisionLineage } from "../hooks/useDecisionLineage";
 import { useDecisionThreads } from "../hooks/useDecisionThreads";
 
@@ -51,7 +52,7 @@ export function DecisionLineagePanel({ teamId }: { teamId: string }) {
             <Row
               dot={<StatusDot variant={thread.change_type === "reversed" ? "attention" : "idle"} />}
               title={thread.topic_label}
-              meta={thread.updated_at.slice(0, 10)}
+              meta={kstDay(thread.updated_at)}
               selected={thread.thread_id === selected}
             />
           </button>

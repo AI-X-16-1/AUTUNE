@@ -38,6 +38,13 @@ stays. A status move that fails does not lose the issue: its key is kept.
 The summary is one line of at most 255 characters, Jira's limit; a longer
 description goes whole into the issue's description when it is made.
 
+**The summary leads with the kind and the short title** (the owner,
+2026-10-09; ``top_line``): "[할 일] " and the item's title of twenty
+characters where it has one, with the whole sentence in the issue's
+description; an item without a title keeps its sentence as the summary,
+behind the same mark. A decision's issue is headed the same way behind
+"[결정] ".
+
 **The status comes back too** (``read_back``, every ten minutes): an issue a
 person moved in Jira moves its item on the board, unless the board moved since
 Autune last touched the issue -- then the board keeps its status, and its own
@@ -68,7 +75,7 @@ from autune_contracts.enums import ActionStatus
 from autune_core import Meeting, TeamMember, User, get_logger
 from autune_integrations import IntegrationError, PermanentIntegrationError
 
-from . import service
+from . import service, top_line
 from .models import ExtActionItem, ExtDecision, ExtDecisionRef, ExtDecisionReview, ExtExternalRef
 from .schemas import ActionItemUpdate
 from .service import _insert_if_absent_into
@@ -201,11 +208,13 @@ def sync_action_item_to_jira(
     ours = bool(ref.external_id) and ref.site == site
 
     account = _assignee_account(session, jira, item)
-    summary = _summary(item.description)
-    # The full text when the summary could not hold it, else nothing -- on an
-    # update too, so a description that changed (or was a deleted person's
-    # words, #587) does not stay behind in Jira (#601 review).
-    description = item.description if summary != item.description else ""
+    mark = top_line.outbound_line("jira", "item", None, "")
+    summary = _summary(top_line.outbound_line("jira", "item", item.title, item.description))
+    # The full text when the summary does not hold it -- the short title
+    # stands there, or the sentence was cut -- else nothing; on an update
+    # too, so a description that changed (or was a deleted person's words,
+    # #587) does not stay behind in Jira (#601 review).
+    description = item.description if summary != mark + item.description else ""
     updated = ours and jira.update_task(
         str(ref.external_id),
         summary,
@@ -423,7 +432,7 @@ def close_issue(jira: JiraIssues, key: str) -> bool:
 
 # --- decisions (2026-10-04) ------------------------------------------------------
 
-DECISION_PREFIX = "[결정] "
+DECISION_PREFIX = top_line.DECISION_MARK
 """What marks a decision's issue among the team's tasks."""
 
 DECISION_RETIRED_NOTE = "Autune에서 확정이 취소된 결정입니다. 이슈 기록은 남기고 닫았습니다."
@@ -494,10 +503,15 @@ def sync_decision_to_jira(
             decision, review = settled
 
     statement = service._confirmed_statement(decision, review)
-    summary = _summary(DECISION_PREFIX + statement)
-    # The whole statement when the summary could not hold it, else nothing --
-    # on an update too, so a reworded or deleted line does not stay behind.
-    description = statement if summary != DECISION_PREFIX + " ".join(statement.split()) else ""
+    mark = top_line.outbound_line("jira", "decision", None, "")
+    title = top_line.standing_title(
+        decision.title, reworded=bool(review is not None and review.statement)
+    )
+    summary = _summary(top_line.outbound_line("jira", "decision", title, statement))
+    # The whole statement when the summary does not hold it -- the short
+    # title stands there, or the statement was cut -- else nothing; on an
+    # update too, so a reworded or deleted line does not stay behind.
+    description = statement if summary != mark + " ".join(statement.split()) else ""
     if ref.external_id and ref.site != site:
         log.info("extraction_jira_decision_other_site", decision_id=decision.id)
     ours = bool(ref.external_id) and ref.site == site

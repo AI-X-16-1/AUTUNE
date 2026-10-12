@@ -579,3 +579,28 @@ def test_no_two_figures_side_by_side_leave_anything_for_a_second_pass() -> None:
                 once = mask(f"말씀드리면 {first}{joiner}{second} 입니다")
                 assert mask(once.text).spans == 0, (first, joiner, second)
                 assert find_unmasked(once.text) == [], (first, joiner, second)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "주민 900101-\n1234567",
+        "주민 900101\n-1234567",
+        "주민 900101-\r\n1234567",
+        "계좌 123456-\n01-\n234567",
+        "+82 10-2345-\n6789",
+        "주민 900101－1234567",
+        "주민 900101--1234567",
+    ],
+)
+def test_a_number_split_at_its_hyphen_is_masked_and_keeps_its_layout(text: str) -> None:
+    """#1223: the detector now reads a line break beside a dash, a fullwidth
+    hyphen and a doubled hyphen as a separator, and the masker follows it --
+    the breaks and dashes stay as layout and the result is a fixed point."""
+    masked = mask(text)
+    assert masked.spans
+    assert find_unmasked(masked.text) == []
+    assert mask(masked.text).spans == 0
+    assert [c for c in masked.text if not c.isdigit() and c != "*"] == [
+        c for c in text if not c.isdigit()
+    ]

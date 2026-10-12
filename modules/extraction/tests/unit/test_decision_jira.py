@@ -248,3 +248,27 @@ def test_a_notion_failure_never_costs_jira_its_issue(monkeypatch: pytest.MonkeyP
     with pytest.raises(PermanentIntegrationError):
         tasks.sync_decision("dec_1")
     assert ran == ["dec_1", "dec_1"]
+
+
+def test_a_short_title_heads_the_decisions_issue_until_a_person_rewords_it(
+    session: Session,
+) -> None:
+    """Module B's owner, 2026-10-09. The title is of the model's sentence; a
+    rewording is the person's own line, and leads as they wrote it."""
+    jira = FakeJira()
+    decision = session.get(ExtDecision, "dec_1")
+    assert decision is not None
+    decision.title = "배포 금요일"
+    review(session, "confirmed")
+
+    sync(session, jira)
+
+    task = jira.tasks["TEAM-1"]
+    assert (task["summary"], task["description"]) == ("[결정] 배포 금요일", STATEMENT)
+
+    review(session, "confirmed", "배포는 다음 주 월요일로 한다")
+    sync(session, jira)
+
+    task = jira.tasks["TEAM-1"]
+    assert (task["summary"], task["description"]) == ("[결정] 배포는 다음 주 월요일로 한다", "")
+    assert STATEMENT not in str(jira.tasks)

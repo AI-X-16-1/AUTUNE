@@ -534,8 +534,8 @@ lineage view (S22), which reads to a user as a bug.
 
 Idempotent: a re-run replaces the meeting's `ctx_decision_versions` row(s) and
 re-chains every thread that touches, then runs all three deletion sweeps (see
-"Deletion") — global and idempotent, so running them on every call closes real
-gaps ahead of #87 rather than leaving them for tests to be the only caller.
+"Deletion") — global and idempotent; they find what the meeting-deletion hook
+(#1161) cannot see.
 The rerun meeting's own `ContextLinks` is republished (see "Republishing after
 a rerun"). Re-chaining a thread updates other meetings' versions too (an
 earlier meeting arriving late shifts what a later one's `previous_*` point
@@ -693,7 +693,7 @@ cleaned up by a deletion hook (see "Deletion").
 | --- | --- | --- | --- |
 | `ctx_embeddings` | Topic (and, Phase 2, material) embeddings | `kind`, `ref_label`, `utterance_ids` (JSONB, nullable), `embedding vector(N)`, `model_version` | `meeting_id` FK `ON DELETE CASCADE` |
 | `ctx_topic_links` | Meeting-to-meeting topic links with scores | `topic_label`, `linked_meeting_date`, `similarity`, `rerank_score`, `confidence`, `status` (`asserted`/`pending`/`confirmed`/`rejected`), `retriever_version`, `reranker_version` | `meeting_id` FK `CASCADE`; `linked_meeting_id` FK `ON DELETE SET NULL` |
-| `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; orphan sweep deferred (#87) |
+| `ctx_decisions` | Decision threads (lineage identity, spans meetings) | `id` (`thr_`), `topic_label` | `team_id` FK `CASCADE`; a thread left empty is deleted by the meeting-deletion hook (#1161) and the orphan sweep |
 | `ctx_decision_versions` | Each version of a decision | `source_decision_id` (`dec_`, no FK), `source_utterance_ids` (JSONB, nullable: the lines B drew it from, ids only), `previous_version_id` (self-FK), `current_statement`, `previous_statement`, `previous_meeting_id` (no FK), `change_type`, `nli_label`, `confidence`, `key_stakeholders_absent` (JSONB), `nli_version` | `thread_id` FK `CASCADE`, `meeting_id` FK `CASCADE` |
 | `ctx_meeting_status` | Completion tracking for the two halves | `topic_linking_done`, `lineage_done`, `extraction_seen`, `deadline_at`, `published_at`, `notified_at` | `meeting_id` FK `CASCADE` |
 | `ctx_briefs` | One pre-meeting brief per scheduled meeting: which past meeting it recaps, and whether it went out. The choice, never the recap | `previous_meeting_id`, `match_reason` (`series`/`topic`/`latest`), `sent_at` | `meeting_id` FK `CASCADE`; `previous_meeting_id` FK `ON DELETE SET NULL` |
@@ -766,19 +766,42 @@ Meeting deletion itself cascades through `meeting_id` foreign keys and reaches
   thread's `topic_label` to its current visible head, blanking it (`""`) for a
   thread every one of whose versions has expired.
 
-  None of the three sweeps above is yet registered as an `autune_core.deletion`
-  meeting hook. ADR 0008 found that a hook issuing a real `DELETE` breaks
-  `packages/core`'s own unit tests, which run before migrations on a clean CI
-  database and iterate every registered hook; the fix needs shared-owner
-  changes tracked in #87. Module E hit the same wall with `intel_reports` and
-  deferred the same way. Until #87 lands, `service.build_decision_lineage`
-  calls all three itself at the end of every run (in addition to the
-  integration tests calling them directly) — real cleanup on every meeting
-  processed, not only when a test happens to exercise it. A thread whose
-  labelling meeting was deleted since the last time *any* meeting for its team
-  triggered a lineage build still holds that meeting's `topic_label` in the
-  interim; every other exposure above is likewise bounded to "until the next
-  sweep run," not indefinite.
+  The last three are done **before the meeting's row goes**, by
+  `service.forget_deleted_meeting`, registered as
+  `@on_meeting_deleted("context")` (#1161). Every way a meeting is deleted
+  runs it first -- its expiry, its team's deletion, a member's own deletion.
+  It works from the meeting's id, because the row is still there:
+  `previous_statement` is emptied on every other meeting's version whose
+  `previous_meeting_id` is this meeting; each thread the meeting has a version
+  in is named after the head it has without it, or `""` when no meeting of it
+  is inside its retention window; and a thread only this meeting is in is
+  deleted, its versions with it. One transaction of its own, committed before
+  the caller deletes; a failure is raised, and the caller keeps the meeting.
+
+  Two things follow from running before the row goes, in a transaction the
+  caller's deletion is not part of. If the deletion then does not happen --
+  another module's hook raised, the commit failed -- the copies stay emptied,
+  the labels stay as renamed, and a thread only this meeting was in is gone
+  with the meeting's versions of it, though the meeting is still there.
+  Nothing puts them back but a lineage build that re-chains those threads
+  (`_rethread`), which a reprocess of the meeting does for the threads its
+  decisions land in. And a lineage build of the same team that runs between
+  the hook and the row's deletion can copy the meeting's statement again.
+
+  That second case is why `service.build_decision_lineage` still calls the
+  three sweeps itself at the end of every run: they find what points at a
+  meeting that no longer exists, whichever way it got there. (ADR 0008's reason
+  for not registering a hook -- `packages/core`'s unit tests iterating every
+  registered hook on an unmigrated database, #87 -- no longer holds: those
+  tests run against an empty registry.)
+
+  What the hook does not touch: `key_stakeholders_absent` on a later version
+  may still count somebody known only from the deleted meeting until the
+  thread is next re-chained or `refresh_absence` reaches it; a later
+  version's `change_type` still says how it differed from the statement that
+  is gone; another meeting's `ctx_topic_links` row keeps
+  `linked_meeting_date` (above); and the team's agenda snapshot
+  (`ctx_team_agendas`) is left for B's next one to replace.
 
 ### A person deleting their own speech (#587, #614)
 
