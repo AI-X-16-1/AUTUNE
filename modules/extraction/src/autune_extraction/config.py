@@ -424,7 +424,11 @@ class ExtractionSettings(BaseSettings):
     exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
     screen draws no control. Whether a deployment turns it on is decided on
     #817. A stopped file is told to the team's approvers by the agent
-    layer's alert (#1201)."""
+    layer's alert (#1201).
+
+    **On, it needs an embedder that is a model.** With
+    ``material_embedder_impl`` left at ``fake`` these settings refuse to load
+    (``_uploads_are_kept_with_a_model``)."""
 
     material_embedder_impl: str = "fake"
     """Which embedder makes an uploaded material's vectors and a search
@@ -438,7 +442,8 @@ class ExtractionSettings(BaseSettings):
     (``models.MATERIAL_EMBEDDING_DIM``).
 
     ``fake`` by default, which finds by shared characters rather than meaning
-    -- enough for tests and a dev stack, not for a team. ``hosted`` is where
+    -- enough for tests, and for nothing that keeps a team's uploads: with
+    ``material_upload`` on, these settings refuse to load. ``hosted`` is where
     the rule (``privacy.md``) says a material's vectors are made; it is given
     masked text only, and nothing else here sends a material's text or a
     question out of this process. A search finds only pieces embedded by the
@@ -536,6 +541,44 @@ class ExtractionSettings(BaseSettings):
         ):
             if value not in ("cpu", "cuda"):
                 raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")
+        return self
+
+    @model_validator(mode="after")
+    def _uploads_are_kept_with_a_model(self) -> ExtractionSettings:
+        """Refuse uploads switched on over the fake embedder (#817).
+
+        With the switch on and the embedder at its default, everything looks
+        on: the rules say ``enabled``, an upload is stored and listed with its
+        day. Its vectors are the fake's, though, so a search finds by shared
+        characters -- and a material is found only by the embedder it was
+        stored with (``material_search``), so what was uploaded then stays
+        listed and is never found once the embedder is a model. Nothing tells
+        the two apart until a team searches.
+
+        **Not keyed on ``AUTUNE_ENV``**, for the reason ``llm_acknowledged_392``
+        is not: ``.env.example`` ships ``AUTUNE_ENV=local``, so a deployment
+        made from that file would be the one let through. There is no
+        exemption at all. A developer who wants uploads on their own machine
+        sets ``local`` or ``hosted``; the tests switch uploads on in settings
+        already loaded, which no validator sees.
+
+        **Only ``fake``.** A value the registry does not know, ``hosted``
+        without its endpoint and either model without a checkpoint are refused
+        at the first upload or search (``registry.get_material_embedder``),
+        and so is a ``hosted`` server that names another model: each raises
+        before a vector is made. The fake is the one that quietly works.
+
+        ``require_loadable`` is what makes this a refusal to start.
+        """
+        if self.material_upload and self.material_embedder_impl == "fake":
+            raise ValueError(
+                "AUTUNE_EXTRACTION_MATERIAL_UPLOAD=true with "
+                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=fake would keep uploaded "
+                "materials with vectors no model made: a search over them finds by "
+                "shared characters, and they are not found once the embedder is a "
+                "model. Set AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL to local or "
+                "hosted before turning uploads on."
+            )
         return self
 
     def _cloud_capable(self) -> tuple[tuple[str, str], ...]:
