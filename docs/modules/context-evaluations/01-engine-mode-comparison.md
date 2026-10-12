@@ -1,6 +1,7 @@
 # Evaluation 01 — the trained stack against an external LLM
 
-**Measured:** 2026-09-30 and 2026-10-01 · **Written:** 2026-10-01 · **Owner:** 문민재 ·
+**Measured:** 2026-09-30, 2026-10-01 and 2026-10-12 · **Written:** 2026-10-01, updated
+2026-10-12 · **Owner:** 문민재 ·
 **Module:** Meeting Context Engine (`autune_context`)
 
 The question: *can an external LLM make the Meeting Context Engine's judgements
@@ -28,8 +29,10 @@ established.**
   `llm` 0.98 → 0.90): it is harder than the development set, and `classic`, which
   was tuned on that set, lost the most. Topic linking barely moved (`classic`
   0.92 → 0.90, `llm` 0.94 → 0.96).
-- **One run is missing**: `hybrid` with the floor at `0` on held-out v3, which hit
-  the free tier's daily limit. See section 6.
+- **`hybrid` with the floor at `0` on held-out v3** (run 2026-10-12, after the free
+  tier's daily limit had stopped it on 2026-10-01): 0.93, the same cases right as
+  `hybrid`, and every one of the 81 true links still reaches the user (`hybrid`:
+  80) — at the price of one more pending question on a no-link meeting. See 3.2.
 - **Afterwards, `classic` gained a replacement cue** (section 8): lineage on v3
   0.81 → 0.91 with no regression on the earlier sets. **That 0.91 is not a held-out
   result** — the rule was written after reading v3's errors — and it does not mean
@@ -40,6 +43,42 @@ established.**
 - **After two guard gaps were fixed, on a fresh set (v5, 120 cases) `classic` goes
   0.74 → 0.82 with the cue** (10 cases fixed, 1 broken, p = 0.012; section 10). Every
   swap that uses a verb the cue knows is caught; none of the swaps said without one is.
+- **The LLM on v4 (2026-10-12): lineage 0.93 against `classic`'s 0.77** (28 cases
+  fixed, 8 broken, p = 0.001; section 9.6) — the first lead here a sign test
+  establishes. Its v3 error came back on the new set: all eight misses are real
+  modifications called `reversed`. `hybrid` equals `classic` on lineage by design.
+- **On v5 (2026-10-12) the lead shrinks to 0.87 against 0.82** (18 cases fixed, 12
+  broken, p = 0.36; section 10.7), with both sides clean. The LLM's error doubled: 16
+  of 34 real modifications called `reversed` (v4: 8 of 34), and on change type alone it
+  is no better than `classic` (0.84 against 0.85). Its whole lead is threading and
+  swaps.
+
+**Accuracy, by suite.** Topic linking and decision lineage are separate suites on
+separate sets, so the two tables are not comparable with each other. `hybrid` differs
+from `classic` only on topic linking: on decision lineage it runs `classic` (section 1)
+and has no number of its own.
+
+Topic linking (sections 3.1 and 3.2):
+
+| Set | `classic` | `hybrid` | `hybrid`, floor `0` | `llm` |
+| --- | --- | --- | --- | --- |
+| Development `*_v2` (49) | 45/49 = 0.92 | 46/49 = 0.94 | 46/49 = 0.94 | 46/49 = 0.94 |
+| Held-out v3 (100) | 90/100 = 0.90 | 93/100 = 0.93 | 93/100 = 0.93 | 96/100 = 0.96 |
+
+There is no topic-linking set after v3; v4 and v5 are decision lineage only.
+
+Decision lineage (sections 4, 8, 9 and 10):
+
+| Set | `classic`, no cue | `classic`, cue | `llm` | `hybrid` |
+| --- | --- | --- | --- | --- |
+| Development `*_v2` (50) | 49/50 = 0.98 | 50/50 = 1.00 | 49/50 = 0.98 | `classic` by design, not run |
+| Held-out v3 (100) | 81/100 = 0.81 | 91/100 = 0.91 (a) | 90/100 = 0.90 | `classic` by design, not run |
+| Held-out v4 (120) | 86/120 = 0.72 | 91/120 = 0.76 (b) | 112/120 = 0.93 | run: identical to `classic` |
+| Held-out v5 (120) | 89/120 = 0.74 | 98/120 = 0.82 | 104/120 = 0.87 | run: identical to `classic` |
+
+(a) Not a held-out number: the cue was written from v3's errors (section 8.2).
+(b) 92/120 = 0.77 with the `책임자` guard fix, which was written after reading v4
+(section 9.6); 0.76 is the clean number.
 
 ---
 
@@ -105,14 +144,20 @@ as a sample of real meetings.
 
 ### 3.2 Held-out v3 (100 cases)
 
-| | `classic` | `hybrid` | `llm` |
-| --- | --- | --- | --- |
-| Accuracy | 90/100 = 0.90 (CI 0.83–0.94) | 93/100 = 0.93 (CI 0.86–0.97) | **96/100 = 0.96** (CI 0.90–0.98) |
-| Precision of asserted links | 77/83 = 0.93 | 74/74 = **1.00** | 77/77 = **1.00** |
-| Recall of asserted links | 77/81 = 0.95 | 74/81 = 0.91 | 77/81 = 0.95 |
-| Reached the user | 81/81 | 80/81 | 77/81 |
-| No-link meetings given an asserted link | 2 of 42 | **0** | **0** |
-| LLM calls · input tokens · request time | 0 | 104 · 20,863 · 234 s | 315 · 61,986 · 1,014 s |
+| | `classic` | `hybrid` | `hybrid`, floor `0` | `llm` |
+| --- | --- | --- | --- | --- |
+| Accuracy | 90/100 = 0.90 (CI 0.83–0.94) | 93/100 = 0.93 (CI 0.86–0.97) | 93/100 = 0.93 (CI 0.86–0.97) | **96/100 = 0.96** (CI 0.90–0.98) |
+| Precision of asserted links | 77/83 = 0.93 | 74/74 = **1.00** | 74/74 = **1.00** | 77/77 = **1.00** |
+| Recall of asserted links | 77/81 = 0.95 | 74/81 = 0.91 | 74/81 = 0.91 | 77/81 = 0.95 |
+| Reached the user | 81/81 | 80/81 | **81/81** | 77/81 |
+| No-link meetings given an asserted link | 2 of 42 | **0** | **0** | **0** |
+| LLM calls · input tokens · request time | 0 | 104 · 20,863 · 234 s | 104 · 20,863 · 226 s | 315 · 61,986 · 1,014 s |
+
+`hybrid` with the floor at `0` was run on 2026-10-12, on that day's `main` (the
+engine's scoring and the harness unchanged since `913bd2f0`), with
+`classic` re-run beside it on the same code: `classic` gave 90/100 again, with the
+same precision, recall and score by category as above, so the column sits with the
+2026-10-01 runs.
 
 By category (`classic` → `hybrid` → `llm`): `follow_up` 10/10 → 10/10 → 10/10,
 `paraphrase` 10/10 → 10/10 → 10/10, `recurring` 5/6 → 5/6 → **6/6**, `distractor`
@@ -124,6 +169,11 @@ By category (`classic` → `hybrid` → `llm`): `follow_up` 10/10 → 10/10 → 
   true link vetoed or demoted). p = 0.51.
 - `llm` against `classic`: nine fixed, three broken. p = 0.15.
 - `llm` against `hybrid`: four fixed, one broken. p = 0.38.
+- `hybrid` with the floor at `0` against `classic`: the same six fixed and three
+  broken as `hybrid` (p = 0.51), and the same score by category. The floor decides
+  only what happens to a vetoed link, not which links are vetoed: in all three
+  broken cases the vetoed true link stays as `pending`, where the floor at `0.25`
+  dropped one of them.
 
 Three of the four cases `llm` fixed over `hybrid` are links `classic` left
 `pending` and the LLM asserted. That is structural: `hybrid` can only veto what
@@ -142,11 +192,12 @@ cap did not cost `llm` a single case with six to nine past meetings.
   pending link at all and "reached the user" is 77/81, below `classic`'s 81/81. A
   veto can demote instead of drop: with the floor at `0`, `hybrid` was the only
   variant on the development set that lost no true link and asserted no wrong one,
-  at the price of four more pending questions on no-link meetings. **Not measured
-  on v3** (section 6).
+  at the price of four more pending questions on no-link meetings. **On v3 it does
+  the same**: 81/81 true links reach the user, no false link is asserted, and one
+  more no-link meeting shows a pending question (42 of 42, against `classic`'s 41).
 - **`pending` noise is `classic`'s own.** It already shows a pending link on 15
-  of 19 development meetings that link to nothing; `hybrid` does not add to that
-  unless the floor is `0`.
+  of 19 development meetings that link to nothing, and on 41 of 42 on v3; `hybrid`
+  does not add to that unless the floor is `0`.
 - The mis-linking this module is most exposed to (`../context.md`, "Retrieve
   broad, re-rank narrow") is exactly what the LLM cut: two false links on
   held-out v3 for `classic`, none for `hybrid` or `llm`.
@@ -246,8 +297,12 @@ form it. It needs a new held-out set before it is a result.
 ## 5. Cost and operational notes
 
 - **Calls.** Development set: `llm` 93 calls on topic linking and 64 on lineage;
-  `hybrid` 53. Held-out v3: `hybrid` 104 on topic linking; `llm` 315 on topic
-  linking and 170 on lineage. No unusable answers in any completed run.
+  `hybrid` 53. Held-out v3: `hybrid` 104 on topic linking (104 again with the floor
+  at `0`); `llm` 315 on topic linking and 170 on lineage. Held-out v4: `llm` 202 on
+  lineage (42,669 input, 3,902 output tokens), `hybrid` none. Held-out v5: the same
+shape, 202 calls (42,562 input, 3,919 output tokens). No unusable answers in any
+  completed run; the floor-`0` run met 20 per-minute `429` responses on the way and
+  lost no verdict to them.
 - **Money.** All of it ran on the Gemini free tier, so nothing was spent. At the
   token counts above, a full `llm` run of both held-out suites is about 98,000
   input and 9,600 output tokens (61,986 + 36,173 in; 6,294 + 3,295 out).
@@ -260,16 +315,17 @@ form it. It needs a new held-out set before it is a result.
   and `flash-latest`: 20 requests a day. `3.6-flash` and `3.7-flash`: 5 a
   minute. `*-flash-lite`: 15 a minute, and `3.5-flash-lite` 500 a day: the two
   `llm` runs of 2026-10-01 used 485 of them and the third run that day (`hybrid`,
-  floor `0`) was refused. The daily limit of the other flash-lite models was not probed. The
-  2.5 models answer 404 to new users. The quota message is hidden by `HttpClient`
-  (status only); read it with `curl`.
+  floor `0`) was refused; it was run on 2026-10-12 instead. The daily limit of the
+  other flash-lite models was not probed. The 2.5 models answer 404 to new users.
+  The quota message is hidden by `HttpClient` (status only); read it with `curl`.
 - **Two real bugs found by running it:** the judge ignored `llm_max_tokens`
   (hard-coded 2048, which a reasoning model's thinking eats), fixed here; and
   `KlueKorNliLocal` crashed on transformers 5.x, which returns the per-label
   scores one level shallower than 4.x. The second was fixed on `main` in the
   meantime (#395). The runs here were made with a local fix of the same thing; the
   development set and v5 (cue on) were re-run on `main`'s version and gave the
-  same numbers (50/50 and 98/120). The other runs were not repeated.
+  same numbers (50/50 and 98/120), and so was `classic` on v3 topic linking on
+  2026-10-12 (90/100). The other runs were not repeated.
 
 ## 6. Not measured, and what would settle it
 
@@ -277,8 +333,8 @@ form it. It needs a new held-out set before it is a result.
 | --- | --- |
 | Does `llm` fix the `reversed_alternative` gap on held-out v3? | **Answered: yes** — 10/10 against `classic`'s 0/10 (section 4) |
 | Pure `llm` on held-out topic linking | **Answered**: 0.96 (section 3.2) |
-| `hybrid` with `llm_pending_floor=0` on held-out v3 | **Not run**: the daily quota ran out. About 100 calls |
-| Is the LLM's lead real? | Neither lead is significant at 100 cases (p = 0.15 and 0.12). It needs more cases or a replicate on a new set |
+| `hybrid` with `llm_pending_floor=0` on held-out v3 | **Answered** (2026-10-12): 0.93, 81/81 true links reach the user, one more pending question than `classic` (section 3.2) |
+| Is the LLM's lead real? | Neither lead is significant on v3 (p = 0.15 and 0.12). **On lineage, v4 establishes it**: 0.93 against 0.77, p = 0.001 (section 9.6); **v5 does not**: 0.87 against 0.82, p = 0.36 (section 10.7). The LLM is ahead on all three sets, by 6 to 16 cases. Topic linking has no second held-out set yet |
 | Does fixing `judge-v1`'s tendency to say `reversed` cost anything else? | A new prompt version, measured on a **new** held-out set |
 | Does combining the two modes beat either alone? | The same new set |
 | A stronger model than the lightest tier | the same runs on a paid tier |
@@ -304,11 +360,17 @@ migrate here.
 - **`classic` stays the default for now.** The LLM is ahead on both held-out
   suites, but not by a margin 100 cases can establish, and it has an error of its
   own. Nothing here is a reason to switch before the other conditions below.
+  (v4 has since established the lineage lead, section 9.6, and replicated the
+  error; on v5 the lead is 6 cases and not significant, and the error doubled,
+  section 10.7. The conditions below — a chosen provider, an approved endpoint —
+  still stand.)
 - **On topic linking, `llm` was the best mode on held-out data and `hybrid` the
   cheapest improvement.** `llm` costs about three times the calls of `hybrid`
   (315 against 104) for three more correct cases (96 against 93). Which is worth it
-  depends on a latency and cost budget nobody has set; `hybrid` with the floor at
-  `0` on this set is the missing point.
+  depends on a latency and cost budget nobody has set. `hybrid` with the floor at
+  `0` costs the same 104 calls as `hybrid` and is the only mode that loses no true
+  link and asserts no false one on this set; what it adds is one more pending
+  question, on top of the 41 `classic` already shows.
 - **On decision lineage, `classic` has a defect independent of any LLM** (a
   replacement with no cue word is read as a parameter change) that the held-out set
   is the evidence for. The LLM does not have that defect and has the opposite one.
@@ -398,9 +460,8 @@ limit, and how `classify_change` uses it).
 
 Section 8 left a question it could not answer: how much of the 0.81 → 0.91 on v3 is
 the rule, and how much is that the rule was written from v3's errors? `*_heldout_v4`
-(120 lineage cases) was written to answer it, and only `classic` was measured: the
-LLM and `hybrid` were not run on it, so nothing here compares them to the LLM numbers
-of sections 3 and 4.
+(120 lineage cases) was written to answer it. On 2026-10-01 only `classic` was
+measured; the LLM and `hybrid` were run on it on 2026-10-12 (section 9.6).
 
 ### 9.1 The set
 
@@ -481,8 +542,8 @@ v3 are all numbers the rules had seen; 0.72 and 0.76 are the first it had not.
 v4 has now been read to write this section. It stays frozen for as long as nothing is
 tuned against it, and any fix for what it showed — the `책임자` guard, the threading
 threshold, the phrasing the verb list misses — needs a **new** set before its effect is
-claimed. It also does not say how the LLM would do on it: the LLM's 0.90 on v3 and
-`classic`'s 0.76 on v4 are different sets and cannot be set against each other.
+claimed. The LLM's 0.90 on v3 and `classic`'s 0.76 on v4 are different sets and
+cannot be set against each other; section 9.6 runs the LLM on v4 itself.
 
 ### 9.5 Reproduce
 
@@ -496,13 +557,77 @@ For the cue-off baseline, run the same command after replacing
 `autune_context.pipeline.change.marks_replacement` with `lambda *a, **k: False` in the
 same process (the cue is looked up at call time).
 
+### 9.6 The LLM and `hybrid` on v4 (2026-10-12)
+
+Run with `--mode all` on 2026-10-12's `main` (the engine's scoring and the harness
+unchanged since `913bd2f0`), the LLM as in section 1
+(`gemini-3.5-flash-lite`, `judge-v1`). `classic` here is today's: the cue plus the
+two guard fixes of section 10, one of which (`책임자`) was written after reading v4.
+It scores 92/120, one more than 9.2's 91 — the `책임자` case, and nothing else moved —
+so it is **not** a clean held-out number for `classic`; 9.2's 0.76 still is. For the
+LLM v4 is clean: `judge-v1` has never been changed, and nothing was tuned against v4.
+
+| | `classic` | `llm` | `hybrid` |
+| --- | --- | --- | --- |
+| Accuracy | 92/120 = 0.77 (CI 0.68–0.83) | **112/120 = 0.93** (CI 0.87–0.97) | 92/120 = 0.77 |
+| Threading (right thread, or a new one) | 112/120 = 0.93 | **120/120 = 1.00** | 112/120 = 0.93 |
+| Change type among correctly threaded non-new | 76/96 = 0.79 | **94/102 = 0.92** | 76/96 = 0.79 |
+| LLM calls · input tokens · request time | 0 | 202 · 42,669 · 598 s | 0 |
+
+**`hybrid` is `classic` on this suite by design** — it asks the LLM only about topic
+links, and decision lineage runs `classic` (section 1) — and it came out identical,
+case for case, with no LLM call. It is listed only to show that.
+
+By category (`classic` → `llm`): `unchanged_restated` 9/10 → 10/10,
+`unchanged_paraphrase` 9/10 → 10/10, `modified_param` 13/14 → **11/14**,
+`modified_scope` 10/10 → **5/10**, `reversed_cancel` 9/12 → 12/12,
+`reversed_alternative` 8/20 → **20/20**, `new_unrelated` 8/8 → 8/8,
+`new_same_domain` 8/10 → 10/10, `distractor` 9/14 → 14/14, `chain` 9/12 → 12/12.
+
+| `llm` | unchanged | modified | reversed | new |
+| --- | --- | --- | --- | --- |
+| unchanged | 27 | 0 | 0 | 0 |
+| modified | 0 | 26 | **8** | 0 |
+| reversed | 0 | 0 | 41 | 0 |
+| new | 0 | 0 | 0 | 18 |
+
+`llm` against today's `classic`: 28 cases fixed, 8 broken (sign test, p = 0.001).
+Against 9.2's clean `classic` the `책임자` case is wrong in both, so 28 fixed and 7
+broken (p = 0.0005).
+
+- **This is the first lead in this evaluation that a sign test establishes.** On v3
+  the LLM's lineage lead was 18 to 9 (p = 0.12); here it is 28 to 8 on a set neither
+  side was tuned on for this claim.
+- **The LLM's error on v3 is back, on a set it had not seen.** All eight misses are a
+  real modification read as `reversed`: two changed owners (`h4_mp_onboarding_owner`,
+  `h4_mp_release_owner`), a design review moved from Friday afternoon to Wednesday
+  morning, and five scope changes. 8 of 34
+  modifications here, 9 of 30 on v3. Section 4.3 described it from v3; v4 now
+  replicates it, so it is a property of `judge-v1` on this model, not of one set.
+- **Everything `classic` loses, the LLM wins.** Threading is 120/120 (`classic`
+  misses six true threads and makes two false ones), all 20 swaps are `reversed`
+  whether or not they use a verb the cue knows, and no `reversed` is read as
+  `unchanged`.
+- **v4 favours the LLM's strengths by construction.** It was written after the cue
+  existed, with 12 of its 20 `reversed_alternative` statements outside the cue's
+  verbs, to measure the cue's ceiling. The LLM's 20/20 there is that ceiling seen from
+  the other side, not a sample of how often teams phrase a swap that way.
+
+Reproduce: section 6's environment, then
+
+```bash
+uv run --package autune-context python -m autune_context.eval decision-lineage \
+    --dataset decision_lineage_heldout_v4.json --mode all
+```
+
 ## 10. Held-out v5 (2026-10-01): after the guard fixes
 
 v4 showed the owner guard missing `책임자` and `담당자`; v3 had shown a digit inside a
 name ("3PL") being read as a quantity. Those two guard gaps were fixed, and nothing
 else in the rule — the verb list, the threading threshold and entailment's priority
 are as they were. `*_heldout_v5` (120 cases) measures the result on sentences none of
-this was written from.
+this was written from. Section 10.7 adds the LLM and `hybrid` on the same set
+(2026-10-12).
 
 ### 10.1 What changed in the rule
 
@@ -591,3 +716,61 @@ uv run --package autune-context python -m autune_context.eval decision-lineage \
 For the cue-off and cue-before-the-fixes columns, replace
 `autune_context.pipeline.change.marks_replacement` in the same process (with
 `lambda *a, **k: False`, or with the function from the earlier `change.py`).
+
+### 10.7 The LLM and `hybrid` on v5 (2026-10-12)
+
+Run with `--mode all` on 2026-10-12's `main` (the engine's scoring and the harness
+unchanged since `913bd2f0`), the LLM as in section 1 (`gemini-3.5-flash-lite`,
+`judge-v1`). `classic` gave 98/120 again, the "cue after" column of 10.3 with the same
+threading and change type, and nothing in the rule has changed since: **v5 is clean for
+both sides** — read once for `classic`'s errors, fixed in nothing, and never before run
+through the LLM.
+
+| | `classic` | `llm` | `hybrid` |
+| --- | --- | --- | --- |
+| Accuracy | 98/120 = 0.82 (CI 0.74–0.88) | **104/120 = 0.87** (CI 0.79–0.92) | 98/120 = 0.82 |
+| Threading (right thread, or a new one) | 113/120 = 0.94 | **120/120 = 1.00** | 113/120 = 0.94 |
+| Change type among correctly threaded non-new | **83/98 = 0.85** | 86/102 = 0.84 | 83/98 = 0.85 |
+| LLM calls · input tokens · request time | 0 | 202 · 42,562 · 604 s | 0 |
+
+`hybrid` is again `classic`, case for case, with no LLM call.
+
+By category (`classic` → `llm`): `unchanged_restated` 9/10 → 10/10,
+`unchanged_paraphrase` 10/10 → 10/10, `modified_param` 10/14 → 10/14 (different
+cases), `modified_scope` 10/10 → **2/10**, `reversed_cancel` 11/12 → 12/12,
+`reversed_alternative` 12/20 → **20/20**, `new_unrelated` 8/8 → 8/8,
+`new_same_domain` 7/10 → 10/10, `distractor` 11/14 → **10/14**, `chain` 10/12 → 12/12.
+
+| `llm` | unchanged | modified | reversed | new |
+| --- | --- | --- | --- | --- |
+| unchanged | 28 | 0 | 0 | 0 |
+| modified | 0 | 18 | **16** | 0 |
+| reversed | 0 | 0 | 40 | 0 |
+| new | 0 | 0 | 0 | 18 |
+
+`llm` against `classic`: 18 cases fixed, 12 broken (sign test, p = 0.36).
+
+- **v4's lead does not replicate at its size.** 28 to 8 there, 18 to 12 here. The LLM
+  is ahead on all three held-out sets (by 9, 16 and 6 cases on v3, v4 and v5), but only
+  v4 establishes it, and `classic` is stronger on v5 than on v4 (0.82 against 0.76).
+- **The LLM's error doubled, and it is now its only error.** All 16 misses are a real
+  modification read as `reversed`: 16 of 34 here, 8 of 34 on v4, 9 of 30 on v3. It
+  reads 8 of 10 scope changes that way ("야간 할증은 정규직에게만 적용해요", "도서관은
+  졸업생도 이용할 수 있게 해요"), three of the four owner changes, two moved times
+  ("점심 휴게를 11시 30분으로 당기죠", "후원 행사는 12월로 옮기죠"), a fee made free, and two
+  changed cycles. What it gets right is mostly a number going up or down (`늘리`,
+  `올리`, `미루`). `classic` misses four of the 16 too, so 12 are breaks.
+- **On change type alone the LLM is no better than `classic` here** (0.84 against
+  0.85). Its lead is threading (seven cases `classic` threads wrong or not at all) and
+  swaps (all 20 `reversed_alternative`, against 12): the same strengths as on v4, set
+  against twice the error.
+- **The direction of the fix is the same as section 4.3's**: `judge-v1` needs to be told
+  that a new value, person or scope for the same decision is `modified`. That is a new
+  prompt version, and it needs a set neither v3, v4 nor v5 (section 6).
+
+Reproduce: section 6's environment, then
+
+```bash
+uv run --package autune-context python -m autune_context.eval decision-lineage \
+    --dataset decision_lineage_heldout_v5.json --mode all
+```
