@@ -45,6 +45,15 @@
  * question a person types. The search's sentences came in here and not
  * with the search, which answers 404 while uploads are off.
  *
+ * `2026-10-12.6` for the privacy policy and `2026-10-12.4` for the terms (the
+ * owner, 2026-10-13). A team with no member left loses its uploaded documents,
+ * its links and its records of refused files within the hour, whatever it
+ * chose about keeping them (#817). The policy had said a person's withdrawal
+ * does not delete a team's documents; for a team's only member that is no
+ * longer the whole of it, so a person who agreed to `.5` agreed to a text that
+ * told them otherwise. Both documents also said "until the team is deleted"
+ * where they now add "or has no member left". The effective date stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -63,8 +72,8 @@ export interface RequiredConsent {
 }
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "2026-10-12.3" },
-  { document: "privacy", version: "2026-10-12.5" },
+  { document: "terms", version: "2026-10-12.4" },
+  { document: "privacy", version: "2026-10-12.6" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

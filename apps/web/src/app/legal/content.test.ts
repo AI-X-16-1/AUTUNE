@@ -90,6 +90,13 @@ describe("legal documents", () => {
     for (const id of ["privacy", "terms"]) {
       expect(text(id), id).not.toContain("팀이 삭제될 때까지 보관");
     }
+    // Whoever agreed to either document as it read before is asked again
+    // (the owner, 2026-10-13): the policy they agreed to said a withdrawal
+    // deletes no team's documents.
+    const before: Record<string, string> = { terms: "2026-10-12.3", privacy: "2026-10-12.5" };
+    for (const { document, version } of REQUIRED_CONSENTS) {
+      expect(version, document).not.toBe(before[document]);
+    }
   });
 
   // The server refuses any other shape (`autune_core.consents._VERSION`),
