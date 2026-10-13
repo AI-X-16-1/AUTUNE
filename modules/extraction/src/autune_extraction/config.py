@@ -460,23 +460,33 @@ class ExtractionSettings(BaseSettings):
     notice (제4조 ⑤) are true only while it is a server Autune runs. Pointing
     it at an outside embedding service is a change to both, not a setting."""
 
-    material_search_min_similarity: float = Field(default=0.4, ge=-1, le=1)
+    material_search_min_similarity: float = Field(default=0.5, ge=-1, le=1)
     """Below this cosine similarity to the masked question, an uploaded
     material's nearest piece is not a hit (#817, ``material_search``). A
     search with nothing at or above it answers no materials and says nothing
     close enough was found, rather than the nearest unrelated ones.
 
-    **0.4 by default, a starting point and not a measurement.** It is set
-    for the embedder a team would run, KURE-v1 (``local`` or ``hosted``), a
-    fine-tune of bge-m3: in that family unrelated Korean text still lands around 0.2 to
-    0.4 -- the vectors share a direction, so the scale does not start at 0 --
-    while a question and the passage that answers it usually land at 0.5 or
-    above. 0.4 cuts the clearly unrelated band and leaves a margin under the
-    related one, so a weak but real hit is kept rather than lost. Nobody has
-    run it on a team's materials yet: tune it on real questions with known
-    answers before trusting it, and raise it if unrelated materials still
-    come back. The ``fake`` embedder counts shared characters, so its scores
-    mean nothing on this scale; its tests set this explicitly."""
+    **0.5 by default, measured once on made-up text and not on a team's
+    materials.** With the embedder a team would run, KURE-v1 (``local`` or
+    ``hosted``), 30 invented Korean documents and 160 questions (2026-10-12):
+    a material that answers the question scored 0.45 to 0.80, median 0.65;
+    one that does not, 0.16 to 0.66, median 0.40. The two overlap, so no
+    floor separates them. At 0.5, 87 of 90 answers were kept and a question
+    brought about two materials that do not answer it; small talk found
+    nothing (0 of 20), and 8 of 30 workplace questions on a subject no
+    material covers still found one. At 0.4, the default before, half of the
+    materials passed for a question one of them answers, and a quarter for
+    a question none does.
+
+    **What it does not do.** A question on the subject of a material that
+    does not hold the answer scores like one the material answers (16 of 20
+    passed): the vector says the subject is the same, not that the answer is
+    there. And the share of unrelated questions that find something grows
+    with the number of materials -- 5% with five, 16% with thirty, not
+    measured past that. Raise it if unrelated materials still come back; each
+    step up loses real answers, short and reworded questions first (0.55
+    kept 76 of 90). The ``fake`` embedder counts shared characters, so its
+    scores mean nothing on this scale; its tests set this explicitly."""
 
     material_search_tool: bool = False
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
