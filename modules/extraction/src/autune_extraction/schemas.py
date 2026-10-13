@@ -484,7 +484,7 @@ class MaterialSettingsRead(BaseModel):
     (``MaterialRead.expires_at``). ``uploads_past_their_day`` is how many
     of the team's uploads are already past their day: none stay so under the
     default beyond the hourly run, and under ``keep_until_deleted`` they are
-    what switching back deletes within the hour -- the screen says the number
+    what an hourly run deletes after a switch back -- the screen says the number
     before the switch is saved. A count only. No person: who last changed it
     is not recorded."""
 

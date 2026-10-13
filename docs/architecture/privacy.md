@@ -636,7 +636,7 @@ person.
   - **Switching back to the window applies to existing materials, counted
     from their upload.** Every upload keeps its `expires_at` whichever
     choice is in force, so on switching back a material whose window has
-    already passed is deleted by the next hourly run. The settings screen
+    already passed is deleted by an hourly run. The settings screen
     says so, and how many materials that is, before the change is saved.
   - A link-only row (#1016) holds a title and a Drive file id, no text, and
     keeps having no window.
@@ -676,8 +676,14 @@ person.
     one again: only a member makes an invitation, and an invitation goes
     with the member who made it. The task reads the state and not the
     event, so it holds however a team came to have no member, and it acts
-    only once the last membership is gone -- at its next run, within the
-    hour. The log line has the team's id and two counts.
+    only once the last membership is gone, at one of its hourly runs. That
+    is how often it looks and not a deadline: a row stored after a run has
+    read the team -- an upload that passed the member check while the team
+    still had a member and was committed after -- is taken by a later run,
+    and a run that fails is not made up before the next. The screen and
+    the legal notice say "checked every hour" for that reason, and
+    neither names an hour by which a material is gone. The log line has
+    the team's id and two counts.
     **Still open, and module A's: the team itself.** The `teams` row stays,
     and so do the team's meetings, which the retention sweep ends as it
     does any team's. Module B's proposal there: the last member's account

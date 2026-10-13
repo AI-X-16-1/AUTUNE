@@ -47,7 +47,7 @@
  *
  * `2026-10-12.6` for the privacy policy and `2026-10-12.4` for the terms (the
  * owner, 2026-10-13). A team with no member left loses its uploaded documents,
- * its links and its records of refused files within the hour, whatever it
+ * its links and its records of refused files at an hourly check, whatever it
  * chose about keeping them (#817). The policy had said a person's withdrawal
  * does not delete a team's documents; for a team's only member that is no
  * longer the whole of it, so a person who agreed to `.5` agreed to a text that
