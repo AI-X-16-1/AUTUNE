@@ -81,9 +81,9 @@ describe("Assistant when the model is busy", () => {
   });
 });
 
-describe("Assistant launcher alert", () => {
-  // agent-assistant.md section 2: a 6px signal.critical dot when the assistant
-  // has something to say first; the nearest signal is the approvals queue (9.7).
+describe("Assistant waiting proposals", () => {
+  // The launcher's red dot said something waited without saying what; the
+  // panel now says it first, with the way to the queue (2026-10-13).
   const WAITING = {
     id: "pend_1",
     team_id: "team_1",
@@ -101,34 +101,47 @@ describe("Assistant launcher alert", () => {
     needs_check: false,
   };
 
-  it("shows a dot while a proposal waits for this person", async () => {
-    vi.spyOn(api, "listPending").mockResolvedValue([WAITING]);
+  it("says how many wait and links to the queue when the panel opens", async () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([
+      WAITING,
+      { ...WAITING, id: "pend_2" },
+    ]);
 
+    open("/");
+
+    expect(
+      await screen.findByText(/승인을 기다리는 제안이 2건 있습니다/),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "승인 대기 열기" }).getAttribute("href"),
+    ).toBe("/approvals");
+  });
+
+  it("puts no dot on the launcher", async () => {
+    const listed = vi.spyOn(api, "listPending").mockResolvedValue([WAITING]);
     render(
       <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
     );
-
+    await waitFor(() => expect(listed).toHaveBeenCalled());
     expect(
-      await screen.findByLabelText("승인을 기다리는 제안이 있습니다"),
-    ).toBeTruthy();
+      screen.queryByLabelText("승인을 기다리는 제안이 있습니다"),
+    ).toBeNull();
   });
 
   async function shownFor(
     answer: () => Promise<PendingAction[]>,
   ): Promise<boolean> {
     const listed = vi.spyOn(api, "listPending").mockImplementation(answer);
-    render(
-      <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
-    );
+    open("/");
     await waitFor(() => expect(listed).toHaveBeenCalled());
-    return screen.queryByLabelText("승인을 기다리는 제안이 있습니다") !== null;
+    return screen.queryByText(/승인을 기다리는 제안이/) !== null;
   }
 
-  it("shows nothing when nothing waits", async () => {
+  it("says nothing when nothing waits", async () => {
     expect(await shownFor(async () => [])).toBe(false);
   });
 
-  it("shows nothing for an approval interrupted mid-run", async () => {
+  it("says nothing of an approval interrupted mid-run", async () => {
     // It comes back as needs_check and is never re-run: nothing to approve (#759 review).
     const interrupted = {
       ...WAITING,
@@ -138,7 +151,7 @@ describe("Assistant launcher alert", () => {
     expect(await shownFor(async () => [interrupted])).toBe(false);
   });
 
-  it("shows nothing when the queue cannot be read", async () => {
+  it("says nothing when the queue cannot be read", async () => {
     expect(
       await shownFor(async () => {
         throw new Error("offline");

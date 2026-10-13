@@ -13,7 +13,6 @@ const state = vi.hoisted(() => ({ dashboard: null as DashboardRead | null }));
 vi.mock("../hooks/useDashboard", () => ({
   useDashboard: () => ({
     dashboard: state.dashboard,
-    heatmap: [],
     gapTitles: {},
     predictions: null,
     loading: false,
@@ -50,6 +49,7 @@ describe("Dashboard", () => {
     render(<Dashboard teamId="team_1" />);
 
     expect(screen.getByText("아직 분석된 회의가 없습니다.")).toBeTruthy();
+    expect(screen.queryByText(/얼라인먼트/)).toBeNull();
     expect(screen.getByRole("link", { name: "회의 시작하기" }).getAttribute("href")).toBe(
       "/meetings/new",
     );
@@ -67,6 +67,7 @@ describe("Dashboard", () => {
     expect(screen.queryByText("아직 분석된 회의가 없습니다.")).toBeNull();
     expect(screen.getByText("품질 점수")).toBeTruthy();
     expect(screen.getByText("결정 재검토 가능성")).toBeTruthy();
+    expect(screen.queryByText("직무 쌍 얼라인먼트")).toBeNull();
     expect(screen.getByText("회의 리포트 카드")).toBeTruthy();
     expect(screen.getByText("주간 리포트 카드")).toBeTruthy();
   });
