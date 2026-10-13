@@ -72,7 +72,7 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
  * 승인 — two tabs: what still waits (below) and what was decided
  * (`DecidedApprovals`, #1215).
  */
-export function ApprovalsScreen() {
+export function ApprovalsScreen({ teamId }: { teamId: string | null }) {
   const [tab, setTab] = useState<Tab>("waiting");
   return (
     <main className="mx-auto max-w-[800px] p-[var(--space-page)]">
@@ -90,19 +90,20 @@ export function ApprovalsScreen() {
       </div>
       {/* Both stay mounted, so a card settled here keeps its result on a tab switch. */}
       <div hidden={tab !== "waiting"}>
-        <WaitingApprovals />
+        <WaitingApprovals teamId={teamId} />
       </div>
-      {tab === "decided" ? <DecidedApprovals /> : null}
+      {tab === "decided" ? <DecidedApprovals teamId={teamId} /> : null}
     </main>
   );
 }
 
 /**
- * 승인 대기 — every L2 proposal the signed-in person may decide, across their
- * teams. Approving runs it at once; the card then shows the result and leaves.
+ * 승인 대기 — every L2 proposal the signed-in person may decide in the team
+ * being looked at; the sidebar's team menu marks the other teams that have
+ * some. Approving runs it at once; the card then shows the result and leaves.
  * What a card shows is built by the server at read time; nothing here is stored.
  */
-function WaitingApprovals() {
+function WaitingApprovals({ teamId }: { teamId: string | null }) {
   const [items, setItems] = useState<PendingAction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Cards that are settled (decided, or found already decided) and what to say.
@@ -202,6 +203,13 @@ function WaitingApprovals() {
     }
   }
 
+  // The team being looked at, and only it (the user, 2026-10-13). Nothing is
+  // listed until the team is known, so another team's cards never flash by.
+  const shown: PendingAction[] | null =
+    teamId === null || items === null
+      ? null
+      : items.filter((item) => item.team_id === teamId);
+
   return (
     <>
       {error ? (
@@ -209,19 +217,19 @@ function WaitingApprovals() {
           {error}
         </p>
       ) : null}
-      {items === null && !error ? (
+      {shown === null && !error ? (
         <p className="mt-4 text-[var(--color-ink-muted)]">불러오는 중…</p>
       ) : null}
-      {items?.length === 0 ? (
+      {shown?.length === 0 ? (
         <p className="mt-4 text-[var(--color-ink-muted)]">
-          승인할 제안이 없습니다. 제안은 그 범위의 승인자에게만 보입니다 —{" "}
+          이 팀에 승인할 제안이 없습니다. 제안은 그 범위의 승인자에게만 보입니다 —{" "}
           <Link href="/settings/approvers" className="underline">
             설정 › 승인자
           </Link>
         </p>
       ) : null}
       <ul className="mt-4 flex flex-col gap-4">
-        {items?.map((item) => {
+        {shown?.map((item) => {
           const isBusy = busy.has(item.id);
           return (
             <li

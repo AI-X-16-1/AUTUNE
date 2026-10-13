@@ -7,6 +7,7 @@ import { listTeams } from "../api";
 import {
   onTeamChosen,
   onTeamsChanged,
+  rememberedTeam,
   rememberTeam,
   teamToOpen,
   teamsToList,
@@ -14,6 +15,7 @@ import {
 import type { TeamSummary } from "../types";
 
 import { NewTeamWindow } from "./NewTeamWindow";
+import { PendingMark } from "./PendingMark";
 import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
 
 /**
@@ -67,6 +69,17 @@ import { besideSidebar, TeamsWindow, type Place } from "./TeamsWindow";
  * choice changes and the page stays, as it did. Whether to ask first and go
  * is the module owner's to settle. On a meeting's review screens the move is
  * what any other sidebar entry already does.
+ *
+ * **A red dot beside a team says proposals wait there** (the user,
+ * 2026-10-13: "사이드바의 팀 목록마다 승인대기가 있으면 오른쪽에 빨간
+ * 점"). 승인 대기 lists only the team being looked at, so a team not being
+ * looked at needs its own sign. Which teams have one is the agent feature's
+ * to read; the shell passes the ids in (`marked`). A marked team behind
+ * "더보기" puts the dot on "더보기", or it would be missed there too.
+ *
+ * **The team opened on is announced** when the remembered one is missing or
+ * is a team the person has left. Every screen that follows the choice then
+ * shows the same team as this menu, instead of each falling back on its own.
  */
 
 /** A meeting's own screens: `/meetings/<id>` and its tabs, never "회의 시작". */
@@ -76,7 +89,7 @@ function insideAMeeting(pathname: string | null): boolean {
   );
 }
 
-export function TeamMenu() {
+export function TeamMenu({ marked }: { marked?: ReadonlySet<string> } = {}) {
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [teamId, setTeamId] = useState<string | null>(null);
   const [at, setAt] = useState<Place | null>(null);
@@ -92,7 +105,9 @@ export function TeamMenu() {
       .then((list) => {
         if (!current) return;
         setTeams(list);
-        setTeamId(teamToOpen(list));
+        const open = teamToOpen(list);
+        setTeamId(open);
+        if (open !== null && open !== rememberedTeam()) rememberTeam(open);
       })
       .catch(() => undefined);
     return () => {
@@ -149,8 +164,12 @@ export function TeamMenu() {
     return (
       <div>
         {heading}
-        <div className="truncate text-[var(--color-ink-body)]" style={{ ...text, padding: "6px 0" }}>
-          {teams[0]?.name}
+        <div
+          className="flex items-center gap-2 text-[var(--color-ink-body)]"
+          style={{ ...text, padding: "6px 0" }}
+        >
+          <span className="min-w-0 truncate">{teams[0]?.name}</span>
+          {teams[0] && marked?.has(teams[0].team_id) ? <PendingMark /> : null}
         </div>
       </div>
     );
@@ -161,10 +180,15 @@ export function TeamMenu() {
     if (another && insideAMeeting(pathname)) router.push(`/?team=${encodeURIComponent(chosenId)}`);
   };
 
+  const listed = teamsToList(teams, teamId);
+  const markedBehind = teams.some(
+    (team) => marked?.has(team.team_id) && !listed.includes(team),
+  );
+
   return (
     <nav aria-label="팀" className="flex flex-col">
       {heading}
-      {teamsToList(teams, teamId).map((team) => {
+      {listed.map((team) => {
         const chosen = team.team_id === teamId;
         return (
           <button
@@ -174,8 +198,8 @@ export function TeamMenu() {
             onClick={() => choose(team.team_id)}
             className={
               chosen
-                ? "truncate rounded-[var(--radius)] bg-[var(--color-accent-selection)] text-left text-[var(--color-accent-hover)]"
-                : "truncate text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
+                ? "flex items-center gap-2 rounded-[var(--radius)] bg-[var(--color-accent-selection)] text-left text-[var(--color-accent-hover)]"
+                : "flex items-center gap-2 text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
             }
             style={
               chosen
@@ -183,7 +207,8 @@ export function TeamMenu() {
                 : { ...text, padding: "6px 0" }
             }
           >
-            {team.name}
+            <span className="min-w-0 truncate">{team.name}</span>
+            {marked?.has(team.team_id) ? <PendingMark /> : null}
           </button>
         );
       })}
@@ -193,22 +218,24 @@ export function TeamMenu() {
         aria-haspopup="dialog"
         aria-expanded={at !== null}
         aria-controls="teams-window"
-        aria-label="팀 더보기"
+        aria-label={markedBehind ? "팀 더보기, 승인 대기 있음" : "팀 더보기"}
         onClick={() => {
           setMaking(false);
           setAt((open) =>
             open === null && control.current ? besideSidebar(control.current, teams.length) : null,
           );
         }}
-        className="text-left text-[var(--color-ink-muted)] hover:text-[var(--color-ink-strong)]"
+        className="flex items-center gap-2 text-left text-[var(--color-ink-muted)] hover:text-[var(--color-ink-strong)]"
         style={{ fontSize: "var(--text-metaSmall)", fontWeight: 500, padding: "6px 0" }}
       >
         더보기
+        {markedBehind ? <PendingMark /> : null}
       </button>
       {at !== null ? (
         <TeamsWindow
           teams={teams}
           teamId={teamId}
+          marked={marked}
           at={at}
           opener={control}
           onChoose={(chosenId) => {

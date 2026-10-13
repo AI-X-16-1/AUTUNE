@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
+import { resetPendingCounts } from "../pendingCount";
 import type { PendingAction } from "../types";
 
 type PendingStatus = PendingAction["status"];
@@ -18,6 +19,7 @@ import { Assistant } from "./Assistant";
 
 afterEach(() => {
   cleanup();
+  resetPendingCounts();
   vi.restoreAllMocks();
 });
 

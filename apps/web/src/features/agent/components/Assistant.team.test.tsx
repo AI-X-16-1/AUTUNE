@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { onAgentActed } from "@/shared/lib/agentActed";
 
 import * as api from "../api";
+import { resetPendingCounts } from "../pendingCount";
 import type { ChatFinding, ChatReply } from "../types";
 import { Assistant } from "./Assistant";
 
@@ -41,6 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  resetPendingCounts();
   vi.restoreAllMocks();
 });
 

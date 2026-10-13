@@ -111,9 +111,9 @@ export function Assistant({
   const bottom = useRef<HTMLDivElement>(null);
   const context = contextFor(pathname);
   const meetingId = context.meetingId;
-  // Proposals waiting for this person, said first when the panel opens. Read
-  // on every page and after every turn, since a turn can queue one.
-  const queued = usePendingCount(pathname, turns.length);
+  // This team's proposals waiting for this person, said first when the panel
+  // opens. Read on every page and after every turn, since a turn can queue one.
+  const queued = usePendingCount(pathname, teamId, turns.length);
   // The meeting's own title for the header, once read; the page's name until then.
   const [titled, setTitled] = useState<{ id: string; title: string } | null>(
     null,
