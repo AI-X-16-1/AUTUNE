@@ -7,7 +7,11 @@ import type { MaterialSettings } from "../types";
 /**
  * How the team keeps its uploaded materials (the owner, 2026-10-11): for the
  * team's retention window counted from the upload -- the default -- or until
- * a member deletes them. Shown only where the deployment takes uploads.
+ * a member deletes them. Shown where the deployment takes uploads, and, where
+ * it does not, to a team that still has one: the server takes the choice and
+ * deletes by it whatever the upload switch says, so a team that chose to keep
+ * everything could otherwise not take that back (#1295). There the screen has
+ * no upload form above this, and `uploadsOff` says so in one sentence.
  *
  * Both choices are said in full before either is picked, including what
  * switching back does to what is already there: every upload has kept the
@@ -23,9 +27,12 @@ import type { MaterialSettings } from "../types";
  */
 export function MaterialKeepSetting({
   settings,
+  uploadsOff = false,
   onChange,
 }: {
   settings: MaterialSettings;
+  /** The server said it takes no upload now; the choice is over those it has. */
+  uploadsOff?: boolean;
   /** Saves the choice; rejects when the server did not take it. */
   onChange: (keepUntilDeleted: boolean) => Promise<void>;
 }) {
@@ -80,6 +87,11 @@ export function MaterialKeepSetting({
       style={{ ...meta, borderRadius: "var(--radius)", padding: "8px 12px" }}
     >
       <legend className="text-[var(--color-ink-strong)]">올린 자료 보관 방식</legend>
+      {uploadsOff ? (
+        <span className="text-[var(--color-ink-body)]">
+          지금은 파일을 새로 올릴 수 없습니다. 이 선택은 이미 올린 자료에 그대로 적용됩니다.
+        </span>
+      ) : null}
       {choices.map((choice) => (
         <label key={String(choice.keep)} className="flex items-start gap-2">
           <input
