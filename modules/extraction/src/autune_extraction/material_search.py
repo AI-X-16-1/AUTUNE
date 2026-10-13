@@ -40,6 +40,43 @@ whose nearest piece is further below the best one's than that is not a hit
 either, so one clear answer does not arrive with four that merely passed.
 Both defaults were measured for KURE-v1 on made-up text, not on a team's
 materials; each setting's docstring says what it does and does not do.
+
+**A word match finds what the floor loses** (#817, 2026-10-13). A question of
+one or two words, or one that repeats a file's title, often scores under the
+floor against the very piece that answers it. So, the floor and the cut left
+as they are, a material is also a hit when every word of the masked question
+(``_words``: two letters or digits and more, nothing the masker hid) is
+
+- in its **title** -- whatever its pieces score; or
+- in one of its **pieces** that scores under the floor and at or over
+  ``ExtractionSettings.material_search_word_match_min_similarity``, and no
+  further below the best hit than the relative cut allows (the best material
+  over the floor, or, with none, the best piece holding the words).
+
+An answer is ordered: materials found by their title, nearest first; then
+the materials over the floor, exactly those the floor and the cut alone
+leave, nearest first; then the materials found by a piece's words. Five at
+most all the same, so a title match can take the place of a material the
+vectors found -- ``more`` says so.
+
+**It is a substring match, not a word match in the dictionary's sense.** The
+question's "지사" is in a piece that says "부산지사", and its "선물" in
+"선물할 수 있나요". That is what finds 롤백 in 롤백은, and what finds a
+common word everywhere: on the measured shelf "회의" was in 50 of 200 files
+and in 17 titles, and a one-word question on it answers the five nearest of
+those. A question with no word of two letters (a version number, "앱") gets
+no word match.
+
+**The words stay in this process.** They are compared with rows read by the
+same rule the vectors are read by (``_reach``: the asking team, uploads not
+past their day, this embedder), and they are in no statement: a bound
+parameter is part of a failed statement's message, and the engine does not
+hide parameters (#356), so a ``LIKE`` on the words would put a person's
+question in an error. A title or an excerpt found this way passes
+``screen_output`` like any other.
+
+Measured for KURE-v1 on made-up text, not on a team's materials; the
+setting's docstring has the numbers.
 """
 
 from __future__ import annotations
@@ -50,7 +87,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from autune_core import get_logger
@@ -83,6 +120,13 @@ conservative one until the team does."""
 CANDIDATES = 50
 """Nearest pieces read before they are grouped by material. Five materials
 are found among them unless one material holds nearly all of them."""
+
+WORD_CANDIDATES = 1000
+"""Pieces under the floor whose text is read for a word match, nearest
+first. A team's shelf can be far larger -- ``materials.MAX_MATERIALS`` files
+of ``material_formats.MAX_TEXT_CHARS`` characters are 120,000 pieces -- and
+a search reads at most this many of them, half a million characters, to look
+for words. The shelf the word match was measured on had 229 pieces."""
 
 QUESTION_MASKED = "질문에서 전화번호처럼 개인정보로 보이는 값은 가리고 찾았습니다."
 QUESTION_REFUSED = (
@@ -128,7 +172,8 @@ class MaterialHit:
     """Masked text, screened again, at most ``EXCERPT_CHARS`` plus the "…" at
     a cut end."""
     score: float
-    """Cosine similarity to the question, -1 to 1."""
+    """Cosine similarity of the excerpt's piece to the question, -1 to 1.
+    Under the floor for a material found by its words."""
 
 
 @dataclass(frozen=True)
@@ -157,17 +202,21 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     return dot / norm if norm else 0.0
 
 
-def _nearest(
-    session: Session, team_id: str, vector: list[float], model: str, *, now: datetime
-) -> list[tuple[str, str, int, str, float]]:
-    """The team's pieces nearest ``vector``: (material id, title, position,
-    text, similarity), nearest first. PostgreSQL ranks by pgvector's cosine
-    operator under its index; another database (the unit suite's SQLite)
-    ranks the team's pieces here. An upload whose ``expires_at`` is ``now``
-    or earlier is not read, though the hourly task may not have deleted it
-    yet -- unless the team keeps its uploads until deleted, as that task
-    passes such a team over."""
-    base = (
+_Piece = tuple[str, str, int, str, float]
+"""(material id, title, position, text, similarity to the question)."""
+
+_Reach = Select[tuple[str, str, int, str]]
+
+
+def _reach(session: Session, team_id: str, model: str, *, now: datetime) -> _Reach:
+    """What a search of ``team_id`` may read, however a hit is found: the
+    pieces of the team's uploads embedded by ``model``, as (material id,
+    title, position, text). An upload whose ``expires_at`` is ``now`` or
+    earlier is not read, though the hourly task may not have deleted it yet
+    -- unless the team keeps its uploads until deleted, as that task passes
+    such a team over. Every reader below starts from this, so a material the
+    vectors would not show does not come back through a word."""
+    reach = (
         select(ExtMaterial.id, ExtMaterial.title, ExtMaterialChunk.position, ExtMaterialChunk.text)
         .join(ExtMaterial, ExtMaterial.id == ExtMaterialChunk.material_id)
         .where(
@@ -178,27 +227,97 @@ def _nearest(
         )
     )
     if not keeps_until_deleted(session, team_id):
-        base = base.where(ExtMaterial.expires_at > now)
-    if session.get_bind().dialect.name == "postgresql":
-        distance = ExtMaterialChunk.embedding.cosine_distance(vector)
-        rows = session.execute(
-            base.add_columns(distance.label("distance"))
-            .order_by(distance, ExtMaterial.id, ExtMaterialChunk.position)
-            .limit(CANDIDATES)
-        )
-        return [(m, t, p, x, 1.0 - float(d)) for m, t, p, x, d in rows]
+        reach = reach.where(ExtMaterial.expires_at > now)
+    return reach
+
+
+def _ranked_here(session: Session, reach: _Reach, vector: list[float]) -> list[_Piece]:
+    """Every piece of ``reach`` with its similarity to ``vector``, nearest
+    first, ranked in this process: for a database without pgvector (the unit
+    suite's SQLite)."""
     scored = [
         (m, t, p, x, _cosine([float(v) for v in e], vector))
-        for m, t, p, x, e in session.execute(base.add_columns(ExtMaterialChunk.embedding))
+        for m, t, p, x, e in session.execute(reach.add_columns(ExtMaterialChunk.embedding))
     ]
     scored.sort(key=lambda row: (-row[4], row[0], row[2]))
-    return scored[:CANDIDATES]
+    return scored
+
+
+def _on_pgvector(session: Session) -> bool:
+    return session.get_bind().dialect.name == "postgresql"
+
+
+def _nearest(session: Session, reach: _Reach, vector: list[float]) -> list[_Piece]:
+    """The ``CANDIDATES`` pieces of ``reach`` nearest ``vector``, nearest
+    first. PostgreSQL ranks by pgvector's cosine operator under its index;
+    another database ranks the pieces here."""
+    if not _on_pgvector(session):
+        return _ranked_here(session, reach, vector)[:CANDIDATES]
+    distance = ExtMaterialChunk.embedding.cosine_distance(vector)
+    rows = session.execute(
+        reach.add_columns(distance.label("distance"))
+        .order_by(distance, ExtMaterial.id, ExtMaterialChunk.position)
+        .limit(CANDIDATES)
+    )
+    return [(m, t, p, x, 1.0 - float(d)) for m, t, p, x, d in rows]
+
+
+def _nearest_of_each(session: Session, reach: _Reach, vector: list[float]) -> list[_Piece]:
+    """Every material of ``reach`` once, with the piece of it nearest
+    ``vector``: what a title is matched against, and the excerpt a material
+    found by its title is shown with. As many rows as the team has uploads,
+    ``materials.MAX_MATERIALS`` at most. No word of the question is in the
+    statement; the titles are compared in this process."""
+    if not _on_pgvector(session):
+        first: dict[str, _Piece] = {}
+        for row in _ranked_here(session, reach, vector):
+            first.setdefault(row[0], row)
+        return list(first.values())
+    score = (1 - ExtMaterialChunk.embedding.cosine_distance(vector)).label("score")
+    rows = session.execute(
+        reach.add_columns(score)
+        .distinct(ExtMaterial.id)
+        .order_by(ExtMaterial.id, score.desc(), ExtMaterialChunk.position)
+    )
+    return [(m, t, p, x, float(s)) for m, t, p, x, s in rows]
+
+
+def _under_the_floor(
+    session: Session, reach: _Reach, vector: list[float], *, low: float, high: float
+) -> list[_Piece]:
+    """The pieces of ``reach`` scoring ``low`` or more and under ``high``,
+    nearest first, ``WORD_CANDIDATES`` at most: what a word match reads the
+    text of. The two bounds are settings and a score, never the question's
+    words, which are compared in this process.
+
+    PostgreSQL sorts these itself rather than through the vector index: the
+    index answers "the nearest few", approximately, and this asks for every
+    piece of a band. Ordering by the similarity, not by the operator the
+    index is built on, is what keeps the planner off it."""
+    if not _on_pgvector(session):
+        ranked = _ranked_here(session, reach, vector)
+        return [row for row in ranked if low <= row[4] < high][:WORD_CANDIDATES]
+    score = (1 - ExtMaterialChunk.embedding.cosine_distance(vector)).label("score")
+    rows = session.execute(
+        reach.add_columns(score)
+        .where(score >= low, score < high)
+        .order_by(score.desc(), ExtMaterial.id, ExtMaterialChunk.position)
+        .limit(WORD_CANDIDATES)
+    )
+    return [(m, t, p, x, float(s)) for m, t, p, x, s in rows]
 
 
 def _words(masked_question: str) -> list[str]:
     """The masked question's words worth looking for in a piece: two letters
     or more, and nothing the masker hid."""
     return [w.casefold() for w in _WORD.findall(masked_question)]
+
+
+def _holds(text: str, words: list[str]) -> bool:
+    """Whether every one of ``words`` is somewhere in ``text``, letter case
+    aside. A substring: "지사" is in "부산지사"."""
+    folded = text.casefold()
+    return all(word in folded for word in words)
 
 
 def _pairs(masked_question: str) -> set[str]:
@@ -322,13 +441,19 @@ def search_materials(
     embedder: Embedder | None = None,
     now: datetime | None = None,
 ) -> MaterialAnswer:
-    """The team's uploaded materials nearest ``query``, best first: one hit per
-    material, its nearest piece as an excerpt. **The caller has checked that
-    the asker is a member of ``team_id``.** A material whose nearest piece is
-    under the similarity floor is not a hit; with none left, ``hits`` is
-    empty and ``notice`` says nothing close enough was found. Nor is one
-    further below the best material than the relative cut allows; ``more``
-    counts only materials that passed both.
+    """The team's uploaded materials that answer ``query``: one hit per
+    material, one piece of it as an excerpt. **The caller has checked that
+    the asker is a member of ``team_id``.**
+
+    First the materials whose title holds every word of the masked question,
+    nearest first, each with its nearest piece. Then the materials nearest
+    the question, best first: one whose nearest piece is under the
+    similarity floor is not among them, nor one further below the best than
+    the relative cut allows. Last the materials one of whose pieces, under
+    the floor, holds every word -- at or over the word match's own lower
+    bound and within the cut of the best hit. With none of the three,
+    ``hits`` is empty and ``notice`` says nothing close enough was found;
+    ``more`` counts the materials of all three.
 
     ``query`` is masked before anything else is done with it and is kept
     nowhere; a blank or too long one raises ``ValidationError`` naming the
@@ -346,28 +471,56 @@ def search_materials(
     model = embedder or get_material_embedder()
     (vector,) = embedded(model, [masked.text])
     wanted = max(1, min(int(limit), MAX_HITS))
-    floor = get_settings().material_search_min_similarity
-    margin = get_settings().material_search_max_below_best
-    best: float | None = None
+    settings = get_settings()
+    floor = settings.material_search_min_similarity
+    margin = settings.material_search_max_below_best
+    word_floor = settings.material_search_word_match_min_similarity
+    reach = _reach(session, team_id, model.model_version, now=now or datetime.now(UTC))
 
-    hits: list[MaterialHit] = []
-    seen: set[str] = set()
-    dropped = 0
-    for material_id, title, position, text, score in _nearest(
-        session, team_id, vector, model.model_version, now=now or datetime.now(UTC)
-    ):
-        if score < floor:
+    best: float | None = None
+    near: dict[str, _Piece] = {}
+    for row in _nearest(session, reach, vector):
+        if row[4] < floor:
             # Nearest first: everything after this is further still.
             break
         if best is None:
-            best = score
-        elif score < best - margin:
+            best = row[4]
+        elif row[4] < best - margin:
             break
-        if material_id in seen:
-            continue
-        seen.add(material_id)
+        near.setdefault(row[0], row)
+
+    # Only the masked question's words: a value the masker hid is stars, and
+    # stars are no word, so a search cannot ask whether a hidden value is in
+    # a stored piece or a title.
+    words = _words(masked.text)
+    named: list[_Piece] = []
+    worded: dict[str, _Piece] = {}
+    if words and word_floor <= 1:
+        named = [row for row in _nearest_of_each(session, reach, vector) if _holds(row[1], words)]
+        named.sort(key=lambda row: (-row[4], row[0]))
+        low = word_floor if best is None else max(word_floor, best - margin)
+        if low < floor:
+            top = best
+            for row in _under_the_floor(session, reach, vector, low=low, high=floor):
+                if not _holds(row[3], words):
+                    continue
+                if top is None:
+                    top = row[4]
+                elif row[4] < top - margin:
+                    break
+                worded.setdefault(row[0], row)
+
+    found: dict[str, tuple[_Piece, str]] = {}
+    for how, rows in (("title", named), ("vector", near.values()), ("words", worded.values())):
+        for row in rows:
+            found.setdefault(row[0], (row, how))
+
+    hits: list[MaterialHit] = []
+    shown = {"title": 0, "vector": 0, "words": 0}
+    dropped = 0
+    for (material_id, title, position, text, score), how in found.values():
         if len(hits) >= wanted:
-            continue
+            break
         try:
             hit = MaterialHit(
                 material_id=material_id,
@@ -380,8 +533,16 @@ def search_materials(
             dropped += 1
             continue
         hits.append(hit)
-    more = len(seen) - dropped > len(hits)
-    log.info("extraction_material_searched", team_id=team_id, hits=len(hits), dropped=dropped)
+        shown[how] += 1
+    more = len(found) - dropped > len(hits)
+    log.info(
+        "extraction_material_searched",
+        team_id=team_id,
+        hits=len(hits),
+        dropped=dropped,
+        by_title=shown["title"],
+        by_words=shown["words"],
+    )
     return MaterialAnswer(
         hits=hits, notice=_notice(bool(masked.counts), asks_personal, hits), more=more
     )

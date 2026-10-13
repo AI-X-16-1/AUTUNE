@@ -46,9 +46,11 @@ def new_team(session: Session, name: str) -> str:
 def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake embedder's scores mean nothing on the real embedder's scale,
     so the floor and the cut below the best are set here: none, except where
-    one is what is tested."""
+    one is what is tested. The word match is off the same way, and on in the
+    tests of it."""
     monkeypatch.setattr(extraction_settings(), "material_search_min_similarity", -1.0)
     monkeypatch.setattr(extraction_settings(), "material_search_max_below_best", 2.0)
+    monkeypatch.setattr(extraction_settings(), "material_search_word_match_min_similarity", 2.0)
 
 
 @pytest.fixture
