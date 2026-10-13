@@ -142,3 +142,17 @@ def test_the_lineage_context_development_set_carries_context() -> None:
     cases = lineage_dataset.load_cases("decision_lineage_context_dev_v1.json")
     assert len(cases) == 30
     assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))
+
+
+def test_lineage_heldout_v7_is_mostly_terse_decisions_with_context() -> None:
+    cases = lineage_dataset.load_cases("decision_lineage_heldout_v7.json")
+
+    assert len(cases) == 60
+    assert sum(c.category.startswith("terse_") for c in cases) == 42
+    assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))
+
+
+def test_the_terse_development_set_carries_context() -> None:
+    cases = lineage_dataset.load_cases("decision_lineage_terse_dev_v1.json")
+    assert len(cases) == 42
+    assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))

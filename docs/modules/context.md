@@ -302,6 +302,9 @@ one miss differs. The set cannot tell them apart, and `classic` needs no API.
   (real-length meeting series; decisions with their source utterances), and the
   rules for using them:
   [`context-evaluations/03-realistic-heldout-sets.md`](context-evaluations/03-realistic-heldout-sets.md).
+  How a terse decision changed, with a third held-out set (`*_heldout_v7`, 0.60 →
+  0.75):
+  [`context-evaluations/04-terse-decision-change-type.md`](context-evaluations/04-terse-decision-change-type.md).
 
 ### Self-hosted serving contract
 
@@ -469,14 +472,22 @@ lineage view (S22), which reads to a user as a bug.
    stronger match later in the list. No thread above the threshold opens a new
    one, anchored on the meeting's team. One thread takes at most one of this
    meeting's decisions. A meeting past its retention window is excluded from
-   matching — see "Deletion". The cosine is the higher of two: statement to
-   statement, and each side's statement embedded together with the utterances
-   it was settled in (`Decision.source_utterance_ids`; the thread head's own
-   stored ids). A terse statement — "2번 시안으로 정한다", "없던 걸로 한다" —
-   names no subject; its utterances do. They are read at match time, from
+   matching — see "Deletion". The cosine is the highest of three: statement to
+   statement; each side's statement embedded together with the utterances it
+   was settled in (`Decision.source_utterance_ids`; the thread head's own
+   stored ids); and the decision's single utterance closest to the head's
+   statement. A terse statement — "2번 시안으로 정한다", "없던 걸로 한다" —
+   names no subject; its utterances do, and one of them on its own does when
+   the rest are a complaint or a reason. They are read at match time, from
    speakers who consent, so a deletion or a withdrawal takes effect without
    re-deriving anything; a side with none readable falls back to its
-   statement. How a decision changed is still classified on the statements.
+   statement. How a decision changed is classified on the statements, except
+   that a version's source utterance closer to the earlier statement than its
+   own statement is stands in for it (`_change_hypotheses`): "그대로 두기로
+   했다" is classified as the line it was settled in, "10시 마감은 지금대로
+   둡시다". A statement that says nothing changes (그대로, 유지, 지금대로, 바꾸지
+   않는다) and that NLI neither entails nor contradicts reads `unchanged`
+   (`pipeline.change.marks_keep`).
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and

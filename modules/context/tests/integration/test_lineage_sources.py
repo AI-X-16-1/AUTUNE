@@ -1,5 +1,6 @@
 """Decision lineage reads a decision's source utterances -- consented ones only --
-to thread a terse statement (``service._context_vectors``)."""
+to thread a terse statement (``service._context_vectors``) and to classify how it
+changed (``service._change_hypotheses``)."""
 
 from __future__ import annotations
 
@@ -81,6 +82,15 @@ def _meeting(team_id: str, days_ago: int, lines: list[tuple[str, bool]]) -> tupl
         return meeting.id, ids
 
 
+def _change_type(meeting_id: str) -> str:
+    with session_scope() as s:
+        return s.scalars(
+            select(CtxDecisionVersion.change_type).where(
+                CtxDecisionVersion.meeting_id == meeting_id
+            )
+        ).one()
+
+
 def _decide(meeting_id: str, statement: str, ids: list[str]) -> str:
     service.build_decision_lineage(
         ExtractionResult(
@@ -108,6 +118,28 @@ def test_a_terse_decision_joins_the_thread_its_utterances_name(team_id: str) -> 
     assert _decide(now, "2번 시안으로 정한다.", now_ids) == _decide(
         past, "배너는 세 개를 순환한다.", past_ids
     )
+
+
+def test_a_terse_change_is_classified_on_the_line_it_was_settled_in(team_id: str) -> None:
+    """The fake NLI entails only an identical string: the consented line restates
+    the earlier statement word for word, the terse statement does not."""
+    past, past_ids = _meeting(team_id, 10, [("홈 화면 배너는 세 개로 하죠.", True)])
+    now, now_ids = _meeting(team_id, 0, [("배너는 세 개를 순환한다.", True)])
+
+    past_thread = _decide(past, "배너는 세 개를 순환한다.", past_ids)
+    assert _decide(now, "그렇게 정리했다.", now_ids) == past_thread
+    assert _change_type(now) == "unchanged"
+
+
+def test_an_unconsented_line_is_not_what_a_change_is_classified_on(team_id: str) -> None:
+    past, past_ids = _meeting(team_id, 10, [("홈 화면 배너는 세 개로 하죠.", True)])
+    now, now_ids = _meeting(
+        team_id, 0, [("배너는 세 개를 순환한다.", False), ("배너 시안 얘기를 했어요.", True)]
+    )
+
+    past_thread = _decide(past, "배너는 세 개를 순환한다.", past_ids)
+    assert _decide(now, "그렇게 정리했다.", now_ids) == past_thread
+    assert _change_type(now) == "modified"
 
 
 def test_an_unconsented_utterance_is_not_read(team_id: str) -> None:
