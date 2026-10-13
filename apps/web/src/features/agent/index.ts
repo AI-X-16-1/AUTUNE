@@ -8,3 +8,4 @@
 export { ApprovalsScreen } from "./components/ApprovalsScreen";
 export { ApproverSettingsScreen } from "./components/ApproverSettingsScreen";
 export { Assistant } from "./components/Assistant";
+export { PendingBadge } from "./components/PendingBadge";

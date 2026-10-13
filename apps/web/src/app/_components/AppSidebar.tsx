@@ -9,6 +9,7 @@ import { logout } from "@/shared/api/auth";
 import { setSignedIn } from "@/shared/api/client";
 import { Button, Wordmark } from "@/shared/ui";
 
+import { PendingBadge } from "@/features/agent";
 import { TeamMenu } from "@/features/transcript";
 
 import { useSessionUser } from "./SessionGate";
@@ -33,7 +34,8 @@ import { useSessionUser } from "./SessionGate";
  *
  * Assembly only: which sections exist and where they go. No feature data —
  * the counts the spec shows beside some entries belong to modules B and C, and
- * the shell does not read them.
+ * the shell does not read them. 승인 대기 carries the agent feature's own
+ * count, read and drawn by `PendingBadge`; the shell only places it.
  */
 
 interface NavItem {
@@ -44,6 +46,8 @@ interface NavItem {
   isCurrent?: (pathname: string) => boolean;
   /** Phase 2 in the spec — drawn with a hollow ring. */
   phase2?: boolean;
+  /** A feature's own mark beside the label, given the path. */
+  badge?: (pathname: string) => React.ReactNode;
 }
 
 const NAV: NavItem[] = [
@@ -62,7 +66,14 @@ const NAV: NavItem[] = [
   { label: "자료", href: "/materials", isCurrent: (p) => p.startsWith("/materials") },
   { label: "대시보드", href: "/dashboard", isCurrent: (p) => p.startsWith("/dashboard") },
   // The agent layer's approval queue: L2 proposals wait here for a person.
-  { label: "승인 대기", href: "/approvals", isCurrent: (p) => p.startsWith("/approvals") },
+  // With the count of what waits for this person: it replaced a red dot on the
+  // assistant's launcher that said nothing of what or where (2026-10-13).
+  {
+    label: "승인 대기",
+    href: "/approvals",
+    isCurrent: (p) => p.startsWith("/approvals"),
+    badge: (p) => <PendingBadge pathname={p} />,
+  },
 ];
 
 /** The documents on `/legal`, by the anchors that page gives them. */
@@ -127,7 +138,12 @@ export function AppSidebar() {
 
       <nav aria-label="주요 메뉴" className="flex flex-col">
         {NAV.map((item) => (
-          <NavEntry key={item.label} item={item} current={item.isCurrent?.(pathname) ?? false} />
+          <NavEntry
+            key={item.label}
+            item={item}
+            current={item.isCurrent?.(pathname) ?? false}
+            badge={item.badge?.(pathname)}
+          />
         ))}
       </nav>
 
@@ -194,7 +210,15 @@ export function AppSidebar() {
   );
 }
 
-function NavEntry({ item, current }: { item: NavItem; current: boolean }) {
+function NavEntry({
+  item,
+  current,
+  badge,
+}: {
+  item: NavItem;
+  current: boolean;
+  badge?: React.ReactNode;
+}) {
   if (!item.href) {
     return (
       <span
@@ -220,9 +244,10 @@ function NavEntry({ item, current }: { item: NavItem; current: boolean }) {
       href={item.href}
       aria-current={current ? "page" : undefined}
       className={
-        current
+        "flex items-center justify-between " +
+        (current
           ? "rounded-[var(--radius)] bg-[var(--color-accent-selection)] text-[var(--color-accent-hover)]"
-          : "text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
+          : "text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]")
       }
       style={
         current
@@ -231,6 +256,7 @@ function NavEntry({ item, current }: { item: NavItem; current: boolean }) {
       }
     >
       {item.label}
+      {badge}
     </Link>
   );
 }

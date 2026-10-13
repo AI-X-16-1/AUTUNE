@@ -14,8 +14,9 @@ import { ApiError } from "@/shared/api/client";
 import { announceAgentActed } from "@/shared/lib/agentActed";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
-import { getMeetingLabel, listPending, sendChat } from "../api";
+import { getMeetingLabel, sendChat } from "../api";
 import { contextFor } from "../assistantContext";
+import { announcePendingChanged, usePendingCount } from "../pendingCount";
 import { findingLink } from "../reportLink";
 import type { ChatFinding, ChatReply } from "../types";
 import { ChatProposal } from "./ChatProposal";
@@ -110,9 +111,10 @@ export function Assistant({
   const bottom = useRef<HTMLDivElement>(null);
   const context = contextFor(pathname);
   const meetingId = context.meetingId;
+  // Proposals waiting for this person, said first when the panel opens. Read
+  // on every page and after every turn, since a turn can queue one.
+  const queued = usePendingCount(pathname, turns.length);
   // The meeting's own title for the header, once read; the page's name until then.
-  // Proposals waiting for this person: the launcher's dot (spec section 2, 9.7).
-  const [queued, setQueued] = useState(0);
   const [titled, setTitled] = useState<{ id: string; title: string } | null>(
     null,
   );
@@ -139,25 +141,6 @@ export function Assistant({
   useEffect(() => {
     if (open) input.current?.focus();
   }, [open]);
-
-  useEffect(() => {
-    // Read on every page and after every turn: a turn can queue a proposal,
-    // and deciding one on 승인 대기 is a navigation away and back. Only rows
-    // still pending count: an approval interrupted mid-run (needs_check) is
-    // never re-run, so it is nothing to approve (#759 review).
-    let current = true;
-    listPending()
-      .then((rows) => {
-        if (current)
-          setQueued(rows.filter((r) => r.status === "pending").length);
-      })
-      .catch(() => {
-        if (current) setQueued(0);
-      });
-    return () => {
-      current = false;
-    };
-  }, [pathname, turns.length]);
 
   useEffect(() => {
     if (!open || !meetingId || titled?.id === meetingId) return;
@@ -204,6 +187,7 @@ export function Assistant({
         : await sendChat({ teamId }, message);
       setTurns((t) => [...t, { role: "assistant", reply, team }]);
       if (reply.executed > 0) announceAgentActed();
+      if (reply.queued > 0) announcePendingChanged();
     } catch (e) {
       setTurns((t) => [
         ...t,
@@ -280,6 +264,23 @@ export function Assistant({
                 style={{ fontSize: 14, fontWeight: 600 }}
               >
                 {userName}님, 무엇을 확인할까요?
+              </p>
+            )}
+            {empty && queued > 0 && (
+              <p
+                className="flex items-center gap-2 rounded-[var(--radius)] bg-[var(--color-surface-sunken)] text-[var(--color-ink-body)]"
+                style={{ fontSize: 12.5, padding: "10px 12px" }}
+              >
+                <StatusDot variant="critical" />
+                승인을 기다리는 제안이 {queued}건 있습니다 ·
+                <Link
+                  href="/approvals"
+                  onClick={close}
+                  className="text-[var(--color-accent-default)]"
+                  style={{ fontWeight: 600 }}
+                >
+                  승인 대기 열기
+                </Link>
               </p>
             )}
             {turns.map((turn, i) => {
@@ -377,23 +378,7 @@ export function Assistant({
           boxShadow: "0 4px 16px rgba(59,74,158,.28)",
         }}
       >
-        <span className="relative flex items-center">
-          <SparkIcon />
-          {queued > 0 && (
-            <span
-              role="status"
-              aria-label="승인을 기다리는 제안이 있습니다"
-              className="absolute rounded-full bg-[var(--color-signal-critical)]"
-              style={{
-                width: 7,
-                height: 7,
-                right: -3,
-                top: -2,
-                boxShadow: "0 0 0 1.5px var(--color-accent-default)",
-              }}
-            />
-          )}
-        </span>
+        <SparkIcon />
         비서
         <Shortcuts />
       </button>
