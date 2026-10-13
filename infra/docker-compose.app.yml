@@ -228,14 +228,17 @@ x-python: &python
     # this file does not name it.
     #
     # TURNING IT OFF is removing the two lines. The upload and search routes
-    # answer 404 again, and the screen draws no upload form, no search box and
-    # not the team's choice of how long its uploads are kept. What was
-    # uploaded stays stored and listed, and a member still deletes one. The
-    # hourly tasks do not read this switch: an upload past its day is still
-    # deleted at an hourly check, and so is everything of a team nobody is
-    # on. A team that chose to keep its uploads has no day, and while this is
-    # off no control on the screen to choose the window again: its uploads
-    # stay until a member deletes each one, or until the two lines are back.
+    # answer 404 again, and the screen draws no upload form and no search
+    # box. What was uploaded stays stored and listed, and a member still
+    # deletes one. The hourly tasks do not read this switch: an upload past
+    # its day is still deleted at an hourly check, and so is everything of a
+    # team nobody is on. A team with an uploaded file left still sees its
+    # choice of how long its uploads are kept, with one sentence saying no
+    # new file can be uploaded, and can change it either way (#1295); a team
+    # with none left sees no choice. A team that chose to keep its uploads
+    # has no day: they stay until a member deletes each one, or chooses the
+    # window again -- each upload then has back the day it was given at its
+    # upload.
     AUTUNE_EXTRACTION_MATERIAL_UPLOAD: "true"
     AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL: local
     # Module D's NLI is the one scripts/up.sh runs without --real-models, for
