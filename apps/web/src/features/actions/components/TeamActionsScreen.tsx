@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import type { Route } from "next";
+import Link from "next/link";
+
 import { Button, ChipToggle, Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
@@ -219,11 +222,11 @@ export function TeamActionsScreen({
         <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
           <div
             role="group"
-            aria-label="보기"
+            aria-label="묶어 보기"
             className="flex items-center gap-2 text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)" }}
           >
-            보기
+            묶어 보기
             {VIEWS.map(({ id, label }) => (
               <ChipToggle key={id} selected={view === id} onClick={() => setView(id)}>
                 {label}
@@ -253,8 +256,11 @@ export function TeamActionsScreen({
           ) : (
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
-              {shown.length === 0 ? <Note>{EMPTY[tab]}</Note> : null}
-              {groups === null || shown.length === 0 ? (
+              {shown.length === 0 ? (
+                // One line, not four empty columns (#1183): there is nothing
+                // to move and nowhere to drop it.
+                <EmptyBoard tab={tab} />
+              ) : groups === null ? (
                 board(shown)
               ) : (
                 <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
@@ -314,10 +320,29 @@ export function TeamActionsScreen({
 }
 
 const EMPTY: Record<Tab, string> = {
-  all: "아직 할 일이 없습니다. 회의가 분석되면 이곳에 모입니다.",
+  all: "회의를 올리면 할 일이 여기에 모입니다.",
   mine: "나에게 배정된 할 일이 없습니다.",
   overdue: "기한이 지난 할 일이 없습니다.",
 };
+
+function EmptyBoard({ tab }: { tab: Tab }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3">
+      <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-body)" }}>
+        {EMPTY[tab]}
+      </p>
+      {tab === "all" ? (
+        <Link
+          href={"/meetings/new" as Route}
+          className="text-[var(--color-accent-text)]"
+          style={{ fontSize: "var(--text-body)" }}
+        >
+          회의 시작
+        </Link>
+      ) : null}
+    </div>
+  );
+}
 
 function Meta({ children }: { children: string }) {
   return (

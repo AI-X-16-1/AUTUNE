@@ -8,6 +8,10 @@ import { Button } from "@/shared/ui";
  * The 확인 필요 column's bar for working through drafts several at a time
  * (the user, 2026-10-04): select all, confirm the selected, delete the
  * selected. Deleting asks once, in place, the way a single delete does.
+ *
+ * 모두 선택 is always there; the two actions appear once something is ticked
+ * (#1183) -- before that they were two buttons that could not be pressed,
+ * under every board, and read as broken.
  */
 export function BulkTriage({
   total,
@@ -63,27 +67,21 @@ export function BulkTriage({
             취소
           </Button>
         </>
-      ) : (
+      ) : picked > 0 ? (
         <>
-          <Button
-            tone="primary"
-            size="compact"
-            loading={busy}
-            disabled={picked === 0}
-            onClick={onConfirm}
-          >
+          <Button tone="primary" size="compact" loading={busy} onClick={onConfirm}>
             선택 확정 ({picked})
           </Button>
           <Button
             tone="quiet"
             size="compact"
-            disabled={picked === 0 || busy}
+            disabled={busy}
             onClick={() => setAsking(true)}
           >
             선택 삭제
           </Button>
         </>
-      )}
+      ) : null}
     </div>
   );
 }

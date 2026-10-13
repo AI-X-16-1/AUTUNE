@@ -121,6 +121,18 @@ async function open() {
 }
 
 describe("TeamActionsScreen, 보기", () => {
+  it("names the row for what it does: it groups, it does not filter", async () => {
+    await open();
+
+    const row = screen.getByRole("group", { name: "묶어 보기" });
+
+    expect(within(row).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "한번에",
+      "팀별",
+      "프로젝트별",
+    ]);
+  });
+
   it("opens on everything at once, with no team or project heading", async () => {
     await open();
 
@@ -352,7 +364,12 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(onScreen()).toEqual([]);
     expect(screen.getByRole("status").textContent).toContain(UNNAMED_TEAM);
-    expect(screen.getByText(/아직 할 일이 없습니다/)).toBeTruthy();
+    // One line and the way to a first meeting, not four empty columns (#1183).
+    expect(screen.getByText(/회의를 올리면 할 일이 여기에 모입니다/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "회의 시작" }).getAttribute("href")).toBe(
+      "/meetings/new",
+    );
+    expect(screen.queryByRole("region", { name: "진행 전" })).toBeNull();
   });
 
   it("says the list is an earlier one, not that it failed, when the team has none of it", async () => {
