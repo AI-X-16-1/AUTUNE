@@ -150,7 +150,7 @@ uploaded rows of `ext_materials`, `ext_material_chunks` with a vector for
 each piece, `ext_material_alarms`, the team's keeping setting
 (`ext_material_settings`), the upload route, the search of a team's
 materials by a question a member types, the delete of an uploaded material
-and the two hourly tasks. The legal notice
+and the three hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
 file, what is kept of it, that it is searched, for how long it is kept,
 who deletes it, and what the approvers of a team are sent about a refused
@@ -679,6 +679,9 @@ person.
     draft built from a material for a meeting (#1147) is an analysis result
     of that meeting: it has the meeting's window and goes with the meeting.
     Deleting the material does not reach a draft already made from it.
+    Nothing builds such a draft yet: the new-meeting form's agenda sources
+    do not include a team's materials (#1147). The rule is here for when
+    one does.
 - Somebody whose data sits in a document's unmasked prose, and who is not on
   the team, has no route of their own in Autune: the route is a team
   member's delete, or the team's window unless the team chose to keep its

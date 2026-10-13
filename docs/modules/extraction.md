@@ -449,10 +449,10 @@ confirmation DM's quotation is #586's second part.
 | `ext_notification_pauses` | One range of days a person set for themselves on which the morning DM and Monday's DM are not sent. Dates only; read and written by that person alone, shown to nobody else, deleted once the range has ended. Goes with the account |
 | `ext_public_holidays` | The public holidays no digest goes on: one row a day, as Google's public calendar of Korea's holidays listed it at the last read, with that read's time (`days_off.py`). Replaced whole on every read; not used once the newest read is two weeks old. Dates of public record -- nothing about a person, a team or a meeting |
 | `ext_projects` | A team's projects as its members name them: a name, other names people say for it, and optionally its own Jira project key (#786). Typed by a member, not derived from speech; goes with the team. `ext_decisions` and `ext_action_items` point at one through `project_id` |
-| `ext_materials` | One row of a team's 자료 screen (#817), told apart by `source`. A Drive link (`drive_link`, #1016): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`) -- not the file and not the link as pasted; Autune reads nothing of it, holds no Drive permission, and builds Google's address from the id where it is shown. An upload (`upload`): a title over the masked text in `ext_material_chunks`, no Drive columns, and nothing of the file itself. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 rows a team, links and uploads together -- at once included: the count and the insert run under a per-team advisory lock (`materials.lock_shelf`); any member deletes one; an upload's `expires_at` is written when it is uploaded -- that moment plus the team's retention window of that day (`teams.retention_days`, 90 days by default) -- and is not moved when the team later changes its window, as a meeting's is fixed when it is held (the owner, 2026-10-12); an upload past it is deleted with its text (`autune.extraction.periodic.forget_expired_material_uploads`, hourly), unless the team keeps uploads until a member deletes them (`ext_material_settings`; the owner, 2026-10-11); a link has no `expires_at`; goes with the team |
+| `ext_materials` | One row of a team's 자료 screen (#817), told apart by `source`. A Drive link (`drive_link`, #1016): a title a member typed, the file's id and which Google editor it belongs to (`materials.py`) -- not the file and not the link as pasted; Autune reads nothing of it, holds no Drive permission, and builds Google's address from the id where it is shown. An upload (`upload`): a title over the masked text in `ext_material_chunks`, no Drive columns, and nothing of the file itself. No column names a person. The title is stored as typed, like a meeting's title; neither it nor the file id is logged. A file once per team, at most 200 rows a team, links and uploads together -- at once included: the count and the insert run under a per-team advisory lock (`materials.lock_shelf`); any member deletes one; an upload's `expires_at` is written when it is uploaded -- that moment plus the team's retention window of that day (`teams.retention_days`, 90 days by default) -- and is not moved when the team later changes its window, as a meeting's is fixed when it is held (the owner, 2026-10-12); an upload past it is deleted with its text (`autune.extraction.periodic.forget_expired_material_uploads`, hourly), unless the team keeps uploads until a member deletes them (`ext_material_settings`; the owner, 2026-10-11); a link has no `expires_at`; goes with the team, or once the team has no member (`autune.extraction.periodic.forget_memberless_team_materials`, hourly) |
 | `ext_material_chunks` | An uploaded material's text in pieces of at most 500 characters (`materials.store_upload`, #817). The whole text is masked (`autune_integrations.document_masking.mask_document`, #1199) before it is cut, and every piece passes `assert_masked` before it is written: no unmasked character of the file is in any row. `embedding` is the piece's `vector(1024)`, made from its masked text in the upload request by the material embedder (`AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL`), under an HNSW index for cosine distance; `ext_materials.embedding_model` names the embedder, and a search reads only vectors of the one it asks with (`material_search.py`). No other index or copy of the text or the vectors exists. Goes with its material, in the same transaction as a member's delete, and with the team |
-| `ext_material_alarms` | An upload stopped for a confidentiality marking (#817 point 9): the team, the time and the kind of marking (`korean_marking` or `english_marking`). Not the file's name or title, nothing of its text, not who brought it. Read and acknowledged (deleted) by the agent layer's approvers' alert (#1201) through `materials.pending_alarms` and `materials.acknowledge_alarm`; who acknowledged is not recorded. `told_at` is when that layer sent the team's approvers their message about the row, null until then, so one stopped upload is told once (`materials.teams_with_untold_alarms`, `materials.mark_alarms_told`); it names nobody. Told or not, unacknowledged, deleted 30 days after it was written (`autune.extraction.periodic.forget_old_material_alarms`, hourly). Goes with the team |
-| `ext_material_settings` | Whether a team keeps its uploaded materials until a member deletes them (`keep_until_deleted`, false by default) and when that last changed (the owner, 2026-10-11). No row is the default: an upload is deleted at its `expires_at`. An upload has its `expires_at` whichever choice is in force, so switching back to the window applies to every existing upload with the day it was given. Any member switches it (`PUT /materials/settings`); no column names who did. Goes with the team |
+| `ext_material_alarms` | An upload stopped for a confidentiality marking (#817 point 9): the team, the time and the kind of marking (`korean_marking` or `english_marking`). Not the file's name or title, nothing of its text, not who brought it. Read and acknowledged (deleted) by the agent layer's approvers' alert (#1201) through `materials.pending_alarms` and `materials.acknowledge_alarm`; who acknowledged is not recorded. `told_at` is when that layer sent the team's approvers their message about the row, null until then, so one stopped upload is told once (`materials.teams_with_untold_alarms`, `materials.mark_alarms_told`); it names nobody. Told or not, unacknowledged, deleted 30 days after it was written (`autune.extraction.periodic.forget_old_material_alarms`, hourly). Goes with the team, or sooner once the team has no member (`autune.extraction.periodic.forget_memberless_team_materials`) |
+| `ext_material_settings` | Whether a team keeps its uploaded materials until a member deletes them (`keep_until_deleted`, false by default) and when that last changed (the owner, 2026-10-11). No row is the default: an upload is deleted at its `expires_at`. An upload has its `expires_at` whichever choice is in force, so switching back to the window applies to every existing upload with the day it was given. Any member switches it (`PUT /materials/settings`); no column names who did. Goes with the team, or once the team has no member (`autune.extraction.periodic.forget_memberless_team_materials`) |
 | `ext_project_sends` | Where a project's minutes for one meeting were sent, per tool (#787): the Notion page id, the Slack message as `channel:ts`, or the Jira issue key, so sending again updates that copy, and a digest of the minutes it last received, so a refresh leaves an unchanged copy alone. Addresses and a hash, no text; goes with the meeting and with the project |
 | `ext_project_send_cleanup` | Copies of project minutes still to take out of a team's tool after their meeting or project was deleted, and half a Notion page that could not be taken back (#787): team, tool and address, no text. Drained every ten minutes; goes with the team |
 | `ext_project_refresh_owed` | Meetings whose project minutes outside still have to be rewritten after a change -- a refresh left a copy behind, or speech was deleted (#787): a meeting id and a count of tries. Retried every ten minutes, given up on after a day; goes with the meeting |
@@ -1304,10 +1304,11 @@ before storage, and the original is not kept". This section holds the two
 lists that rule points here for: what is read of each format, and where and
 for which words a confidentiality marking is looked for.
 
-**Status, 2026-10-09: the rule is written first.** Nothing in this section is
-on `main` yet -- no reader, no `material_marking.py`, no upload route. The
-code follows in its own change, off by default, and this paragraph goes with
-it.
+**Status: on `main`, behind a switch.** The reader (`material_reading.py`,
+`material_formats.py`), the marking check (`material_marking.py`), the
+upload route and the search are on `main`. The upload and search routes
+answer 404 unless `AUTUNE_EXTRACTION_MATERIAL_UPLOAD` is on, and it is off
+by default; whether a deployment turns it on is decided on #817.
 
 ### How long it is kept
 
@@ -1338,9 +1339,12 @@ lsh2217's review on #1198, chosen by module B's owner on 2026-10-11).
 - **Either way**, any member deletes a material from the 자료 screen at any
   time; the `ext_materials` row and its `ext_material_chunks` rows -- masked
   text and vectors -- go in one transaction, and nothing else holds a copy of
-  either. Deleting the team deletes every material it has. Only masked text
+  either. Deleting the team deletes every material it has, and so does the
+  team having no member left (the task above). Only masked text
   is ever kept; the original file is not. An agenda draft made from a
-  material for a meeting is that meeting's and keeps the meeting's window.
+  material for a meeting is that meeting's and keeps the meeting's window
+  -- a rule for a draft nothing builds yet: the new-meeting form's agenda
+  sources do not include a team's materials (#1147).
 
 ### What is read, per format
 
@@ -1471,7 +1475,7 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   and not a number the detector reads; it and the file id stay out of logs
   and error messages, and neither goes to any outside service.
   A link row keeps no text and has no retention window: a member deletes one
-  at any time, and it goes with the team.
+  at any time, and it goes with the team or once the team has no member.
 - An uploaded file (`materials.store_upload`, #817) is read in the upload
   request's memory and nowhere else: no table, disk, queue, log or Celery
   payload holds a byte of it, and its name is read for its ending and the
@@ -1479,7 +1483,7 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   retention window counted from the upload -- an hourly task deletes it after
   -- or, when the team has switched to it, until a member deletes it (the
   owner, 2026-10-11); either way a member deletes it at any time and it goes
-  with the team. The day is fixed at the upload (`ext_materials.expires_at`)
+  with the team, or once the team has no member. The day is fixed at the upload (`ext_materials.expires_at`)
   and the team changing its window afterwards moves it neither way (the
   owner, 2026-10-12). The list answers each upload's `expires_at`. Masked is not
   anonymous: a name in a sentence stays. A file marked confidential is
