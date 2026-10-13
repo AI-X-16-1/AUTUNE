@@ -31,6 +31,12 @@ vi.mock("./SessionGate", () => ({ useSessionUser: () => sessionUser() }));
 vi.mock("@/features/transcript", () => ({
   TeamMenu: () => <div data-testid="team-menu" />,
 }));
+// The agent feature's count of waiting proposals; its own tests are beside it.
+vi.mock("@/features/agent", () => ({
+  PendingBadge: ({ pathname }: { pathname: string }) => (
+    <span data-testid="pending-badge" data-pathname={pathname} />
+  ),
+}));
 
 const ME = { id: "user_me", email: "me@example.com", display_name: "Me", teams: [] };
 
@@ -149,5 +155,18 @@ describe("AppSidebar, signing out", () => {
     );
     expect(replace).not.toHaveBeenCalled();
     expect(setSignedIn).not.toHaveBeenCalled();
+  });
+});
+
+describe("AppSidebar, waiting proposals", () => {
+  it("puts the agent's count on 승인 대기 and nowhere else", () => {
+    sessionUser.mockReturnValue(ME);
+    pathname.mockImplementation(() => "/actions");
+    render(<AppSidebar />);
+
+    const badges = screen.getAllByTestId("pending-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]!.closest("a")?.getAttribute("href")).toBe("/approvals");
+    expect(badges[0]!.getAttribute("data-pathname")).toBe("/actions");
   });
 });

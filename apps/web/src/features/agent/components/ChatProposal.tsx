@@ -8,6 +8,7 @@ import { announceAgentActed } from "@/shared/lib/agentActed";
 import { Button, MaskedText, StatusDot } from "@/shared/ui";
 
 import { approvePending, listPending, rejectPending } from "../api";
+import { announcePendingChanged } from "../pendingCount";
 import { reportLink } from "../reportLink";
 import type { PendingAction, RejectReason } from "../types";
 
@@ -102,6 +103,8 @@ export function ChatProposal({ item }: { item: PendingAction }) {
     } finally {
       setBusy(false);
       setChoosing(false);
+      // The sidebar's count beside 승인 대기 reads the queue again.
+      announcePendingChanged();
     }
   };
 
