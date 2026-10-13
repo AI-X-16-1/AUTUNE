@@ -668,12 +668,13 @@ person.
     only once the last membership is gone -- at its next run, within the
     hour. The log line has the team's id and two counts.
     **Still open, and module A's: the team itself.** The `teams` row stays,
-    and the team's meetings until their own windows pass. Module B's
-    proposal there: the last member's account deletion deletes the team
-    with it, after a confirmation that names the team. That is module A's
-    code and module A's (mkkim68's) decision, and mkkim68 has said module A
-    takes it (review of #1198, 2026-10-12; #817). What upload waited for
-    was a way for these materials to end, and that part now has one.
+    and so do the team's meetings, which the retention sweep ends as it
+    does any team's. Module B's proposal there: the last member's account
+    deletion deletes the team with it, after a confirmation that names the
+    team. That is module A's code and module A's (mkkim68's) decision, and
+    mkkim68 has said module A takes it (review of #1198, 2026-10-12;
+    #817). What upload waited for was a way for these materials to end,
+    and that part now has one.
   - **What a meeting makes from a material is the meeting's.** An agenda
     draft built from a material for a meeting (#1147) is an analysis result
     of that meeting: it has the meeting's window and goes with the meeting.
@@ -819,12 +820,10 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
-- Fetching a model's files is a download, and it is still a request to
-  somebody else. With `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local` the
-  API process asks huggingface.co about KURE-v1's files each time it loads
-  the model, and fetches them when its cache does not hold them: requests
-  that name the model and its revision, and nothing of a material, a
-  question or a team.
+- With `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local` the API process
+  asks huggingface.co about KURE-v1's files each time it loads the model,
+  and downloads them when its cache does not hold them: requests that name
+  the model, and nothing of a material, a question or a team.
 - A cloud model is never the default, and in module B it has to be switched on
   twice (#392). B's classifier, resolver, meeting summary, short titles and
   step-4 NLI send text to a provider only when their implementation is set to
