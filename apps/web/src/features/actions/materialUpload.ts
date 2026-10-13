@@ -91,13 +91,20 @@ function readReason(cause: ApiError): string | null {
 /**
  * A file with a confidentiality marking, stopped. What a member may know, as
  * facts: that there is a marking (not which, and not where), that nothing was
- * kept, and what the team's approvers are told -- that an upload was stopped,
- * when, and the kind of marking; not who sent it and not the file's name.
+ * kept, and who can see the record of it -- that an upload was stopped, when,
+ * and the kind of marking; not who sent it and not the file's name.
+ *
+ * **Who sees it is said as the code has it**: the holders of the `any`
+ * approver scope and nobody else (the agent layer's `ALARM_SCOPES`). A team
+ * starts with no approver at all, and then nobody is told and nobody can
+ * open the record before it is deleted at thirty days -- so the sentence
+ * says that too, and does not promise a reader the team may not have.
  */
 export const CONFIDENTIAL_REFUSAL =
   "이 파일에는 기밀·대외비 표시가 있어 받지 않았습니다. 파일의 내용은 저장되지 않았습니다. " +
-  "팀의 승인자에게는 업로드가 멈췄다는 사실과 그 시각, 표시의 종류만 알려지며 " +
-  "올린 사람과 파일 이름은 알려지지 않습니다.";
+  "팀에 '전체' 범위의 승인자가 있으면 그 사람만 업로드가 멈췄다는 사실과 그 시각, 표시의 종류를 볼 수 있으며, " +
+  "올린 사람과 파일 이름은 알려지지 않습니다. " +
+  "그런 승인자가 없는 팀에서는 이 기록을 아무도 보지 못하며, 기록은 30일 뒤 삭제됩니다.";
 
 /**
  * No answer that says what happened: a dropped connection, or a failure on

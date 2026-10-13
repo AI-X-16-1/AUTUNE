@@ -135,6 +135,11 @@ describe("MaterialsScreen, whether a file can be sent at all", () => {
     expect(form.textContent).not.toMatch(/팀이 지울 때까지/);
     expect(within(form).getByText(/문장 속의 이름은 가려지지 않으며/)).toBeTruthy();
     expect(within(form).getByText(/그림으로만 들어 있는 글은\s+읽지 않습니다/)).toBeTruthy();
+    // What the masker does not put back together (`document_masking.py`), said
+    // before the file goes (the owner, 2026-10-13).
+    expect(form.textContent?.replace(/\s+/g, " ")).toContain(
+      "줄이나 쪽이 바뀌는 곳에서 나뉜 번호나 전자우편 주소는 가려지지 않을 수 있습니다.",
+    );
     expect(within(form).getByText(/한 파일 5MB까지 · \.txt \.pdf \.docx/)).toBeTruthy();
     expect(screen.getByLabelText("올릴 파일").getAttribute("accept")).toBe(".txt,.pdf,.docx");
     expect(screen.getByLabelText("올릴 자료 제목").getAttribute("maxlength")).toBe("80");
@@ -455,6 +460,11 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
     expect(group.textContent).toMatch(/팀 구성원이 직접 삭제할 때까지 보관합니다/);
     expect(group.textContent).toMatch(/팀의 보관 기간을 나중에 바꿔도 이미 올린 자료의 날은 달라지지 않습니다/);
     expect(group.textContent).toMatch(/각각 올릴 때 정해진 지워지는 날이 다시 적용되어/);
+    // Kept until a member deletes it, and no longer than there is a member
+    // (#817; the owner, 2026-10-13).
+    expect(group.textContent).toMatch(
+      /팀에 구성원이 한 명도 남지 않으면 이 선택과 관계없이 팀의 자료를 한 시간 안에 모두 지웁니다/,
+    );
     expect(group.textContent).not.toMatch(/지금 이 방식으로/);
     expect(group.textContent).toMatch(/누가 바꿨는지는 기록하지 않습니다/);
     expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);

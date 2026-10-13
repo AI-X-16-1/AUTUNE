@@ -115,6 +115,11 @@ describe("MaterialsScreen, whether a question can be asked at all", () => {
     // Masked is not anonymous: only values of a set shape are hidden.
     expect(section.textContent).toContain("전화번호처럼 형식이 정해진 개인정보를 가린 글의 일부");
     expect(section.textContent).not.toMatch(/글은 개인정보를 가린/);
+    // A value the masker missed can be shown, and a material has no way to
+    // mask one part: the member deletes it (the owner, 2026-10-13).
+    expect(section.textContent?.replace(/\s+/g, " ")).toContain(
+      "줄이나 쪽이 바뀌는 곳에서 나뉜 번호나 전자우편 주소도 가려지지 않은 채 보일 수 있습니다. 그런 글이 보이면 그 자료를 삭제해 주세요.",
+    );
     expect(section.textContent).toContain("문장 속의 이름은 가려지지 않으므로 그대로 보일 수 있습니다");
     // What the embedding server keeps of a question is not known here.
     expect(section.textContent).not.toMatch(/저장하지 않|보관하지 않|남기지 않/);

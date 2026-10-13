@@ -1,0 +1,733 @@
+{
+  "version": 1,
+  "_about": "Development set (2026-10-12), not held-out: what decision lineage's use of a decision's source utterances is designed and calibrated on, so that decision_lineage_heldout_v6 is not. Same format as v6 (every meeting carries `context`), different subjects (a library, a bus company, a theatre, a kindergarten, a bakery, a sports club). Written after v6 was frozen; shares no statement with it or any earlier set.",
+  "cases": [
+    {
+      "id": "d_tu_late_fee",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "도서 연체료는 하루 100원으로 한다.",
+          "context": [
+            "연체료를 얼마로 할지 정하죠.",
+            "하루 100원이면 부담 없이 반납을 유도할 수 있어요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그건 지금대로 둔다.",
+        "context": [
+          "연체료 올리자는 의견이 있었는데요.",
+          "반납률이 괜찮아서 하루 100원 연체료는 그대로 두죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "d_tu_route",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "7번 버스는 시장 앞을 경유한다.",
+          "context": [
+            "7번 버스 노선을 시장 앞으로 돌리죠. 어르신 승객이 많아요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "노선은 손대지 않기로 했다.",
+        "context": [
+          "7번 노선을 다시 바꾸자는 민원이 있었어요.",
+          "시장 앞 경유 노선은 그대로 유지합니다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "d_tu_nap",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "낮잠 시간은 오후 1시부터 2시까지다.",
+          "context": [
+            "아이들 낮잠은 1시부터 2시까지로 정하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "원래대로 간다.",
+        "context": [
+          "낮잠 시간을 줄이자는 학부모 의견이 있었어요.",
+          "검토해 봤는데 1시부터 2시 낮잠은 그대로 갑니다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "d_tm_matinee",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "주말 낮 공연은 오후 2시에 시작한다.",
+          "context": [
+            "주말 낮 공연 시작 시간을 2시로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "한 시간 당긴다.",
+        "context": [
+          "2시 공연은 끝나고 저녁 공연 준비가 빠듯해요.",
+          "주말 낮 공연을 1시로 한 시간 당기죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_tm_loaves",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "매장당 식빵은 하루 40개를 굽는다.",
+          "context": [
+            "식빵 생산량은 매장당 하루 40개로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "20개 더 늘린다.",
+        "context": [
+          "식빵이 오후 3시면 다 팔려요.",
+          "매장당 하루 60개로 20개 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_tm_coach",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "유소년반 코치는 장태오가 맡는다.",
+          "context": [
+            "유소년반 코치를 정하죠. 태오 코치님이 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "백승아가 이어서 한다.",
+        "context": [
+          "태오 코치님이 성인반으로 옮기셔서 유소년반이 비어요.",
+          "유소년반은 승아 코치님이 이어서 맡아 주세요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_tm_hours",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "열람실은 저녁 9시에 닫는다.",
+          "context": [
+            "열람실은 저녁 9시에 닫는 걸로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "자정까지로 넓힌다.",
+        "context": [
+          "시험 기간에는 9시 이후에도 자리를 찾는 학생이 많아요.",
+          "열람실 운영을 자정까지로 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_tr_bus_cancel",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "심야 버스는 금요일과 토요일에 운행한다.",
+          "context": [
+            "심야 버스를 금요일, 토요일에 시범 운행하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "접기로 했다.",
+        "context": [
+          "심야 버스 승객이 하루 열 명도 안 돼요.",
+          "심야 버스 운행은 접죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_tr_printing",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "공연 팸플릿은 종이로 인쇄해 배포한다.",
+          "context": [
+            "팸플릿은 종이로 인쇄해서 입구에서 나눠 드리죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "QR 코드로 대신한다.",
+        "context": [
+          "인쇄비가 너무 많이 들어요.",
+          "종이 팸플릿 말고 좌석마다 QR 코드를 붙여서 대신하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_tr_supplier",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "버터는 가온유업에서 납품받는다.",
+          "context": [
+            "버터 납품 업체는 가온유업으로 하죠. 단가가 제일 좋아요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "직수입으로 돌린다.",
+        "context": [
+          "가온유업 품질이 들쭉날쭉해서 클레임이 많아요.",
+          "업체 납품 말고 프랑스산 직수입으로 돌리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_tn_fee_vs_nap",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "원복은 한 벌에 3만 원이다.",
+          "context": [
+            "원복 가격은 한 벌에 3만 원으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그렇게 하기로 했다.",
+        "context": [
+          "소풍 장소는 어린이대공원으로 하죠.",
+          "다들 좋다고 하니 그렇게 하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_tn_delay_vs_delay",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "신간 입고는 매달 첫째 주에 한다.",
+          "context": [
+            "신간 입고는 매달 첫째 주에 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "일주일 미루기로 했다.",
+        "context": [
+          "도서관 외벽 공사가 비 때문에 늦어졌어요.",
+          "외벽 공사 완료를 일주일 미루죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_tn_owner_vs_owner",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "배차 관리는 오민석이 맡는다.",
+          "context": [
+            "배차 관리는 민석 님이 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "윤가람이 맡는다.",
+        "context": [
+          "정비 기록 전산화를 누가 할지 정하죠.",
+          "정비 기록 전산화는 가람 님이 맡아 주세요."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_tn_cancel_vs_cancel",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 19,
+          "decision": "연말 공연은 3회 한다.",
+          "context": [
+            "연말 공연은 세 번 올리죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "취소한다.",
+        "context": [
+          "단원 MT를 하려 했는데 대관이 안 돼요.",
+          "이번 MT는 취소하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_un_rent",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "연습실 대관료는 시간당 2만 원이다.",
+          "context": [
+            "연습실 대관료는 시간당 2만 원으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "연습실 대관료는 계속 시간당 2만 원으로 받는다.",
+        "context": [
+          "대관료 인상 얘기가 있었지만 지금 수준을 유지하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "d_un_pickup",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "하원 차량은 오후 4시에 출발한다.",
+          "context": [
+            "하원 차량은 4시에 출발하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "하원 차량 출발 시각은 오후 4시 그대로다.",
+        "context": [
+          "출발 시간 바꿔 달라는 요청이 있었는데 그대로 갑니다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "d_un_sampling",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "신제품 시식은 매장 입구에서 한다.",
+          "context": [
+            "신제품 시식대는 입구에 두죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "시식대는 계속 매장 입구에 둔다.",
+        "context": [
+          "계산대 옆으로 옮기자는 말도 있었는데 입구가 낫겠어요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "d_mo_fare",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "마을버스 요금은 1,200원이다.",
+          "context": [
+            "마을버스 요금은 1,200원으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "마을버스 요금을 1,400원으로 올린다.",
+        "context": [
+          "연료비가 올라서 요금 조정이 불가피해요.",
+          "1,400원으로 올리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_mo_loan_count",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "1인당 대출 권수는 다섯 권이다.",
+          "context": [
+            "대출은 한 번에 다섯 권까지로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "1인당 대출 권수를 열 권으로 늘린다.",
+        "context": [
+          "방학 동안은 많이 빌려 가고 싶다는 요청이 많아요.",
+          "열 권까지 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_mo_class_size",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "유소년반 정원은 열두 명이다.",
+          "context": [
+            "유소년반은 열두 명으로 운영하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "유소년반 정원을 열다섯 명으로 늘린다.",
+        "context": [
+          "대기자가 많아서 세 명 더 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_mo_scope_members",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "무료 와이파이는 회원에게만 제공한다.",
+          "context": [
+            "와이파이는 회원만 쓸 수 있게 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무료 와이파이를 비회원 방문객에게도 연다.",
+        "context": [
+          "관광객들이 와이파이를 많이 찾아요.",
+          "비회원도 쓸 수 있게 열죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_re_card",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "버스 요금은 현금으로도 받는다.",
+          "context": [
+            "현금 승객이 아직 많으니 현금도 받죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "버스 요금 현금 결제를 폐지한다.",
+        "context": [
+          "현금 정산 사고가 계속 나요.",
+          "현금은 받지 말고 교통카드만 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_re_outsource",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "무대 조명은 외부 업체에 맡긴다.",
+          "context": [
+            "조명은 외부 업체에 맡기죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무대 조명을 극단 자체 인력으로 운영한다.",
+        "context": [
+          "업체 일정이 자꾸 안 맞아요.",
+          "조명은 우리 단원이 직접 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_re_delivery",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "케이크 배달 서비스를 시작한다.",
+          "context": [
+            "케이크 배달을 시작해 보죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "케이크 배달 서비스를 중단한다.",
+        "context": [
+          "배달 중 파손 클레임이 너무 많아요.",
+          "배달은 그만두고 매장 픽업만 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_nd_fee_vs_hours",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "도서 연체료는 하루 100원이다.",
+          "context": [
+            "연체료는 하루 100원으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무인 반납기는 24시간 운영한다.",
+        "context": [
+          "반납기는 밤에도 쓸 수 있게 24시간 열죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_nd_route_vs_driver",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "7번 버스는 시장 앞을 경유한다.",
+          "context": [
+            "7번 노선은 시장 앞을 지나게 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "버스 기사 휴게실을 차고지에 새로 만든다.",
+        "context": [
+          "기사님들 쉴 곳이 없어요.",
+          "차고지에 휴게실을 하나 만들죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_nd_ticket_vs_seat",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "공연 티켓은 2만 원이다.",
+          "context": [
+            "티켓 가격은 2만 원으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "공연장 앞줄 두 열은 휠체어석으로 비워 둔다.",
+        "context": [
+          "휠체어 관객 자리가 부족하다는 의견이 있었어요.",
+          "앞 두 줄은 휠체어석으로 비워 두죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "d_di_bread",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "매장 영업은 오전 7시에 시작한다.",
+          "context": [
+            "영업은 7시에 시작하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "크루아상은 매장당 하루 30개를 굽는다.",
+          "context": [
+            "크루아상은 하루 30개씩 굽죠."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "포장 봉투는 유료로 판매한다.",
+          "context": [
+            "봉투는 유료로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "열 개 더 굽는다.",
+        "context": [
+          "크루아상이 점심 전에 다 나가요.",
+          "크루아상을 하루 40개로 열 개 더 굽죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "d_di_library",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "열람실 좌석은 사전 예약제로 운영한다.",
+          "context": [
+            "열람실은 예약한 사람만 쓰게 하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "신간 입고는 매달 첫째 주에 한다.",
+          "context": [
+            "신간은 첫째 주에 들여오죠."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "사서 교육은 분기마다 한다.",
+          "context": [
+            "사서 교육은 분기마다 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "예약제는 없애기로 했다.",
+        "context": [
+          "예약해 놓고 안 오는 사람이 너무 많아요.",
+          "열람실 예약제는 없애고 선착순으로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "d_di_new_amid",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "정기 공연은 분기마다 올린다.",
+          "context": [
+            "정기 공연은 분기마다 하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "단원 회비는 월 3만 원이다.",
+          "context": [
+            "회비는 3만 원으로 하죠."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "연습은 화요일과 목요일 저녁에 한다.",
+          "context": [
+            "연습은 화, 목 저녁에 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신입 단원 오디션은 봄과 가을에 연다.",
+        "context": [
+          "신입 오디션은 일 년에 두 번, 봄 가을에 하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    }
+  ]
+}

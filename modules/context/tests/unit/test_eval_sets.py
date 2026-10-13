@@ -130,3 +130,15 @@ def test_a_link_is_on_topic_when_its_segment_is_about_a_topic_the_linked_meeting
     assert (on.on_topic, on.from_untagged) == (True, False)
     assert (off.on_topic, off.from_untagged) == (False, False)
     assert (closing.on_topic, closing.from_untagged) == (False, True)
+
+
+def test_the_development_series_loads() -> None:
+    series = topic_dataset.load_cases("topic_linking_series_dev_v1.json")
+    assert len(series) == 3
+    assert all(isinstance(s, EvalSeries) and len(s.meetings) == 6 for s in series)
+
+
+def test_the_lineage_context_development_set_carries_context() -> None:
+    cases = lineage_dataset.load_cases("decision_lineage_context_dev_v1.json")
+    assert len(cases) == 30
+    assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))
