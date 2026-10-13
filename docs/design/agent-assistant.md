@@ -26,13 +26,13 @@ UI copy is Korean and is quoted as it appears on screen.
 | Property | Value |
 |---|---|
 | Position | right 24 · bottom 24 |
-| Size | height 48 · padding 0 18 0 14 · radius 24 (an exception reserved for the floating launcher) |
-| Background / text | `ink.strong #16191F` / `#FFFFFF` · 600 13.5px |
-| Contents | 22px accent circle ("AT", 700 9px) · "비서" · shortcut `⌘J` (mono 11.5, opacity .6) |
-| Shadow | `0 2px 12px rgba(22,25,31,.18)` |
-| Hover | background `#000` |
-| Alert | when the assistant has something to say first (for example, an item became overdue): a 6px `signal.critical` dot at the circle's top right. No numeric badge |
-| Shortcuts | `⌘J` / `Ctrl+J` toggles, `Esc` closes |
+| Size | height 44 · padding 0 10 0 16 · radius 22 (an exception reserved for the floating launcher) |
+| Background / text | `accent.default` / `accent.on-accent` · 600 13.5px (the same in dark mode, where `ink.strong` turns light) |
+| Contents | 18px four-point spark icon · "비서" · one shortcut pill, `Ctrl J` then `⌘J` split by a thin rule (500 11.5px, white 16% background, height 24, radius 12, nested 10px from the launcher's end so the two ends share a centre), so a Windows user does not translate the Mac shortcut |
+| Shadow | `0 4px 16px rgba(59,74,158,.28)` |
+| Hover | background `accent.hover` |
+| Alert | when the assistant has something to say first (for example, an item became overdue): a 7px `signal.critical` dot at the icon's top right, ringed in the accent. No numeric badge |
+| Shortcuts | `Ctrl+J` / `⌘J` toggles, `Esc` closes |
 
 ## 3. Panel (open)
 
@@ -136,7 +136,7 @@ design names module D's retrieval as the filter; see section 9.
 | State | Shown as |
 |---|---|
 | Closed | Launcher only |
-| Closed with an alert | Red 6px dot at the launcher circle's top right |
+| Closed with an alert | Red 7px dot at the launcher icon's top right |
 | Open, empty conversation | One greeting line in the message area ("{name}님, 무엇을 확인할까요?", 600 14) and three larger suggested-question chips (height 32) |
 | Streaming | Three dots · `보내기` → `중지` |
 | Action waiting | Proposal block shown; the input stays usable |
@@ -147,7 +147,7 @@ design names module D's retrieval as the filter; see section 9.
 
 ## 7. Accessibility
 
-- Launcher `aria-label="Autune 비서 열기 (⌘J)"`; panel `role="dialog"
+- Launcher `aria-label="Autune 비서 열기 (Ctrl+J / ⌘J)"`; panel `role="dialog"
   aria-modal="false"`.
 - Focus moves to the input on open and back to the launcher on close. The
   message area is `aria-live="polite"`.
