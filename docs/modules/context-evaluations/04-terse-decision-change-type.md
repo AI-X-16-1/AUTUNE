@@ -95,13 +95,29 @@ query (`service._consented_texts`).
    Where NLI contradicts, the cue does not speak, so "A사를 계속 쓰기로" after a switch
    away from A is not rescued.
 
+   A change verb with a direction (올리, 늘리, 인상; 내리, 줄이, 인하) is the exception.
+   Negated after an earlier decision that moved the same way, it takes that decision
+   back: after "가격을 10% 올린다", "가격은 올리지 않기로 했다" is a withdrawal, not a
+   keep. Against a decision that moved nothing ("가격은 만 원이다") it is still a keep.
+   A keep noun inside a compound ("유지보수") and a keep adverb whose clause gives way
+   to another ("계속 논의하다가 …") are not keeps either. All three were found in
+   review, on made-up statements.
+
 The vocabulary is general Korean for keeping and changing, not words lifted from the
 sets. Some of it was added after a failure on the development set showed it was missing.
 
 ## 4. Results
 
 Old code against new, one process, same cases. A = before fix 4, B = part 1,
-C = parts 1 and 2, D = all three (the shipped code).
+C = parts 1 and 2, D = all three.
+
+The review exceptions in part 3 came after these runs, and they change no result below.
+The keep and withdrawal cues were compared, before and after the exceptions, on every
+statement and context line of every lineage set against every earlier statement in its
+case: 0 of 1,849 pairs differ. That comparison reads only the cue functions, not the
+models, and printed counts only for the held-out sets. No set has a negated move after a
+move the same way, a keep noun in a compound, or a keep adverb in a clause that gives
+way, which is also why the evaluations did not catch the first of these.
 
 **Development sets** (per-case lines read):
 

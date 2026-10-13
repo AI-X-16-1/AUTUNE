@@ -168,6 +168,64 @@ def test_a_negated_change_verb_does_not_hide_a_real_withdrawal() -> None:
     assert marks_reversal("노선은 바꾸지 않고 심야 운행은 하지 않기로 했다.")
 
 
+_WITHDRAWN_MOVES = [
+    ("가격은 올리지 않기로 했다.", "가격을 10% 올린다."),
+    ("인력은 늘리지 않기로 했다.", "인력을 두 명 늘린다."),
+    ("요금은 인상하지 않는다.", "요금을 5% 인상한다."),
+    ("가격은 안 올리기로 했다.", "가격 인상은 다음 달부터다."),
+    ("수수료는 내리지 말죠.", "수수료를 1%로 내린다."),
+]
+
+
+@pytest.mark.parametrize(("statement", "previous"), _WITHDRAWN_MOVES)
+def test_a_negated_move_the_earlier_decision_made_withdraws_it(
+    statement: str, previous: str
+) -> None:
+    assert marks_reversal(statement, previous)
+    assert not marks_keep(statement, previous)
+
+
+@pytest.mark.parametrize(("statement", "previous"), _WITHDRAWN_MOVES)
+def test_a_withdrawn_move_is_reversed_or_modified_never_unchanged(
+    statement: str, previous: str
+) -> None:
+    contradicted, _ = classify_change(_nli(0.0, 0.1, 0.9), _nli(0.0, 0.1, 0.9), statement, previous)
+    neutral, _ = classify_change(_nli(0.0, 0.9, 0.1), _nli(0.0, 0.9, 0.1), statement, previous)
+    assert contradicted is ChangeType.REVERSED
+    assert neutral is ChangeType.MODIFIED
+
+
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        ("가격은 올리지 말죠.", "가격은 만 원이다."),
+        ("가격은 올리지 않기로 했다.", "가격은 올리지 않는다."),
+        ("인원은 줄이지 않는다.", "인원을 두 명 늘린다."),
+        ("요금은 인상하지 않는다.", "요금을 인상하지 않는다."),
+    ],
+)
+def test_a_negated_move_the_earlier_decision_did_not_make_keeps_it(
+    statement: str, previous: str
+) -> None:
+    assert marks_keep(statement, previous)
+    assert not marks_reversal(statement, previous)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "서버 유지보수는 월 2회로 한다.",
+        "유지 보수 계약은 연장한다.",
+        "계속 논의하다가 회의를 주 2회로 한다.",
+        "그대로 두다가 다음 달에 올린다.",
+    ],
+)
+def test_a_keep_word_in_a_compound_or_a_clause_that_gives_way_is_not_a_keep(
+    statement: str,
+) -> None:
+    assert not marks_keep(statement)
+
+
 @pytest.mark.parametrize(
     "statement",
     [

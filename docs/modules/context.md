@@ -487,7 +487,8 @@ lineage view (S22), which reads to a user as a bug.
    했다" is classified as the line it was settled in, "10시 마감은 지금대로
    둡시다". A statement that says nothing changes (그대로, 유지, 지금대로, 바꾸지
    않는다) and that NLI neither entails nor contradicts reads `unchanged`
-   (`pipeline.change.marks_keep`).
+   (`pipeline.change.marks_keep`) — except a negated move the earlier
+   decision made: after "10% 올린다", "올리지 않기로 했다" withdraws it.
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and
