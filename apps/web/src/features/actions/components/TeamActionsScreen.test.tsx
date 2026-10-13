@@ -21,6 +21,11 @@ import type { ActionItemRead, Project, TeamName } from "../types";
 const teams = vi.fn<() => Promise<TeamName[]>>();
 const projects = vi.fn<() => Promise<Project[]>>();
 const jira = vi.fn<() => Promise<JiraProjectIssues[]>>();
+// A team's Jira connection record; every team has one unless a test says not.
+const jiraConnection = vi.fn<(scope: { teamId: string }) => Promise<{ connected: boolean } | null>>();
+vi.mock("@/shared/api/auth", () => ({
+  getJiraConnection: (scope: { teamId: string }) => jiraConnection(scope),
+}));
 vi.mock("../api", () => ({
   listMyTeams: () => teams(),
   listMyProjects: () => projects(),
@@ -106,6 +111,7 @@ beforeEach(() => {
   ];
   teams.mockResolvedValue(TEAMS);
   projects.mockResolvedValue(PROJECTS);
+  jiraConnection.mockResolvedValue({ connected: true });
 });
 
 afterEach(() => {
@@ -487,5 +493,39 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(inGroup("플랫폼")).toEqual(["a", "c"]);
     expect(screen.queryByRole("region", { name: "디자인" })).toBeNull();
+  });
+  it("offers the Jira link only where a team in view has Jira connected", async () => {
+    jiraConnection.mockImplementation(async ({ teamId }) => ({ connected: teamId === "team_d" }));
+    await open();
+
+    expect(await screen.findByRole("button", { name: "Jira 열린 이슈 보기" })).toBeTruthy();
+    expect(jiraConnection).toHaveBeenCalledWith({ teamId: "team_d" });
+    expect(jiraConnection).toHaveBeenCalledWith({ teamId: "team_p" });
+  });
+
+  it("has no Jira link for teams that never connected it, and asks Jira nothing", async () => {
+    jiraConnection.mockResolvedValue({ connected: false });
+    await open();
+    await waitFor(() => expect(jiraConnection).toHaveBeenCalled());
+
+    expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
+    expect(jira).not.toHaveBeenCalled();
+  });
+
+  it("has no Jira link when the connection could not be read", async () => {
+    jiraConnection.mockResolvedValue(null);
+    await open();
+    await waitFor(() => expect(jiraConnection).toHaveBeenCalled());
+
+    expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
+  });
+
+  it("puts the Jira link with the board's controls, above the board", async () => {
+    await open();
+
+    const link = await screen.findByRole("button", { name: "Jira 열린 이슈 보기" });
+    const column = screen.getByRole("region", { name: "진행 전" });
+
+    expect(link.compareDocumentPosition(column) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

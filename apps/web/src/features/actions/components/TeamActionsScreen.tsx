@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
 import Link from "next/link";
 
+import { getJiraConnection } from "@/shared/api/auth";
 import { Button, ChipToggle, Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
@@ -137,6 +138,27 @@ export function TeamActionsScreen({
     };
   }, []);
 
+  // Whether any team in view has Jira connected (#1183): the link to its open
+  // issues is for those teams only. This is the team's own connection record,
+  // not a read of Jira, so asking costs nothing at Jira. A team whose answer
+  // did not come is taken as not connected rather than offering a link that
+  // then says "연결한 Jira 프로젝트가 없습니다".
+  const [jiraOn, setJiraOn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const ids = teamId === null ? teams.map((team) => team.id) : [teamId];
+    if (ids.length === 0) {
+      setJiraOn(false);
+      return;
+    }
+    void Promise.all(ids.map((id) => getJiraConnection({ teamId: id }))).then((answers) => {
+      if (alive) setJiraOn(answers.some((answer) => answer?.connected === true));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [teams, teamId]);
+
   const shown = inProject(lists[tab], project);
   const groups =
     view === "team"
@@ -248,6 +270,10 @@ export function TeamActionsScreen({
           onChoose={setProject}
         />
 
+        {/* With the board's controls, not alone under it, and only for a team
+            that has Jira (#1183). */}
+        {jiraOn ? <JiraOpenIssues teamId={teamId} /> : null}
+
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
             <Note>할 일을 불러오는 중입니다.</Note>
@@ -292,7 +318,6 @@ export function TeamActionsScreen({
         </div>
 
         <SinceLastMeetingSection items={items} teamId={teamId} onOpen={setSelectedId} />
-        <JiraOpenIssues teamId={teamId} />
       </div>
 
       {selected !== undefined ? (
