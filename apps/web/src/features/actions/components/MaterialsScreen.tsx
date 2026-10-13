@@ -170,9 +170,16 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   // cannot -- then no toggle is drawn and the rows still say their days.
   const [settings, setSettings] = useState<MaterialSettings | null>(null);
   const uploadsOn = rules?.enabled === true;
+  // The choice is over the uploads a team has as much as over those to come.
+  // Where uploads were switched off again, the server still takes the choice
+  // and still deletes by it every hour, so a team with an upload left has to
+  // see which one holds and be able to change it (#1295). A link keeps no
+  // text and has no day: links alone ask for nothing.
+  const hasUpload = (materials ?? []).some((material) => material.source === "upload");
+  const keepSettingWanted = uploadsOn || hasUpload;
 
   useEffect(() => {
-    if (!uploadsOn) return;
+    if (!keepSettingWanted) return;
     let alive = true;
     getMaterialSettings(teamId)
       .then((answer) => alive && setSettings(answer))
@@ -180,7 +187,7 @@ function TeamMaterials({ teamId }: { teamId: string }) {
     return () => {
       alive = false;
     };
-  }, [teamId, uploadsOn]);
+  }, [teamId, keepSettingWanted]);
 
   useEffect(() => {
     let alive = true;
@@ -223,9 +230,11 @@ function TeamMaterials({ teamId }: { teamId: string }) {
           setNote("자료를 등록했습니다.");
         }}
       />
-      {rules?.enabled && settings ? (
+      {keepSettingWanted && settings ? (
         <MaterialKeepSetting
           settings={settings}
+          // Only on the server's word: an answer that did not come is not "off".
+          uploadsOff={rules?.enabled === false}
           onChange={async (keep) => {
             setNote(null);
             setSettings(await saveMaterialSettings(teamId, keep));
