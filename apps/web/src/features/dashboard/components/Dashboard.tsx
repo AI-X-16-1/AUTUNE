@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 
+import { Button } from "@/shared/ui";
+
 import { ActionCompletionRate } from "./ActionCompletionRate";
 import { DashboardCard } from "./DashboardCard";
 import { GapDistributionBars } from "./GapDistributionBars";
@@ -32,7 +34,7 @@ import { useDashboard } from "../hooks/useDashboard";
  * `/heatmap` stay, so it comes back as one line here once stance is produced.
  */
 export function Dashboard({ teamId }: { teamId: string }) {
-  const { dashboard, gapTitles, predictions, loading, error } = useDashboard(teamId);
+  const { dashboard, gapTitles, predictions, loading, error, reload } = useDashboard(teamId);
 
   if (loading && !dashboard) {
     return <p style={metaStyle}>불러오는 중…</p>;
@@ -50,11 +52,21 @@ export function Dashboard({ teamId }: { teamId: string }) {
     return null;
   }
 
+  // The figures stay on screen while they reload; only the button says so.
+  const refresh = (
+    <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end" }}>
+      <Button tone="quiet" size="compact" loading={loading} onClick={() => void reload()}>
+        새로고침
+      </Button>
+    </div>
+  );
+
   // No meeting scored yet: every widget would say so on its own, so one card
   // says it once, beside the one thing a member can set already (#1179).
   if (dashboard.meeting_count === 0) {
     return (
       <div className="grid" style={gridStyle}>
+        {refresh}
         <div style={{ gridColumn: "1 / -1" }}>
           <DashboardCard title="대시보드">
             <p style={{ ...metaStyle, color: "var(--color-ink-strong)" }}>
@@ -88,6 +100,7 @@ export function Dashboard({ teamId }: { teamId: string }) {
   // Half-width cards come in pairs, so no row ends in an empty cell (#1179).
   return (
     <div className="grid" style={gridStyle}>
+      {refresh}
       <div style={{ gridColumn: "1 / -1" }}>
         <QualityScoreCard dashboard={dashboard} />
       </div>
