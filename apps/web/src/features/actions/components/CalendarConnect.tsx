@@ -50,7 +50,10 @@ import { getNotificationPause } from "../api";
  * said here -- it is not a use of the calendar connection. Each sentence
  * about what is *not* read is about one read
  * only: "no title, no other event" is true of the out-of-office read and
- * false of the picker.
+ * false of the picker. What is kept from the picked event is said whole:
+ * which event the line went onto, and the day it starts
+ * (`gap_agenda_events.event_day`), which the Follow-up card offers the
+ * approver among the next meeting's dates with the picker's name beside it.
  *
  * **What a ticked 휴가 기간 writes is said here as well** (the user,
  * 2026-10-06): the same grant puts the person's own leave on their calendar
@@ -194,8 +197,10 @@ export function CalendarConnect() {
         갭 화면의 &lsquo;다음 회의 잡기&rsquo;를 직접 누를 때에만, 내 캘린더의 앞으로 2주
         일정(제목과 시간)을 읽어 고를 수 있게 보여 주고, 고른 일정의 설명과 참석자 주소를 읽어
         그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
-        이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느
-        일정에 적었는지만 나중에 지울 수 있도록 기록합니다.
+        이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않습니다. 어느
+        일정에 적었는지는 나중에 지울 수 있도록 기록하고, 그 일정이 시작하는 날짜도 함께
+        기록합니다. 이 날짜는 후속 조치를 승인하는 사람에게 다음 회의 날짜 후보로, 고른 사람의
+        이름과 함께 보입니다.
       </span>
       <span
         className="basis-full text-[var(--color-ink-muted)]"
