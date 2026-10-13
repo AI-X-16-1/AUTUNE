@@ -1359,6 +1359,19 @@ authors, company. One exception: an Excel cell note's author is read only to
 drop the note's first line when it is a note author's name and a colon, and is
 kept nowhere.
 
+**A part under another name (#1252).** The readers of `.docx`, `.xlsx` and
+`.pptx` find a part by its usual name (`xl/worksheets/sheet1.xml`); the file's
+own relationships may give it any name. A file whose document, workbook or
+presentation names one of these under another name is refused as `damaged`
+-- not read: a header, a footer, the footnotes, endnotes or comments of a
+document; a sheet; a slide, a slide master, a notes master or a handout
+master. **Not reached, and so still left unread in a file that is taken:**
+what a sheet, a slide or a master names in turn -- a sheet's cell notes and
+text boxes, a slide's speaker notes, comments and SmartArt, a master's
+layouts -- and the document properties, when one has another name than the
+usual. One such name is known to be written and is read like the usual one:
+openpyxl (3.1.5) writes a sheet's cell notes to `xl/comments/comment1.xml`.
+
 **The gap no reader closes:** a marking or a phone number that exists only as
 a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not
 seen. No OCR is done. A PDF with a page that is only a picture is refused
@@ -1434,8 +1447,12 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   owner, 2026-10-12). The list answers each upload's `expires_at`. Masked is not
   anonymous: a name in a sentence stays. A file marked confidential is
   refused and leaves one alarm row that names no person. The only model
-  that reads the text is the embedder, in this process, on the masked
-  pieces. The upload switch (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`): off by
+  that reads the text is the embedder, on the masked pieces: loaded in this
+  process (`AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local`) or, with
+  `hosted`, on our own inference server, which is posted the masked pieces
+  and nothing else. `docs/architecture/privacy.md` has the rule, and what
+  holds `hosted` back until #1250 is decided. The upload switch
+  (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`): off by
   default, and no code turns it on. Whether a deployment turns it on is
   decided on #817. A stopped file is told to the team's approvers by the
   agent layer (#1201), which reads the alarm rows through four functions
@@ -1452,9 +1469,10 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   hides (전화번호, 이메일, ...) gets a notice that it cannot be shown, and the
   note that stars are hidden values comes only with an excerpt that shows a
   run the masker made. A material whose nearest piece is under
-  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY` (cosine, 0.4 by default)
+  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY` (cosine, 0.5 by default)
   is not a hit; with none left the answer is empty and says nothing close
-  enough was found. 0.4 is a starting point for KURE-v1, not a measurement.
+  enough was found. 0.5 was measured for KURE-v1 on made-up documents, not
+  on a team's materials, and no floor separates every unrelated question.
   An upload past its `expires_at` is not searched, even in the hour before
   the task deletes it; a team that keeps its uploads until deleted has
   none such, as the task passes it over.

@@ -331,7 +331,8 @@ def test_one_hit_a_material_at_most_five_and_more_says_so(
     session: Session, embedder: Recording
 ) -> None:
     for n in range(7):
-        upload(session, LAUNCH * 4, title=f"자료 {n}")
+        # Seven texts: the same one seven times is one material now.
+        upload(session, LAUNCH * 4 + f"{n}번 자료의 덧붙임.", title=f"자료 {n}")
 
     answer = search_materials(session, TEAM, "출시 일정")
 
@@ -422,7 +423,7 @@ def test_the_floor_has_a_default_for_the_real_embedder_and_reads_the_environment
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     field = ExtractionSettings.model_fields["material_search_min_similarity"]
-    assert field.default == 0.4
+    assert field.default == 0.5
 
     monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY", "0.55")
     assert ExtractionSettings().material_search_min_similarity == 0.55

@@ -389,6 +389,12 @@ export interface Material {
    * an upload; always empty in a list.
    */
   not_read: MaterialNotRead[];
+  /**
+   * True only in the answer to an upload whose text the team already keeps:
+   * nothing was stored, and this row is that earlier material -- its title
+   * and its day, not the title just typed. False or absent everywhere else.
+   */
+  already_kept?: boolean;
 }
 
 export type MaterialNotRead = "pictures" | "charts" | "embedded_files";

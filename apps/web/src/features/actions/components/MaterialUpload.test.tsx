@@ -250,6 +250,38 @@ describe("MaterialsScreen, sending a file", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it("adds no second row for a text the team already keeps, and says which material has it", async () => {
+    await open([uploaded({ title: "출장비 한도" })]);
+    await screen.findByRole("form", { name: "파일 올리기" });
+    upload.mockResolvedValueOnce(uploaded({ title: "출장비 한도", already_kept: true }));
+    title("출장비 한도 최종");
+    choose(file());
+
+    fireEvent.click(send());
+
+    const note = await screen.findByText(/새로 저장하지 않았습니다/);
+    expect(note.textContent).toMatch(/같은 내용이 이미 '출장비 한도' 자료로 올라와 있어 새로 저장하지 않았습니다/);
+    expect(note.textContent).toMatch(/방금 입력한 제목은 저장되지 않았습니다/);
+    expect(note.textContent).toMatch(new RegExp(`그 자료는 ${localToday(new Date(EXPIRES))}까지 보관합니다`));
+    expect(screen.queryByText(/자료를 올렸습니다/)).toBeNull();
+    expect(rows()).toHaveLength(1);
+    expect(screen.queryByText("출장비 한도 최종")).toBeNull();
+  });
+
+  it("shows the earlier material when the list did not have it yet", async () => {
+    await open();
+    await screen.findByRole("form", { name: "파일 올리기" });
+    upload.mockResolvedValueOnce(uploaded({ title: "출장비 한도", already_kept: true }));
+    title("출장비 한도");
+    choose(file());
+
+    fireEvent.click(send());
+
+    expect(await screen.findByText(/새로 저장하지 않았습니다/)).toBeTruthy();
+    expect(rows()).toHaveLength(1);
+    expect(screen.queryByText(/방금 입력한 제목/)).toBeNull();
+  });
+
   it("does not leave the last file's note standing under a refusal of the next", async () => {
     await open();
     await screen.findByRole("form", { name: "파일 올리기" });

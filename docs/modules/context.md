@@ -277,8 +277,9 @@ one miss differs. The set cannot tell them apart, and `classic` needs no API.
   (p = 0.15 against `classic`). Decision lineage: `classic` 0.81, `llm` 0.90
   (p = 0.12) — `classic` read every replacement phrased without a cue word
   ("A사에서 B사로 바꾼다") as `modified`, 0 of 10, while the LLM got all ten and
-  in exchange called nine real modifications `reversed`. One run is missing
-  (`hybrid` with the floor at `0`). `classic` stays the default. Afterwards
+  in exchange called nine real modifications `reversed`. `hybrid` with the floor
+  at `0`, run on 2026-10-12, scored 0.93 and let no true link go unseen.
+  `classic` stays the default. Afterwards
   `classic` gained a replacement cue (`pipeline/change.py`): 0.81 → 0.91 on v3, a
   figure that does not count as held-out for it, and 0.72 → 0.76 on a clean
   held-out set (`*_heldout_v4`, 120 cases), then 0.74 → 0.82 on a second one
