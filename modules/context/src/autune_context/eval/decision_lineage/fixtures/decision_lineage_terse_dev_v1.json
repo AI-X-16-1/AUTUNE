@@ -1,0 +1,1071 @@
+{
+  "version": 1,
+  "_about": "Development set (2026-10-13), not held-out: what a change-type rule for terse decisions is designed and calibrated on, so that decision_lineage_heldout_v7 is not. Same format as v6 and v7 (every meeting carries `context`). Written after v7 was frozen, with different subjects (a cafe, a dental clinic, a translation agency, a campsite, an online shop, a recycling centre); shares no statement with v7 or any earlier set.",
+  "cases": [
+    {
+      "id": "du_cafe_hours",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "매장 영업은 밤 10시까지 한다.",
+          "context": [
+            "영업 마감 시간을 정하죠.",
+            "10시까지 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "변동 없다.",
+        "context": [
+          "11시까지 열자는 점장님 의견이 있었죠.",
+          "매출 보니까 의미가 없어서 10시 마감은 그대로 갑니다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_dental_recall",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "정기 검진 안내 문자는 6개월마다 보낸다.",
+          "context": [
+            "검진 안내 주기를 정하죠.",
+            "6개월마다 문자 보냅시다."
+          ]
+        },
+        {
+          "days_ago": 15,
+          "decision": "임플란트 상담은 원장이 직접 한다.",
+          "context": [
+            "임플란트 상담은 원장님이 하시죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "고치지 않기로 했다.",
+        "context": [
+          "검진 문자를 3개월로 당기자는 얘기가 있었어요.",
+          "환자분들이 귀찮아하셔서 6개월 안내 문자는 지금대로 둡시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_trans_rate",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "영한 번역 단가는 단어당 120원이다.",
+          "context": [
+            "번역 단가를 정하죠.",
+            "단어당 120원으로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그 단가로 계속 간다.",
+        "context": [
+          "단가를 내려 달라는 고객사 요청이 있었는데요.",
+          "품질 유지하려면 단어당 120원은 그대로 받아야 해요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_camp_quiet",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "캠핑장 소등 시간은 밤 11시다.",
+          "context": [
+            "매너 타임을 정하죠.",
+            "11시부터 조용히 하도록 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "예전대로 한다.",
+        "context": [
+          "자정까지 늘려 달라는 단골 요청이 있었어요.",
+          "다른 손님 민원 때문에 11시 매너 타임은 바꾸지 않아요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_shop_return",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "반품 접수는 수령 후 7일 이내만 받는다.",
+          "context": [
+            "반품 기간을 정하죠.",
+            "7일 안에만 받읍시다."
+          ]
+        },
+        {
+          "days_ago": 12,
+          "decision": "상세페이지 사진은 외주로 찍는다.",
+          "context": [
+            "상품 사진은 외주 맡기죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "바꿀 필요 없다는 결론이다.",
+        "context": [
+          "반품 기간을 14일로 늘리자는 말이 있었죠.",
+          "따져 보니 7일 반품 기간이 업계 평균이라 그대로 두죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_recycle_pickup",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 45,
+          "decision": "대형 폐기물 수거는 매주 수요일이다.",
+          "context": [
+            "대형 폐기물 수거 요일을 정하죠.",
+            "수요일마다 걷읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "기존 일정 그대로다.",
+        "context": [
+          "수거 요일을 바꾸자는 민원이 한 건 있었는데요.",
+          "대형 폐기물은 계속 수요일에 걷죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_cafe_bean",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 50,
+          "decision": "원두는 브라질 블렌드를 쓴다.",
+          "context": [
+            "하우스 원두를 정하죠.",
+            "브라질 블렌드로 갑시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그걸로 계속한다.",
+        "context": [
+          "에티오피아로 바꾸자는 바리스타 의견이 있었어요.",
+          "고객 반응이 좋아서 브라질 블렌드를 계속 씁시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_dental_lunch",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "점심시간은 오후 1시부터 2시까지다.",
+          "context": [
+            "점심시간을 정하죠.",
+            "1시부터 2시까지로 합시다."
+          ]
+        },
+        {
+          "days_ago": 8,
+          "decision": "주차 지원은 1시간까지 한다.",
+          "context": [
+            "주차는 한 시간 지원하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "안 바꾸기로 했다.",
+        "context": [
+          "점심을 12시 반으로 당기자는 의견이 있었는데요.",
+          "예약 환자가 몰려서 1시부터 2시 점심은 그대로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_trans_tool",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 60,
+          "decision": "번역 메모리는 트라도스로 관리한다.",
+          "context": [
+            "번역 메모리 툴을 정하죠.",
+            "트라도스로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지금 툴 그대로 쓴다.",
+        "context": [
+          "다른 툴로 옮기자는 얘기가 나왔었죠.",
+          "옮기는 비용이 커서 트라도스를 계속 씁시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "du_camp_price",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "오토캠핑 사이트는 1박 5만 원이다.",
+          "context": [
+            "사이트 요금을 정하죠.",
+            "1박 5만 원으로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "동결한다.",
+        "context": [
+          "성수기라 요금을 올리자는 얘기가 있었어요.",
+          "단골 생각해서 오토캠핑 1박 5만 원은 올리지 말죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "dm_cafe_staff",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "주말 아르바이트는 3명을 쓴다.",
+          "context": [
+            "주말 인력을 정하죠.",
+            "세 명이면 돼요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "한 명 더 쓴다.",
+        "context": [
+          "주말 손님이 늘어서 세 명으론 모자라요.",
+          "주말 알바를 네 명으로 한 명 더 뽑죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_dental_open",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "토요일 진료는 오후 1시까지 한다.",
+          "context": [
+            "토요일 진료 시간을 정하죠.",
+            "1시까지 봅시다."
+          ]
+        },
+        {
+          "days_ago": 14,
+          "decision": "스케일링 예약은 온라인으로 받는다.",
+          "context": [
+            "스케일링은 온라인 예약 받죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "3시까지로 늘린다.",
+        "context": [
+          "토요일 오후 예약 문의가 많아요.",
+          "토요일 진료를 오후 3시까지 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_trans_due",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "매뉴얼 번역 납기는 11월 30일이다.",
+          "context": [
+            "매뉴얼 납기를 정하죠.",
+            "11월 말까지 넘깁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "열흘 미룬다.",
+        "context": [
+          "고객사가 원문을 늦게 줬어요.",
+          "매뉴얼 번역 납기를 12월 10일로 열흘 미루죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_camp_sites",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 42,
+          "decision": "글램핑 텐트는 8동 운영한다.",
+          "context": [
+            "글램핑 규모를 정하죠.",
+            "여덟 동으로 시작합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "4동 더 짓는다.",
+        "context": [
+          "주말 예약이 한 달 치가 다 찼어요.",
+          "글램핑 텐트를 열두 동으로 네 동 더 짓죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_shop_fee",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "무료 배송은 3만 원 이상 주문에 적용한다.",
+          "context": [
+            "무료 배송 기준을 정하죠.",
+            "3만 원 이상이면 무료로 합시다."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "고객센터는 평일에만 운영한다.",
+          "context": [
+            "고객센터는 평일만 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "5만 원으로 올린다.",
+        "context": [
+          "택배비가 올라서 3만 원 기준으로는 적자예요.",
+          "무료 배송 기준을 5만 원 이상으로 올리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_recycle_owner",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "재활용 선별장 관리는 반장 노태호가 맡는다.",
+          "context": [
+            "선별장 관리 담당을 정하죠.",
+            "노태호 반장님이 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "고은비가 이어받는다.",
+        "context": [
+          "노 반장님이 다른 센터로 가세요.",
+          "선별장 관리는 고은비 씨가 이어받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_cafe_menu",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "시즌 음료는 여름에만 판다.",
+          "context": [
+            "시즌 음료 판매 기간을 정하죠.",
+            "여름 한정으로 팝시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "가을까지 연장한다.",
+        "context": [
+          "시즌 음료가 9월에도 잘 나가요.",
+          "시즌 음료를 가을까지 연장하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_dental_ratio",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "치위생사는 4명이 근무한다.",
+          "context": [
+            "치위생사 인원을 정하죠.",
+            "네 명으로 합시다."
+          ]
+        },
+        {
+          "days_ago": 16,
+          "decision": "대기실 TV는 끈다.",
+          "context": [
+            "대기실 TV는 꺼 두죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "하나 줄인다.",
+        "context": [
+          "평일 오전 환자가 줄었어요.",
+          "치위생사를 세 명으로 한 명 줄이죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_trans_scope",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "감수는 법률 문서에만 한다.",
+          "context": [
+            "감수 대상을 정하죠.",
+            "법률 문서만 감수합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "의료 문서도 포함한다.",
+        "context": [
+          "의료 문서 오역 클레임이 있었어요.",
+          "감수 대상에 의료 문서도 넣죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dm_shop_day",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "신상품은 매주 월요일에 올린다.",
+          "context": [
+            "신상품 업로드 요일을 정하죠.",
+            "월요일마다 올립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "목요일로 옮긴다.",
+        "context": [
+          "월요일은 주말 주문 처리로 정신이 없어요.",
+          "신상품 업로드를 목요일로 옮기죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dr_cafe_delivery",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "배달 앱 입점을 한다.",
+          "context": [
+            "배달을 할지 정하죠.",
+            "배달 앱에 입점합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "빼기로 했다.",
+        "context": [
+          "수수료 떼고 나면 남는 게 없어요.",
+          "배달 앱에서는 빠지죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_dental_ads",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "지하철 광고를 낸다.",
+          "context": [
+            "광고를 어디에 낼지 정하죠.",
+            "지하철 역 광고를 냅시다."
+          ]
+        },
+        {
+          "days_ago": 13,
+          "decision": "진료 후 만족도 문자를 보낸다.",
+          "context": [
+            "만족도 문자 보내죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "없었던 일로 한다.",
+        "context": [
+          "의료 광고 심의에서 걸렸어요.",
+          "지하철 광고는 없었던 일로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_trans_mt",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "초벌 번역은 기계 번역으로 한다.",
+          "context": [
+            "초벌 번역 방식을 정하죠.",
+            "기계 번역으로 초벌을 뽑읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사람이 처음부터 하기로 했다.",
+        "context": [
+          "기계 초벌을 고치는 시간이 더 걸려요.",
+          "초벌부터 번역사가 직접 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_camp_pool",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "캠핑장에 물놀이장을 만든다.",
+          "context": [
+            "물놀이장을 정하죠.",
+            "아이들용 물놀이장을 만듭시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "보류한다.",
+        "context": [
+          "허가가 안 나왔어요.",
+          "물놀이장 공사는 보류하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_shop_app",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 23,
+          "decision": "자체 쇼핑 앱을 만든다.",
+          "context": [
+            "앱을 만들지 정하죠.",
+            "자체 앱을 개발합시다."
+          ]
+        },
+        {
+          "days_ago": 9,
+          "decision": "포장에 손편지를 넣는다.",
+          "context": [
+            "손편지 넣읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "스마트스토어로 대신한다.",
+        "context": [
+          "앱 개발비가 너무 비싸요.",
+          "앱은 만들지 말고 스마트스토어로 대신하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_recycle_contract",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 38,
+          "decision": "폐비닐 처리는 그린순환에 맡긴다.",
+          "context": [
+            "폐비닐 처리 업체를 정하죠.",
+            "그린순환에 맡깁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "계약을 끊는다.",
+        "context": [
+          "그린순환이 단가를 두 배로 올렸어요.",
+          "그린순환과는 계약을 끊고 시설공단에 넘기죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_cafe_kiosk",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "주문은 키오스크로만 받는다.",
+          "context": [
+            "주문 방식을 정하죠.",
+            "키오스크로만 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "카운터 주문으로 돌아간다.",
+        "context": [
+          "어르신 손님들이 키오스크를 불편해하세요.",
+          "다시 카운터에서 주문 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_dental_night",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "목요일 야간 진료를 한다.",
+          "context": [
+            "야간 진료를 정하죠.",
+            "목요일은 밤 9시까지 봅시다."
+          ]
+        },
+        {
+          "days_ago": 11,
+          "decision": "소아 환자에게 스티커를 준다.",
+          "context": [
+            "아이들한테 스티커 주죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "안 한다.",
+        "context": [
+          "야간에 오는 환자가 거의 없어요.",
+          "목요일 야간 진료는 하지 맙시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_trans_office",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 44,
+          "decision": "사무실을 강남으로 옮긴다.",
+          "context": [
+            "사무실 이전을 정하죠.",
+            "강남으로 옮깁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "전원 재택으로 간다.",
+        "context": [
+          "강남 임대료가 너무 올랐어요.",
+          "사무실 이전 대신 전원 재택으로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dr_camp_rental",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 37,
+          "decision": "캠핑 장비 대여 서비스를 운영한다.",
+          "context": [
+            "장비 대여를 정하죠.",
+            "텐트랑 의자 빌려 드립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정리한다.",
+        "context": [
+          "장비 파손이 너무 많아요.",
+          "장비 대여 서비스는 정리하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dn_cafe_new",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "포인트 적립은 결제 금액의 5%다.",
+          "context": [
+            "포인트 적립률을 정하죠.",
+            "5%로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "다음 주부터 한다.",
+        "context": [
+          "매장 위생 점검을 매주 하자는 말이 있었죠.",
+          "위생 점검은 다음 주부터 매주 하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "dn_dental_owner",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "보험 청구는 실장 정하린이 맡는다.",
+          "context": [
+            "보험 청구 담당을 정하죠.",
+            "하린 실장님이 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "문채윤이 맡는다.",
+        "context": [
+          "SNS 홍보를 누가 할지 정하죠.",
+          "SNS 홍보는 채윤 씨가 맡아 주세요."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "dn_trans_cancel",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "연말 송년회는 12월 20일에 한다.",
+          "context": [
+            "송년회 날짜를 정하죠.",
+            "20일로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "취소하기로 했다.",
+        "context": [
+          "외부 세미나에 단체로 가려 했는데 마감됐대요.",
+          "세미나 단체 참석은 취소하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "dn_camp_keep",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "관리동 매점은 밤 9시에 닫는다.",
+          "context": [
+            "매점 시간을 정하죠.",
+            "9시에 닫읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지금처럼 간다.",
+        "context": [
+          "예약 취소 수수료 얘기가 나왔었죠.",
+          "취소 수수료는 지금처럼 이틀 전까지 무료로 하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "dn_shop_more",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "상품 리뷰 이벤트는 매달 한다.",
+          "context": [
+            "리뷰 이벤트를 정하죠.",
+            "매달 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "두 개 더 늘린다.",
+        "context": [
+          "창고 선반이 모자라요.",
+          "창고 선반을 두 개 더 들이죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "dn_recycle_delay",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "주민 설명회는 다음 달 5일에 연다.",
+          "context": [
+            "설명회 날짜를 정하죠.",
+            "5일에 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "보름 늦춘다.",
+        "context": [
+          "압축기 교체가 부품이 안 와서 밀려요.",
+          "압축기 교체는 보름 늦추죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "dfu_cafe",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "텀블러 할인은 300원이다.",
+          "context": [
+            "텀블러 할인을 정하죠.",
+            "300원 깎아 드립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "텀블러 할인은 계속 300원으로 한다.",
+        "context": [
+          "할인을 늘리자는 얘기가 있었지만 300원 유지하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "dfu_dental",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "초진 환자는 파노라마를 찍는다.",
+          "context": [
+            "초진 검사를 정하죠.",
+            "파노라마 찍읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "초진 환자 파노라마 촬영은 지금처럼 한다.",
+        "context": [
+          "생략하자는 말이 있었는데 그대로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "dfm_shop",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "쿠폰 유효기간은 30일이다.",
+          "context": [
+            "쿠폰 기간을 정하죠.",
+            "30일로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "쿠폰 유효기간을 60일로 늘린다.",
+        "context": [
+          "기간이 짧다는 불만이 많아서 60일로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dfm_camp",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "체크인은 오후 2시부터다.",
+          "context": [
+            "체크인 시간을 정하죠.",
+            "2시부터 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "체크인 시작을 오후 1시로 당긴다.",
+        "context": [
+          "일찍 오는 손님이 많아서 1시로 당기죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "dfr_trans",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "프리랜서 번역사 풀을 운영한다.",
+          "context": [
+            "프리랜서 풀을 정하죠.",
+            "프리랜서 풀로 갑시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "프리랜서 풀을 없애고 정규직 번역사로 바꾼다.",
+        "context": [
+          "품질 편차가 커서 정규직으로 뽑죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "dfr_recycle",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "음식물 처리기를 동마다 설치한다.",
+          "context": [
+            "음식물 처리기를 정하죠.",
+            "동마다 놓읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "음식물 처리기 설치 계획을 철회한다.",
+        "context": [
+          "전기료 부담이 커서 철회하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    }
+  ]
+}

@@ -177,8 +177,9 @@ def _process_meeting(
 def _head_similarity(case: EvalCase, past_thread_ids: list[str]) -> dict[str, float]:
     """The score ``service._assign_decisions_to_threads`` compares with
     ``lineage_match_threshold``, for the current decision against each past
-    thread's head: the higher of statement-to-statement cosine and the cosine
-    of each statement together with its ``context``.
+    thread's head: the highest of statement-to-statement cosine, the cosine of
+    each statement together with its ``context``, and the cosine of the current
+    meeting's ``context`` line closest to the head's statement.
 
     A thread's head is its most recent past meeting -- the one
     ``service._thread_heads`` would offer -- so the current statement is
@@ -196,8 +197,14 @@ def _head_similarity(case: EvalCase, past_thread_ids: list[str]) -> dict[str, fl
     enriched = get_embedder().embed([" ".join([m.decision, *m.context]) for m in meetings])
     # A side with no context falls back to its statement, as in the engine.
     contextual = [enriched[k] if m.context else plain[k] for k, m in enumerate(meetings)]
+    own = case.current_meeting.context
+    lines = get_embedder().embed(own) if own else []
     return {
-        thread_id: max(_cosine(plain[0], plain[k]), _cosine(contextual[0], contextual[k]))
+        thread_id: max(
+            _cosine(plain[0], plain[k]),
+            _cosine(contextual[0], contextual[k]),
+            *(_cosine(line, plain[k]) for line in lines),
+        )
         for k, thread_id in enumerate(heads, start=1)
     }
 

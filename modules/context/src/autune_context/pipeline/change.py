@@ -22,6 +22,19 @@ set's change types wrong. What each step here corrects
   withdrawal or replacement is *said* with negation or a stop/cancel/replace
   word, and a moved parameter is not.
 
+- **A keep that NLI cannot place is still a keep.** "10시 마감은 그대로 둡시다"
+  against "매장 영업은 밤 10시까지 한다" scores neutral both ways, and neutral
+  used to read as a moved parameter. A statement that says nothing changes
+  (``marks_keep``: 그대로, 지금대로, 유지, 동결, 변동 없이, a change verb said with
+  a negation -- 바꾸지 않는다, 안 고친다) and that NLI does not find contradicting
+  the earlier one is a restatement. A negated change verb is also not a
+  withdrawal: "바꾸지 않기로" keeps the decision, so ``marks_reversal`` skips it.
+  A verb with a direction (올리, 늘리, 인상; 내리, 줄이, 인하) is the exception
+  when the earlier decision moved that same way: after "가격을 10% 올린다",
+  "가격은 올리지 않기로 했다" withdraws the raise, so it is a withdrawal and no
+  keep. A keep word inside a compound noun (유지보수) or in a clause that gives way
+  to another (계속 논의하다가 …) says nothing about the decision.
+
 - **A replacement carries none of those words.** "MySQL에서 PostgreSQL로 옮기기로
   했다" withdraws the earlier choice as surely as "MySQL은 쓰지 않기로 했다" does,
   but has no negation or cancellation to fire ``marks_reversal`` -- so a swap of one
@@ -129,6 +142,30 @@ _CONDITION_PARTICLES = {"만", "도", "까지"}
 _BOUND_NOUNS = {"이상", "이하", "미만", "초과"}
 # Adverbs that say "no change from now" -- stripped before re-asking NLI.
 _KEEP_ADVERBS = {"계속", "계속해서", "그대로", "여전히", "변함없이"}
+# Nouns that say "kept": 유지하다, 동결하다, 현행 유지.
+_KEEP_NOUNS = {"유지", "동결", "존치"}
+# "As it is now / was": 지금대로, 원래대로, 기존처럼. A noun of the present or the
+# past followed by 대로 or 처럼.
+_AS_BEFORE_NOUNS = {"지금", "현재", "원래", "예전", "기존", "종전", "현행", "이전", "평소"}
+_AS_PARTICLES = {"대로", "처럼"}
+# Verbs that change something. Negated (바꾸지 않다, 안 고치다) they say "kept".
+_CHANGE_VERBS = {"바꾸", "고치", "손대", "손보", "건드리", "뒤집", "늘리", "줄이", "올리", "내리"}
+_CHANGE_NOUNS = {"변경", "수정", "조정", "변동", "변화", "인상", "인하"}  # + 하다 / + 없다
+# Change words with a direction. Negated after an earlier decision that moved the
+# same way ("10% 올린다" -> "올리지 않기로"), they withdraw it rather than keep it.
+_DIRECTIONS = {
+    "올리": "up",
+    "늘리": "up",
+    "인상": "up",
+    "내리": "down",
+    "줄이": "down",
+    "인하": "down",
+}
+# A clause ending that gives way to the next clause: "계속 논의하다가 …" -- what was
+# kept is the discussion, not the decision.
+_YIELDING_ENDINGS = {"다가"}
+_NEGATING_AUX = {("않", "VX"), ("말", "VX")}
+_NEGATING_ADVERBS = {("안", "MAG"), ("못", "MAG")}
 
 # Verbs that swap one thing for another. ``바꾸``/``옮기``/``이전`` also move a
 # parameter ("목요일로 옮긴다"); what tells the two apart is the target, not the verb.
@@ -175,21 +212,30 @@ def classify_change(
         return ChangeType.UNCHANGED, kept_forward.entailment
     contradiction = max(forward.contradiction, backward.contradiction)
     if contradiction >= _CONTRADICTION_MIN:
-        reversed_ = marks_reversal(current) or marks_replacement(current, previous)
+        reversed_ = marks_reversal(current, previous) or marks_replacement(current, previous)
         return (ChangeType.REVERSED if reversed_ else ChangeType.MODIFIED), contradiction
     # Neither entailed nor contradicted: NLI has no opinion, and a swap said without
     # a negation is exactly what it scores neutral as often as contradictory.
     if marks_replacement(current, previous):
         return ChangeType.REVERSED, forward.neutral
+    if marks_keep(current, previous):
+        return ChangeType.UNCHANGED, forward.neutral
     return ChangeType.MODIFIED, forward.neutral
 
 
-def marks_reversal(statement: str) -> bool:
-    """Whether ``statement`` negates, stops, or cancels/replaces something."""
+def marks_reversal(statement: str, previous: str = "") -> bool:
+    """Whether ``statement`` negates, stops, or cancels/replaces something.
+    ``previous``: the earlier statement, which decides whether a negated verb with
+    a direction keeps the decision or withdraws it (``_negated_changes``)."""
     if "더 이상" in statement:
         return True
     head: str | None = None  # the noun an absence would attach to
-    for form, tag in _morphemes(statement):
+    morphemes = _morphemes(statement)
+    kept = _negated_changes(morphemes, _directions_moved(previous))
+    for index, (form, tag) in enumerate(morphemes):
+        if index in kept:  # 바꾸지 않다: the decision is kept, not withdrawn
+            head = None
+            continue
         if (form, tag) in _ABSENCE_TOKENS and head in _SMOOTH_NOUNS:
             head = None
             continue
@@ -201,6 +247,115 @@ def marks_reversal(statement: str) -> bool:
             head = form
         elif tag != "JKS":  # 차질이 없도록: the particle keeps the head
             head = None
+    return False
+
+
+def marks_keep(statement: str, previous: str = "") -> bool:
+    """Whether ``statement`` says something stays as it is: a keep adverb
+    (그대로, 계속), a keep noun (유지, 동결), "as now / as before" (지금대로,
+    기존처럼), "no change" (변동 없이), or a change verb said with a negation
+    (바꾸지 않는다, 안 고친다) -- but not a verb with the direction ``previous``
+    moved in (``_negated_changes``)."""
+    morphemes = _morphemes(statement)
+    if _negated_changes(morphemes, _directions_moved(previous)):
+        return True
+    for index, (form, tag) in enumerate(morphemes):
+        after = morphemes[index + 1] if index + 1 < len(morphemes) else ("", "")
+        if tag == "MAG" and form in _KEEP_ADVERBS and not _yields(morphemes, index):
+            return True
+        if tag.startswith("NN") and form in _KEEP_NOUNS and not after[1].startswith("NN"):
+            return True  # 현행 유지, 유지하다 -- not 유지보수, a compound
+        if tag.startswith("NN") and form in _AS_BEFORE_NOUNS and after[0] in _AS_PARTICLES:
+            return True
+        if tag.startswith("NN") and form in _CHANGE_NOUNS:
+            rest = morphemes[index + 1 : index + 3]
+            if any((f, t) in _ABSENCE_TOKENS for f, t in rest):  # 변동 없이, 변경이 없다
+                return True
+    return False
+
+
+def _negated_changes(
+    morphemes: list[tuple[str, str]], withdrawn: frozenset[str] = frozenset()
+) -> set[int]:
+    """Indices of the negating morphemes (않, 말, 안, 못) whose predicate is a
+    change verb: 바꾸지 않다, 변경하지 말다, 안 바꾸다. A predicate whose direction
+    is in ``withdrawn`` is left out: "올리지 않다" after a raise takes it back."""
+    return {
+        negator
+        for negator, predicate in _negated_predicates(morphemes).items()
+        if _direction(morphemes, predicate) not in withdrawn
+    }
+
+
+def _negated_predicates(morphemes: list[tuple[str, str]]) -> dict[int, int]:
+    """Negating morpheme index -> the index of the change predicate it negates."""
+    out: dict[int, int] = {}
+    for index, (form, tag) in enumerate(morphemes):
+        if (form, tag) in _NEGATING_AUX:
+            # -지 않다: the predicate sits before the connective 지.
+            j = index - 1
+            if j >= 0 and morphemes[j] == ("지", "EC"):
+                j -= 1
+            if j >= 0 and _is_change_predicate(morphemes, j):
+                out[index] = j
+        elif (form, tag) in _NEGATING_ADVERBS:
+            if index + 1 < len(morphemes) and _is_change_predicate(morphemes, index + 1):
+                out[index] = index + 1
+    return out
+
+
+def _direction(morphemes: list[tuple[str, str]], index: int) -> str | None:
+    """The direction of the change word at ``index``, or of the noun before its 하다
+    (인상하다), or ``None`` for a change with none (바꾸다, 변경하다)."""
+    form, tag = morphemes[index]
+    if tag.startswith("XSV") and index > 0:
+        form = morphemes[index - 1][0]
+    return _DIRECTIONS.get(form)
+
+
+def _directions_moved(statement: str) -> frozenset[str]:
+    """The directions ``statement`` moves something in, said without a negation:
+    "가격을 10% 올린다" -> up, "인상" -> up; "올리지 않는다" -> none."""
+    if not statement:
+        return frozenset()
+    morphemes = _morphemes(statement)
+    negated: set[int] = set()
+    for predicate in _negated_predicates(morphemes).values():
+        negated.add(predicate)
+        if morphemes[predicate][1].startswith("XSV"):
+            negated.add(predicate - 1)  # the 인상 of 인상하지 않다
+    return frozenset(
+        direction
+        for index, (form, tag) in enumerate(morphemes)
+        if index not in negated
+        and (tag == "VV" or tag.startswith("NN"))
+        and (direction := _DIRECTIONS.get(form)) is not None
+    )
+
+
+def _yields(morphemes: list[tuple[str, str]], index: int) -> bool:
+    """Whether the clause the adverb at ``index`` opens gives way to another
+    ("계속 논의하다가 …"): its first predicate ends in a yielding ending."""
+    for later in range(index + 1, len(morphemes)):
+        tag = morphemes[later][1]
+        if tag == "EC":
+            return morphemes[later][0] in _YIELDING_ENDINGS
+        if tag in ("EF", "ETN", "ETM", "SF"):
+            return False
+    return False
+
+
+def _is_change_predicate(morphemes: list[tuple[str, str]], index: int) -> bool:
+    """Whether the morpheme at ``index`` is a change verb, or the 하다 of a
+    change noun (변경하다)."""
+    form, tag = morphemes[index]
+    if tag == "VV" and form in _CHANGE_VERBS:
+        return True
+    if tag.startswith("NN") and form in _CHANGE_NOUNS:
+        return index + 1 < len(morphemes) and morphemes[index + 1][1].startswith("XSV")
+    if tag.startswith("XSV") and index > 0:
+        prev_form, prev_tag = morphemes[index - 1]
+        return prev_tag.startswith("NN") and prev_form in _CHANGE_NOUNS
     return False
 
 
