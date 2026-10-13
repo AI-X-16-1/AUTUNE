@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 
-import { JIRA_AGENDA } from "@/features/actions";
+import { JIRA_AGENDA, SINCE_LAST_MEETING_AGENDA } from "@/features/actions";
 import { OPEN_GAPS_AGENDA } from "@/features/gap";
 import { NewMeetingScreen } from "@/features/transcript";
 
@@ -16,8 +16,12 @@ import { NewMeetingScreen } from "@/features/transcript";
  * The team's decisions are not in it (the user, 2026-10-09: "결정을 조건에서
  * 빼기"): the draft never draws a decision — the brief shows them in its recap
  * — and the row must not name a source its draft cannot show.
+ *
+ * The last one is the team's to-dos that are late or were closed without
+ * being finished since its last meeting (#1270); the brief's draft draws the
+ * same under the same name.
  */
-const AGENDA_SOURCES = [JIRA_AGENDA, OPEN_GAPS_AGENDA];
+const AGENDA_SOURCES = [JIRA_AGENDA, OPEN_GAPS_AGENDA, SINCE_LAST_MEETING_AGENDA];
 
 /**
  * The 새 회의 route's assembly, as a client component.
