@@ -470,6 +470,7 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
     expect(group.textContent).toMatch(/그날이 지난 자료는 1시간마다 확인하여 지웁니다/);
     expect(group.textContent).not.toMatch(/시간 안에/);
     expect(group.textContent).not.toMatch(/지금 이 방식으로/);
+    expect(group.textContent).not.toMatch(/새로 올릴 수 없습니다/);
     expect(group.textContent).toMatch(/누가 바꿨는지는 기록하지 않습니다/);
     expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);
     expect(choice(group, /팀이 지울 때까지 보관/).checked).toBe(false);
@@ -536,11 +537,110 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
     expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);
   });
 
-  it("is not drawn where the deployment takes no uploads, and not asked for", async () => {
+  it("is not drawn where the deployment takes no uploads and the team has none, and not asked for", async () => {
     await open([linked()], { ...RULES, enabled: false });
 
     await waitFor(() => expect(rules).toHaveBeenCalled());
     expect(screen.queryByRole("group", { name: "올린 자료 보관 방식" })).toBeNull();
     expect(settingsGet).not.toHaveBeenCalled();
+  });
+});
+
+// Uploads switched off again after a team used them (#1295). The server
+// still takes the choice and still deletes by it every hour; only the screen
+// had stopped drawing it, and a team that keeps everything could not go back.
+describe("MaterialsScreen, how the team keeps its uploads once uploads are switched off", () => {
+  const OFF = { ...RULES, enabled: false };
+  const setting = () => screen.findByRole("group", { name: "올린 자료 보관 방식" });
+  const choice = (group: HTMLElement, name: RegExp) =>
+    within(group).getByRole("radio", { name }) as HTMLInputElement;
+
+  it("is drawn while the team still has an upload, and says no file can be sent now", async () => {
+    await open([uploaded({ expires_at: null }), linked()], OFF, KEPT);
+
+    const group = await setting();
+    expect(group.textContent).toContain(
+      "지금은 파일을 새로 올릴 수 없습니다. 이 선택은 이미 올린 자료에 그대로 적용됩니다.",
+    );
+    expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(false);
+    expect(choice(group, /팀이 지울 때까지 보관/).checked).toBe(true);
+    expect(settingsGet).toHaveBeenCalledExactlyOnceWith("team_a");
+    // The choice came back; the form that sends a file did not.
+    expect(screen.queryByRole("form", { name: "파일 올리기" })).toBeNull();
+    expect(screen.queryByText(/파일을 올려 둘 수도 있습니다/)).toBeNull();
+  });
+
+  it("takes the choice back there, told how many uploads that deletes, and reads the list again", async () => {
+    await open([uploaded({ expires_at: null })], OFF, { ...KEPT, uploads_past_their_day: 1 });
+    settingsSave.mockResolvedValue(WINDOW);
+    list.mockResolvedValue([uploaded()]);
+
+    const back = choice(await setting(), /보관 기간이 지나면 삭제/);
+    expect(back.closest("label")?.textContent).toContain(
+      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 1건은 1시간마다 확인하여 지우며, 복구할 수 없습니다.",
+    );
+    fireEvent.click(back);
+
+    await waitFor(() => expect(settingsSave).toHaveBeenCalledExactlyOnceWith("team_a", false));
+    await waitFor(() =>
+      expect(within(rows()[0] as HTMLElement).getByText(/올린 파일/).textContent).toContain(
+        `${localToday(new Date(EXPIRES))} 삭제 예정`,
+      ),
+    );
+    expect(choice(await setting(), /보관 기간이 지나면 삭제/).checked).toBe(true);
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it("goes with the team's last upload", async () => {
+    await open([uploaded(), linked()], OFF);
+    remove.mockResolvedValue(undefined);
+    await setting();
+    const up = rows()[0] as HTMLElement;
+
+    fireEvent.click(within(up).getByRole("button", { name: "삭제" }));
+    fireEvent.click(
+      within(within(up).getByRole("group", { name: "자료 삭제 확인" })).getByRole("button", {
+        name: "삭제",
+      }),
+    );
+
+    await waitFor(() => expect(rows()).toHaveLength(1));
+    expect(screen.queryByRole("group", { name: "올린 자료 보관 방식" })).toBeNull();
+  });
+
+  it("does not say no file can be sent where the server did not say so", async () => {
+    await open([uploaded()], new ApiError(503, "unavailable", "down"));
+
+    const group = await setting();
+    expect(group.textContent).not.toMatch(/새로 올릴 수 없습니다/);
+    expect(screen.queryByRole("form", { name: "파일 올리기" })).toBeNull();
+  });
+
+  it("is asked for once, whichever of the list and the rules answers first", async () => {
+    let answer: (value: MaterialUploadRules) => void = () => undefined;
+    session.mockResolvedValue(me());
+    settingsGet.mockResolvedValue(WINDOW);
+    list.mockResolvedValue([uploaded()]);
+    rules.mockReturnValue(new Promise<MaterialUploadRules>((resolve) => (answer = resolve)));
+    render(<MaterialsScreen />);
+    // The upload in the list is reason enough, before the rules say anything.
+    await setting();
+
+    answer(RULES);
+
+    await screen.findByRole("form", { name: "파일 올리기" });
+    expect(settingsGet).toHaveBeenCalledExactlyOnceWith("team_a");
+  });
+
+  it("is not drawn where the server does not say how the team keeps them", async () => {
+    session.mockResolvedValue(me());
+    settingsGet.mockRejectedValue(new ApiError(404, "unknown", "Not Found"));
+    list.mockResolvedValue([uploaded()]);
+    rules.mockResolvedValue(OFF);
+    render(<MaterialsScreen />);
+
+    expect(await screen.findByText("분기 계획")).toBeTruthy();
+    await waitFor(() => expect(settingsGet).toHaveBeenCalledExactlyOnceWith("team_a"));
+    expect(screen.queryByRole("group", { name: "올린 자료 보관 방식" })).toBeNull();
   });
 });
