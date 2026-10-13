@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { DashboardRead } from "../types";
@@ -8,15 +8,20 @@ import { Dashboard } from "./Dashboard";
 // #1179: a team with no scored meeting sees one card saying so, not seven
 // widgets each saying they are empty.
 
-const state = vi.hoisted(() => ({ dashboard: null as DashboardRead | null }));
+const state = vi.hoisted(() => ({
+  dashboard: null as DashboardRead | null,
+  loading: false,
+  reload: (() => Promise.resolve()) as () => Promise<void>,
+}));
 
 vi.mock("../hooks/useDashboard", () => ({
   useDashboard: () => ({
     dashboard: state.dashboard,
     gapTitles: {},
     predictions: null,
-    loading: false,
+    loading: state.loading,
     error: null,
+    reload: state.reload,
   }),
 }));
 vi.mock("./MeetingReportsCard", () => ({ MeetingReportsCard: () => <p>회의 리포트 카드</p> }));
@@ -70,5 +75,29 @@ describe("Dashboard", () => {
     expect(screen.queryByText("직무 쌍 얼라인먼트")).toBeNull();
     expect(screen.getByText("회의 리포트 카드")).toBeTruthy();
     expect(screen.getByText("주간 리포트 카드")).toBeTruthy();
+  });
+
+  // F5 would also clear the agent chat on the same page, so the dashboard
+  // reloads its own figures.
+  it.each([0, 1])("reloads its figures from a button (%i scored meetings)", (count) => {
+    state.dashboard = dashboard(count);
+    const reload = vi.fn(() => Promise.resolve());
+    state.reload = reload;
+
+    render(<Dashboard teamId="team_1" />);
+    fireEvent.click(screen.getByRole("button", { name: "새로고침" }));
+
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the figures on screen and the button busy while it reloads", () => {
+    state.dashboard = dashboard(1);
+    state.loading = true;
+
+    render(<Dashboard teamId="team_1" />);
+
+    expect(screen.getByText("품질 점수")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "새로고침" }).hasAttribute("disabled")).toBe(true);
+    state.loading = false;
   });
 });
