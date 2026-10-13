@@ -56,3 +56,26 @@ export function writtenDay(iso: string, year: number | null): string | null {
 export function shownDue(iso: string): string {
   return writtenDay(iso, new Date().getFullYear()) ?? iso;
 }
+
+/** `date` moved by `days`, as `YYYY-MM-DD` -- local days, so no zone moves it. */
+function plusDays(date: Date, days: number): string {
+  return localToday(new Date(date.getFullYear(), date.getMonth(), date.getDate() + days));
+}
+
+/**
+ * The days a person most often means by a due date, for the detail window's
+ * quick picks (#1183): tomorrow, this week's Friday, next week's Monday.
+ *
+ * "이번 주 금" is the coming Friday -- today when today is Friday, next week's
+ * on the weekend, so a pick is never a day that has passed. A pick that lands
+ * on the same day as an earlier one is left out rather than shown twice.
+ */
+export function quickDues(now: Date = new Date()): { label: string; iso: string }[] {
+  const weekday = now.getDay();
+  const picks = [
+    { label: "내일", iso: plusDays(now, 1) },
+    { label: "이번 주 금", iso: plusDays(now, (5 - weekday + 7) % 7) },
+    { label: "다음 주 월", iso: plusDays(now, (1 - weekday + 7) % 7 || 7) },
+  ];
+  return picks.filter((pick, index) => picks.findIndex((p) => p.iso === pick.iso) === index);
+}

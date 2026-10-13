@@ -12,7 +12,8 @@ import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
-import { shownDue } from "../dates";
+import { quickDues, shownDue } from "../dates";
+import { isSpeakerLabel, speakerLabelShown } from "../speakerLabel";
 import { typedTextRefusal } from "../refusal";
 import { rowTitle } from "../title";
 import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
@@ -50,6 +51,7 @@ export function ActionDetailDrawer({
   onStatusChange,
   onCloseUnfinished,
   onAssigneeChange,
+  onDueChange,
   onDelete,
 }: {
   item: ActionItemRead;
@@ -62,6 +64,8 @@ export function ActionDetailDrawer({
     assignee_id: string | null;
     assignee_label: string | null;
   }) => void | Promise<void>;
+  /** Set the due date (`YYYY-MM-DD`), or clear it with `null`. */
+  onDueChange?: (due: string | null) => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
 }) {
   const heading = rowTitle(item.title, item.description);
@@ -93,6 +97,36 @@ export function ActionDetailDrawer({
       : { kind: "none" };
   const [typed, setTyped] = useState<string | null>(null);
   const [assigning, setAssigning] = useState(false);
+
+  // One path for every status change made here -- the select and the 확정
+  // button -- so each says the same thing after the same act.
+  const changeStatus = async (next: ActionStatus) => {
+    const confirmed = confirms(item, next);
+    setFailure(null);
+    setNotice(null);
+    setChanging(true);
+    try {
+      await onStatusChange?.(next);
+      if (confirmed) setNotice(CONFIRMED_NOTICE);
+    } catch {
+      setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setChanging(false);
+    }
+  };
+
+  const saveDue = async (due: string | null) => {
+    setFailure(null);
+    setNotice(null);
+    setChanging(true);
+    try {
+      await onDueChange?.(due);
+    } catch {
+      setFailure("기한을 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setChanging(false);
+    }
+  };
 
   const saveAssignee = async (value: AssigneeValue) => {
     setFailure(null);
@@ -199,15 +233,18 @@ export function ActionDetailDrawer({
                     ? "끝내지 않고 닫힘"
                     : COLUMN_LABELS[item.status ?? "needs_confirmation"]}
               </span>
-              <span
-                className="text-[var(--color-ink-muted)]"
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--text-metaSmall)",
-                }}
-              >
-                {item.confidence.toFixed(2)}
-              </span>
+              {/* Not the number (#1183): nobody can read 0.82. The server already
+                  decides which items the model was unsure of (`is_candidate`),
+                  and that is the one thing the number was telling a reader. */}
+              {isCandidate(item) ? (
+                <span
+                  className="text-[var(--color-ink-muted)]"
+                  style={{ fontSize: "var(--text-metaSmall)" }}
+                  title="자동 추출의 확신이 낮아 후보로 나눈 항목입니다. 맞는지 근거 발화로 확인해 주세요."
+                >
+                  · 확실하지 않음
+                </span>
+              ) : null}
               {item.description_resolved ? (
                 <span
                   className="text-[var(--color-ink-muted)]"
@@ -242,17 +279,56 @@ export function ActionDetailDrawer({
           className="flex-1 overflow-y-auto"
           style={{ padding: "var(--space-card)" }}
         >
+          {/* The most common thing done in this window is deciding whether
+              an item is real, so it is the first thing in it (#1183), not a
+              pick in the status select. 거부 is a deletion -- an item has no
+              "rejected" status and the row is not kept -- so it goes through
+              the same confirmation as 삭제. */}
+          {(item.status ?? "needs_confirmation") === "needs_confirmation" &&
+          onStatusChange !== undefined ? (
+            <div
+              role="group"
+              aria-label="이 항목 처리"
+              className="mb-4 flex items-center gap-2"
+            >
+              <Button
+                tone="primary"
+                size="compact"
+                loading={changing}
+                onClick={() => void changeStatus("todo")}
+              >
+                확정
+              </Button>
+              <Button
+                tone="quiet"
+                size="compact"
+                disabled={changing || onDelete === undefined}
+                onClick={() => setConfirming(true)}
+              >
+                거부
+              </Button>
+            </div>
+          ) : null}
           <Field label="담당">
             {onAssigneeChange === undefined ? (
               item.needs_reassignment ? (
                 "재배정 필요 · 담당자가 이 팀에 없습니다"
               ) : (
-                (item.assignee_name ?? item.assignee_label ?? "미지정")
+                (item.assignee_name ??
+                (item.assignee_label ? speakerLabelShown(item.assignee_label) : "미지정"))
               )
             ) : (
               <div className="grid gap-2">
                 {item.needs_reassignment ? (
                   <span>재배정 필요 · 담당자가 이 팀에 없습니다</span>
+                ) : null}
+                {item.assignee_label && isSpeakerLabel(item.assignee_label) ? (
+                  <p
+                    className="text-[var(--color-ink-muted)]"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    {`지금은 ${speakerLabelShown(item.assignee_label)}입니다. 팀원 목록에서 고르면 그 사람의 캘린더와 Jira에 연결됩니다.`}
+                  </p>
                 ) : null}
                 <AssigneeInput
                   id={`assignee-${item.id}`}
@@ -290,7 +366,66 @@ export function ActionDetailDrawer({
             )}
           </Field>
           <Field label="기한">
-            {item.due_date ? shownDue(item.due_date) : "없음"}
+            {onDueChange === undefined ? (
+              item.due_date ? (
+                shownDue(item.due_date)
+              ) : (
+                "없음"
+              )
+            ) : (
+              <div className="grid gap-2">
+                {/* A date field like the other two, so it reads as editable
+                    (#1183). It saves the moment a day is picked, the way the
+                    status and a member do; the quick picks are the days a
+                    person most often means. */}
+                <input
+                  type="date"
+                  aria-label="기한"
+                  value={/^\d{4}-\d{2}-\d{2}$/.test(item.due_date ?? "") ? (item.due_date ?? "") : ""}
+                  disabled={changing}
+                  onChange={(event) => void saveDue(event.target.value || null)}
+                  className="w-full border bg-transparent"
+                  style={{
+                    height: "var(--control-h-default)",
+                    paddingInline: "var(--control-px-text)",
+                    borderRadius: "var(--radius)",
+                    border: "1px solid var(--color-hairline)",
+                    fontSize: "var(--text-body)",
+                  }}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  {quickDues().map((pick) => (
+                    <Button
+                      key={pick.label}
+                      tone="quiet"
+                      size="compact"
+                      disabled={changing || item.due_date === pick.iso}
+                      onClick={() => void saveDue(pick.iso)}
+                    >
+                      {pick.label}
+                    </Button>
+                  ))}
+                  {item.due_date ? (
+                    <Button
+                      tone="text"
+                      size="compact"
+                      disabled={changing}
+                      onClick={() => void saveDue(null)}
+                    >
+                      기한 없애기
+                    </Button>
+                  ) : null}
+                </div>
+                {item.due_date ? (
+                  <span
+                    className="text-[var(--color-ink-muted)]"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    {shownDue(item.due_date)}
+                  </span>
+                ) : null}
+              </div>
+            )}
           </Field>
           {item.due_text ? (
             <Field label="기한 파싱 원문">
@@ -303,23 +438,7 @@ export function ActionDetailDrawer({
               value={item.status ?? "needs_confirmation"}
               disabled={changing}
               aria-busy={changing || undefined}
-              onChange={async (event) => {
-                const next = event.target.value as ActionStatus;
-                const confirmed = confirms(item, next);
-                setFailure(null);
-                setNotice(null);
-                setChanging(true);
-                try {
-                  await onStatusChange?.(next);
-                  if (confirmed) setNotice(CONFIRMED_NOTICE);
-                } catch {
-                  setFailure(
-                    "상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.",
-                  );
-                } finally {
-                  setChanging(false);
-                }
-              }}
+              onChange={(event) => void changeStatus(event.target.value as ActionStatus)}
               className="w-full border bg-transparent"
               style={{
                 height: "var(--control-h-default)",
