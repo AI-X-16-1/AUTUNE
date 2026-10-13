@@ -9,6 +9,7 @@
 export { HomeScreen } from "./components/HomeScreen";
 export { InvitationScreen } from "./components/InvitationScreen";
 export { LiveMeetingScreen } from "./components/LiveMeetingScreen";
+export { MeetingTeam } from "./components/MeetingTeam";
 export { MembersSettingsScreen } from "./components/MembersSettingsScreen";
 export { StoredMeetingScreen } from "./components/StoredMeetingScreen";
 export { NewMeetingScreen } from "./components/NewMeetingScreen";

@@ -3,14 +3,14 @@
 import type { Route } from "next";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { logout } from "@/shared/api/auth";
 import { setSignedIn } from "@/shared/api/client";
 import { Button, Wordmark } from "@/shared/ui";
 
-import { PendingBadge } from "@/features/agent";
-import { TeamMenu } from "@/features/transcript";
+import { PendingBadge, usePendingTeams } from "@/features/agent";
+import { onTeamChosen, rememberedTeam, TeamMenu } from "@/features/transcript";
 
 import { useSessionUser } from "./SessionGate";
 
@@ -35,7 +35,10 @@ import { useSessionUser } from "./SessionGate";
  * Assembly only: which sections exist and where they go. No feature data —
  * the counts the spec shows beside some entries belong to modules B and C, and
  * the shell does not read them. 승인 대기 carries the agent feature's own
- * count, read and drawn by `PendingBadge`; the shell only places it.
+ * count, read and drawn by `PendingBadge`; the shell only places it. The
+ * count is the chosen team's, what 승인 대기 lists, and the teams with any
+ * waiting are passed to the team menu as ids for its red dots -- module A's
+ * menu and the agent feature do not import each other.
  */
 
 interface NavItem {
@@ -47,7 +50,7 @@ interface NavItem {
   /** Phase 2 in the spec — drawn with a hollow ring. */
   phase2?: boolean;
   /** A feature's own mark beside the label, given the path. */
-  badge?: (pathname: string) => React.ReactNode;
+  badge?: (pathname: string, teamId: string | null) => React.ReactNode;
 }
 
 const NAV: NavItem[] = [
@@ -72,7 +75,7 @@ const NAV: NavItem[] = [
     label: "승인 대기",
     href: "/approvals",
     isCurrent: (p) => p.startsWith("/approvals"),
-    badge: (p) => <PendingBadge pathname={p} />,
+    badge: (p, teamId) => <PendingBadge pathname={p} teamId={teamId} />,
   },
 ];
 
@@ -92,6 +95,14 @@ export function AppSidebar() {
   const pathname = usePathname();
   const user = useSessionUser();
   const router = useRouter();
+  const pendingTeams = usePendingTeams(pathname);
+  // The team chosen in the menu, as every team-level screen reads it. Read
+  // after mount: the store is the browser's, and the server has none.
+  const [teamId, setTeamId] = useState<string | null>(null);
+  useEffect(() => {
+    setTeamId(rememberedTeam());
+    return onTeamChosen(setTeamId);
+  }, []);
   const [leaving, setLeaving] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -134,7 +145,7 @@ export function AppSidebar() {
       </Link>
 
       {/* Which team the team-level screens are about; every one of them follows it. */}
-      <TeamMenu />
+      <TeamMenu marked={pendingTeams} />
 
       <nav aria-label="주요 메뉴" className="flex flex-col">
         {NAV.map((item) => (
@@ -142,7 +153,7 @@ export function AppSidebar() {
             key={item.label}
             item={item}
             current={item.isCurrent?.(pathname) ?? false}
-            badge={item.badge?.(pathname)}
+            badge={item.badge?.(pathname, teamId)}
           />
         ))}
       </nav>

@@ -2,12 +2,13 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
-import { announcePendingChanged } from "../pendingCount";
+import { announcePendingChanged, resetPendingCounts } from "../pendingCount";
 import type { PendingAction } from "../types";
 import { PendingBadge } from "./PendingBadge";
 
 afterEach(() => {
   cleanup();
+  resetPendingCounts();
   vi.restoreAllMocks();
 });
 
@@ -40,7 +41,7 @@ describe("PendingBadge", () => {
       row("c", { status: "approved", needs_check: true }),
     ]);
 
-    render(<PendingBadge pathname="/" />);
+    render(<PendingBadge pathname="/" teamId="team_1" />);
 
     expect(await screen.findByText("2")).toBeTruthy();
     expect(screen.getByText(", 승인할 제안 2건")).toBeTruthy();
@@ -48,7 +49,7 @@ describe("PendingBadge", () => {
 
   it("draws nothing while nothing waits", async () => {
     const listed = vi.spyOn(api, "listPending").mockResolvedValue([]);
-    const { container } = render(<PendingBadge pathname="/" />);
+    const { container } = render(<PendingBadge pathname="/" teamId="team_1" />);
     await waitFor(() => expect(listed).toHaveBeenCalled());
     expect(container.textContent).toBe("");
   });
@@ -58,12 +59,47 @@ describe("PendingBadge", () => {
       .spyOn(api, "listPending")
       .mockResolvedValueOnce([row("a")])
       .mockResolvedValueOnce([]);
-    const { container } = render(<PendingBadge pathname="/approvals" />);
+    const { container } = render(<PendingBadge pathname="/approvals" teamId="team_1" />);
     expect(await screen.findByText("1")).toBeTruthy();
 
     act(() => announcePendingChanged());
 
     await waitFor(() => expect(listed).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(container.textContent).toBe(""));
+  });
+});
+
+describe("PendingBadge, per team", () => {
+  it("counts only the chosen team's proposals", async () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([
+      row("a"),
+      row("b", { team_id: "team_2" }),
+      row("c", { team_id: "team_2" }),
+    ]);
+
+    render(<PendingBadge pathname="/" teamId="team_2" />);
+
+    expect(await screen.findByText("2")).toBeTruthy();
+  });
+
+  it("draws nothing while no team is chosen", async () => {
+    const listed = vi.spyOn(api, "listPending").mockResolvedValue([row("a")]);
+    const { container } = render(<PendingBadge pathname="/" teamId={null} />);
+    await waitFor(() => expect(listed).toHaveBeenCalled());
+    expect(container.textContent).toBe("");
+  });
+
+  it("reads the queue once for every place that shows a count", async () => {
+    const listed = vi.spyOn(api, "listPending").mockResolvedValue([row("a")]);
+
+    render(
+      <>
+        <PendingBadge pathname="/" teamId="team_1" />
+        <PendingBadge pathname="/" teamId="team_1" />
+      </>,
+    );
+
+    expect(await screen.findAllByText("1")).toHaveLength(2);
+    expect(listed).toHaveBeenCalledTimes(1);
   });
 });

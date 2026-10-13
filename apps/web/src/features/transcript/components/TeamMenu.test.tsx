@@ -105,11 +105,13 @@ describe("TeamMenu", () => {
     expect(names()).toEqual(["가 팀", "나 팀"]);
   });
 
-  it("marks the first team for somebody who has not chosen one", async () => {
+  it("marks the first team for somebody who has not chosen one, and keeps it", async () => {
     open([A, B]);
 
     await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
-    expect(window.localStorage.getItem("autune.team")).toBeNull();
+    // Kept and announced, so a screen that reads the choice -- 승인 대기 lists
+    // one team (2026-10-13) -- opens on the team this menu marks.
+    expect(window.localStorage.getItem("autune.team")).toBe("team_a");
   });
 
   it("a team picked here is the team of the screen on show, at once, and is kept", async () => {
@@ -637,5 +639,48 @@ describe("TeamMenu, making a team", () => {
     expect(await screen.findByText("가 팀")).toBeTruthy();
     fireEvent.click(plus());
     expect(maker()).not.toBeNull();
+  });
+});
+
+describe("TeamMenu, proposals waiting", () => {
+  // A red dot beside every team with proposals waiting for this person (the
+  // user, 2026-10-13): 승인 대기 lists one team, so the others need a sign.
+  const dotted = () =>
+    sidebarTeams()
+      .filter((b) => (b.textContent ?? "").includes("승인 대기 있음"))
+      .map((b) => b.textContent?.replace(", 승인 대기 있음", ""));
+
+  it("marks each listed team that has some, whichever is being looked at", async () => {
+    list.mockResolvedValue([A, B, C]);
+    render(<TeamMenu marked={new Set(["team_b", "team_c"])} />);
+
+    await waitFor(() => expect(chosen()).toEqual(["가 팀"]));
+    expect(dotted()).toEqual(["나 팀", "다 팀"]);
+  });
+
+  it("puts the dot on 더보기 when a team behind it has some", async () => {
+    list.mockResolvedValue([A, B, C, D, E]);
+    render(<TeamMenu marked={new Set(["team_e"])} />);
+
+    const behind = await screen.findByRole("button", { name: "팀 더보기, 승인 대기 있음" });
+    expect(dotted()).toEqual([]);
+
+    fireEvent.click(behind);
+    const row = windowEntry("마 팀, 승인 대기 있음");
+    expect(row).toBeTruthy();
+  });
+
+  it("puts no dot on 더보기 when every marked team is listed", async () => {
+    list.mockResolvedValue([A, B, C, D]);
+    render(<TeamMenu marked={new Set(["team_b"])} />);
+
+    expect(await screen.findByRole("button", { name: "팀 더보기" })).toBeTruthy();
+  });
+
+  it("marks the one team of somebody on one team", async () => {
+    list.mockResolvedValue([A]);
+    render(<TeamMenu marked={new Set(["team_a"])} />);
+
+    expect(await screen.findByText(", 승인 대기 있음")).toBeTruthy();
   });
 });

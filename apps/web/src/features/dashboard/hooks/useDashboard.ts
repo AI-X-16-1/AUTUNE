@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getDashboard, getGapTitles, getPredictions } from "../api";
 import type { DashboardRead, GapTitlesByPattern, PredictionsRead } from "../types";
@@ -18,6 +18,12 @@ import type { DashboardRead, GapTitlesByPattern, PredictionsRead } from "../type
  * any but `/dashboard` still lets the rest render (those widgets have their
  * own empty/missing states), instead of blanking the whole screen over one
  * piece.
+ *
+ * Loaded again whenever the tab comes back into view, and by `reload` (the
+ * dashboard's 새로고침): a person who moved cards on the action board in
+ * another tab sees the new rate without F5, which would also clear the agent
+ * chat on the same page. Only the newest load is applied, so one that started
+ * earlier and lands later does not put old figures back.
  */
 export function useDashboard(teamId: string) {
   const [dashboard, setDashboard] = useState<DashboardRead | null>(null);
@@ -25,14 +31,19 @@ export function useDashboard(teamId: string) {
   const [predictions, setPredictions] = useState<PredictionsRead | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
+  const latest = useRef(0);
 
   const reload = useCallback(async () => {
+    const load = ++latest.current;
     setLoading(true);
     const [dashboardResult, gapTitlesResult, predictionsResult] = await Promise.allSettled([
       getDashboard(teamId),
       getGapTitles(teamId),
       getPredictions(teamId),
     ]);
+    if (load !== latest.current) {
+      return;
+    }
 
     if (dashboardResult.status === "fulfilled") {
       setDashboard(dashboardResult.value);
@@ -48,6 +59,16 @@ export function useDashboard(teamId: string) {
 
   useEffect(() => {
     void reload();
+  }, [reload]);
+
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void reload();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [reload]);
 
   return { dashboard, gapTitles, predictions, loading, error, reload };
