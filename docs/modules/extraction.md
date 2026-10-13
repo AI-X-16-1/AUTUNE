@@ -1359,6 +1359,19 @@ authors, company. One exception: an Excel cell note's author is read only to
 drop the note's first line when it is a note author's name and a colon, and is
 kept nowhere.
 
+**A part under another name (#1252).** The readers of `.docx`, `.xlsx` and
+`.pptx` find a part by its usual name (`xl/worksheets/sheet1.xml`); the file's
+own relationships may give it any name. A file whose document, workbook or
+presentation names one of these under another name is refused as `damaged`
+-- not read: a header, a footer, the footnotes, endnotes or comments of a
+document; a sheet; a slide, a slide master, a notes master or a handout
+master. **Not reached, and so still left unread in a file that is taken:**
+what a sheet, a slide or a master names in turn -- a sheet's cell notes and
+text boxes, a slide's speaker notes, comments and SmartArt, a master's
+layouts -- and the document properties, when one has another name than the
+usual. One such name is known to be written and is read like the usual one:
+openpyxl (3.1.5) writes a sheet's cell notes to `xl/comments/comment1.xml`.
+
 **The gap no reader closes:** a marking or a phone number that exists only as
 a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not
 seen. No OCR is done. A PDF with a page that is only a picture is refused
