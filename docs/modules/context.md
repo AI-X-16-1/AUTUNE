@@ -148,7 +148,7 @@ autune_context/pipeline/
 │                   #   plus an opt-in worker_process_init hook that warms and logs each model
 ├── base.py         # Protocols: Embedder, Reranker, NliModel, LlmClient (+ result dataclasses)
 ├── registry.py     # config string → implementation, lru_cache, startup dimension guard
-├── _serving.py     # shared /health + /info probe for the self-hosted HTTP clients
+├── _serving.py     # /health + /info probe, and the guarded client the embedder and NLI use
 ├── embedding.py    # KureHttpEmbedder / KureLocalEmbedder / FakeEmbedder
 ├── reranking.py    # BgeRerankerKoHttp / ...Local / Fake
 ├── nli.py          # KlueKorNliHttp / ...Local / Fake
@@ -175,6 +175,19 @@ Rules:
   written onto every output row, so results stay traceable across redeploys. The
   `*Http` client also probes `/health` in its constructor, so an unreachable
   endpoint fails the warm-up rather than the first task.
+- **The embedder and NLI clients go through the outbound guard** even though the
+  server is ours (`_serving.ModelServerClient`, an `autune_integrations.HttpClient`):
+  that a server is our own is the reasoning that leaves a guard unrun, and the
+  extraction module's hosted clients already work this way. The guard caps a
+  request at 4,000 characters, so texts and pairs go in batches under it, and a
+  single text no request could carry is cut to the cap (half each for an NLI
+  pair) rather than failing the meeting. The in-process `*_local` models read
+  it whole; texts that long are rare (one utterance, or a decision with its
+  source utterances). **The re-ranker is not on the guard yet.** Its query and
+  passages are whole topic segments, and one segment of a real-length meeting
+  passes the cap on its own, so moving it means cutting segments, which
+  changes which links are asserted. That needs the same cut in the local
+  re-ranker and a measurement on the held-out sets first.
 - **The embedding dimension is a compile-time fact.** `ctx_embeddings.embedding`
   is `vector(N)` where `N = autune_context.constants.EMBEDDING_DIM`, fixed at
   migration time. `get_embedder()` raises at startup unless the chosen model's

@@ -12,10 +12,9 @@ import hashlib
 import math
 from typing import TYPE_CHECKING
 
-import httpx
-
 from autune_context.constants import EMBEDDING_DIM
-from autune_context.pipeline._serving import probe
+from autune_context.pipeline._serving import ModelServerClient, batches, clip, probe
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 if TYPE_CHECKING:
     from autune_context.config import ContextSettings
@@ -26,11 +25,15 @@ class KureHttpEmbedder:
     ``{"embeddings": [[...]]}``; ``GET {endpoint}/info`` -> ``{"model_version",
     "dim"}`` (both read at construction, so a wrong-dimension model is caught by
     ``get_embedder()``'s guard even for the HTTP impl).
+
+    On ``ModelServerClient``, so ``check_outbound`` reads every request: texts
+    go in batches of at most ``MAX_OUTBOUND_CHARS`` characters, and a single
+    text longer than that is cut to it first (``_serving.clip``).
     """
 
     def __init__(self, settings: ContextSettings) -> None:
-        self._client = httpx.Client(
-            base_url=settings.embedder_endpoint, timeout=settings.embedder_timeout_s
+        self._client = ModelServerClient(
+            settings.embedder_endpoint, service="embedder", timeout_s=settings.embedder_timeout_s
         )
         info = probe(self._client, service="embedder")
         try:
@@ -52,9 +55,14 @@ class KureHttpEmbedder:
         return self._model_version
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        resp = self._client.post("/embed", json={"texts": texts})
-        resp.raise_for_status()
-        return [[float(x) for x in row] for row in resp.json()["embeddings"]]
+        fitted = [clip(text, MAX_OUTBOUND_CHARS) for text in texts]
+        vectors: list[list[float]] = []
+        for batch in batches(fitted, len):
+            rows = self._client.request("POST", "/embed", json={"texts": batch})["embeddings"]
+            if len(rows) != len(batch):
+                raise ValueError(f"asked for {len(batch)} embeddings, got {len(rows)}")
+            vectors += [[float(x) for x in row] for row in rows]
+        return vectors
 
 
 class KureLocalEmbedder:
