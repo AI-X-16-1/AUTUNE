@@ -403,11 +403,13 @@ person's, those counts are that person's completion record. So:
 (#1265). B's `GET /api/extraction/since-last-meeting` shows the members of a
 team which of the team's action items were finished, closed without being
 finished, started or newly put on the board since the team's last analysed
-meeting, which are late, and how many are open. It is read from
-`ext_edit_events` at the request and is not stored, sent or logged; the answer
-carries item ids and one team total, and a row on the board is an item's title
-and due date -- no assignee, and nothing counted, grouped or ordered per
-person.
+meeting -- or since a meeting of the team the caller names (#1270) -- which
+are late, and how many are open. It is read from `ext_edit_events` at the
+request and is not stored, sent or logged; the answer carries item ids and one
+team total. A row on the board is an item's title and due date; a line in the
+pre-meeting brief's agenda draft, which takes only the late and the closed
+ones, is an item's title and the name of its part, with no due date. Neither
+has an assignee, and nothing is counted, grouped or ordered per person.
 
 ## 4. Retention and deletion
 

@@ -31,6 +31,10 @@ vi.mock("@/features/actions", () => ({
     label: "B's unfinished to-dos of the earlier meeting",
     lines: () => Promise.resolve([]),
   },
+  SINCE_EARLIER_MEETING_AGENDA: {
+    label: "B's late or closed to-dos since the earlier meeting",
+    lines: () => Promise.resolve([]),
+  },
 }));
 vi.mock("@/features/gap", () => ({
   EARLIER_GAPS_AGENDA: { label: "C's gaps of the earlier meeting", lines: () => Promise.resolve([]) },
@@ -45,12 +49,13 @@ describe("the 컨텍스트 route", () => {
     expect(screen.getByRole("status").textContent).toBe("mtg_7");
   });
 
-  it("hands the tab what the agenda draft carries: the earlier meeting's open gaps, then its unfinished to-dos", async () => {
+  it("hands the tab what the agenda draft carries: the earlier meeting's open gaps, its unfinished to-dos, then what is late or was closed since it", async () => {
     render(await MeetingContextPage({ params: Promise.resolve({ meetingId: "mtg_7" }) }));
 
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "C's gaps of the earlier meeting",
       "B's unfinished to-dos of the earlier meeting",
+      "B's late or closed to-dos since the earlier meeting",
     ]);
   });
 });

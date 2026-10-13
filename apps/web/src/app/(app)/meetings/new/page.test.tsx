@@ -14,6 +14,10 @@ vi.mock("@/features/actions", () => ({
     <p role="note">the notice of module B, {entrance}</p>
   ),
   JIRA_AGENDA: { label: "B's Jira issues", lines: () => Promise.resolve([]) },
+  SINCE_LAST_MEETING_AGENDA: {
+    label: "B's late or closed to-dos since the last meeting",
+    lines: () => Promise.resolve([]),
+  },
 }));
 vi.mock("@/features/gap", () => ({
   OPEN_GAPS_AGENDA: { label: "C's open gaps", lines: () => Promise.resolve([]) },
@@ -49,6 +53,7 @@ describe("the 새 회의 route", () => {
     expect(screen.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "B's Jira issues",
       "C's open gaps",
+      "B's late or closed to-dos since the last meeting",
     ]);
   });
 
