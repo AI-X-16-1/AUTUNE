@@ -150,7 +150,7 @@ uploaded rows of `ext_materials`, `ext_material_chunks` with a vector for
 each piece, `ext_material_alarms`, the team's keeping setting
 (`ext_material_settings`), the upload route, the search of a team's
 materials by a question a member types, the delete of an uploaded material
-and the two hourly tasks. The legal notice
+and the three hourly tasks. The legal notice
 (`apps/web/src/app/legal/content.ts`) says what is read of an uploaded
 file, what is kept of it, that it is searched, for how long it is kept,
 who deletes it, and what the approvers of a team are sent about a refused
@@ -236,6 +236,16 @@ path and a retention rule (section 4) -- any member's delete, and the
 team's window by default or the team's own choice to keep it until deleted
 -- and is read by the team alone.
 
+**What the masker does not put back together.** Four shapes of a patterned
+value are stored with some or all of it readable (`document_masking.py`): a
+line that ends inside a group of digits, a break that left a hyphen on both
+lines, a value that runs across the edge of a PDF page, and an e-mail
+address broken across lines. `assert_masked` and the screen on an excerpt's
+way out run the same detector, so neither sees what the first reading
+missed. A material has no report and no mask-in-place: the transcript's
+path (above) is module A's and takes utterances. A member who sees such a
+value deletes the material; Autune holds no original to mask again.
+
 **No row names a person.** Not who uploaded a file, not who deleted one, not
 who was stopped. The title is typed by a member and can hold a name; it is
 kept out of logs and error messages and is screened before it leaves Autune.
@@ -272,7 +282,8 @@ link is for approvers only and shows the time and the kind of marking. An
 approver's acknowledgement deletes the row, and who acknowledged is not
 recorded. In a small team the time of an attempt can point at one person,
 which is why the row is short-lived: unacknowledged, it is deleted 30 days
-after it was written, by the task that deletes materials past their window.
+after it was written, by a task of its own
+(`autune.extraction.periodic.forget_old_material_alarms`, hourly).
 
 For the same reason an approver here is a holder of the `any` scope and
 nobody with a narrower one (the layer's owner on #1201, 2026-10-12). The
@@ -620,7 +631,8 @@ person.
     team's uploads, those already made and those to come -- not one
     material at a time -- and the 자료 screen shows every member which one
     is in force. While it is on, no task deletes the team's materials by
-    age, and a material goes only by a member's delete or with the team.
+    age, and a material goes only by a member's delete, with the team, or
+    once the team has no member (below).
   - **Switching back to the window applies to existing materials, counted
     from their upload.** Every upload keeps its `expires_at` whichever
     choice is in force, so on switching back a material whose window has
@@ -649,22 +661,38 @@ person.
     and there is no level at which a material outlives its team.
   - **Only masked text is kept** (section 2). The original file is never
     written anywhere, so keeping a material longer keeps no more of it.
-  - **Open (#817): a team nobody is on.** A last member who deletes their own
-    account (`DELETE /api/audio/me`) instead of the team leaves the team
-    with no member, and nothing deletes such a team today. Its materials
-    would then have nobody who can delete them or change the team's
-    setting. The case matters only for a team that chose to keep its
-    materials until deleted -- nothing would ever end them -- and, under the
-    default, for the length of the window, during which nobody can delete
-    one; when the window passes, the hourly task still ends them. Module
-    B's proposal: the last member's account deletion deletes the team with
-    it, after a confirmation that names the team, so nothing is left that
-    nobody can reach. That is module A's code and module A's (mkkim68's)
-    decision. Upload stays off until that case has an answer.
+  - **A team nobody is on keeps no materials (#817).** A last member who
+    deletes their own account (`DELETE /api/audio/me`) instead of the team
+    leaves the team with no member, and nothing deletes such a team today.
+    Nobody could then delete its materials or change its setting -- every
+    route over them asks for a member -- and a team that chose to keep its
+    materials until deleted would keep them without end. So module B
+    deletes them itself: an hourly task
+    (`autune.extraction.periodic.forget_memberless_team_materials`) deletes,
+    for every team with no row in `team_members`, every material -- an
+    upload's masked text and vectors, and a link -- every alarm row and the
+    keeping setting, **whatever that setting says**. "Kept until a member
+    deletes it" is a choice made for members, and such a team does not get
+    one again: only a member makes an invitation, and an invitation goes
+    with the member who made it. The task reads the state and not the
+    event, so it holds however a team came to have no member, and it acts
+    only once the last membership is gone -- at its next run, within the
+    hour. The log line has the team's id and two counts.
+    **Still open, and module A's: the team itself.** The `teams` row stays,
+    and so do the team's meetings, which the retention sweep ends as it
+    does any team's. Module B's proposal there: the last member's account
+    deletion deletes the team with it, after a confirmation that names the
+    team. That is module A's code and module A's (mkkim68's) decision, and
+    mkkim68 has said module A takes it (review of #1198, 2026-10-12;
+    #817). What upload waited for was a way for these materials to end,
+    and that part now has one.
   - **What a meeting makes from a material is the meeting's.** An agenda
     draft built from a material for a meeting (#1147) is an analysis result
     of that meeting: it has the meeting's window and goes with the meeting.
     Deleting the material does not reach a draft already made from it.
+    Nothing builds such a draft yet: the new-meeting form's agenda sources
+    do not include a team's materials (#1147). The rule is here for when
+    one does.
 - Somebody whose data sits in a document's unmasked prose, and who is not on
   the team, has no route of their own in Autune: the route is a team
   member's delete, or the team's window unless the team chose to keep its
@@ -806,6 +834,10 @@ the feature needs.
 - Never send raw audio anywhere.
 - Error tracking must scrub message bodies; assume anything in an exception
   string is published.
+- With `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local` the API process
+  asks huggingface.co about KURE-v1's files each time it loads the model,
+  and downloads them when its cache does not hold them: requests that name
+  the model, and nothing of a material, a question or a team.
 - A cloud model is never the default, and in module B it has to be switched on
   twice (#392). B's classifier, resolver, meeting summary, short titles and
   step-4 NLI send text to a provider only when their implementation is set to

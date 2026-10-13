@@ -48,6 +48,15 @@ storage, and the original is not kept":
   given. Any member deletes a material at once, and its text goes in the same
   transaction; everything goes with the team (``ON DELETE CASCADE``). A Drive
   link keeps no text and has no day.
+- **A team nobody is on keeps nothing here** (#817; the owner, 2026-10-13).
+  Only a member can delete a material or change the team's setting, so
+  once a team has no member nobody could ever end what it holds -- and a
+  team that chose to keep its uploads would keep them without end.
+  ``forget_memberless_team_materials`` -- hourly,
+  ``tasks.forget_memberless_team_materials`` -- deletes every row this
+  module keeps for such a team's 자료 screen: uploads with their text and
+  vectors, links, alarm rows and the keeping setting, whatever that setting
+  says. The team itself, and its meetings, are module A's.
 
 **For both: a row names no person.** Any member of the team registers,
 uploads and deletes, as with the team's projects; there is no admin role
@@ -74,11 +83,11 @@ from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 from urllib.parse import parse_qs, urlsplit
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, union
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from autune_core import Team, get_logger
+from autune_core import Team, TeamMember, get_logger
 from autune_core.errors import AutuneError, ConflictError, NotFoundError, ValidationError
 from autune_integrations.document_masking import mask_document
 from autune_integrations.privacy import assert_masked
@@ -120,6 +129,11 @@ the time of an attempt can point at one person, so the row is short-lived."""
 FORGET_BATCH = 100
 """How many expired uploads one ``forget_expired_uploads`` call deletes, in
 one transaction. The task calls it again until a call finds fewer."""
+
+MEMBERLESS_BATCH = 20
+"""How many teams one ``forget_memberless_team_materials`` call empties, in
+one transaction; a team holds at most ``MAX_MATERIALS`` rows. The task calls
+it again until a call finds fewer."""
 
 _ID = re.compile(r"[A-Za-z0-9_-]{10,200}")
 """Drive ids are URL-safe base64-ish -- ``ID`` in ``driveLink.ts``."""
@@ -689,6 +703,65 @@ def forget_expired_uploads(session: Session, *, now: datetime, limit: int | None
     for team_id, material_id in gone:
         log.info("extraction_material_expired", material_id=material_id, team_id=team_id)
     return len(ids)
+
+
+def _deleted(result: object) -> int:
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+def forget_memberless_team_materials(session: Session, *, limit: int | None = None) -> int:
+    """Delete what this module keeps for the 자료 screen of at most ``limit``
+    (``MEMBERLESS_BATCH``) teams that have no member: every material -- an
+    upload with its masked text and vectors, and a link -- every alarm row, and
+    the keeping setting. Returns how many teams were emptied; the caller
+    commits and calls again while a call returns the whole batch.
+
+    **Why whatever the setting says.** "Kept until a member deletes it" is a
+    promise to the members, and there are none: every route over these rows
+    asks for one, so nobody can read, search, delete or switch back. Such a
+    team does not get a member again either -- only a member makes an
+    invitation, and an invitation goes with the member who made it.
+
+    **Why here and not when an account is deleted.** This reads the state, so
+    it holds whichever way a team came to have nobody on it, and it acts only
+    once the last membership row is really gone. A hook on account deletion
+    runs before that delete commits, in a transaction of its own: if the
+    deletion then failed, the person would still be on a team whose materials
+    were gone.
+
+    A team is made with its first member in one transaction (module A's
+    ``create_team``), and an upload needs a member, so a team seen here with
+    no member is not one that is about to get its first. The ``teams`` row and
+    the team's meetings are not touched: they are module A's (invariant 4)."""
+    if limit is None:
+        limit = MEMBERLESS_BATCH
+    held = union(
+        select(ExtMaterial.team_id),
+        select(ExtMaterialAlarm.team_id),
+        select(ExtMaterialSetting.team_id),
+    ).subquery()
+    on_it = select(TeamMember.user_id).where(TeamMember.team_id == held.c.team_id).exists()
+    teams = list(
+        session.scalars(select(held.c.team_id).where(~on_it).order_by(held.c.team_id).limit(limit))
+    )
+    for team_id in teams:
+        theirs = select(ExtMaterial.id).where(ExtMaterial.team_id == team_id)
+        # The text first, as in ``delete_material``.
+        session.execute(delete(ExtMaterialChunk).where(ExtMaterialChunk.material_id.in_(theirs)))
+        materials = _deleted(
+            session.execute(delete(ExtMaterial).where(ExtMaterial.team_id == team_id))
+        )
+        alarms = _deleted(
+            session.execute(delete(ExtMaterialAlarm).where(ExtMaterialAlarm.team_id == team_id))
+        )
+        session.execute(delete(ExtMaterialSetting).where(ExtMaterialSetting.team_id == team_id))
+        log.info(
+            "extraction_memberless_team_materials_forgotten",
+            team_id=team_id,
+            materials=materials,
+            alarms=alarms,
+        )
+    return len(teams)
 
 
 def forget_old_alarms(session: Session, *, now: datetime) -> int:

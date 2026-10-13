@@ -109,6 +109,12 @@ describe("a refusal, in the member's words", () => {
     const said = uploadRefusal(cause, RULES);
 
     expect(said).toBe(CONFIDENTIAL_REFUSAL);
+    // Who can see the record is the holders of `any`, and a team may have
+    // none: the sentence says both (the owner, 2026-10-13).
+    expect(said).toContain(
+      "팀에 '전체' 범위의 승인자가 있으면 그 사람만 업로드가 멈췄다는 사실과 그 시각, 표시의 종류를 볼 수 있으며, 올린 사람과 파일 이름은 알려지지 않습니다. 그런 승인자가 없는 팀에서는 이 기록을 아무도 보지 못하며, 기록은 30일 뒤 삭제됩니다.",
+    );
+    expect(said).not.toContain("팀의 승인자에게는");
     expect(said).toMatch(/저장되지 않았습니다/);
     expect(said).toMatch(/올린 사람과 파일 이름은 알려지지 않습니다/);
   });
