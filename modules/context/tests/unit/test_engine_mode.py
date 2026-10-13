@@ -148,7 +148,11 @@ _TOPIC = TopicSegment(label="예산", text="현재 예산 논의", utterance_ids
 
 
 def _embedder():
-    return type("E", (), {"model_version": "e1"})()
+    # One vector for every text: the keyphrase check (``_subjects_agree``) always
+    # agrees, so these tests see dense similarity and the verifier decide, as before.
+    return type(
+        "E", (), {"model_version": "e1", "embed": lambda self, texts: [[1.0] for _ in texts]}
+    )()
 
 
 def _link(candidates, llm: FakeLlm, verdicts=None, **overrides) -> list[CtxTopicLink]:

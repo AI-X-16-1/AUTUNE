@@ -117,17 +117,23 @@ class CaseResult:
         """What ``asserted`` would have been with ``link_similarity_threshold``
         at ``similarity`` and ``link_confidence_threshold`` at ``rerank`` —
         every candidate row is already written, pending or not, so this needs
-        no re-run."""
+        no re-run. A meeting the keyphrase check held back (``held_back``)
+        stays out on the similarity side; one under the configured threshold
+        was never checked, and counts as passing."""
         return frozenset(
             m
             for m in self.best_similarity
-            if self.best_similarity[m] >= similarity or self.best_rerank[m] >= rerank
+            if (self.best_similarity[m] >= similarity and m not in self.held_back)
+            or self.best_rerank[m] >= rerank
         )
 
     segments: tuple[SegmentOutcome, ...] = field(default=())
     """Series cases only: the current meeting's topic segments."""
     asserted_links: tuple[LinkOutcome, ...] = field(default=())
     """Series cases only: one per asserted link row."""
+    held_back: frozenset[str] = field(default=frozenset())
+    """Past meetings dense similarity alone would have asserted that were left
+    ``pending``: the keyphrase check (``service._subjects_agree``) said no."""
 
     def index(self, meeting_id: str) -> int:
         return self.past_ids.index(meeting_id)
@@ -155,6 +161,7 @@ def run_case(case: EvalCase) -> CaseResult:
             asserted, pending, best_similarity, best_rerank = _link_sets(links)
 
         expected = frozenset(past_ids[i] for i in case.expected_linked_indices)
+        held_back = _held_back(asserted, best_similarity, best_rerank)
         return CaseResult(
             case_id=case.id,
             category=case.category,
@@ -164,6 +171,7 @@ def run_case(case: EvalCase) -> CaseResult:
             best_similarity=best_similarity,
             best_rerank=best_rerank,
             past_ids=tuple(past_ids),
+            held_back=held_back,
         )
     finally:
         with session_scope() as s:
@@ -216,12 +224,26 @@ def run_series(series: EvalSeries) -> list[CaseResult]:
                     past_ids=tuple(ids[:index]),
                     segments=segments,
                     asserted_links=asserted_links,
+                    held_back=_held_back(asserted, best_similarity, best_rerank),
                 )
             )
         return results
     finally:
         with session_scope() as s:
             s.execute(delete(Team).where(Team.id == team_id))
+
+
+def _held_back(
+    asserted: frozenset[str], best_similarity: dict[str, float], best_rerank: dict[str, float]
+) -> frozenset[str]:
+    settings = get_settings()
+    return frozenset(
+        m
+        for m, sim in best_similarity.items()
+        if sim >= settings.link_similarity_threshold
+        and m not in asserted
+        and best_rerank[m] < settings.link_confidence_threshold
+    )
 
 
 def _series_category(expected: frozenset[int], index: int) -> str:
@@ -475,7 +497,8 @@ def report(results: list[CaseResult]) -> str:
         lines += [
             "",
             "threshold sweep (accuracy if link_similarity_threshold were t,",
-            " link_confidence_threshold held as configured):",
+            " link_confidence_threshold and the keyphrase check held as configured;",
+            " below the configured t the keyphrase check was not run and counts as passed):",
             *_sweep(
                 results, settings.link_similarity_threshold, settings.link_confidence_threshold
             ),
