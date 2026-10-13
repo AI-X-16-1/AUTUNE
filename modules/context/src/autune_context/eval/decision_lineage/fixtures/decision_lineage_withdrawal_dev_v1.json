@@ -1,0 +1,966 @@
+{
+  "version": 1,
+  "_about": "Development set (2026-10-13), not held-out: what a cue for withdrawals said without a negation or a cancel/stop/replace word is designed on, so that decision_lineage_heldout_v8 is not. Written after v8 was frozen, with other subjects (a ski resort, a language academy, a veterinary clinic, a farmers' market, a co-working space and a city bus company); shares no statement or line with v8 or any earlier set. Same format as v6-v8. Names and organisations are made up.",
+  "cases": [
+    {
+      "id": "wd_ski_night",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "야간 스키를 운영한다.",
+          "context": [
+            "야간 운영을 할지 봅시다.",
+            "밤 10시까지 야간 스키를 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "끝내기로 했다.",
+        "context": [
+          "야간에는 전기료가 매출보다 많이 나와요.",
+          "야간 스키는 이번 시즌으로 끝냅시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_ski_rental",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "장비 대여는 렌탈 업체에 위탁한다.",
+          "context": [
+            "장비 대여를 어떻게 할까요?",
+            "렌탈 전문 업체에 위탁합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "장비 대여는 리조트가 직접 한다.",
+        "context": [
+          "업체가 장비 관리를 엉망으로 해요.",
+          "대여는 우리가 직접 운영합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_ski_lift",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "리프트는 오전 8시부터 돌린다.",
+          "context": [
+            "리프트 운행 시간을 정하죠.",
+            "아침 8시부터 돌립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "9시부터 돌린다.",
+        "context": [
+          "8시에는 타는 사람이 거의 없어요.",
+          "리프트는 9시부터 돌리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_ski_bus",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "시내 셔틀버스를 운행한다.",
+          "context": [
+            "손님들 교통편을 정하죠.",
+            "시내에서 셔틀버스를 돌립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "셔틀은 뺀다.",
+        "context": [
+          "셔틀 타는 손님이 하루 열 명도 안 돼요.",
+          "셔틀버스는 운행 계획에서 뺍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_ski_lesson",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "강습은 주말 이틀 연다.",
+          "context": [
+            "강습 일정을 정하죠.",
+            "토요일 일요일 이틀 강습합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "일요일 강습은 빼고 토요일에만 한다.",
+        "context": [
+          "일요일에는 강사를 구하기 어려워요.",
+          "일요일은 빼고 토요일만 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_ski_price",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "시즌권은 40만 원에 판다.",
+          "context": [
+            "시즌권 가격을 정하죠.",
+            "40만 원으로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "작년처럼 40만 원에 판다.",
+        "context": [
+          "가격을 올리자는 얘기가 있었는데요.",
+          "시즌권은 작년처럼 40만 원 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "wd_ski_cafe",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "슬로프 정설은 매일 새벽에 한다.",
+          "context": [
+            "정설 시간을 정하죠.",
+            "새벽마다 정설합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정상 카페 메뉴를 정리한다.",
+        "context": [
+          "메뉴가 너무 많아서 재고가 남아요.",
+          "카페 메뉴는 다섯 개로 정리합시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "wd_aca_online",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "회화 수업은 온라인으로 한다.",
+          "context": [
+            "회화 수업 방식을 바꾸죠.",
+            "회화반은 화상 수업으로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "대면 수업으로 돌아간다.",
+        "context": [
+          "화면으로 하니 말하기가 안 늘어요.",
+          "회화는 다시 교실에서 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_aca_textbook",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 42,
+          "decision": "교재는 출판사 교재를 쓴다.",
+          "context": [
+            "교재를 정하죠.",
+            "출판사 교재로 갑시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "강사들이 만든 자료로 수업한다.",
+        "context": [
+          "출판사 교재가 수준에 안 맞아요.",
+          "교재는 우리 강사들이 직접 만듭시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_aca_test",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "레벨 테스트는 입학 전에 본다.",
+          "context": [
+            "레벨 테스트 시점을 정하죠.",
+            "입학 전에 봅시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "레벨 테스트는 첫 수업 다음 주로 넘긴다.",
+        "context": [
+          "입학 전에는 학생들이 긴장해서 점수가 낮아요.",
+          "테스트는 첫 수업 다음 주로 넘기죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_aca_shuttle",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 38,
+          "decision": "학원 차량을 운행한다.",
+          "context": [
+            "통학 차량을 둘지 정하죠.",
+            "학원 차량을 한 대 운행합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "차량 운행에서 손 뗀다.",
+        "context": [
+          "보험료랑 기사 월급이 감당이 안 돼요.",
+          "학원 차량은 이제 손 뗍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_aca_class",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "초급반은 열두 명으로 꾸린다.",
+          "context": [
+            "초급반 정원을 정하죠.",
+            "초급반은 열두 명까지 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "초급반에서 네 명을 뺀다.",
+        "context": [
+          "열두 명이면 말할 기회가 너무 적어요.",
+          "초급반은 여덟 명으로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_aca_hours",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "토요일 수업은 오전에만 한다.",
+          "context": [
+            "토요일 수업 시간을 정하죠.",
+            "토요일은 오전만 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "토요일은 원래대로 오전만 한다.",
+        "context": [
+          "오후반을 열자는 문의가 있었어요.",
+          "토요일은 원래대로 오전만 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "wd_aca_review",
+      "category": "reversed_cued",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "매달 학부모 상담을 한다.",
+          "context": [
+            "학부모 소통을 정하죠.",
+            "한 달에 한 번 상담합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "학부모 상담은 없애기로 했다.",
+        "context": [
+          "상담 신청이 거의 없어요.",
+          "정기 상담은 없앱시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_vet_hotel",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 37,
+          "decision": "반려동물 호텔을 운영한다.",
+          "context": [
+            "부대 서비스를 늘려 보죠.",
+            "입원실 옆에 호텔을 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "호텔은 닫는다.",
+        "context": [
+          "야간에 돌볼 사람이 없어요.",
+          "반려동물 호텔은 닫읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_vet_lab",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 44,
+          "decision": "혈액 검사는 외부 검사 기관에 보낸다.",
+          "context": [
+            "혈액 검사를 어떻게 할까요?",
+            "외부 검사 기관에 보냅시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "혈액 검사는 병원 안에서 한다.",
+        "context": [
+          "결과가 늦게 와서 보호자들이 기다려요.",
+          "검사 장비를 들여서 원내에서 합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_vet_booking",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "진료는 예약제로만 받는다.",
+          "context": [
+            "진료 접수 방식을 정하죠.",
+            "예약하신 분만 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "예전처럼 오시는 순서대로 받는다.",
+        "context": [
+          "예약 못 한 응급 환자가 돌아가요.",
+          "진료는 예전처럼 오시는 순서대로 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_vet_vaccine",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "예방접종 문자는 접종 사흘 전에 보낸다.",
+          "context": [
+            "접종 안내 시점을 정하죠.",
+            "사흘 전에 문자 보냅시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "접종 문자를 다시 일주일 전으로 당긴다.",
+        "context": [
+          "사흘 전이면 일정 잡기 어렵대요.",
+          "문자는 다시 일주일 전에 보내죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_vet_night",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 39,
+          "decision": "야간 응급 진료는 하지 않는다.",
+          "context": [
+            "야간 진료를 할지 정하죠.",
+            "야간 응급은 받지 맙시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지금처럼 야간 응급은 안 받는다.",
+        "context": [
+          "야간 진료 문의가 늘었어요.",
+          "야간 응급은 지금처럼 안 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "wd_vet_parking",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "수술실 조명을 교체한다.",
+          "context": [
+            "수술실 조명이 어두워요.",
+            "조명을 새로 바꿉시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주차 공간 두 칸을 더 빌린다.",
+        "context": [
+          "보호자들이 주차를 못 해서 헤매요.",
+          "옆 건물 주차장 두 칸을 빌립시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "wd_mkt_sunday",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "일요 장터를 연다.",
+          "context": [
+            "장터를 하나 더 열죠.",
+            "일요일에도 장터를 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "일요 장터는 그만한다.",
+        "context": [
+          "일요일에는 농가들이 못 나와요.",
+          "일요 장터는 그만합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_mkt_bag",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "장바구니는 종이 봉투로 바꾼다.",
+          "context": [
+            "봉투를 어떻게 할까요?",
+            "비닐 말고 종이 봉투로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "비닐 봉투로 되돌린다.",
+        "context": [
+          "종이 봉투가 비에 젖어서 찢어져요.",
+          "봉투는 비닐로 되돌립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_mkt_card",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "결제는 장터 공용 단말기로 받는다.",
+          "context": [
+            "결제 방식을 정하죠.",
+            "공용 카드 단말기를 씁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "결제는 농가마다 각자 받는다.",
+        "context": [
+          "공용 단말기 정산이 너무 늦어요.",
+          "결제는 농가별로 알아서 받게 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_mkt_hours",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "장터는 오후 6시에 닫는다.",
+          "context": [
+            "장터 마감 시간을 정하죠.",
+            "6시에 닫읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "장터는 7시에 닫는다.",
+        "context": [
+          "퇴근길 손님이 6시 넘어서 와요.",
+          "장터는 한 시간 늦춰서 7시에 닫죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_mkt_fee",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "농가 자리세는 하루 2만 원이다.",
+          "context": [
+            "자리세를 정하죠.",
+            "하루 2만 원씩 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "자리세를 다시 정리해서 만 5천 원으로 한다.",
+        "context": [
+          "작은 농가들이 부담스러워해요.",
+          "자리세는 다시 정리해서 만 5천 원 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_mkt_tent",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "천막은 장터 운영회가 친다.",
+          "context": [
+            "천막 설치를 정하죠.",
+            "천막은 운영회에서 칩시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "천막은 하던 대로 운영회가 친다.",
+        "context": [
+          "농가가 직접 치자는 말도 있었는데요.",
+          "천막은 하던 대로 운영회가 치죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "wd_mkt_music",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 38,
+          "decision": "장터 홍보 현수막을 단다.",
+          "context": [
+            "장터를 알리죠.",
+            "입구에 현수막을 답시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "버스킹 공연을 한 팀 부른다.",
+        "context": [
+          "장터 분위기가 너무 조용해요.",
+          "토요일에 버스킹을 한 팀 부르죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "wd_cow_24h",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "공유 오피스를 24시간 연다.",
+          "context": [
+            "운영 시간을 정하죠.",
+            "24시간 열어 둡시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "24시간 운영은 종료한다.",
+        "context": [
+          "새벽에 도난 사고가 났어요.",
+          "24시간 운영은 이번 달로 종료하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_cow_coffee",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 41,
+          "decision": "커피는 원두 납품 업체에서 받는다.",
+          "context": [
+            "커피를 어떻게 할까요?",
+            "원두 업체에서 납품받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "커피는 캡슐 머신으로 한다.",
+        "context": [
+          "원두 기계 청소를 아무도 안 해요.",
+          "커피는 캡슐 머신 두 대 들여서 해결하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_cow_desk",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "자유석을 없애고 지정석만 둔다.",
+          "context": [
+            "좌석 운영을 정하죠.",
+            "자유석 없애고 다 지정석으로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "자유석으로 돌아간다.",
+        "context": [
+          "지정석은 절반이 비어 있어요.",
+          "다시 자유석으로 돌아가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_cow_lounge",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "라운지는 오후 10시까지 쓴다.",
+          "context": [
+            "라운지 이용 시간을 정하죠.",
+            "라운지는 밤 10시까지 씁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "라운지는 9시에 닫는다.",
+        "context": [
+          "늦게까지 떠드는 소리 민원이 있어요.",
+          "라운지는 한 시간 당겨서 9시에 닫죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_cow_mail",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "우편물은 안내 데스크에서 받아 둔다.",
+          "context": [
+            "우편물 처리를 정하죠.",
+            "데스크에서 받아 둡시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "우편물은 안내 데스크와 무인 보관함에서 받는다.",
+        "context": [
+          "데스크가 비면 택배를 못 받아요.",
+          "무인 보관함도 같이 씁시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_cow_price",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "1인석은 월 25만 원이다.",
+          "context": [
+            "1인석 가격을 정하죠.",
+            "월 25만 원 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "1인석은 예전 가격 그대로 받는다.",
+        "context": [
+          "가격을 내리자는 말이 있었는데요.",
+          "1인석은 예전 가격 그대로 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "wd_cow_phone",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "회의실 예약은 앱으로 받는다.",
+          "context": [
+            "회의실 예약 방식을 정하죠.",
+            "앱으로 예약받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "폰부스 두 개를 설치한다.",
+        "context": [
+          "통화할 공간이 없다는 불만이 많아요.",
+          "폰부스를 두 개 놓읍시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "wd_bus_route",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 43,
+          "decision": "심야 노선 N7을 신설한다.",
+          "context": [
+            "심야 노선을 늘리죠.",
+            "N7 노선을 새로 만듭시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "N7은 폐선한다.",
+        "context": [
+          "승객이 한 번에 두세 명이에요.",
+          "N7 노선은 폐선합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_bus_cash",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 37,
+          "decision": "버스 요금은 카드로만 받는다.",
+          "context": [
+            "요금 받는 방식을 정하죠.",
+            "현금은 받지 말고 카드로만 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "현금 요금함을 다시 단다.",
+        "context": [
+          "카드 없는 어르신들이 못 타세요.",
+          "현금함은 다시 답시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_bus_repair",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 39,
+          "decision": "차량 정비는 협력 정비소에 맡긴다.",
+          "context": [
+            "차량 정비를 정하죠.",
+            "협력 정비소에 맡깁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정비는 차고지 정비팀이 맡는다.",
+        "context": [
+          "외부 정비소는 대기가 길어요.",
+          "정비는 차고지에 정비팀을 꾸려서 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "wd_bus_wifi",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "모든 버스에 와이파이를 단다.",
+          "context": [
+            "버스 서비스를 늘리죠.",
+            "버스마다 와이파이를 답시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "광역버스는 빼고 와이파이를 단다.",
+        "context": [
+          "광역버스는 통신사 지원이 안 돼요.",
+          "광역버스만 빼고 와이파이를 답시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_bus_shift",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "기사 근무는 하루 2교대로 한다.",
+          "context": [
+            "근무 형태를 정하죠.",
+            "2교대로 돌립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "근무는 3교대로 돌린다.",
+        "context": [
+          "2교대는 기사들 피로가 너무 커요.",
+          "3교대로 돌리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "wd_bus_stop",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "정류장 안내판을 LED로 바꾼다.",
+          "context": [
+            "안내판이 잘 안 보여요.",
+            "LED 안내판으로 바꿉시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "차고지 세차기를 한 대 더 들인다.",
+        "context": [
+          "세차 대기가 너무 길어요.",
+          "세차기를 한 대 더 들이죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    }
+  ]
+}

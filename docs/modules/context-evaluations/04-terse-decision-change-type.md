@@ -187,7 +187,9 @@ Pooled over the two held-out sets: **18 fixed, 3 broken, sign test p = 0.0015**.
 - v7 has been run once, aggregates only. It still counts as held-out for a fix that does
   not tune the three parts above, for example a new cancellation cue. Under the rules in
   section 5 of `03-realistic-heldout-sets.md`, the next run must again put old and new
-  code side by side.
+  code side by side. (Fix 5 made that run, in
+  [`05-withdrawal-without-a-cue-word.md`](05-withdrawal-without-a-cue-word.md); v7 is no
+  longer held-out for change type.)
 - The terse development set is development data. Its per-case lines have been read.
 
 ```bash

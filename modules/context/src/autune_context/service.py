@@ -1355,6 +1355,7 @@ def _rethread(
     else:
         assert nli is not None
         model_version = nli.model_version
+        statements = [later for _, later in pairs]
         if embedder is not None:
             pairs = [
                 (earlier, later)
@@ -1362,7 +1363,7 @@ def _rethread(
                     pairs, _change_hypotheses(session, embedder, versions), strict=True
                 )
             ]
-        changes = _classify_pairs_nli(nli, pairs)
+        changes = _classify_pairs_nli(nli, pairs, statements)
 
     prior_meeting_ids: list[str] = []
     for index, version in enumerate(versions):
@@ -1432,10 +1433,13 @@ def _change_hypotheses(
 
 
 def _classify_pairs_nli(
-    nli: NliModel, pairs: list[tuple[str, str]]
+    nli: NliModel, pairs: list[tuple[str, str]], statements: Sequence[str] | None = None
 ) -> list[tuple[ChangeType, float, str | None]]:
     """``classic``'s change classification for ``(earlier, later)`` pairs: NLI in
     both directions plus the lexical cues (``pipeline.change``), in one batch.
+    ``statements``: the later versions' own statements, where ``later`` is the
+    source utterance ``_change_hypotheses`` chose instead; a withdrawal said in
+    either one counts (``classify_change``).
 
     The label recorded is the model's own forward verdict, kept as-is:
     ``change_type`` is derived from it, not the same thing.
@@ -1459,7 +1463,12 @@ def _classify_pairs_nli(
     changes: list[tuple[ChangeType, float, str | None]] = []
     for i, (earlier, later) in enumerate(pairs):
         change, score = classify_change(
-            scored[i], scored_back[i], later, earlier, scored_kept.get(i)
+            scored[i],
+            scored_back[i],
+            later,
+            earlier,
+            scored_kept.get(i),
+            statement=statements[i] if statements is not None else None,
         )
         changes.append((change, score, NliLabel(scored[i].label).value))
     return changes

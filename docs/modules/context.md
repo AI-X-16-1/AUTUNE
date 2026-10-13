@@ -305,6 +305,8 @@ one miss differs. The set cannot tell them apart, and `classic` needs no API.
   How a terse decision changed, with a third held-out set (`*_heldout_v7`, 0.60 →
   0.75):
   [`context-evaluations/04-terse-decision-change-type.md`](context-evaluations/04-terse-decision-change-type.md).
+  A withdrawal said without a cue word, with a fourth held-out set (`*_heldout_v8`):
+  [`context-evaluations/05-withdrawal-without-a-cue-word.md`](context-evaluations/05-withdrawal-without-a-cue-word.md).
 
 ### Self-hosted serving contract
 
@@ -488,7 +490,15 @@ lineage view (S22), which reads to a user as a bug.
    둡시다". A statement that says nothing changes (그대로, 유지, 지금대로, 바꾸지
    않는다) and that NLI neither entails nor contradicts reads `unchanged`
    (`pipeline.change.marks_keep`) — except a negated move the earlier
-   decision made: after "10% 올린다", "올리지 않기로 했다" withdraws it.
+   decision made: after "10% 올린다", "올리지 않기로 했다" withdraws it. A
+   withdrawal said by leaving or going back — "이번 시즌으로 끝냅시다", "그
+   행사에서는 빠지죠", "계약을 끊는다", "종이 영수증으로 되돌린다" — reads
+   `reversed` whatever NLI says (`pipeline.change.marks_withdrawal`), in the
+   statement or in the line read in its place, unless the verb hands its clause
+   on ("화요일은 빼고 매일 연다"), takes a value ("8시에 닫는다") or was the
+   earlier decision's own word. So does bringing in-house what was given out
+   (`marks_in_house`), and, where NLI contradicts, going back to how things
+   were (예전처럼, 원래대로; `marks_as_before`).
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and
