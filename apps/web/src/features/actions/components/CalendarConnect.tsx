@@ -23,6 +23,13 @@ import { getNotificationPause } from "../api";
  * Nothing shows until the status is known, and nothing shows for a visitor
  * without a session: a button that could only fail is worse than none.
  *
+ * **That a date moved there comes back is said here**, connected or not: the
+ * button's label says dates go in, and the same grant reads the events Autune
+ * put there, so a day the person drags becomes the item's due date -- on the
+ * team's board, and in the team's Notion where one is connected, since the
+ * edit is synced onward like one made on the board. Only Autune's own events
+ * are asked for, by the private tag it wrote on them.
+ *
  * **Where this server also reads out-of-office time, it says so here** --
  * beside the button, before the person connects, and beside "연결됨" for
  * someone who connected earlier (PARKJAEKYUNG0525, review of #838). Putting
@@ -160,6 +167,15 @@ export function CalendarConnect() {
           내 Google 캘린더에 마감일 넣기
         </Button>
       )}
+      <span
+        className="basis-full text-[var(--color-ink-muted)]"
+        style={{ fontSize: "var(--text-metaSmall)" }}
+      >
+        Autune이 넣은 마감일 일정을 내 캘린더에서 다른 날로 옮기면, 그 할 일의 마감일도 10분쯤
+        안에 그 날로 바뀝니다. 바뀐 마감일은 팀 보드에 보이고, 팀이 Notion을 연결했다면
+        Notion에도 반영됩니다. 이를 위해 Autune이 넣은 일정만 다시 읽으며, 내 캘린더의 다른
+        일정은 읽지 않습니다.
+      </span>
       {readsLeave ? (
         <span
           className="basis-full text-[var(--color-ink-muted)]"
