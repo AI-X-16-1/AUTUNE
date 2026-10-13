@@ -135,6 +135,20 @@ def held(session: Session, team: str = TEAM) -> dict[str, int]:
     }
 
 
+def pieces_of(session: Session, material_ids: list[str]) -> int:
+    """By the material's id, not through its row: a piece left behind after
+    its material went has no row to be found through, and SQLite does not
+    cascade."""
+    return (
+        session.scalar(
+            select(func.count())
+            .select_from(ExtMaterialChunk)
+            .where(ExtMaterialChunk.material_id.in_(material_ids))
+        )
+        or 0
+    )
+
+
 NOTHING = {"materials": 0, "pieces": 0, "alarms": 0, "settings": 0}
 
 
@@ -146,11 +160,14 @@ def test_a_team_nobody_is_on_loses_everything_it_kept_even_kept_until_deleted(
     assert before["materials"] == 2 and before["pieces"] > 1
     assert before["alarms"] == 1 and before["settings"] == 1
     assert materials.keeps_until_deleted(session, TEAM)
+    uploaded = list(session.scalars(select(ExtMaterial.id).where(ExtMaterial.team_id == TEAM)))
+    assert pieces_of(session, uploaded) == before["pieces"]
 
     the_last_member_is_gone(session)
 
     assert materials.forget_memberless_team_materials(session) == 1
     assert held(session) == NOTHING
+    assert pieces_of(session, uploaded) == 0
     # The team itself is module A's: this deletes no shared row.
     assert session.get(Team, TEAM) is not None
 
