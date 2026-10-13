@@ -424,7 +424,11 @@ class ExtractionSettings(BaseSettings):
     exist, and ``/materials/upload-rules`` says ``enabled: false`` so the
     screen draws no control. Whether a deployment turns it on is decided on
     #817. A stopped file is told to the team's approvers by the agent
-    layer's alert (#1201)."""
+    layer's alert (#1201).
+
+    **On, it needs an embedder that is a model.** With
+    ``material_embedder_impl`` left at ``fake`` these settings refuse to load
+    (``_uploads_are_kept_with_a_model``)."""
 
     material_embedder_impl: str = "fake"
     """Which embedder makes an uploaded material's vectors and a search
@@ -438,10 +442,12 @@ class ExtractionSettings(BaseSettings):
     (``models.MATERIAL_EMBEDDING_DIM``).
 
     ``fake`` by default, which finds by shared characters rather than meaning
-    -- enough for tests and a dev stack, not for a team. ``hosted`` is where
-    the rule (``privacy.md``) says a material's vectors are made; it is given
-    masked text only, and nothing else here sends a material's text or a
-    question out of this process. A search finds only pieces embedded by the
+    -- enough for tests, and for nothing that keeps a team's uploads: with
+    ``material_upload`` on, these settings refuse to load. The rule
+    (``privacy.md``) has a material's vectors made in this process or on our
+    own inference server; ``hosted`` is the second, and is given masked text
+    only. Nothing else here sends a material's text or a question out of this
+    process. A search finds only pieces embedded by the
     embedder it asks with, so switching between implementations that record
     different versions leaves earlier uploads unfound until they are uploaded
     again (``material_search``)."""
@@ -455,23 +461,33 @@ class ExtractionSettings(BaseSettings):
     notice (제4조 ⑤) are true only while it is a server Autune runs. Pointing
     it at an outside embedding service is a change to both, not a setting."""
 
-    material_search_min_similarity: float = Field(default=0.4, ge=-1, le=1)
+    material_search_min_similarity: float = Field(default=0.5, ge=-1, le=1)
     """Below this cosine similarity to the masked question, an uploaded
     material's nearest piece is not a hit (#817, ``material_search``). A
     search with nothing at or above it answers no materials and says nothing
     close enough was found, rather than the nearest unrelated ones.
 
-    **0.4 by default, a starting point and not a measurement.** It is set
-    for the embedder a team would run, KURE-v1 (``local`` or ``hosted``), a
-    fine-tune of bge-m3: in that family unrelated Korean text still lands around 0.2 to
-    0.4 -- the vectors share a direction, so the scale does not start at 0 --
-    while a question and the passage that answers it usually land at 0.5 or
-    above. 0.4 cuts the clearly unrelated band and leaves a margin under the
-    related one, so a weak but real hit is kept rather than lost. Nobody has
-    run it on a team's materials yet: tune it on real questions with known
-    answers before trusting it, and raise it if unrelated materials still
-    come back. The ``fake`` embedder counts shared characters, so its scores
-    mean nothing on this scale; its tests set this explicitly."""
+    **0.5 by default, measured once on made-up text and not on a team's
+    materials.** With the embedder a team would run, KURE-v1 (``local`` or
+    ``hosted``), 30 invented Korean documents and 160 questions (2026-10-12):
+    a material that answers the question scored 0.45 to 0.80, median 0.65;
+    one that does not, 0.16 to 0.66, median 0.40. The two overlap, so no
+    floor separates them. At 0.5, 87 of 90 answers were kept and a question
+    brought about two materials that do not answer it; small talk found
+    nothing (0 of 20), and 8 of 30 workplace questions on a subject no
+    material covers still found one. At 0.4, the default before, half of the
+    materials passed for a question one of them answers, and a quarter for
+    a question none does.
+
+    **What it does not do.** A question on the subject of a material that
+    does not hold the answer scores like one the material answers (16 of 20
+    passed): the vector says the subject is the same, not that the answer is
+    there. And the share of unrelated questions that find something grows
+    with the number of materials -- 5% with five, 16% with thirty, not
+    measured past that. Raise it if unrelated materials still come back; each
+    step up loses real answers, short and reworded questions first (0.55
+    kept 76 of 90). The ``fake`` embedder counts shared characters, so its
+    scores mean nothing on this scale; its tests set this explicitly."""
 
     material_search_tool: bool = False
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
@@ -536,6 +552,44 @@ class ExtractionSettings(BaseSettings):
         ):
             if value not in ("cpu", "cuda"):
                 raise ValueError(f"AUTUNE_EXTRACTION_{name}={value!r}; expected 'cpu' or 'cuda'")
+        return self
+
+    @model_validator(mode="after")
+    def _uploads_are_kept_with_a_model(self) -> ExtractionSettings:
+        """Refuse uploads switched on over the fake embedder (#817).
+
+        With the switch on and the embedder at its default, everything looks
+        on: the rules say ``enabled``, an upload is stored and listed with its
+        day. Its vectors are the fake's, though, so a search finds by shared
+        characters -- and a material is found only by the embedder it was
+        stored with (``material_search``), so what was uploaded then stays
+        listed and is never found once the embedder is a model. Nothing tells
+        the two apart until a team searches.
+
+        **Not keyed on ``AUTUNE_ENV``**, for the reason ``llm_acknowledged_392``
+        is not: ``.env.example`` ships ``AUTUNE_ENV=local``, so a deployment
+        made from that file would be the one let through. There is no
+        exemption at all. A developer who wants uploads on their own machine
+        sets ``local`` or ``hosted``; the tests switch uploads on in settings
+        already loaded, which no validator sees.
+
+        **Only ``fake``.** A value the registry does not know, ``hosted``
+        without its endpoint and either model without a checkpoint are refused
+        at the first upload or search (``registry.get_material_embedder``),
+        and so is a ``hosted`` server that names another model: each raises
+        before a vector is made. The fake is the one that quietly works.
+
+        ``require_loadable`` is what makes this a refusal to start.
+        """
+        if self.material_upload and self.material_embedder_impl == "fake":
+            raise ValueError(
+                "AUTUNE_EXTRACTION_MATERIAL_UPLOAD=true with "
+                "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=fake would keep uploaded "
+                "materials with vectors no model made: a search over them finds by "
+                "shared characters, and they are not found once the embedder is a "
+                "model. Set AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL to local or "
+                "hosted before turning uploads on."
+            )
         return self
 
     def _cloud_capable(self) -> tuple[tuple[str, str], ...]:

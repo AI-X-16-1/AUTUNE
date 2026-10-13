@@ -1,4 +1,5 @@
-import { listActionItems, listJiraOpenIssues } from "./api";
+import { listActionItems, listJiraOpenIssues, listSinceLastMeeting } from "./api";
+import { SINCE_PARTS } from "./sinceParts";
 import { rowTitle } from "./title";
 import type { ActionStatus } from "./types";
 
@@ -54,4 +55,43 @@ export const EARLIER_ITEMS_AGENDA = {
     (await listActionItems({ meeting_id: earlierMeetingId }))
       .filter((item) => item.status !== undefined && UNFINISHED.has(item.status))
       .map((item) => ({ title: rowTitle(item.title, item.description).shown })),
+};
+
+/**
+ * What moved on the team's board since its last analysed meeting, as lines an
+ * agenda can be drafted from (the user, 2026-10-12: "사용자들이 회의할 때 전체
+ * 작업 내용 요약"). The same answer the board's "지난 회의 이후" section draws,
+ * part after part in its order, and read the same way: by the server, now,
+ * from Autune's own rows, stored nowhere.
+ *
+ * **A line is the item's top line and the part it is in** -- no assignee and
+ * no due date, as the other sources here: a draft is about what to take up,
+ * not about who. Nothing is counted.
+ *
+ * A team with no analysed meeting has no lines: its answer's parts are empty.
+ * An id the item list does not hold -- deleted between the two reads -- is
+ * left out.
+ *
+ * **Not handed to a form yet.** The new-meeting form's list of sources is a
+ * route file's, outside this feature; this is exported for it and wired
+ * nowhere.
+ */
+export const SINCE_LAST_MEETING_AGENDA = {
+  label: "지난 회의 이후 바뀐 할 일",
+  lines: async (teamId: string) => {
+    const [answers, items] = await Promise.all([listSinceLastMeeting(teamId), listActionItems()]);
+    const byId = new Map(items.map((item) => [item.id, item]));
+    return answers
+      .filter((answer) => answer.team_id === teamId)
+      .flatMap((answer) =>
+        SINCE_PARTS.flatMap((part) =>
+          answer[part.key].flatMap((id) => {
+            const item = byId.get(id);
+            return item === undefined
+              ? []
+              : [{ title: rowTitle(item.title, item.description).shown, detail: part.label }];
+          }),
+        ),
+      );
+  },
 };

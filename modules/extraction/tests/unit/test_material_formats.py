@@ -1126,7 +1126,11 @@ def test_a_part_read_twice_counts_once(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     opened = material_formats._Package(data)
 
-    assert opened.read("word/document.xml") == opened.read("word/document.xml")
+    def unpacked() -> bytes:
+        with opened.open("word/document.xml") as part:
+            return part.read()
+
+    assert unpacked() == unpacked()
 
 
 def test_the_list_of_formats_is_what_the_readers_take() -> None:

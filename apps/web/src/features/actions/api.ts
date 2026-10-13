@@ -610,6 +610,40 @@ export interface JiraProjectIssues {
 export const listJiraOpenIssues = () =>
   api.extraction<JiraProjectIssues[]>("/jira/issues");
 
+/**
+ * What moved on one team's board since its last analysed meeting. Item ids in
+ * parts and one team total: the answer names nobody and counts nothing per
+ * person, and an id is in one part at most.
+ */
+export interface SinceLastMeeting {
+  team_id: string;
+  team_name: string;
+  /** `no_meeting`: the team has no analysed meeting yet, and every part is empty. */
+  state: "ok" | "no_meeting";
+  meeting_id: string | null;
+  meeting_title: string | null;
+  /** When the last meeting was held: the instant everything here is after. */
+  since: string | null;
+  finished: string[];
+  /** Closed without being finished: done on the board, and not finished work. */
+  closed: string[];
+  late: string[];
+  started: string[];
+  created: string[];
+  /** Every open item of the team, in a part above or not. */
+  open: number;
+}
+
+/**
+ * The board since the last meeting, for one team or -- with none named -- for
+ * every team the caller is on, one answer each. Read from Autune's own rows
+ * by the server at this moment and stored nowhere.
+ */
+export const listSinceLastMeeting = (teamId?: string) =>
+  api.extraction<SinceLastMeeting[]>(
+    `/since-last-meeting${teamId ? `?team_id=${encodeURIComponent(teamId)}` : ""}`,
+  );
+
 export interface NotionPage {
   id: string;
   title: string;

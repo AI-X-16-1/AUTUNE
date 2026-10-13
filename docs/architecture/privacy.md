@@ -218,9 +218,11 @@ the team, the title a member typed and the time. `ext_material_chunks` holds
 the masked text cut into pieces, and a vector for each piece. The whole text
 is masked before it is cut, so a value that straddles a cut is masked too,
 and every piece passes `assert_masked` before it is written. A vector is
-computed from masked text only, by KURE-v1 on our own inference server (as
-module D's embeddings are), and stored in PostgreSQL with pgvector (ADR
-0004) -- no text goes to an outside embedding service.
+computed from masked text only, by KURE-v1 -- on our own inference server (as
+module D's embeddings are) or loaded in the API's own process, where the
+text is sent nowhere; which of the two is the setting the status paragraph
+above names, with what holds `hosted` back -- and stored in PostgreSQL with
+pgvector (ADR 0004). No text goes to an outside embedding service.
 
 **Masked is not anonymous.** What decides which characters are hidden is
 the detector transcripts use (`autune_integrations.privacy.find_pii`,
@@ -241,8 +243,9 @@ kept out of logs and error messages and is screened before it leaves Autune.
 **Who reads it.** Members of the team: masked excerpts on the 자료 screen.
 Every excerpt is screened again on the way out. **No language model is
 given a material's text under this rule.** The masked text goes to one model
-only, the embedder on our own inference server that makes the vectors, and to
-nothing outside Autune's own servers. A tool that hands excerpts to the
+only, the embedder that makes the vectors -- on our own inference server or
+in the API's own process, as above -- and to nothing outside Autune's own
+servers. A tool that hands excerpts to the
 chatbot's model is a later change to this section, approved on its own. One
 thing about that tool is decided already (#817 10(b), 2026-10-08): it is
 given the words of the question, and uses them to search and for nothing
@@ -384,6 +387,16 @@ person's, those counts are that person's completion record. So:
   person's -- record. Three, as for stance and speaking ratios above.
 - Adding an assignee to the contract is a privacy violation, not an additive
   change.
+
+**What moved since the last meeting is a list of items, never of people**
+(#1265). B's `GET /api/extraction/since-last-meeting` shows the members of a
+team which of the team's action items were finished, closed without being
+finished, started or newly put on the board since the team's last analysed
+meeting, which are late, and how many are open. It is read from
+`ext_edit_events` at the request and is not stored, sent or logged; the answer
+carries item ids and one team total, and a row on the board is an item's title
+and due date -- no assignee, and nothing counted, grouped or ordered per
+person.
 
 ## 4. Retention and deletion
 

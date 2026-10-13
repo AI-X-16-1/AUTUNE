@@ -116,7 +116,8 @@ def test_an_upload_is_left_out_from_the_moment_of_its_day(
     """On real ``timestamptz`` values, and at the moment the hourly task
     starts to take the upload -- not a moment later."""
     past = upload(db_session, team_id, LAUNCH, "지난 자료")
-    live = upload(db_session, team_id, LAUNCH, "남은 자료")
+    # Its own text: the same text again would answer ``past`` and store nothing.
+    live = upload(db_session, team_id, LAUNCH + "출시 뒤 회고는 한 주 안에 한다.\n", "남은 자료")
     day = db_session.get_one(ExtMaterial, past).expires_at
     assert day is not None and day.tzinfo is not None
     db_session.get_one(ExtMaterial, live).expires_at = day + timedelta(days=1)

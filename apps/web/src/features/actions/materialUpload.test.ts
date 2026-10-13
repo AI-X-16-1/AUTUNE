@@ -6,6 +6,7 @@ import {
   CONFIDENTIAL_REFUSAL,
   KEPT_UNTIL_DELETED,
   UNANSWERED,
+  alreadyKeptNote,
   deletionDay,
   fileRefusal,
   keepingLabel,
@@ -79,6 +80,7 @@ describe("a refusal, in the member's words", () => {
     ["encoding", /UTF-8로 저장해/],
     ["empty", /읽을 글이 없는/],
     ["too_long", /30만 자/],
+    ["too_deep", /여러 겹으로 겹쳐/],
     ["unsupported_type", /이 형식의 파일은 받지 않습니다/],
     ["too_large", /10MB까지/],
   ])("says why a file could not be read: %s", (reason, sentence) => {
@@ -179,7 +181,15 @@ describe("an upload with no answer", () => {
     expect(mayHaveStored(new ApiError(500, "internal_error", "boom"))).toBe(true);
     expect(uploadRefusal(dropped, RULES)).toBe(UNANSWERED);
     expect(uploadRefusal(failed, RULES)).toBe(UNANSWERED);
-    expect(UNANSWERED).toMatch(/목록에 자료가 보이지 않으면/);
+  });
+
+  it("asks for a second look at the list before a second upload: the server may still be storing it", () => {
+    // Seen through the app: the proxy gave up at 30 s, the list read at once
+    // was empty, and the file was stored 75 s later. A member told "not in the
+    // list means not stored, upload again" had it twice.
+    expect(UNANSWERED).toMatch(/아직 진행 중일 수 있으니 1~2분 뒤/);
+    expect(UNANSWERED).toMatch(/그때도 자료가 보이지 않으면 다시 올려 주세요/);
+    expect(UNANSWERED).not.toMatch(/저장되지 않은 것/);
   });
 
   it("knows a refusal stored nothing", () => {
@@ -229,5 +239,34 @@ describe("how long a row's text is kept", () => {
 
     expect(keptNote(at.toISOString())).toBe("개인정보를 가린 글을 2027-01-07까지 보관합니다.");
     expect(keptNote(null)).toBe("개인정보를 가린 글을 팀이 지울 때까지 보관합니다.");
+  });
+});
+
+describe("an upload of a text the team already keeps", () => {
+  const at = new Date(2027, 0, 7, 0, 30, 0);
+  const kept = { title: "출장비 한도", expires_at: at.toISOString() };
+
+  it("names the earlier material, says nothing was stored, and gives that material's day", () => {
+    expect(alreadyKeptNote(kept, "출장비 한도 최종")).toBe(
+      "같은 내용이 이미 '출장비 한도' 자료로 올라와 있어 새로 저장하지 않았습니다. " +
+        "방금 입력한 제목은 저장되지 않았습니다. 그 자료는 2027-01-07까지 보관합니다.",
+    );
+  });
+
+  it("does not speak of the typed title when it is the earlier material's", () => {
+    expect(alreadyKeptNote(kept, " 출장비 한도 ")).toBe(
+      "같은 내용이 이미 '출장비 한도' 자료로 올라와 있어 새로 저장하지 않았습니다. " +
+        "그 자료는 2027-01-07까지 보관합니다.",
+    );
+  });
+
+  it("says a team that keeps uploads until deleted keeps that one so", () => {
+    expect(alreadyKeptNote({ ...kept, expires_at: null }, "출장비 한도")).toMatch(
+      /그 자료는 팀이 지울 때까지 보관합니다\.$/,
+    );
+  });
+
+  it("never reads as a second copy kept", () => {
+    expect(alreadyKeptNote(kept, "다른 제목")).not.toMatch(/자료를 올렸습니다/);
   });
 });

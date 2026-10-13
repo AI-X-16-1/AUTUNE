@@ -7,8 +7,10 @@ the first call a worker makes and not on every task.
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 
+from autune_core import get_logger
 from autune_extraction.config import get_settings
 from autune_extraction.models import MATERIAL_EMBEDDING_DIM
 
@@ -19,6 +21,8 @@ from .nli import FakeNli, HostedNli, LocalNli
 from .resolver import FakeResolver, HostedResolver, LlmResolver, LocalQwenResolver
 from .summary import LlmSummarizer
 from .title import LlmTitler
+
+log = get_logger(__name__)
 
 _CLASSIFIERS: dict[str, str] = {
     "local": "weights in this process",
@@ -300,7 +304,10 @@ def get_material_embedder() -> Embedder:
     and ``hosted``; the fake is as wide as the stored column. A vector of
     another width is refused where it is used (``materials.embedded``), and
     ``hosted`` refuses one itself: ``LocalKureEmbedder`` knows its width only
-    once it has loaded, the server only once it has answered."""
+    once it has loaded, the server only once it has answered. ``hosted`` is
+    built only once its server has named the checkpoint as the model it runs
+    (``HostedKureEmbedder.confirm_model``); a server that names another, or
+    cannot be asked, raises here and the next call asks again."""
     settings = get_settings()
     impl = settings.material_embedder_impl
     if impl in ("local", "hosted") and not settings.embedder_checkpoint:
@@ -318,14 +325,72 @@ def get_material_embedder() -> Embedder:
                 "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=hosted needs "
                 "AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_ENDPOINT"
             )
-        return HostedKureEmbedder(
+        hosted = HostedKureEmbedder(
             settings.material_embedder_endpoint,
             settings.embedder_checkpoint,
             dim=MATERIAL_EMBEDDING_DIM,
         )
+        # Before it is handed to anybody: a server running another model of
+        # the same width gets no text, and nothing is cached when this raises.
+        hosted.confirm_model()
+        return hosted
     if impl == "fake":
         return FakeEmbedder(dim=MATERIAL_EMBEDDING_DIM)
     raise ValueError(
         f"unknown AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL={impl!r}; "
         f"known: {sorted(_MATERIAL_EMBEDDERS)}"
     )
+
+
+def warm_material_embedder() -> threading.Thread | None:
+    """Start reading the local material embedder's weights, and return at once.
+
+    Called once when the api starts (``router``). Without it the weights are
+    read inside the first upload or search after every start, and that one
+    request takes as long as the load -- 105 s the time it was measured
+    through the app -- with the team's shelf locked behind it
+    (``materials.lock_shelf``).
+
+    Only with uploads on and the embedder ``local``. With uploads off nothing
+    embeds a material, and about 2 GB would be held for nothing. ``fake`` has
+    nothing to read. ``hosted`` keeps no weights here, and building it asks
+    its server a question that is not this function's to send at start.
+
+    The embedder is built here, in the caller's thread, so that the first
+    request finds this instance in the cache and waits on its load instead of
+    starting another; building it reads nothing. The load itself runs in a
+    daemon thread: the api answers while it runs, and a load that fails leaves
+    the api up -- the next upload tries again and fails as it did before this
+    existed. A failure's log line names the checkpoint and the kind of error
+    and not the error's message, which a library may fill with a path or an
+    address. Returns the thread, or ``None`` when nothing was started."""
+    settings = get_settings()
+    if not settings.material_upload or settings.material_embedder_impl != "local":
+        return None
+    try:
+        embedder = get_material_embedder()
+    except Exception as exc:  # noqa: BLE001 -- the api starts without it
+        log.warning(
+            "extraction_embedder_warm_up_failed",
+            checkpoint=settings.embedder_checkpoint,
+            error=type(exc).__name__,
+        )
+        return None
+    if not isinstance(embedder, LocalKureEmbedder):
+        return None
+    thread = threading.Thread(
+        target=_warm, args=(embedder,), name="extraction-material-embedder-warm-up", daemon=True
+    )
+    thread.start()
+    return thread
+
+
+def _warm(embedder: LocalKureEmbedder) -> None:
+    try:
+        embedder.load()
+    except Exception as exc:  # noqa: BLE001 -- no text is in reach of a load; the api stays up
+        log.warning(
+            "extraction_embedder_warm_up_failed",
+            checkpoint=embedder.model_version,
+            error=type(exc).__name__,
+        )

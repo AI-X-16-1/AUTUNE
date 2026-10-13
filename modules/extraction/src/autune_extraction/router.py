@@ -16,10 +16,12 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -41,12 +43,14 @@ from . import (
     notion_connect,
     projects,
     service,
+    since_last_meeting,
     sync_log,
     sync_state,
     tasks,
 )
 from .config import get_settings
 from .notion_setup import NotionSetupError
+from .pipeline import registry
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -88,11 +92,29 @@ from .schemas import (
     ProjectSendResult,
     ProjectWrite,
     ReviewDecision,
+    SinceLastMeeting,
     SyncLogRead,
     TeamRead,
 )
 
-router = APIRouter()
+
+@asynccontextmanager
+async def _started(_app: Any) -> AsyncIterator[None]:
+    """What module B does once in a process that serves this router.
+
+    apps/api includes every module's router, and FastAPI runs an included
+    router's lifespan with the app's own; the workers and beat import
+    ``tasks`` and never come here. So this is the api's start and nothing
+    else's, without a line under ``apps/`` (invariant 6).
+
+    It starts the local material embedder's load in the background where
+    uploads are on (``registry.warm_material_embedder``) and waits for
+    nothing: ``/health`` answers while the weights are read."""
+    registry.warm_material_embedder()
+    yield
+
+
+router = APIRouter(lifespan=_started)
 
 
 def dev_routes_enabled() -> bool:
@@ -731,7 +753,7 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
     stopped for a marking has its alarm row committed before the refusal is
     answered -- the route's own rollback would otherwise take it."""
     try:
-        row, not_read = materials.store_upload(
+        row, not_read, already_kept = materials.store_upload(
             session, team, title=upload.title, file_name=upload.file_name, data=upload.data
         )
     except materials.ConfidentialFileError:
@@ -739,12 +761,12 @@ def _stored_upload(session: Session, team: str, upload: material_upload.Upload) 
         raise
     response = materials.read(row, kept=materials.keeps_until_deleted(session, team))
     session.commit()
-    return response.model_copy(update={"not_read": list(not_read)})
+    return response.model_copy(update={"not_read": list(not_read), "already_kept": already_kept})
 
 
 @router.post("/materials/upload", response_model=MaterialRead, status_code=status.HTTP_201_CREATED)
 async def upload_material(
-    request: Request, team_id: str, session: SessionDep, reader: CurrentUser
+    request: Request, response: Response, team_id: str, session: SessionDep, reader: CurrentUser
 ) -> MaterialRead:
     """Keep the masked text of a file a member uploads: a form of exactly two
     parts, ``title`` and ``file`` (#817). Any member.
@@ -756,6 +778,11 @@ async def upload_material(
     masked and stored inside this one request -- no path and no byte goes to
     a task -- and the buffers are wiped in the ``finally`` on every path out.
     The answer says whether it was kept.
+
+    201 with the new row. When the team already keeps the same masked text,
+    200 with that earlier row and ``already_kept``: nothing was written, and
+    the title in the answer is the earlier upload's, not the one sent
+    (``materials.store_upload``).
 
     With ``AUTUNE_EXTRACTION_MATERIAL_UPLOAD`` off -- the default -- it answers
     the bare 404 of a route that does not exist."""
@@ -769,7 +796,10 @@ async def upload_material(
             request.headers.get("content-length"),
             request.stream(),
         )
-        return await run_in_threadpool(_stored_upload, session, team, upload)
+        stored = await run_in_threadpool(_stored_upload, session, team, upload)
+        if stored.already_kept:
+            response.status_code = status.HTTP_200_OK
+        return stored
     finally:
         if upload is not None:
             upload.wipe()
@@ -1009,6 +1039,26 @@ def jira_open_issues(
         teams = service.team_ids_of(session, reader.id)
     found = (jira_issues.project_issues(session, team) for team in teams)
     return [project for project in found if project is not None]
+
+
+@router.get("/since-last-meeting", response_model=list[SinceLastMeeting])
+def board_since_last_meeting(
+    session: SessionDep,
+    reader: CurrentUser,
+    meeting_id: str | None = None,
+    team_id: str | None = None,
+) -> list[SinceLastMeeting]:
+    """What moved on a team's board since its last analysed meeting, read now
+    and stored nowhere (``since_last_meeting``). Named by a meeting or a team,
+    it answers for that team, members only (#189); without either, for every
+    team the caller is on, one answer each and never added together -- "the
+    last meeting" is a team's. Item ids in parts and a team total: nobody is
+    named and nothing is counted per person."""
+    if meeting_id or team_id:
+        teams = [_member_team(session, reader, meeting_id, team_id)]
+    else:
+        teams = service.team_ids_of(session, reader.id)
+    return [since_last_meeting.summary(session, team) for team in teams]
 
 
 @router.get("/notion/setup")

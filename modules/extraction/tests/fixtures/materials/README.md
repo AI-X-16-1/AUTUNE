@@ -9,3 +9,6 @@ Files the tests of an uploaded material's readers read
 - `xls/` -- three old workbooks made for these tests with xlwt 1.3.0: a
   contact sheet with a hidden second sheet, and two that carry a marking on
   the first sheet and on the second.
+- `openpyxl/` -- one workbook made for these tests with openpyxl 3.1.5: two
+  sheets with a cell note each. openpyxl names a sheet's notes
+  `xl/comments/comment1.xml`, where Excel names them `xl/comments1.xml`.

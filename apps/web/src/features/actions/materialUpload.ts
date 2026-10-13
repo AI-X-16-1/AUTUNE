@@ -57,6 +57,8 @@ const READ = {
   encoding: "글자를 읽을 수 없는 파일입니다. UTF-8로 저장해 다시 올려 주세요.",
   empty: "읽을 글이 없는 파일입니다.",
   too_long: "글이 너무 깁니다. 한 파일의 글은 30만 자까지 받습니다.",
+  too_deep:
+    "표나 도형이 너무 여러 겹으로 겹쳐 있어 읽을 수 없습니다. 겹친 것을 풀어 다시 올려 주세요.",
 } as const satisfies Record<string, string>;
 
 /**
@@ -99,11 +101,15 @@ export const CONFIDENTIAL_REFUSAL =
 
 /**
  * No answer that says what happened: a dropped connection, or a failure on
- * the server's side. A proxy can give up on a request the server finished,
- * so this does not claim nothing was stored -- the list, read again, says.
+ * the server's side. A proxy can give up on a request the server is still
+ * working on, and the file is then stored after this is shown: the list read
+ * at that moment does not have it yet. So this neither claims nothing was
+ * stored nor sends the member straight back to upload a second copy -- it
+ * asks them to read the list again in a minute or two first.
  */
 export const UNANSWERED =
-  "올린 결과를 확인하지 못했습니다. 목록에 자료가 보이지 않으면 저장되지 않은 것이니 다시 올려 주세요.";
+  "올린 결과를 확인하지 못했습니다. 저장이 아직 진행 중일 수 있으니 1~2분 뒤 화면을 새로 고쳐 목록을 확인해 주세요. " +
+  "그때도 자료가 보이지 않으면 다시 올려 주세요.";
 
 /** Whether a failed upload may still have stored a row, so the list is worth reading again. */
 export function mayHaveStored(cause: unknown): boolean {
@@ -209,4 +215,27 @@ export function keptNote(expiresAt: string | null): string {
   return at === null || Number.isNaN(at.getTime())
     ? "개인정보를 가린 글을 팀이 지울 때까지 보관합니다."
     : `개인정보를 가린 글을 ${localToday(at)}까지 보관합니다.`;
+}
+
+/**
+ * What the upload's note says when the server stored nothing because the team
+ * already keeps the same text (`already_kept`): which material that is and how
+ * long it stays. It must not read as a second copy kept, as the title just
+ * typed having been used, or as a window counted from today -- the earlier
+ * material keeps its own title and its own day.
+ */
+export function alreadyKeptNote(
+  kept: { title: string; expires_at: string | null },
+  typedTitle: string,
+): string {
+  const at = kept.expires_at === null ? null : new Date(kept.expires_at);
+  return [
+    `같은 내용이 이미 '${kept.title}' 자료로 올라와 있어 새로 저장하지 않았습니다.`,
+    typedTitle.trim() === kept.title ? null : "방금 입력한 제목은 저장되지 않았습니다.",
+    at === null || Number.isNaN(at.getTime())
+      ? "그 자료는 팀이 지울 때까지 보관합니다."
+      : `그 자료는 ${localToday(at)}까지 보관합니다.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }

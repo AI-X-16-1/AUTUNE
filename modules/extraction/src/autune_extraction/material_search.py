@@ -34,8 +34,9 @@ Ranking is cosine similarity with a floor
 (``ExtractionSettings.material_search_min_similarity``): a material whose
 nearest piece is under it is not a hit, so a question about nothing the team
 uploaded answers no materials, with a notice, instead of the nearest
-unrelated ones. The default is a starting point for KURE-v1, not a
-measurement; the setting's docstring says why and what to tune.
+unrelated ones. The default was measured for KURE-v1 on made-up text, not
+on a team's materials; the setting's docstring says what it does and does
+not do.
 """
 
 from __future__ import annotations
