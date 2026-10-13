@@ -198,11 +198,14 @@ x-python: &python
     # .env.example's `fake`, module B's settings refuse to load, and the api,
     # the workers and beat do not start. `local` is KURE-v1 inside the api
     # process, on the CPU (.env.example's EMBEDDER_DEVICE; the api container is
-    # given no GPU). It is loaded at the first upload or search, not at start,
-    # and stays in that process: about 2 GB of memory, as measured on a laptop.
-    # Its weights are read from the `models` volume -- the checkpoint is the
-    # one D's embedder on the worker loads -- and downloaded there on first
-    # use if they are not in it.
+    # given no GPU). The api starts loading it when it starts, in the
+    # background: /health answers meanwhile, and an upload or search sent
+    # before the load ends waits for it. It stays in that process from then
+    # on, whether or not anyone uploads: about 2 GB of memory, as measured on
+    # a laptop. Its weights are read from the `models` volume -- the
+    # checkpoint is the one D's embedder on the worker loads -- and downloaded
+    # there at that start if they are not in it. A load that fails leaves the
+    # api up, and the next upload tries it again.
     #
     # WHAT LEAVES THIS SERVER because of it: nothing of a material's text and
     # nothing of a question; both are masked and embedded here. Two things
@@ -210,11 +213,11 @@ x-python: &python
     # approvers with the '전체' scope get one Slack DM -- how many refused
     # uploads wait and a link to the approvals page; no file name, time, kind
     # of marking or person -- if the team connected Slack and the approver
-    # linked their own account. And each time the api loads the model it asks
-    # huggingface.co about the model's files: requests that name the model
-    # and its revision -- nothing of a material, a question or a team. The
-    # weights come from there too, only when the `models` volume does not
-    # hold them yet.
+    # linked their own account. And each time the api loads the model -- at
+    # every start of the container, then -- it asks huggingface.co about the
+    # model's files: requests that name the model and its revision -- nothing
+    # of a material, a question or a team. The weights come from there too,
+    # only when the `models` volume does not hold them yet.
     #
     # NOT TURNED ON, and not to be without its own decision:
     # AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL, which would hand masked excerpts
