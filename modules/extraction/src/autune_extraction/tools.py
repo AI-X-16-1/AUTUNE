@@ -1102,7 +1102,9 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
     of the masked text Autune kept (never a whole document), with the
     material's id as evidence; a value hidden as personal data reads as ``*``
     and cannot be recovered. The tool is in ``TEXT_WITHHELD_TOOLS``, so the
-    registry marks every item ``withheld``.
+    registry marks every item ``withheld``. An item carries no score -- the
+    member's screen is sent the items, and how near a hit is to the question
+    is not shown there or on the 자료 screen; the order says which is best.
     """
     # #817 10(b), 2026-10-08: the question is used to search and for nothing
     # else -- not in the result, not in a log line, and (as for every tool)
@@ -1142,7 +1144,8 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
             {
                 "title": hit.title,
                 "body": hit.excerpt,
-                "score": hit.score,
+                # No ``score``: how near a hit is stays in the search, as on
+                # the route (``MaterialHit``). The items are best first.
                 "id": hit.material_id,
                 "position": hit.position,
             }

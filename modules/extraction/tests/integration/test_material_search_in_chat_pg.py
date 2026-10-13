@@ -26,7 +26,7 @@ from autune_agent.main.toolcall import FunctionCall
 from autune_agent.models import AgentRun
 from autune_agent.testing import ScriptedToolModel
 from autune_core import Team
-from autune_extraction import materials, tools
+from autune_extraction import material_search, materials, tools
 from autune_extraction.config import get_settings
 
 MOVE_TITLE = "분기 창고 이전 계획"
@@ -127,6 +127,14 @@ def test_a_member_is_shown_the_materials_and_neither_model_reads_them(
     assert set(shown) == {MOVE_TITLE, LOAD_TITLE}
     assert "삼월 둘째 주" in shown[MOVE_TITLE].body and "지게차" in shown[LOAD_TITLE].body
     assert all(item.withheld for item in shown.values())
+    # No similarity goes down with them, as none does on the 자료 screen. The
+    # reply carries the items (``ChatReply.items``), not the result's
+    # ``confidence``, which stays in this process.
+    near = material_search.search_materials(db_session, team_id, QUESTION).hits
+    assert len(near) == 2 and all(hit.score != 0.0 for hit in near)
+    assert [item.score for item in shown.values()] == [0.0, 0.0]
+    down = said([item.model_dump() for item in state["outcome"].result.items])
+    assert not any(repr(hit.score) in down for hit in near)
     assert theirs not in said(state["outcome"].model_dump())
 
     # The run's row: the tool's name and the materials' ids. No title, no

@@ -794,6 +794,24 @@ def three(session: Session) -> tuple[list[str], list[float]]:
     return [hit.material_id for hit in hits], scores
 
 
+@pytest.mark.usefixtures("tool_on")
+def test_an_item_of_the_tool_carries_no_score_and_the_nearest_is_first(
+    session: Session, embedder: Recording
+) -> None:
+    # The assistant's reply sends these items to the member's screen. How
+    # near a hit is stays in the search, as on the route (``MaterialHit``
+    # has no score); the order is what says which is best.
+    ids, scores = three(session)
+    assert all(score != 0.0 for score in scores)
+
+    result = tools.find_materials(session, TEAM, ASKED)
+
+    assert [item["id"] for item in result["items"]] == ids
+    assert [item.get("score", 0.0) for item in result["items"]] == [0.0, 0.0, 0.0]
+    sent = json.dumps(result["items"], ensure_ascii=False)
+    assert not any(repr(score) in sent for score in scores)
+
+
 def test_the_cut_has_a_default_for_the_real_embedder_and_reads_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
