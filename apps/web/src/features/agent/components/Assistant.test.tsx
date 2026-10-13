@@ -22,7 +22,14 @@ afterEach(() => {
 });
 
 function open(pathname: string): void {
-  render(<Assistant teamId="team_1" teamName="A팀" userName="민경" pathname={pathname} />);
+  render(
+    <Assistant
+      teamId="team_1"
+      teamName="A팀"
+      userName="민경"
+      pathname={pathname}
+    />,
+  );
   fireEvent.click(screen.getByRole("button", { name: /Autune 비서 열기/ }));
 }
 
@@ -97,7 +104,9 @@ describe("Assistant launcher alert", () => {
   it("shows a dot while a proposal waits for this person", async () => {
     vi.spyOn(api, "listPending").mockResolvedValue([WAITING]);
 
-    render(<Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />);
+    render(
+      <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
+    );
 
     expect(
       await screen.findByLabelText("승인을 기다리는 제안이 있습니다"),
@@ -108,7 +117,9 @@ describe("Assistant launcher alert", () => {
     answer: () => Promise<PendingAction[]>,
   ): Promise<boolean> {
     const listed = vi.spyOn(api, "listPending").mockImplementation(answer);
-    render(<Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />);
+    render(
+      <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
+    );
     await waitFor(() => expect(listed).toHaveBeenCalled());
     return screen.queryByLabelText("승인을 기다리는 제안이 있습니다") !== null;
   }
@@ -133,6 +144,35 @@ describe("Assistant launcher alert", () => {
         throw new Error("offline");
       }),
     ).toBe(false);
+  });
+});
+
+describe("Assistant launcher shortcut", () => {
+  it("shows both the Mac and the Windows shortcut", () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([]);
+    render(
+      <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
+    );
+
+    const launcher = screen.getByRole("button", {
+      name: "Autune 비서 열기 (Ctrl+J / ⌘J)",
+    });
+    // Ctrl J first, then ⌘J.
+    expect(launcher.textContent).toMatch(/Ctrl J.*⌘J/);
+  });
+
+  it("opens on Ctrl+J as well as ⌘J", () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([]);
+    render(
+      <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
+    );
+    const launcher = screen.getByRole("button", { name: /Autune 비서 열기/ });
+
+    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.keyDown(window, { key: "j", metaKey: true });
+    expect(launcher.getAttribute("aria-expanded")).toBe("false");
   });
 });
 
