@@ -362,49 +362,90 @@ export function Assistant({
         ref={launcher}
         type="button"
         onClick={() => (open ? close() : setOpen(true))}
-        aria-label="Autune 비서 열기 (⌘J)"
+        aria-label="Autune 비서 열기 (Ctrl+J / ⌘J)"
         aria-expanded={open}
-        className="fixed z-40 flex items-center bg-[var(--color-ink-strong)] text-white hover:bg-black"
+        className="fixed z-40 flex items-center bg-[var(--color-accent-default)] text-[var(--color-accent-on-accent)] transition-colors hover:bg-[var(--color-accent-hover)]"
         style={{
           right: 24,
           bottom: 24,
-          height: 48,
-          padding: "0 18px 0 14px",
-          borderRadius: 24,
+          height: 44,
+          padding: "0 10px 0 16px",
+          borderRadius: 22,
           gap: 8,
           fontSize: 13.5,
           fontWeight: 600,
-          boxShadow: "0 2px 12px rgba(22,25,31,.18)",
+          boxShadow: "0 4px 16px rgba(59,74,158,.28)",
         }}
       >
-        <span
-          aria-hidden
-          className="flex items-center justify-center rounded-full bg-[var(--color-accent-default)]"
-          style={{ width: 22, height: 22, fontSize: 9, fontWeight: 700 }}
-        >
-          AT
+        <span className="relative flex items-center">
+          <SparkIcon />
+          {queued > 0 && (
+            <span
+              role="status"
+              aria-label="승인을 기다리는 제안이 있습니다"
+              className="absolute rounded-full bg-[var(--color-signal-critical)]"
+              style={{
+                width: 7,
+                height: 7,
+                right: -3,
+                top: -2,
+                boxShadow: "0 0 0 1.5px var(--color-accent-default)",
+              }}
+            />
+          )}
         </span>
-        {queued > 0 && (
-          <span
-            role="status"
-            aria-label="승인을 기다리는 제안이 있습니다"
-            className="absolute rounded-full bg-[var(--color-signal-critical)]"
-            style={{ width: 6, height: 6, left: 32, top: 12 }}
-          />
-        )}
         비서
-        <span
-          aria-hidden
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11.5,
-            opacity: 0.6,
-          }}
-        >
-          ⌘J
-        </span>
+        <Shortcuts />
       </button>
     </>
+  );
+}
+
+/** The launcher's mark: a four-point spark, drawn in the button's own color. */
+function SparkIcon() {
+  return (
+    <svg
+      aria-hidden
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <path d="M12 2.5c.4 4.6 2.4 7.4 7.5 8.4.5.1.5.9 0 1-5.1 1-7.1 3.8-7.5 8.4 0 .6-.9.6-1 0-.4-4.6-2.4-7.4-7.5-8.4-.5-.1-.5-.9 0-1 5.1-1 7.1-3.8 7.5-8.4.1-.6 1-.6 1 0Z" />
+      <path d="M19 2c.2 1.6.8 2.4 2.3 2.7.3.1.3.5 0 .6-1.5.3-2.1 1.1-2.3 2.7 0 .3-.5.3-.5 0-.2-1.6-.8-2.4-2.3-2.7-.3-.1-.3-.5 0-.6 1.5-.3 2.1-1.1 2.3-2.7 0-.3.5-.3.5 0Z" />
+    </svg>
+  );
+}
+
+/**
+ * The shortcut, Ctrl J first and then ⌘J, so a Windows user does not have to
+ * translate the Mac one. One pill nested in the launcher's: 24px tall in a
+ * 44px button with 10px to its right, so both ends share a centre.
+ */
+function Shortcuts() {
+  return (
+    <span
+      aria-hidden
+      className="flex items-center"
+      style={{
+        height: 24,
+        marginLeft: 6,
+        padding: "0 10px",
+        gap: 7,
+        borderRadius: 12,
+        fontSize: 11.5,
+        fontWeight: 500,
+        letterSpacing: ".02em",
+        background: "rgba(255,255,255,.16)",
+        color: "rgba(255,255,255,.88)",
+      }}
+    >
+      <span>Ctrl J</span>
+      <span
+        style={{ width: 1, height: 10, background: "rgba(255,255,255,.35)" }}
+      />
+      <span>⌘J</span>
+    </span>
   );
 }
 
