@@ -1244,12 +1244,15 @@ the feature needs.
       owner is also who pressed, kept because the line can only be removed
       with their grant, as B keeps an item's assignee; no screen, route or
       tool reads it but the one below. It also keeps the day the event
-      starts, which `gap.next_meeting_days` hands the Follow-up approval card
-      as a candidate day for the follow-up meeting, with the display name of
-      who picked it -- an act they took for the team, and the name the team
+      starts. `gap.next_meeting_days` returns that day with the display name
+      of who picked it -- an act they took for the team, and the name the team
       Slack notice below posts for the same press where a channel is
-      connected -- and nothing else of the calendar or the event. The tool
-      serves the approvals card only and is not offered to the chat model. Only
+      connected -- and nothing else of the calendar or the event. **Nothing
+      calls that tool yet, so the day and the name are shown to nobody.** It
+      was written for the Follow-up approval card, to offer the day as a
+      candidate for the follow-up meeting, and the card does not read it
+      (#1051). No model is offered it either: the chat's tools and each
+      subagent's are named one by one, and it is on none of the lists. Only
       members still on the meeting's team are named. The event's attendees,
       all on the team by the refusal above, already see that day on the
       event. Taking a gap back removes its line and its record. A
