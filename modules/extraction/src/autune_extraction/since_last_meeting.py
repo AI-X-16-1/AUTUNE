@@ -15,6 +15,16 @@ last meeting" means since the one before. A meeting past its retention window
 is not it either, and one that was deleted is gone with its rows, so the
 meeting before it becomes the last and the answer reaches further back.
 
+**Or the meeting the caller names** (``since_meeting_id``; module D's owner
+on #1270). The pre-meeting brief recaps one earlier meeting, chosen by module
+D, and its agenda draft counts from that same one rather than from a second
+"last meeting" picked here. A named meeting is counted from as it is -- the
+caller chose it, so its status is not asked -- when it is the team's, was held
+by now and is inside its retention window. Otherwise there is nothing to
+count from, and the answer is the one a team with no analysed meeting gets.
+*늦은 일* asks only for today, so it is the same list whichever meeting is
+counted from.
+
 **"Since" is an instant, not a day**: an edit is after it when its
 ``created_at`` is. Both carry an offset, so the server's zone does not come
 into it. Only 늦은 일 asks for a date, and takes Korea's
@@ -102,6 +112,27 @@ def last_meeting(session: Session, team_id: str, *, now: datetime) -> LastMeetin
     return LastMeeting(id=meeting_id, title=title, held=_aware(when))
 
 
+def named_meeting(
+    session: Session, team_id: str, meeting_id: str, *, now: datetime
+) -> LastMeeting | None:
+    """The meeting a caller named to count from, or ``None`` when it is not a
+    meeting of ``team_id`` held by ``now`` and inside its retention window.
+    Its status is not asked: the caller chose it."""
+    held = func.coalesce(Meeting.started_at, Meeting.created_at)
+    found = session.execute(
+        select(Meeting.id, Meeting.title, held).where(
+            Meeting.id == meeting_id,
+            Meeting.team_id == team_id,
+            service.within_retention(now),
+            held <= now,
+        )
+    ).first()
+    if found is None:
+        return None
+    found_id, title, when = found
+    return LastMeeting(id=found_id, title=title, held=_aware(when))
+
+
 def _status_events(session: Session, team_id: str, since: datetime) -> tuple[set[str], set[str]]:
     """Ids of the team's items with a status event after ``since``, and of those
     with one at or before it. A status event is an edit that named the status,
@@ -131,11 +162,22 @@ def _status_events(session: Session, team_id: str, since: datetime) -> tuple[set
     return after, before
 
 
-def summary(session: Session, team_id: str, *, now: datetime | None = None) -> SinceLastMeeting:
-    """One team's board since its last meeting. The caller has checked the reader."""
+def summary(
+    session: Session,
+    team_id: str,
+    *,
+    now: datetime | None = None,
+    since_meeting_id: str | None = None,
+) -> SinceLastMeeting:
+    """One team's board since its last meeting -- or since ``since_meeting_id``,
+    when the caller names the meeting to count from. The caller has checked the
+    reader."""
     moment = now if now is not None else datetime.now(UTC)
     name = session.scalar(select(Team.name).where(Team.id == team_id)) or ""
-    last = last_meeting(session, team_id, now=moment)
+    if since_meeting_id is None:
+        last = last_meeting(session, team_id, now=moment)
+    else:
+        last = named_meeting(session, team_id, since_meeting_id, now=moment)
     if last is None:
         return SinceLastMeeting(team_id=team_id, team_name=name, state="no_meeting")
 

@@ -215,7 +215,7 @@ export function HeatmapMockup(): ReactNode {
 /** Illustrative probability stat — matches ui-spec's "prediction, probability in mono". */
 export function PredictionMockup(): ReactNode {
   return (
-    <svg width={240} height={120} role="img" aria-label="예측 예상 모습">
+    <svg width={240} height={120} role="img" aria-label="결정 재검토 가능성 예상 모습">
       <text
         x={0}
         y={44}
@@ -227,7 +227,7 @@ export function PredictionMockup(): ReactNode {
         62%
       </text>
       <text x={0} y={71} fontSize={15} fill="var(--color-ink-muted)">
-        정렬 붕괴 위험 · 2주 이내
+        14일 안에 재검토될 확률
       </text>
       <rect x={0} y={85} width={221} height={10} rx={5} fill="var(--color-surface-sunken)" />
       <rect x={0} y={85} width={136} height={10} rx={5} fill={CHART_STEPS[3]} />

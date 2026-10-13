@@ -140,6 +140,11 @@
     "kind": "definition"
   },
   {
+    "question": "결정 재검토 가능성이 뭐야?",
+    "expected": "prediction.overview",
+    "kind": "definition"
+  },
+  {
     "question": "그 확률 계산에 뭘 넣어?",
     "expected": "prediction.inputs",
     "kind": "paraphrase"

@@ -205,7 +205,7 @@ def test_a_copy_past_its_day_is_not_kept_unless_the_team_keeps_until_deleted(
     session: Session,
 ) -> None:
     """The hourly task is about to delete it: answering "it is kept" would
-    leave the member with nothing within the hour. The search's own rule."""
+    leave the member with nothing once it has run. The search's own rule."""
     past = upload(session).row
     past.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     session.flush()

@@ -270,7 +270,7 @@ def read(row: ExtMaterial, *, kept: bool = False) -> MaterialRead:
 def uploads_past_their_day(session: Session, team_id: str, *, now: datetime) -> int:
     """How many of the team's uploads are past the day they were given. While
     the team keeps uploads until deleted these stay; they are what switching
-    back to the window deletes at the next hourly run, which the settings
+    back to the window leaves for an hourly run to delete, which the settings
     screen says before the switch is saved. A count -- no id, no title."""
     return (
         session.scalar(
@@ -304,7 +304,7 @@ def set_keep_until_deleted(session: Session, team_id: str, keep: bool) -> None:
     Takes no user: the change records when, never who. No upload's
     ``expires_at`` is touched either way: switching back to the window
     applies at once to every existing upload, each with the day it was given
-    -- the next hourly run deletes those already past it."""
+    -- an hourly run deletes those already past it."""
     row = session.get(ExtMaterialSetting, team_id)
     if row is None:
         # Two members switching at once both find no row; the second insert

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_about": "v1 (2026-10-12). Written before any model was run on it, and frozen: no rule or threshold may be chosen by looking at its failures -- a change tuned on it needs a new held-out set. Each case is a team's analyzed past meetings and one scheduled meeting about to start. `expected` is the index of the past meeting the brief should recap -- the one this meeting follows -- or null when none is related, in which case the brief must fall back to `latest` and post no content. `related` lists every past meeting on the same subject (it always contains `expected`); a choice inside it but not `expected` is the wrong meeting of the right series. Categories in dataset.py.",
+  "_about": "v1 (2026-10-12). Written before any model was run on it, and frozen: no rule or threshold may be chosen by looking at its failures -- a change tuned on it needs a new held-out set. Each case is a team's analyzed past meetings and one scheduled meeting about to start. `expected` is the index of the past meeting the brief should recap -- the one this meeting follows -- or null when none is related, in which case the brief must fall back to `latest` and post no content. `related` lists every past meeting on the same subject (it always contains `expected`); a choice inside it but not `expected` is the wrong meeting of the right series. Categories in dataset.py. Seven cases (se_menu_renewal, ns_menu_round, ns_menu_round_agenda, tr_pos_integration, ga_menu_board, ga_card_reader, di_delivery) were rewritten on 2026-10-13 in another domain: they had been built from a demo meeting script meant for testing only. Structure, labels and categories are unchanged, and so is the result on the current code (50/51, the same miss, the same threshold sweep).",
   "cases": [
     {
       "id": "se_standup",
@@ -28,14 +28,14 @@
       "related": [0, 2]
     },
     {
-      "id": "se_v2_launch",
+      "id": "se_menu_renewal",
       "category": "series_exact",
       "past_meetings": [
-        {"title": "v2.0 출시 준비 회의", "days_ago": 21, "lines": ["결제 모듈 연동이 PG사 API 변경 때문에 늦어지고 있다.", "온보딩 화면을 네 장에서 세 장으로 줄이기로 했다.", "출시 당일 SNS 이벤트 예산이 200만 원 더 필요하다."]},
-        {"title": "v2.0 출시 준비 회의", "days_ago": 7, "lines": ["결제 연동은 10월 13일까지 QA 서버에 올린다.", "출시일을 10월 23일 금요일로 확정했다.", "온보딩은 B안으로 확정하고 이벤트 예산 증액도 승인됐다."]},
+        {"title": "가을 메뉴 개편 회의", "days_ago": 21, "lines": ["신메뉴 시식 평가에서 단호박 수프 점수가 가장 낮았다.", "메뉴판을 여섯 쪽에서 네 쪽으로 줄이기로 했다.", "개편 첫 주 할인 행사 예산이 150만 원 더 필요하다."]},
+        {"title": "가을 메뉴 개편 회의", "days_ago": 7, "lines": ["원두 납품처 변경은 11월 3일까지 마무리한다.", "개편 메뉴 판매 시작일을 11월 10일 월요일로 정했다.", "메뉴판 디자인은 녹색 시안으로 하고 할인 예산 증액도 승인됐다."]},
         {"title": "사내 워크숍 기획", "days_ago": 3, "lines": ["11월 워크숍 장소 후보를 세 곳으로 좁혔다.", "1박 2일로 진행한다.", "참석 인원 조사를 이번 주에 돌린다."]}
       ],
-      "upcoming": {"title": "v2.0 출시 준비 회의", "agenda": ["결제 테스트 결과 공유"]},
+      "upcoming": {"title": "가을 메뉴 개편 회의", "agenda": ["원두 납품처 변경 결과 공유"]},
       "expected": 1,
       "related": [0, 1]
     },
@@ -118,26 +118,26 @@
       "related": [0]
     },
     {
-      "id": "ns_launch_round",
+      "id": "ns_menu_round",
       "category": "numbered_series",
       "past_meetings": [
-        {"title": "v2.0 출시 준비 1차 회의", "days_ago": 21, "lines": ["결제 모듈 연동이 PG사 API 변경 때문에 늦어지고 있다.", "온보딩 화면을 네 장에서 세 장으로 줄이기로 했다.", "출시 당일 SNS 이벤트 예산이 200만 원 더 필요하다."]},
-        {"title": "v2.0 출시 준비 2차 회의", "days_ago": 7, "lines": ["결제 연동은 10월 13일까지 QA 서버에 올린다.", "출시일을 10월 23일 금요일로 확정했다.", "온보딩은 B안으로 확정하고 이벤트 예산 증액도 승인됐다."]},
+        {"title": "가을 메뉴 개편 1차 회의", "days_ago": 21, "lines": ["신메뉴 시식 평가에서 단호박 수프 점수가 가장 낮았다.", "메뉴판을 여섯 쪽에서 네 쪽으로 줄이기로 했다.", "개편 첫 주 할인 행사 예산이 150만 원 더 필요하다."]},
+        {"title": "가을 메뉴 개편 2차 회의", "days_ago": 7, "lines": ["원두 납품처 변경은 11월 3일까지 마무리한다.", "개편 메뉴 판매 시작일을 11월 10일 월요일로 정했다.", "메뉴판 디자인은 녹색 시안으로 하고 할인 예산 증액도 승인됐다."]},
         {"title": "사내 워크숍 기획", "days_ago": 2, "lines": ["11월 워크숍 장소 후보를 세 곳으로 좁혔다.", "1박 2일로 진행한다.", "참석 인원 조사를 이번 주에 돌린다."]}
       ],
-      "upcoming": {"title": "v2.0 출시 준비 3차 회의", "agenda": []},
+      "upcoming": {"title": "가을 메뉴 개편 3차 회의", "agenda": []},
       "expected": 1,
       "related": [0, 1]
     },
     {
-      "id": "ns_launch_round_agenda",
+      "id": "ns_menu_round_agenda",
       "category": "numbered_series",
       "past_meetings": [
-        {"title": "v2.0 출시 준비 1차 회의", "days_ago": 21, "lines": ["결제 모듈 연동이 PG사 API 변경 때문에 늦어지고 있다.", "온보딩 화면을 네 장에서 세 장으로 줄이기로 했다.", "출시 당일 SNS 이벤트 예산이 200만 원 더 필요하다."]},
-        {"title": "v2.0 출시 준비 2차 회의", "days_ago": 7, "lines": ["결제 연동은 10월 13일까지 QA 서버에 올린다.", "결제 변경 FAQ는 10월 20일까지 초안을 만든다.", "출시일을 10월 23일 금요일로 확정했다."]},
+        {"title": "가을 메뉴 개편 1차 회의", "days_ago": 21, "lines": ["신메뉴 시식 평가에서 단호박 수프 점수가 가장 낮았다.", "메뉴판을 여섯 쪽에서 네 쪽으로 줄이기로 했다.", "개편 첫 주 할인 행사 예산이 150만 원 더 필요하다."]},
+        {"title": "가을 메뉴 개편 2차 회의", "days_ago": 7, "lines": ["원두 납품처 변경은 11월 3일까지 마무리한다.", "알레르기 표기 안내문은 11월 5일까지 초안을 만든다.", "개편 메뉴 판매 시작일을 11월 10일 월요일로 정했다."]},
         {"title": "사내 워크숍 기획", "days_ago": 2, "lines": ["11월 워크숍 장소 후보를 세 곳으로 좁혔다.", "1박 2일로 진행한다.", "참석 인원 조사를 이번 주에 돌린다."]}
       ],
-      "upcoming": {"title": "v2.0 출시 준비 3차 회의", "agenda": ["결제 테스트 결과 공유", "결제 변경 FAQ 초안 검토"]},
+      "upcoming": {"title": "가을 메뉴 개편 3차 회의", "agenda": ["원두 납품처 변경 결과 공유", "알레르기 표기 안내문 초안 검토"]},
       "expected": 1,
       "related": [0, 1]
     },
@@ -212,13 +212,13 @@
       "related": [0]
     },
     {
-      "id": "tr_pg_integration",
+      "id": "tr_pos_integration",
       "category": "topic_retitled",
       "past_meetings": [
-        {"title": "결제 모듈 연동 점검", "days_ago": 10, "lines": ["PG사 API가 바뀌어서 결제 연동이 늦어지고 있다.", "PG사 테스트 서버가 자주 끊긴다.", "연동이 끝나면 QA 서버에 바로 올린다."]},
+        {"title": "포스기 연동 점검", "days_ago": 10, "lines": ["포스 업체가 프로그램을 바꿔서 주문 연동이 늦어지고 있다.", "포스 업체 시험 서버가 자주 끊긴다.", "연동이 끝나면 매장 한 곳에서 먼저 써 본다."]},
         {"title": "팀 회식 장소 정하기", "days_ago": 2, "lines": ["다음 주 금요일 회식 장소를 골랐다.", "고깃집으로 정했다.", "예약은 총무가 한다."]}
       ],
-      "upcoming": {"title": "PG 연동 QA 결과 공유", "agenda": ["결제 연동 QA 서버 배포"]},
+      "upcoming": {"title": "매장 시범 운영 결과 공유", "agenda": ["포스 주문 연동 시범 매장 적용"]},
       "expected": 0,
       "related": [0]
     },
@@ -301,14 +301,14 @@
       "related": [0]
     },
     {
-      "id": "ga_onboarding",
+      "id": "ga_menu_board",
       "category": "generic_title",
       "past_meetings": [
-        {"title": "결제 모듈 연동 점검", "days_ago": 10, "lines": ["PG사 API가 바뀌어서 결제 연동이 늦어지고 있다.", "테스트 서버가 자주 끊긴다.", "연동이 끝나면 QA 서버에 올린다."]},
-        {"title": "온보딩 화면 개선", "days_ago": 6, "lines": ["온보딩을 세 장으로 줄인 B안으로 정했다.", "건너뛰기 버튼을 오른쪽 위에 고정한다.", "최종 파일은 목요일까지 넘긴다."]},
-        {"title": "보도자료 검토", "days_ago": 2, "lines": ["출시 보도자료 날짜를 고쳤다.", "인용문을 대표 이름으로 바꾼다.", "언론사 배포는 출시 당일 오전이다."]}
+        {"title": "포스기 연동 점검", "days_ago": 10, "lines": ["포스 업체가 프로그램을 바꿔서 주문 연동이 늦어지고 있다.", "포스 업체 시험 서버가 자주 끊긴다.", "연동이 끝나면 매장 한 곳에서 먼저 써 본다."]},
+        {"title": "메뉴판 디자인 개선", "days_ago": 6, "lines": ["메뉴판을 네 쪽으로 줄인 녹색 시안으로 정했다.", "가격 표기를 오른쪽 끝에 맞춘다.", "인쇄 파일은 목요일까지 넘긴다."]},
+        {"title": "지역 신문 광고 검토", "days_ago": 2, "lines": ["광고 게재 날짜를 고쳤다.", "문구를 점장 인사말로 바꾼다.", "게재는 개편 당일 아침이다."]}
       ],
-      "upcoming": {"title": "화요일 팀 회의", "agenda": ["온보딩 B안 최종 파일 전달", "건너뛰기 버튼 위치 확정"]},
+      "upcoming": {"title": "화요일 팀 회의", "agenda": ["메뉴판 인쇄 파일 전달", "가격 표기 위치 확정"]},
       "expected": 1,
       "related": [1]
     },
@@ -335,25 +335,25 @@
       "related": [1]
     },
     {
-      "id": "ga_push_bug",
+      "id": "ga_card_reader",
       "category": "generic_title",
       "past_meetings": [
-        {"title": "앱 푸시 알림 버그", "days_ago": 9, "lines": ["안드로이드 12 이하 기기에서 푸시 알림이 오지 않는다.", "테스트 기기가 13 이상밖에 없어서 확인을 못 했다.", "구형 기기를 대여실에서 빌려서 확인한다."]},
+        {"title": "카드 단말기 오류", "days_ago": 9, "lines": ["오래된 카드 단말기에서 교통카드 결제가 되지 않는다.", "시험용 단말기가 신형밖에 없어서 확인을 못 했다.", "구형 단말기를 본사 창고에서 빌려서 확인한다."]},
         {"title": "채용 브랜딩", "days_ago": 4, "lines": ["채용 페이지에 팀 인터뷰를 싣기로 했다.", "인터뷰는 세 명을 한다.", "사진은 다음 주에 찍는다."]}
       ],
-      "upcoming": {"title": "회의", "agenda": ["구형 안드로이드 푸시 수신 확인"]},
+      "upcoming": {"title": "회의", "agenda": ["구형 단말기 교통카드 결제 확인"]},
       "expected": 0,
       "related": [0]
     },
     {
-      "id": "di_payment",
+      "id": "di_delivery",
       "category": "distractor",
       "past_meetings": [
-        {"title": "결제 UI 개편", "days_ago": 20, "lines": ["결제 버튼 색을 브랜드 색으로 바꿨다.", "결제 화면을 세 단계에서 두 단계로 줄인다.", "카드 입력 칸을 한 줄로 합친다."]},
-        {"title": "PG사 API 연동", "days_ago": 10, "lines": ["PG사 API 변경으로 승인 요청 형식이 바뀌었다.", "PG사 테스트 서버가 불안정해서 연동 테스트가 밀렸다.", "테스트 계정은 PG사 담당자에게 직접 받는다."]},
-        {"title": "결제 수수료 정산", "days_ago": 3, "lines": ["9월 결제 수수료 정산 금액이 맞지 않았다.", "수수료율이 계약과 다르게 적용됐다.", "재무팀이 차액을 청구한다."]}
+        {"title": "배달 앱 화면 개편", "days_ago": 20, "lines": ["주문 버튼 색을 매장 대표 색으로 바꿨다.", "주문 화면을 세 단계에서 두 단계로 줄인다.", "주소 입력 칸을 한 줄로 합친다."]},
+        {"title": "배달 대행사 연동", "days_ago": 10, "lines": ["배달 대행사 프로그램이 바뀌어서 배차 요청 형식이 달라졌다.", "대행사 시험 서버가 불안정해서 연동 시험이 밀렸다.", "시험용 계정은 대행사 담당자에게 직접 받는다."]},
+        {"title": "배달 수수료 정산", "days_ago": 3, "lines": ["9월 배달 수수료 정산 금액이 맞지 않았다.", "수수료율이 계약과 다르게 적용됐다.", "재무팀이 차액을 청구한다."]}
       ],
-      "upcoming": {"title": "PG사 테스트 서버 이슈 점검", "agenda": ["PG사 테스트 계정 발급"]},
+      "upcoming": {"title": "대행사 시험 서버 문제 점검", "agenda": ["대행사 시험용 계정 발급"]},
       "expected": 1,
       "related": [1]
     },
