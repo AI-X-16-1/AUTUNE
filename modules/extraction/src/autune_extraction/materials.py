@@ -138,10 +138,13 @@ class ConfidentialFileError(AutuneError):
 
 class StoredUpload(NamedTuple):
     """An upload's row, and what its file held that was not read -- said once,
-    in the answer to the upload, and stored nowhere."""
+    in the answer to the upload, and stored nowhere. ``already_kept`` says the
+    row is an earlier upload of the same text and this one wrote nothing
+    (``_kept_already``): its title is that upload's, not the one just typed."""
 
     row: ExtMaterial
     not_read: tuple[NotRead, ...]
+    already_kept: bool = False
 
 
 @dataclass(frozen=True)
@@ -340,6 +343,11 @@ def _hold_a_place(session: Session, team_id: str, *, field: str) -> None:
     """Lock the team's shelf and refuse when it is full. Links and uploads
     share the one cap."""
     lock_shelf(session, team_id)
+    _refuse_a_full_shelf(session, team_id, field=field)
+
+
+def _refuse_a_full_shelf(session: Session, team_id: str, *, field: str) -> None:
+    """The cap alone. The caller holds the team's shelf (``lock_shelf``)."""
     held = session.scalar(
         select(func.count()).select_from(ExtMaterial).where(ExtMaterial.team_id == team_id)
     )
@@ -421,6 +429,62 @@ def _stop(session: Session, team_id: str, marking: Marking) -> None:
     log.info("extraction_material_upload_stopped", team_id=team_id, marking=marking)
 
 
+def _kept_already(
+    session: Session, team_id: str, pieces: list[str], *, model: str, now: datetime
+) -> ExtMaterial | None:
+    """This team's upload that already keeps exactly ``pieces`` -- the same
+    masked text, cut the same way, in the same order -- or None.
+
+    A second upload of a text the team keeps used to be a second material. A
+    member whose first try went unanswered and who uploaded again had it
+    twice, and the two took two of a search's five places with one text.
+
+    The comparison is of what is stored already: masked pieces against masked
+    pieces, character for character. Nothing is kept to make it -- no digest
+    of a text, masked or not -- and nothing of the file is compared: the same
+    text from a .docx and from a .txt is one material, and a text that differs
+    by a space is another. Two texts that differ only in what the mask covers,
+    one phone number for another of the same shape, are the same pieces and
+    so one material.
+
+    It reads ``team_id``'s rows and no other team's: what another team keeps
+    cannot change the answer, so an upload cannot be used to ask.
+
+    Only what a search would read counts as kept (``material_search``): an
+    upload, embedded by ``model``, every piece with its vector, and not past
+    its day unless the team keeps uploads until deleted. A copy the hourly
+    task is about to delete is no answer to "it is kept". Of several, the one
+    kept longest.
+
+    The caller holds the team's shelf: of two uploads of one text at once,
+    the second waits, then finds the first's row here."""
+    if not pieces:
+        return None
+    candidates = (
+        select(ExtMaterial)
+        .join(ExtMaterialChunk, ExtMaterialChunk.material_id == ExtMaterial.id)
+        .where(
+            ExtMaterial.team_id == team_id,
+            ExtMaterial.source == "upload",
+            ExtMaterial.embedding_model == model,
+            ExtMaterialChunk.position == 0,
+            ExtMaterialChunk.text == pieces[0],
+        )
+        .order_by(ExtMaterial.expires_at.desc(), ExtMaterial.id)
+    )
+    if not keeps_until_deleted(session, team_id):
+        candidates = candidates.where(ExtMaterial.expires_at > now)
+    for row in session.scalars(candidates).all():
+        kept = session.execute(
+            select(ExtMaterialChunk.text, ExtMaterialChunk.embedding.is_(None))
+            .where(ExtMaterialChunk.material_id == row.id)
+            .order_by(ExtMaterialChunk.position)
+        ).all()
+        if [piece for piece, _ in kept] == pieces and not any(bare for _, bare in kept):
+            return row
+    return None
+
+
 def store_upload(
     session: Session, team_id: str, *, title: str, file_name: str, data: bytes | bytearray
 ) -> StoredUpload:
@@ -431,30 +495,43 @@ def store_upload(
     marking check over the file's name, its head, its foot and its own label
     (``FileText.edges``), which writes an alarm row and raises
     ``ConfidentialFileError`` -- the caller commits that row before it
-    answers; the team's cap; then the whole text masked, cut, each piece
-    checked, and the row and its pieces written. ``file_name`` is read for its
-    ending and the marking check and is not stored. A piece the outbound
-    guard still refuses raises ``PrivacyViolationError`` and nothing is
-    written. What the file held that was not read -- pictures, charts,
-    embedded files -- comes back beside the row."""
+    answers; the team's shelf locked; the whole text masked, cut, each piece
+    checked; a look for an upload of this team that already keeps exactly
+    these pieces (``_kept_already``); the team's cap; and the row and its
+    pieces written. ``file_name`` is read for its ending and the marking check
+    and is not stored. A piece the outbound guard still refuses raises
+    ``PrivacyViolationError`` and nothing is written. What the file held that
+    was not read -- pictures, charts, embedded files -- comes back beside the
+    row.
+
+    When the team already keeps the text, that earlier row is the answer
+    (``already_kept``) and nothing is written or changed: no second copy, no
+    place taken on the shelf -- so a full shelf still answers it -- and the
+    title typed now is dropped; the earlier row keeps its own title and its
+    own day."""
     clean = _checked_title(title, team_id)
     found = read_file(file_name, data)
     marking = file_marking(file_name, found.edges())
     if marking is not None:
         _stop(session, team_id, marking)
         raise ConfidentialFileError
-    _hold_a_place(session, team_id, field="file")
+    lock_shelf(session, team_id)
     masked = mask_document(found.text).text
     not_read = found.not_read
     del found
     pieces = cut(masked)
     for piece in pieces:
         assert_masked(piece, destination="ext_material_chunks")
+    embedder = get_material_embedder()
+    now = datetime.now(UTC)
+    same = _kept_already(session, team_id, pieces, model=embedder.model_version, now=now)
+    if same is not None:
+        log.info("extraction_material_upload_already_kept", material_id=same.id, team_id=team_id)
+        return StoredUpload(same, not_read, already_kept=True)
+    _refuse_a_full_shelf(session, team_id, field="file")
     # Vectors from the masked pieces and nothing else, in this request: no
     # text or path goes to a task (#817).
-    embedder = get_material_embedder()
     vectors = embedded(embedder, pieces)
-    now = datetime.now(UTC)
     row = ExtMaterial(
         team_id=team_id,
         title=clean,

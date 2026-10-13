@@ -36,8 +36,10 @@ def rows(session: Session, model: type, **where: str) -> int:
 
 
 def upload(session: Session, team_id: str, title: str = "계획") -> ExtMaterial:
+    # A text of its own per title: the same text again answers the earlier row
+    # and stores nothing (``test_materials_same_text_pg``).
     return materials.store_upload(
-        session, team_id, title=title, file_name="plan.txt", data=BODY.encode()
+        session, team_id, title=title, file_name="plan.txt", data=f"{BODY}{title}".encode()
     ).row
 
 

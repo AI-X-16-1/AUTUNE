@@ -458,6 +458,9 @@ class MaterialRead(BaseModel):
     2026-10-12). ``not_read`` is what a file held
     that was not read, said only in the answer to the upload; the plain-text
     formats have nothing unread; the others can: pictures, charts, embedded files.
+    ``already_kept`` is true only in the answer to an upload whose masked text
+    the team already keeps: the row is that earlier upload, with its own title
+    and day, and the upload wrote nothing.
     """
 
     id: str
@@ -469,6 +472,7 @@ class MaterialRead(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     not_read: list[Literal["pictures", "charts", "embedded_files"]] = Field(default_factory=list)
+    already_kept: bool = False
 
 
 class MaterialSettingsRead(BaseModel):
