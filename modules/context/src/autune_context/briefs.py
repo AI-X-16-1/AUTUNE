@@ -239,8 +239,8 @@ different groups, not one series."""
 
 def _series_key(title: str) -> str:
     """``title`` normalized, with its round, number and date taken out, so the
-    meetings of a numbered series share one key ("v2.0 출시 준비 3차 회의" ->
-    "v2.0 출시 준비 회의"). A version ("v2.0") is not a round and stays."""
+    meetings of a numbered series share one key ("v3.1 앱 개편 3차 회의" ->
+    "v3.1 앱 개편 회의"). A version ("v3.1") is not a round and stays."""
     key = _COUNTED.sub(r"\1", _normalize_title(title))
     return " ".join(_ROUND.sub(" ", key).split())
 
