@@ -902,7 +902,11 @@ The compose file also sets `AUTUNE_EXTRACTION_MATERIAL_UPLOAD=true` with
 `AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL=local` (module B's owner, 2026-10-12,
 #817), so **this site keeps the masked text of documents uploaded to a team's
 자료**, and a member of the team finds one by typing a question. The file itself
-is not kept. The two are set together: with uploads on and the embedder at
+is not kept. An upload is deleted at the end of its team's retention window
+unless the team chose to keep its uploads until a member deletes them, and a
+team nobody is on loses them at an hourly check, whatever it chose
+(`docs/architecture/privacy.md`, section 4). The two are set together:
+with uploads on and the embedder at
 `.env.example`'s `fake`, the api, the workers and beat do not start. `local` is
 KURE-v1 inside the `api` container, on the CPU, read from the `models` volume:
 no material text and no question leaves the server. The container starts
