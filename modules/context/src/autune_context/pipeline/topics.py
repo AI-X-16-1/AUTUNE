@@ -283,21 +283,33 @@ def person_names(texts: Iterable[str]) -> frozenset[str]:
     "도윤 님,", "수빈 씨가", which is how a transcript often spaces it -- the name
     is a plain noun word, and a label could be it. So: the word before a
     detached honorific, and the word before a title that carries one (한서진 in
-    "한서진 팀장님"; _TITLES), when it is two to four Hangul syllables. Collected over the
-    whole meeting, because a name said with 님 once is said without it later.
+    "한서진 팀장님"; _TITLES), when it is two to four Hangul syllables that
+    kiwipiepy reads as one proper noun. The proper-noun test keeps a department
+    before a title (개발 팀장님, 영업 이사님) and a common noun before a detached
+    님 (고객 님께) out; the honorific must be its own morpheme, so 씨앗 is no 씨.
+    Collected over the whole meeting, because a name said with 님 once is said
+    without it later.
     """
     from kiwipiepy import Kiwi
 
     names: set[str] = set()
     for text in texts:
         words = [(m.group(), m.start(), toks) for m, toks in _words(text, _kiwi(Kiwi))]
-        for (prev, _, _), (word, _, tokens) in zip(words, words[1:], strict=False):
-            honorific = _DETACHED_HONORIFIC.match(word) or any(
+        for (prev, _, prev_tokens), (word, _, tokens) in zip(words, words[1:], strict=False):
+            detached = (
+                _DETACHED_HONORIFIC.match(word) is not None
+                and bool(tokens)
+                and tokens[0].form in _HONORIFICS
+            )
+            honorific = detached or any(
                 t.tag.startswith("XSN") and t.form in _HONORIFICS and prev_t.form in _TITLES
                 for prev_t, t in zip(tokens, tokens[1:], strict=False)
             )
             stem = prev.rstrip(",.!?~")
-            if honorific and _NAME_WORD.match(stem):
+            proper = (
+                bool(prev_tokens) and prev_tokens[0].tag == "NNP" and prev_tokens[0].form == stem
+            )
+            if honorific and proper and _NAME_WORD.match(stem):
                 names.add(stem)
     return frozenset(names)
 

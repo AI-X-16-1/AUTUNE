@@ -122,6 +122,30 @@ def test_a_customer_is_not_a_name():
     assert person_names(["신규 고객님께 안내 문자를 보내요."]) == frozenset()
 
 
+def test_a_department_before_a_title_is_not_a_name():
+    texts = [
+        "개발 팀장님이 일정을 다시 보자고 하셨어요.",
+        "영업 이사님께 견적을 보내요.",
+        "마케팅 팀장님이 예산을 올렸어요.",
+        "품질 부장님 승인이 필요해요.",
+        "담당 매니저님이 확인했어요.",
+    ]
+    assert person_names(texts) == frozenset()
+
+
+def test_a_common_noun_before_a_detached_honorific_or_a_seed_is_not_a_name():
+    texts = ["초기 씨앗 자금을 모아요.", "수박 씨앗을 심어요.", "고객 님께 안내 문자를 보내요."]
+    assert person_names(texts) == frozenset()
+
+
+def test_a_department_still_labels_its_segment():
+    text = (
+        "개발 팀장님이 일정을 다시 보자고 하셨어요. 개발 일정이 두 주 밀렸어요."
+        " 개발 일정은 다음 주에 다시 잡죠."
+    )
+    assert _label(text, names=person_names([text])) == "개발 일정"
+
+
 def test_a_name_never_labels_a_segment_even_where_it_comes_without_its_honorific():
     names = person_names(["도윤 님, 물류 쪽은 어떤가요?"])
     text = "도윤 님, 물류 쪽은 어떤가요? 도윤 견적은 금요일에 봐요. 도윤 의견도 듣고요."
