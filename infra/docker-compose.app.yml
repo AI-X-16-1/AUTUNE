@@ -187,6 +187,57 @@ x-python: &python
     # already written stay on their rows. While it is `llm` the key and the
     # acknowledgement stay, whatever the classifier is.
     AUTUNE_EXTRACTION_TITLE_IMPL: llm
+    # Uploads to a team's 자료 are on, on this site (decided by module B's
+    # owner, 2026-10-12; #817): a member uploads a document, its text is masked
+    # and kept, and a member of the same team finds it by typing a question.
+    # The file itself is not kept. An upload is deleted at the end of its
+    # team's retention window (90 days by default) unless the team chose to
+    # keep its uploads until someone deletes them. A team nobody is on keeps
+    # none of it, whatever it chose: once its last member is gone, an hourly
+    # check deletes its uploads, its links and its records of refused files
+    # (#1292). Checked every hour -- not a deadline.
+    #
+    # THE TWO LINES GO TOGETHER. With uploads on and the embedder left at
+    # .env.example's `fake`, module B's settings refuse to load, and the api,
+    # the workers and beat do not start. `local` is KURE-v1 inside the api
+    # process, on the CPU (.env.example's EMBEDDER_DEVICE; the api container is
+    # given no GPU). The api starts loading it when it starts, in the
+    # background: /health answers meanwhile, and an upload or search sent
+    # before the load ends waits for it. It stays in that process from then
+    # on, whether or not anyone uploads: about 2 GB of memory, as measured on
+    # a laptop. Its weights are read from the `models` volume -- the
+    # checkpoint is the one D's embedder on the worker loads -- and downloaded
+    # there at that start if they are not in it. A load that fails leaves the
+    # api up, and the next upload tries it again.
+    #
+    # WHAT LEAVES THIS SERVER because of it: nothing of a material's text and
+    # nothing of a question; both are masked and embedded here. Two things
+    # do. When a file is refused for a confidentiality marking, the team's
+    # approvers with the '전체' scope get one Slack DM -- how many refused
+    # uploads wait and a link to the approvals page; no file name, time, kind
+    # of marking or person -- if the team connected Slack and the approver
+    # linked their own account. And each time the api loads the model -- at
+    # every start of the container, then -- it asks huggingface.co about the
+    # model's files: requests that name the model and its revision -- nothing
+    # of a material, a question or a team. The weights come from there too,
+    # only when the `models` volume does not hold them yet.
+    #
+    # NOT TURNED ON, and not to be without its own decision:
+    # AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL, which would hand masked excerpts
+    # of a material to the assistant's model. .env.example leaves it false and
+    # this file does not name it.
+    #
+    # TURNING IT OFF is removing the two lines. The upload and search routes
+    # answer 404 again, and the screen draws no upload form, no search box and
+    # not the team's choice of how long its uploads are kept. What was
+    # uploaded stays stored and listed, and a member still deletes one. The
+    # hourly tasks do not read this switch: an upload past its day is still
+    # deleted at an hourly check, and so is everything of a team nobody is
+    # on. A team that chose to keep its uploads has no day, and while this is
+    # off no control on the screen to choose the window again: its uploads
+    # stay until a member deletes each one, or until the two lines are back.
+    AUTUNE_EXTRACTION_MATERIAL_UPLOAD: "true"
+    AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL: local
     # Module D's NLI is the one scripts/up.sh runs without --real-models, for
     # the reason it gives: the checkpoint is a private repo (#172).
     AUTUNE_CONTEXT_NLI_IMPL: fake
