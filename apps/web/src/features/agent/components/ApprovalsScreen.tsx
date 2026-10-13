@@ -8,6 +8,7 @@ import { Button } from "@/shared/ui/Button";
 import { Tabs } from "@/shared/ui/Tabs";
 
 import { approvePending, listPending, rejectPending } from "../api";
+import { announcePendingChanged } from "../pendingCount";
 import { REASONS, SUBAGENT_LABEL } from "../approvalLabels";
 import { meetingLabel } from "../meetingLabel";
 import { reportLink } from "../reportLink";
@@ -196,6 +197,8 @@ function WaitingApprovals() {
         return next;
       });
       setClicked(null);
+      // The sidebar's count beside 승인 대기 reads the queue again.
+      announcePendingChanged();
     }
   }
 
