@@ -140,7 +140,29 @@ describe("MeetingSummaryScreen", () => {
     expect(left.textContent).toContain(
       "후보 1건 · 미결 질문 2건 · 응답 대기 모호 동의 1건은 회의록에 넣지 않았습니다.",
     );
-    expect(within(left).getByRole("link").getAttribute("href")).toBe("/meetings/mtg_1/actions");
+    // No sentence sending the reader to the 할 일 tab: its items open there.
+    expect(within(left).queryByRole("link")).toBeNull();
+    expect(page.textContent).not.toContain("근거 발화와 수정은 할 일 탭에서");
+  });
+
+  it("links each item to its window in the 할 일 tab, and not the page's text", async () => {
+    getSummary.mockResolvedValue({
+      ...BASE,
+      action_items: [
+        item({ id: "act_7", description: "설문 문항 다시 쓰기" }),
+        item({ id: "act/8", description: "배포 일정 잡기" }),
+      ],
+    });
+
+    render(<MeetingSummaryScreen meetingId="mtg_1" />);
+
+    const actions = within(await document_()).getByRole("region", { name: "할 일" });
+    const links = within(actions).getAllByRole("link");
+    expect(links.map((link) => link.textContent)).toEqual(["설문 문항 다시 쓰기", "배포 일정 잡기"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/meetings/mtg_1/actions?item=act_7",
+      "/meetings/mtg_1/actions?item=act%2F8",
+    ]);
   });
 
   it("copies the page that is on screen", async () => {
@@ -250,9 +272,8 @@ describe("MeetingSummaryScreen", () => {
       "결정 사항없음",
     );
     expect(within(page).getByRole("region", { name: "할 일" }).textContent).toBe("할 일없음");
-    expect(screen.getByRole("region", { name: "회의록에 없는 것" }).textContent).not.toContain(
-      "넣지 않았습니다",
-    );
+    // Nothing was left out, so there is no line saying so.
+    expect(screen.queryByRole("region", { name: "회의록에 없는 것" })).toBeNull();
   });
 });
 
