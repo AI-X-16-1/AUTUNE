@@ -860,7 +860,10 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
         # match back onto its own thread even though B gave it a new dec_ id.
         # Appended, not substituted, for threads whose team-wide head is a
         # *later* meeting — this meeting may sit mid-thread.
-        heads = _thread_heads(session, meeting.team_id, embedder)
+        # Only the cosine path compares source utterances; the judge reads
+        # statements. So in ``llm`` mode no utterance is read or embedded.
+        reads_sources = judge is None
+        heads = _thread_heads(session, meeting.team_id, embedder, with_sources=reads_sources)
         own_versions = session.execute(
             select(
                 CtxDecisionVersion.thread_id,
@@ -872,8 +875,12 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
         ).all()
         if own_versions:
             own_vectors = embedder.embed([statement for _, statement, _ in own_versions])
-            own_context = _context_vectors(
-                session, embedder, [(statement, ids) for _, statement, ids in own_versions]
+            own_context = (
+                _context_vectors(
+                    session, embedder, [(statement, ids) for _, statement, ids in own_versions]
+                )
+                if reads_sources
+                else [None] * len(own_versions)
             )
             heads += [
                 _ThreadHead(thread_id, vector, statement, context)
@@ -1036,7 +1043,9 @@ def _meeting_time():
     return func.coalesce(Meeting.started_at, Meeting.created_at)
 
 
-def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_ThreadHead]:
+def _thread_heads(
+    session: Session, team_id: str, embedder: Embedder, *, with_sources: bool = True
+) -> list[_ThreadHead]:
     """Every non-empty thread for this team, represented by its latest *visible*
     version (by meeting time), embedded.
 
@@ -1048,7 +1057,8 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
     One query and one batch embed — threads accumulate per team over the
     retention window, so neither can be per-thread. The returned list is in a
     deterministic order so ``_assign_decisions_to_threads``'s tie-break is
-    stable.
+    stable. ``with_sources=False`` leaves every ``context_vector`` ``None`` and
+    reads no utterance, for a caller that will not compare them.
     """
     versions = session.scalars(
         select(CtxDecisionVersion)
@@ -1071,10 +1081,14 @@ def _thread_heads(session: Session, team_id: str, embedder: Embedder) -> list[_T
         return []
     ordered = sorted(head_by_thread.items())
     vectors = embedder.embed([version.current_statement for _, version in ordered])
-    contexts = _context_vectors(
-        session,
-        embedder,
-        [(version.current_statement, version.source_utterance_ids) for _, version in ordered],
+    contexts = (
+        _context_vectors(
+            session,
+            embedder,
+            [(version.current_statement, version.source_utterance_ids) for _, version in ordered],
+        )
+        if with_sources
+        else [None] * len(ordered)
     )
     return [
         _ThreadHead(thread_id, vector, version.current_statement, context)
