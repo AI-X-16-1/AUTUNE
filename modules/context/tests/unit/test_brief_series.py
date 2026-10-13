@@ -10,7 +10,7 @@ from autune_context.briefs import _series_key
 @pytest.mark.parametrize(
     ("earlier", "later"),
     [
-        ("v2.0 출시 준비 1차 회의", "v2.0 출시 준비 2차 회의"),
+        ("v3.1 앱 개편 1차 회의", "v3.1 앱 개편 2차 회의"),
         ("물류센터 이전 1차회의", "물류센터 이전 2차회의"),
         ("연말 행사 준비", "연말 행사 준비 2차"),
         ("신제품 네이밍 1회차 워크숍", "신제품 네이밍 2회차 워크숍"),
@@ -38,7 +38,7 @@ def test_a_round_number_or_date_does_not_split_a_series(earlier: str, later: str
         ("1팀 주간회의", "2팀 주간회의"),
         ("고객사 1 미팅", "고객사 2 미팅"),
         # A version is a different release.
-        ("v2.0 출시 준비 회의", "v3.0 출시 준비 회의"),
+        ("v3.1 앱 개편 회의", "v4.0 앱 개편 회의"),
         ("Sprint 23 Planning", "Sprint 23 Review"),
     ],
 )
