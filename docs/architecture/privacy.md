@@ -236,6 +236,16 @@ path and a retention rule (section 4) -- any member's delete, and the
 team's window by default or the team's own choice to keep it until deleted
 -- and is read by the team alone.
 
+**What the masker does not put back together.** Four shapes of a patterned
+value are stored with some or all of it readable (`document_masking.py`): a
+line that ends inside a group of digits, a break that left a hyphen on both
+lines, a value that runs across the edge of a PDF page, and an e-mail
+address broken across lines. `assert_masked` and the screen on an excerpt's
+way out run the same detector, so neither sees what the first reading
+missed. A material has no report and no mask-in-place: the transcript's
+path (above) is module A's and takes utterances. A member who sees such a
+value deletes the material; Autune holds no original to mask again.
+
 **No row names a person.** Not who uploaded a file, not who deleted one, not
 who was stopped. The title is typed by a member and can hold a name; it is
 kept out of logs and error messages and is screened before it leaves Autune.
@@ -272,7 +282,8 @@ link is for approvers only and shows the time and the kind of marking. An
 approver's acknowledgement deletes the row, and who acknowledged is not
 recorded. In a small team the time of an attempt can point at one person,
 which is why the row is short-lived: unacknowledged, it is deleted 30 days
-after it was written, by the task that deletes materials past their window.
+after it was written, by a task of its own
+(`autune.extraction.periodic.forget_old_material_alarms`, hourly).
 
 For the same reason an approver here is a holder of the `any` scope and
 nobody with a narrower one (the layer's owner on #1201, 2026-10-12). The

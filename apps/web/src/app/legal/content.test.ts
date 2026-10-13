@@ -99,6 +99,34 @@ describe("legal documents", () => {
     }
   });
 
+  // What the documents said of a team's uploaded documents and what the code
+  // does (the owner, 2026-10-13): vectors are kept beside the masked text;
+  // the masker misses a value split by a line or page break and the check
+  // before storing is the same detector (`document_masking.py`); a material
+  // has no report path, only its delete; and a server's access record holds
+  // the address asked for, which can carry a team's id.
+  it("say what is kept of an uploaded document and what the masking does not do", () => {
+    const text = (id: string) => JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === id));
+    const privacy = text("privacy");
+    expect(privacy).toContain(
+      "그 글을 찾는 데 쓰기 위하여 가림 처리된 글로부터 계산한 수치(벡터)와 계산에 쓴 모델의 이름",
+    );
+    expect(privacy).toContain(
+      "가림 처리는 자동화된 방법으로 이루어지므로, 줄이나 쪽이 바뀌는 곳에서 나뉘어 적힌 번호나 전자우편 주소는 가려지지 않은 채 보관될 수 있습니다. 문서 자료에는 가려지지 않은 부분만 골라 가리는 기능이 없으며, 팀 구성원은 그 자료를 삭제할 수 있습니다.",
+    );
+    expect(privacy).toContain(
+      "접속 일시, 접속 IP 주소 및 요청한 주소(팀을 가리키는 번호가 포함될 수 있습니다)는 서비스의 데이터베이스에 저장하지 않으나",
+    );
+    expect(text("terms")).toContain(
+      "이용자는 전사문의 해당 부분을 신고하여 즉시 가림 처리되도록 할 수 있으며, 팀의 문서 자료에 그런 부분이 있는 경우에는 그 자료를 삭제할 수 있습니다.",
+    );
+    const security = text("security");
+    expect(security).toContain(
+      "저장하기 전에 같은 방법으로 한 번 더 검사합니다. 이 검사는 처음의 가림 처리가 찾지 못한 값을 찾아내지 못합니다.",
+    );
+    expect(security).not.toContain("가림 처리되었는지 다시 검사합니다");
+  });
+
   // The server refuses any other shape (`autune_core.consents._VERSION`),
   // and a version it refuses leaves every person at the consent page.
   it("are asked for under a version the server takes", () => {

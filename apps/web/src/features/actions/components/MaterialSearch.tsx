@@ -110,7 +110,8 @@ export function MaterialSearch({
         올린 파일에서 보관 중인 글만 찾습니다. 링크로 등록한 Drive 파일은 Autune이
         내용을 읽지 않으므로 찾지 않습니다. 보이는 글은 전화번호처럼 형식이 정해진
         개인정보를 가린 글의 일부입니다. 문장 속의 이름은 가려지지 않으므로 그대로
-        보일 수 있습니다.
+        보일 수 있습니다. 줄이나 쪽이 바뀌는 곳에서 나뉜 번호나 전자우편 주소도 가려지지 않은 채 보일
+        수 있습니다. 그런 글이 보이면 그 자료를 삭제해 주세요.
       </p>
       {error ? (
         <span role="alert" className="text-[var(--color-signal-critical)]" style={meta}>

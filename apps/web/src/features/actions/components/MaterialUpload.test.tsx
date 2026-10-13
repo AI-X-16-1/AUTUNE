@@ -135,6 +135,11 @@ describe("MaterialsScreen, whether a file can be sent at all", () => {
     expect(form.textContent).not.toMatch(/팀이 지울 때까지/);
     expect(within(form).getByText(/문장 속의 이름은 가려지지 않으며/)).toBeTruthy();
     expect(within(form).getByText(/그림으로만 들어 있는 글은\s+읽지 않습니다/)).toBeTruthy();
+    // What the masker does not put back together (`document_masking.py`), said
+    // before the file goes (the owner, 2026-10-13).
+    expect(form.textContent?.replace(/\s+/g, " ")).toContain(
+      "줄이나 쪽이 바뀌는 곳에서 나뉜 번호나 전자우편 주소는 가려지지 않을 수 있습니다.",
+    );
     expect(within(form).getByText(/한 파일 5MB까지 · \.txt \.pdf \.docx/)).toBeTruthy();
     expect(screen.getByLabelText("올릴 파일").getAttribute("accept")).toBe(".txt,.pdf,.docx");
     expect(screen.getByLabelText("올릴 자료 제목").getAttribute("maxlength")).toBe("80");

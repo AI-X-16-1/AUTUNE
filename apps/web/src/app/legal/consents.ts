@@ -53,6 +53,14 @@
  * longer the whole of it, so a person who agreed to `.5` agreed to a text that
  * told them otherwise. Both documents also said "until the team is deleted"
  * where they now add "or has no member left". The effective date stays.
+ * The same rise carries four corrections of what the documents said of a
+ * team's uploaded documents (the owner, 2026-10-13): the policy lists the
+ * vectors computed from the masked text and the model's name among what is
+ * kept; it says a number or an address split by a line or page break can be
+ * kept unmasked, that a material has no way to mask one part and can be
+ * deleted, and that the check before storing is the same method again; the
+ * terms say reporting a missed part is for the transcript; and the policy
+ * says a server's access record can hold the requested address.
  *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
