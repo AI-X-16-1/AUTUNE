@@ -406,7 +406,8 @@ export type MaterialNotRead = "pictures" | "charts" | "embedded_files";
  * `retention_days`, the team's window today, is what an upload made now
  * gets. True: kept until a member deletes it. Any member switches it; who
  * did is not kept. `uploads_past_their_day` is how many uploads are already
- * past their day: under true, what switching back deletes within the hour.
+ * past their day: under true, what an hourly check deletes after switching
+ * back.
  * A count only; absent from a server older than the field.
  */
 export interface MaterialSettings {

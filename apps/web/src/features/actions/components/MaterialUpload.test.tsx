@@ -463,8 +463,12 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
     // Kept until a member deletes it, and no longer than there is a member
     // (#817; the owner, 2026-10-13).
     expect(group.textContent).toMatch(
-      /팀에 구성원이 한 명도 남지 않으면 이 선택과 관계없이 팀의 자료를 한 시간 안에 모두 지웁니다/,
+      /팀에 구성원이 한 명도 남지 않으면 이 선택과 관계없이 1시간마다 확인하여 팀의 자료를 모두 지웁니다/,
     );
+    // How often it is checked, never a deadline: a check can miss a row
+    // stored after it read the team (the owner, 2026-10-13).
+    expect(group.textContent).toMatch(/그날이 지난 자료는 1시간마다 확인하여 지웁니다/);
+    expect(group.textContent).not.toMatch(/시간 안에/);
     expect(group.textContent).not.toMatch(/지금 이 방식으로/);
     expect(group.textContent).toMatch(/누가 바꿨는지는 기록하지 않습니다/);
     expect(choice(group, /보관 기간이 지나면 삭제/).checked).toBe(true);
@@ -496,7 +500,7 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
     const back = choice(group, /보관 기간이 지나면 삭제/);
     expect(back.checked).toBe(false);
     expect(back.closest("label")?.textContent).toContain(
-      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 3건이 한 시간 안에 지워지며, 복구할 수 없습니다.",
+      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 3건은 1시간마다 확인하여 지우며, 복구할 수 없습니다.",
     );
     expect(settingsSave).not.toHaveBeenCalled();
   });
@@ -506,7 +510,7 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
 
     const group = await setting();
     expect(group.textContent).toContain("지금 이 방식으로 바꿔도 곧바로 지워지는 자료는 없습니다.");
-    expect(group.textContent).not.toMatch(/\d+건이 한 시간 안에/);
+    expect(group.textContent).not.toMatch(/\d+건은 1시간마다/);
   });
 
   it("gives no number, and no zero, when the server answers no count", async () => {
@@ -514,7 +518,7 @@ describe("MaterialsScreen, how the team keeps its uploads", () => {
 
     const group = await setting();
     expect(group.textContent).toContain(
-      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료는 한 시간 안에 지워지며, 복구할 수 없습니다.",
+      "지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료는 1시간마다 확인하여 지우며, 복구할 수 없습니다.",
     );
     expect(group.textContent).not.toMatch(/곧바로 지워지는 자료는 없습니다/);
   });
