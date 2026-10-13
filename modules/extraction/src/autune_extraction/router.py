@@ -1047,13 +1047,21 @@ def board_since_last_meeting(
     reader: CurrentUser,
     meeting_id: str | None = None,
     team_id: str | None = None,
+    since_meeting_id: str | None = None,
 ) -> list[SinceLastMeeting]:
     """What moved on a team's board since its last analysed meeting, read now
     and stored nowhere (``since_last_meeting``). Named by a meeting or a team,
     it answers for that team, members only (#189); without either, for every
     team the caller is on, one answer each and never added together -- "the
     last meeting" is a team's. Item ids in parts and a team total: nobody is
-    named and nothing is counted per person."""
+    named and nothing is counted per person.
+
+    ``since_meeting_id`` names the meeting to count from instead (#1270): the
+    one answer is for that meeting's team, members only, and the other two
+    names are not read."""
+    if since_meeting_id:
+        team = _member_team(session, reader, since_meeting_id)
+        return [since_last_meeting.summary(session, team, since_meeting_id=since_meeting_id)]
     if meeting_id or team_id:
         teams = [_member_team(session, reader, meeting_id, team_id)]
     else:

@@ -644,6 +644,17 @@ export const listSinceLastMeeting = (teamId?: string) =>
     `/since-last-meeting${teamId ? `?team_id=${encodeURIComponent(teamId)}` : ""}`,
   );
 
+/**
+ * The same answer counted from the meeting named, for that meeting's team
+ * (#1270): the pre-meeting brief counts from the earlier meeting it chose, not
+ * from a "last meeting" picked a second time. One answer; `no_meeting`, with
+ * every part empty, when the meeting cannot be counted from.
+ */
+export const listSinceMeeting = (meetingId: string) =>
+  api.extraction<SinceLastMeeting[]>(
+    `/since-last-meeting?since_meeting_id=${encodeURIComponent(meetingId)}`,
+  );
+
 export interface NotionPage {
   id: string;
   title: string;

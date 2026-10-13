@@ -30,6 +30,11 @@ and in neither version did it recap an unrelated meeting.**
   model ran on it:
   - `brief_selection_v1.json` (51 cases): the dev set. The first measurement
     was taken on it, and the fix was designed and its threshold chosen from it.
+    Seven of its cases had been built from a demo meeting script meant only for
+    testing. They were rewritten in another domain on 2026-10-13, with the same
+    structure and labels. On the fixed code the rewritten set gives the same
+    result as before, 50/51 with the same miss, and the same threshold sweep, so
+    the numbers below stand.
   - `brief_selection_heldout_v1.json` (52 cases): written and committed after
     the first measurement and before any fix. The fixed code was run on it
     once; the code before the fix was run on it once for comparison.

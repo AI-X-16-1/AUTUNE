@@ -114,7 +114,11 @@ See `../architecture/async-pipeline.md`.
    `model_version`; it is **shown** — in the snapshot and on `/predictions` —
    only once the team has three scored meetings (#27). #27's four weeks of
    history are lifted until the final presentation (`prediction.MIN_HISTORY`
-   is zero) and come back after it. Prophet trend forecasting is not built; see Open questions.
+   is zero) and come back after it. S26 titles the card **결정 재검토
+   가능성** (the likelihood a decision is revisited), not 예측, because the
+   heuristic baseline is unvalidated and the title should not claim a
+   forecast; the value is the stored risk unchanged. Prophet trend
+   forecasting is not built; see Open questions.
 6. **Report** — `service.generate_weekly_report` aggregates `intel_scores` and
    `intel_gap_patterns` for a team over `[period_start, period_end)`, plus B's
    current action-item counts (below), into one

@@ -54,7 +54,7 @@ export function Dashboard({ teamId }: { teamId: string }) {
             </p>
             <p style={{ ...metaStyle, marginTop: "var(--space-8)" }}>
               회의를 분석하면 품질 점수, 갭 유형, 할 일 완료율, 회의 리포트가 여기에 나타납니다.
-              예측과 직무 쌍 얼라인먼트는 분석한 회의가 3회 이상 쌓여야 나타납니다.
+              결정 재검토 가능성과 직무 쌍 얼라인먼트는 분석한 회의가 3회 이상 쌓여야 나타납니다.
             </p>
             <Link
               href="/meetings/new"

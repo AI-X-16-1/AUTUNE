@@ -152,6 +152,11 @@ def read(session: Session, team: str = MINE, **kwargs: datetime):
     return since_last_meeting.summary(session, team, **kwargs)
 
 
+def read_from(session: Session, meeting: str, team: str = MINE):
+    """Counted from the meeting the caller names (#1270), as the brief asks."""
+    return since_last_meeting.summary(session, team, since_meeting_id=meeting)
+
+
 BEFORE = timedelta(days=5)
 """Before ``mtg_last``, after ``mtg_old``."""
 
@@ -364,6 +369,71 @@ def test_another_teams_items_are_not_in_a_teams_answer(session: Session) -> None
     assert (theirs.finished, theirs.late, theirs.open) == (["act_theirs"], ["act_theirs_late"], 1)
 
 
+# -- counted from a named meeting (#1270) -------------------------------------
+
+
+def test_a_named_meeting_is_counted_from_instead_of_the_last_one(session: Session) -> None:
+    for item_id in ("act_closed_between", "act_done_between", "act_closed_since"):
+        item(session, item_id)
+    item(session, "act_late", due=today() - timedelta(days=3))
+    # After ``mtg_old``, before ``mtg_last``: since the one and not the other.
+    close(session, "act_closed_between", ago=BEFORE)
+    move(session, "act_done_between", ActionStatus.DONE, ago=BEFORE)
+    close(session, "act_closed_since")
+
+    last, named = read(session), read_from(session, "mtg_old")
+
+    assert (last.meeting_id, last.closed, last.finished) == ("mtg_last", ["act_closed_since"], [])
+    assert (named.state, named.meeting_id, named.meeting_title) == ("ok", "mtg_old", "mtg_old 회의")
+    assert named.since is not None
+    assert abs(named.since - (now() - timedelta(days=9))) < timedelta(minutes=1)
+    assert sorted(named.closed) == ["act_closed_between", "act_closed_since"]
+    assert named.finished == ["act_done_between"]
+    # 늦은 일 asks only for today: the same list whichever meeting is counted from.
+    assert last.late == named.late == ["act_late"]
+    assert last.open == named.open == 1
+
+
+def test_a_move_made_before_the_named_meeting_is_not_since_it(session: Session) -> None:
+    item(session, "act_before_both")
+    close(session, "act_before_both", ago=timedelta(days=12))
+
+    assert read_from(session, "mtg_old").closed == []
+
+
+def test_a_named_meeting_is_counted_from_whatever_its_status(session: Session) -> None:
+    # The caller chose it: module D's brief names a meeting D analysed, which
+    # need not be one of the statuses this module picks its own last one by.
+    item(session, "act_since_live")
+    item(session, "act_before_live")
+    move(session, "act_since_live", ActionStatus.DONE)
+    move(session, "act_before_live", ActionStatus.DONE, ago=timedelta(hours=1))
+
+    answer = read_from(session, "mtg_live")
+
+    assert (answer.state, answer.meeting_id) == ("ok", "mtg_live")
+    assert answer.finished == ["act_since_live"]
+
+
+def test_a_named_meeting_that_cannot_be_counted_from_gives_no_parts(session: Session) -> None:
+    item(session, "act_late", due=today() - timedelta(days=3))
+    item(session, "act_closed")
+    close(session, "act_closed")
+    expired = session.get(Meeting, "mtg_last")
+    assert expired is not None
+    expired.expires_at = now() - timedelta(hours=1)
+    session.flush()
+
+    # Not held yet, another team's, unknown, and past its retention window.
+    for meeting in ("mtg_next", "mtg_theirs", "mtg_nope", "mtg_last"):
+        answer = read_from(session, meeting)
+
+        assert answer.state == "no_meeting", meeting
+        assert (answer.meeting_id, answer.meeting_title, answer.since) == (None, None, None)
+        # No fall-back to the team's own last meeting, and no late list either.
+        assert (answer.closed, answer.late, answer.open) == ([], [], 0), meeting
+
+
 # -- the route --------------------------------------------------------------
 
 
@@ -445,3 +515,25 @@ def test_the_answer_names_nobody_counts_nobody_and_leaves_nothing_behind(
     assert OWNER_NAME not in answer.text
     assert logs == []
     assert session.scalar(select(func.count()).select_from(ExtEditEvent)) == events
+
+
+def test_the_route_counts_from_a_named_meeting_for_its_team_members_only(
+    client: TestClient, session: Session
+) -> None:
+    item(session, "act_between")
+    item(session, "act_theirs", meeting="mtg_theirs")
+    close(session, "act_between", ago=BEFORE)
+    close(session, "act_theirs")
+
+    path = f"{PREFIX}/since-last-meeting"
+    (named,) = client.get(path, params={"since_meeting_id": "mtg_old"}).json()
+    (last,) = client.get(path, params={"team_id": MINE}).json()
+
+    assert (named["team_id"], named["meeting_id"], named["closed"]) == (
+        MINE,
+        "mtg_old",
+        ["act_between"],
+    )
+    assert (last["meeting_id"], last["closed"]) == ("mtg_last", [])
+    for meeting in ("mtg_theirs", "mtg_nope"):
+        assert client.get(path, params={"since_meeting_id": meeting}).status_code == 404

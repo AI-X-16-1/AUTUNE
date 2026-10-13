@@ -484,7 +484,7 @@ class MaterialSettingsRead(BaseModel):
     (``MaterialRead.expires_at``). ``uploads_past_their_day`` is how many
     of the team's uploads are already past their day: none stay so under the
     default beyond the hourly run, and under ``keep_until_deleted`` they are
-    what switching back deletes within the hour -- the screen says the number
+    what an hourly run deletes after a switch back -- the screen says the number
     before the switch is saved. A count only. No person: who last changed it
     is not recorded."""
 
@@ -907,8 +907,9 @@ class JiraProjectIssues(BaseModel):
 
 
 class SinceLastMeeting(BaseModel):
-    """What moved on one team's board since its last analysed meeting
-    (``since_last_meeting``). Read at the request and stored nowhere.
+    """What moved on one team's board since its last analysed meeting, or
+    since the meeting the caller named (``since_last_meeting``). Read at the
+    request and stored nowhere.
 
     **Item ids in parts and one team total -- no person in it.** Each part is a
     list of action-item ids, and an id is in one part at most; the board draws
@@ -916,9 +917,10 @@ class SinceLastMeeting(BaseModel):
     grouped, counted or ordered by assignee, and adding an assignee to a part
     would make the per-person completion record ADR 0003 forbids.
 
-    ``state`` is ``no_meeting`` for a team with no analysed meeting yet: there
-    is nothing to count from, and every part is empty. ``open`` is every open
-    item of the team, listed here or not."""
+    ``state`` is ``no_meeting`` for a team with no analysed meeting yet, and
+    for a named meeting that cannot be counted from: there is nothing to count
+    from, and every part is empty. ``open`` is every open item of the team,
+    listed here or not."""
 
     team_id: str
     team_name: str

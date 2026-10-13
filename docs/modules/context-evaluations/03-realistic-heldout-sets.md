@@ -350,4 +350,6 @@ accuracy 0.567 → 0.800, 7 fixed and 0 broken (p = 0.016); threading 0.60 → 0
   Change type among threaded cases dips (0.815 → 0.783) because 22 terse cases now reach
   classification at all. Fixing that needs a set that v6 is not.
 - v6 has now been run once, aggregates only, and still counts as held-out for a
-  change-type fix.
+  change-type fix. It was used for that in
+  [`04-terse-decision-change-type.md`](04-terse-decision-change-type.md) and no longer
+  counts as held-out for decision lineage.

@@ -898,8 +898,11 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
             context_vectors = _context_vectors(
                 session, embedder, [(d.statement, d.source_utterance_ids) for d in decisions]
             )
+            line_vectors = _line_vectors(
+                session, embedder, [d.source_utterance_ids for d in decisions]
+            )
             assignment = _assign_decisions_to_threads(
-                vectors, heads, settings.lineage_match_threshold, context_vectors
+                vectors, heads, settings.lineage_match_threshold, context_vectors, line_vectors
             )
 
         # Idempotency: now drop this meeting's old versions. The threads they
@@ -954,7 +957,7 @@ def build_decision_lineage(result: ExtractionResult) -> LineageOutcome:
 
         session.flush()
         for thread_id in affected:
-            _rethread(session, thread_id, nli, judge)
+            _rethread(session, thread_id, nli, judge, embedder)
 
         orphans_swept = sweep_orphan_decision_threads(session)
         labels_swept = sweep_stale_topic_labels(session)
@@ -1113,14 +1116,7 @@ def _context_vectors(
     wanted = {i for _, ids in items for i in ids or []}
     if not wanted:
         return [None] * len(items)
-    texts: dict[str, str] = {
-        utterance_id: text
-        for utterance_id, text in session.execute(
-            select(Utterance.id, Utterance.text)
-            .join(Participant, Participant.id == Utterance.participant_id)
-            .where(Utterance.id.in_(wanted), Participant.consented.is_(True))
-        )
-    }
+    texts = _consented_texts(session, wanted)
     enriched: list[str | None] = []
     for statement, ids in items:
         lines = [texts[i] for i in ids or [] if i in texts]
@@ -1130,11 +1126,39 @@ def _context_vectors(
     return [next(vectors) if text is not None else None for text in enriched]
 
 
+def _line_vectors(
+    session: Session, embedder: Embedder, id_lists: Sequence[Sequence[str] | None]
+) -> list[list[list[float]]]:
+    """Per decision: each of its readable source utterances, embedded on its own.
+    Empty for a decision with none (consented speech only, ``_consented_texts``)."""
+    texts = _consented_texts(session, {i for ids in id_lists for i in ids or []})
+    lines = [[texts[i] for i in ids or [] if i in texts] for ids in id_lists]
+    flat = [line for own in lines for line in own]
+    vectors = iter(embedder.embed(flat) if flat else [])
+    return [[next(vectors) for _ in own] for own in lines]
+
+
+def _consented_texts(session: Session, utterance_ids: set[str]) -> dict[str, str]:
+    """Utterance id -> text, for the ids whose speaker consents. Deleted lines
+    and lines from a speaker who does not consent are simply absent."""
+    if not utterance_ids:
+        return {}
+    return {
+        utterance_id: text
+        for utterance_id, text in session.execute(
+            select(Utterance.id, Utterance.text)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(Utterance.id.in_(utterance_ids), Participant.consented.is_(True))
+        )
+    }
+
+
 def _assign_decisions_to_threads(
     vectors: list[list[float]],
     heads: list[_ThreadHead],
     threshold: float,
     context_vectors: Sequence[list[float] | None] | None = None,
+    line_vectors: Sequence[Sequence[list[float]]] | None = None,
 ) -> dict[int, _ThreadHead]:
     """Best-similarity-first assignment of decisions (by index into ``vectors``)
     to threads, each used at most once.
@@ -1155,18 +1179,23 @@ def _assign_decisions_to_threads(
     ``heads``: the two entries are candidates for the *same* slot, not two
     slots.
 
-    A pair scores the higher of two cosines: statement to statement, and each
+    A pair scores the highest of three cosines: statement to statement; each
     side's statement together with its source utterances (``context_vectors``,
-    ``_ThreadHead.context_vector``; a side with none uses its statement). The
-    second is what threads a terse decision whose subject only its utterances
-    name, at the same ``threshold``.
+    ``_ThreadHead.context_vector``; a side with none uses its statement); and
+    the decision's source utterance closest to the head's statement
+    (``line_vectors``). The last two are what thread a terse decision whose
+    subject only its utterances name, at the same ``threshold``: joined, the
+    utterances carry the subject, and one line on its own does when the others
+    are about something else (a complaint, a reason) and dilute the join.
     """
     contexts = list(context_vectors) if context_vectors is not None else [None] * len(vectors)
+    lines = list(line_vectors) if line_vectors is not None else [[] for _ in vectors]
     candidates = [
         (
             max(
                 _cosine(vector, head.vector),
                 _cosine(contexts[d_idx] or vector, head.context_vector or head.vector),
+                *(_cosine(line, head.vector) for line in lines[d_idx]),
             ),
             d_idx,
             h_idx,
@@ -1248,7 +1277,11 @@ def _assign_decisions_by_judge(
 
 
 def _rethread(
-    session: Session, thread_id: str, nli: NliModel | None, judge: LlmJudge | None = None
+    session: Session,
+    thread_id: str,
+    nli: NliModel | None,
+    judge: LlmJudge | None = None,
+    embedder: Embedder | None = None,
 ) -> None:
     """Re-chain every *visible* version of one thread in meeting-chronological
     order, and refresh the thread's ``topic_label`` to match.
@@ -1271,6 +1304,12 @@ def _rethread(
     recomputed back to B's number if the version
     later becomes the head of its thread (same stance as
     ``sweep_dangling_previous_statements``: what changed survives).
+
+    Under NLI, given ``embedder``, the later side of a pair is what
+    ``_change_hypotheses`` picks: the version's statement, or the source
+    utterance closer to the earlier statement than the statement is (a terse
+    decision). ``previous_statement`` and ``current_statement`` still hold the
+    statements.
 
     A version whose meeting has passed its retention window (``expires_at``) is
     excluded from the chain entirely — it is treated as already gone, the same
@@ -1316,6 +1355,13 @@ def _rethread(
     else:
         assert nli is not None
         model_version = nli.model_version
+        if embedder is not None:
+            pairs = [
+                (earlier, later)
+                for (earlier, _), later in zip(
+                    pairs, _change_hypotheses(session, embedder, versions), strict=True
+                )
+            ]
         changes = _classify_pairs_nli(nli, pairs)
 
     prior_meeting_ids: list[str] = []
@@ -1344,6 +1390,45 @@ def _rethread(
 
     thread.topic_label = versions[-1].current_statement[:400]
     session.flush()
+
+
+def _change_hypotheses(
+    session: Session, embedder: Embedder, versions: Sequence[CtxDecisionVersion]
+) -> list[str]:
+    """Per adjacent pair of ``versions``: the text ``classic`` classifies the later
+    version's change on.
+
+    That is its statement, unless one of its source utterances is closer (cosine)
+    to the earlier statement than the statement itself is; then that utterance.
+    A terse decision -- "그대로 두기로 했다", "한 시간 늘린다" -- gives NLI
+    nothing to compare: the line it was settled in ("10시 마감은 그대로
+    둡시다") names what stayed or moved. A statement that says what it is about
+    is nearly always closer than any line, so it is classified as before.
+    Consented speech only, read now (``_consented_texts``), the same as matching.
+    """
+    later = versions[1:]
+    texts = _consented_texts(
+        session, {i for version in later for i in version.source_utterance_ids or []}
+    )
+    lines = [
+        [texts[i] for i in version.source_utterance_ids or [] if i in texts] for version in later
+    ]
+    if not any(lines):
+        return [version.current_statement for version in later]
+    batch: list[str] = []
+    for index, version in enumerate(later):
+        batch += [versions[index].current_statement, version.current_statement, *lines[index]]
+    vectors = iter(embedder.embed(batch))
+    out: list[str] = []
+    for version, own in zip(later, lines, strict=True):
+        earlier_vector, statement_vector = next(vectors), next(vectors)
+        best, best_score = version.current_statement, _cosine(earlier_vector, statement_vector)
+        for line in own:
+            score = _cosine(earlier_vector, next(vectors))
+            if score > best_score:
+                best, best_score = line, score
+        out.append(best)
+    return out
 
 
 def _classify_pairs_nli(
