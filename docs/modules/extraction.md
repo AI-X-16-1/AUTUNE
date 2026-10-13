@@ -1321,7 +1321,11 @@ lsh2217's review on #1198, chosen by module B's owner on 2026-10-11).
   material past it -- the row, its masked text and its vectors -- and search
   leaves one out from the moment its window ends; the hourly
   `autune.extraction.periodic.forget_old_material_alarms` deletes every alarm
-  row older than 30 days.
+  row older than 30 days. The hourly
+  `autune.extraction.periodic.forget_memberless_team_materials` deletes, for
+  a team with no row in `team_members`, every material, alarm row and the
+  keeping setting, whatever that setting says: nobody is left who could
+  delete them (`docs/architecture/privacy.md`, section 4).
 - **The team's choice.** In its settings a team may choose "kept until a
   member deletes it" (`ext_material_settings`, one row a team, cascading
   from `teams`; no row is the default). Any member may change it, either
