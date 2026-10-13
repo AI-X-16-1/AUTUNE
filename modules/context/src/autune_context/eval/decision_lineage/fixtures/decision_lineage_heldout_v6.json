@@ -1,0 +1,1539 @@
+{
+  "version": 1,
+  "_about": "Held-out v6 (2026-10-12). Written before any model was run on it, and frozen: no rule, prompt or threshold may be chosen by looking at its failures. Every meeting carries `context`, the utterances its decision was settled in, which the runner stores and the decision cites as `source_utterance_ids` -- so a change that reads them can be measured, while the code as it stands ignores them. 22 of 60 cases are `terse_*`: the statement B would write leaves out what it is about (\"2번 시안으로 정한다\", \"2주 미루기로 했다\", \"없던 걸로 한다\") and only the context says it; `terse_new` pairs such a statement with a past decision it does not continue, so reading the context must not invent a thread. The other 38 have full statements (unchanged, modified, reversed, new_same_domain, distractor, chain), to catch what reading the context would break. Labels follow dataset.py. No statement repeats one in an earlier set. Written by the engine's author after a development meeting in which a terse decision did not thread; the cases first drafted from that meeting were rewritten in other domains. Not independently labelled. Reworded on 2026-10-12, still before any run, so that no line comes close to the development meetings (review of #1258).",
+  "cases": [
+    {
+      "id": "h6_tu_messenger",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "사내 메신저는 슬랙으로 통일한다.",
+          "context": [
+            "메신저가 카톡이랑 슬랙으로 나뉘어 있어서 공지가 자꾸 묻혀요.",
+            "업무 대화는 전부 슬랙으로 통일하죠.",
+            "카톡 단톡방은 이번 주까지만 쓰고 닫겠습니다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "메신저 건은 지난번 결정대로 간다.",
+        "context": [
+          "메신저 다시 카톡으로 돌리자는 얘기가 있었는데요.",
+          "아니요, 슬랙으로 통일한 거 그대로 유지하죠.",
+          "적응 기간이라 불편한 거니까 한 달은 더 써 봅시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_tu_review_rule",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "코드 리뷰는 최소 두 명이 승인해야 머지한다.",
+          "context": [
+            "장애 난 거 보니까 리뷰 한 명만 보고 머지한 거더라고요.",
+            "앞으로는 승인 두 명 받아야 머지하는 걸로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그 규칙은 그대로 유지한다.",
+        "context": [
+          "리뷰 두 명 승인 규칙 때문에 머지가 늦어진다는 의견이 있었어요.",
+          "그래도 장애 줄어든 게 크니까 두 명 승인은 그대로 가죠.",
+          "대신 리뷰 요청 후 하루 안에 보기로 노력합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_tu_dress",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 45,
+          "decision": "금요일은 자율 복장으로 출근한다.",
+          "context": [
+            "금요일만이라도 편하게 입고 오자는 의견이 많았어요.",
+            "고객 미팅 없는 날은 금요일 자율 복장으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "기존 방침대로 한다.",
+        "context": [
+          "금요일 복장 얘기 다시 나왔는데요, 바꿀 이유는 없어 보여요.",
+          "금요일 자율 복장은 지금처럼 계속 가는 걸로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_tu_backup",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "서버 백업은 매일 새벽 3시에 한다.",
+          "context": [
+            "백업 시간을 언제로 할지 정해야 해요.",
+            "트래픽 제일 적은 새벽 3시에 매일 돌리죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지금 설정을 유지하기로 했다.",
+        "context": [
+          "백업 시간 옮기자는 제안이 있었는데 새벽 3시가 여전히 트래픽이 제일 적어요.",
+          "그럼 매일 새벽 3시 백업은 손대지 말고 그대로 두죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_tu_hiring_freeze",
+      "category": "terse_unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "하반기 신규 채용은 동결한다.",
+          "context": [
+            "하반기 매출이 계획보다 낮아서 채용은 일단 멈추죠.",
+            "결원 충원만 예외로 하고 신규 채용은 동결입니다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "결론은 이전과 같다.",
+        "context": [
+          "채용 동결 풀어 달라는 요청이 두 팀에서 왔어요.",
+          "검토해 봤는데 하반기 신규 채용 동결은 그대로 갑니다.",
+          "결원 충원 예외도 그대로고요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_tm_banner_b",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 14,
+          "decision": "홈 화면 배너는 세 개를 순환 노출한다.",
+          "context": [
+            "홈 화면 배너를 몇 개 돌릴지 정하죠.",
+            "세 개를 5초씩 순환하는 걸로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "2번 시안으로 정한다.",
+        "context": [
+          "배너 시안 두 개 중에 2번 시안 클릭률이 높았어요.",
+          "2번 시안은 세 개가 아니라 두 개만 순환하는 안이에요.",
+          "그럼 홈 화면 배너는 두 개 순환하는 2번 시안으로 정할게요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_tm_opening_push",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "2호점 오픈일은 11월 5일로 한다.",
+          "context": [
+            "2호점 오픈일을 정해야 채용 일정을 짤 수 있어요.",
+            "인테리어 일정 보면 11월 5일이 맞을 것 같아요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "2주 미루기로 했다.",
+        "context": [
+          "인테리어 공사가 늦어져서 11월 5일 오픈은 어렵겠어요.",
+          "오픈을 2주 미뤄서 11월 19일로 가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_tm_ad_budget",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "온라인 광고 예산은 월 500만 원으로 한다.",
+          "context": [
+            "온라인 광고 예산을 정하죠.",
+            "검색 광고랑 SNS 광고 합쳐서 월 500만 원이면 될 것 같아요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "150만 원 증액이 승인됐다.",
+        "context": [
+          "검색 광고 효율이 좋아서 광고 예산 늘려 달라고 올렸잖아요.",
+          "월 150만 원 증액 승인 났습니다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_tm_standup_time",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "데일리 스탠드업은 오전 9시 30분에 한다.",
+          "context": [
+            "스탠드업 시간을 고정하죠. 9시 반이 다들 괜찮으세요?",
+            "네, 오전 9시 30분 스탠드업으로 하겠습니다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "30분 늦춘다.",
+        "context": [
+          "9시 반에 스탠드업 하니까 출근 늦는 분들이 계속 빠져요.",
+          "스탠드업을 10시로 30분 늦추죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_tm_owner_swap",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 16,
+          "decision": "고객 설명회 준비는 박서연이 맡는다.",
+          "context": [
+            "다음 달 고객 설명회 준비를 누가 할지 정하죠.",
+            "서연 님이 설명회 준비 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정우진이 이어받는다.",
+        "context": [
+          "서연 님이 다음 주부터 육아휴직이라 설명회 준비할 사람이 없어요.",
+          "고객 설명회 준비는 우진 님이 이어받아 주세요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_tm_scope_all",
+      "category": "terse_modified",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "사진 리뷰 적립금은 첫 구매 고객에게만 준다.",
+          "context": [
+            "사진 리뷰 적립금을 누구한테 줄지 정해야 해요.",
+            "우선 첫 구매 고객만 주는 걸로 시작하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "전 고객으로 넓힌다.",
+        "context": [
+          "사진 리뷰 적립금 반응이 좋아서 대상을 늘리자는 의견이 있어요.",
+          "첫 구매 고객만이 아니라 전 고객으로 넓히죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_tr_notion_report",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "주간 보고는 노션에 작성한다.",
+          "context": [
+            "주간 보고를 메일로 받으니까 찾기가 어려워요.",
+            "앞으로 주간 보고는 노션 페이지에 쓰죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "없던 걸로 한다.",
+        "context": [
+          "노션 주간 보고, 한 달 해 봤는데 거의 아무도 안 쓰시네요.",
+          "노션 주간 보고는 없던 걸로 하고 그냥 회의 때 구두로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_tr_vendor_back",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "디자인 외주는 A스튜디오에 맡긴다.",
+          "context": [
+            "디자인 외주 업체 세 곳 비교해 봤어요.",
+            "포트폴리오 보면 A스튜디오가 제일 나아요. 거기로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "내부에서 직접 하기로 했다.",
+        "context": [
+          "A스튜디오 견적이 처음보다 두 배로 올랐어요.",
+          "외주 맡기지 말고 디자인은 내부 인력으로 직접 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_tr_offsite_cancel",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "팀 워크숍은 다음 달 가평에서 1박 2일로 한다.",
+          "context": [
+            "워크숍 장소 투표 결과 가평이 제일 많았어요.",
+            "다음 달에 가평 펜션에서 1박 2일로 가죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "취소한다.",
+        "context": [
+          "다음 달에 출시랑 겹쳐서 워크숍 갈 상황이 아니에요.",
+          "가평 워크숍은 이번에 취소하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_tr_chatbot_drop",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "고객센터 챗봇은 A사 제품을 도입한다.",
+          "context": [
+            "챗봇 업체 데모 두 곳 봤는데 A사가 연동이 쉬워요.",
+            "고객센터 챗봇은 A사로 도입하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "도입하지 않기로 했다.",
+        "context": [
+          "챗봇 시범 운영해 보니 오답이 너무 많아서 고객 불만이 늘었어요.",
+          "챗봇은 도입하지 말고 상담 인력을 한 명 늘리는 걸로 가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_tr_paper_switch",
+      "category": "terse_reversed",
+      "past_meetings": [
+        {
+          "days_ago": 19,
+          "decision": "논문은 12월 학회에 낸다.",
+          "context": [
+            "실험 일정 보면 12월 학회 마감에 맞출 수 있을 것 같아요.",
+            "이번 논문은 12월 학회에 내죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "3월 저널로 돌린다.",
+        "context": [
+          "어블레이션이 생각보다 오래 걸려서 12월 학회는 무리예요.",
+          "학회는 포기하고 3월 저널 투고로 돌리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_tn_dinner_vs_offsite",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "회식은 매달 마지막 금요일에 한다.",
+          "context": [
+            "회식 날짜를 고정하면 다들 일정 잡기 편할 것 같아요.",
+            "매달 마지막 금요일로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그걸로 확정한다.",
+        "context": [
+          "워크숍 장소 후보가 가평이랑 강릉인데요, 가평이 가깝고 싸요.",
+          "워크숍은 가평으로 확정하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_tn_fee_vs_parking",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "정기 배송 이용료는 월 9,900원으로 한다.",
+          "context": [
+            "정기 배송 상품 가격을 정해야 해요.",
+            "경쟁사 보면 월 9,900원이 적당해요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "두 시간 무료로 한다.",
+        "context": [
+          "공사 기간에 환자분들 주차는 공영 주차장 쓰시게 하죠.",
+          "공영 주차장 협약으로 두 시간 무료로 해 드리죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_tn_owner_vs_owner",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 15,
+          "decision": "신규 매장 인테리어 감리는 김도윤이 맡는다.",
+          "context": [
+            "신규 매장 인테리어 감리 누가 맡을래요?",
+            "도윤 님이 감리 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "한지아가 맡기로 했다.",
+        "context": [
+          "협력사 계약서 검토할 사람이 필요해요.",
+          "계약서 검토는 지아 님이 맡아 주세요."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_tn_date_vs_date",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "중간고사 출제 원안은 시험 3주 전까지 낸다.",
+          "context": [
+            "출제 원안 마감을 정하죠. 교무부 검토 시간이 필요해요.",
+            "시험 3주 전까지 원안 제출로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "일주일 앞당긴다.",
+        "context": [
+          "학부모 상담 주간이 시험이랑 겹쳐서 상담 주간을 옮겨야 해요.",
+          "학부모 상담 주간을 일주일 앞당기죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_tn_cancel_vs_cancel",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "신입 교육은 1주 동안 한다.",
+          "context": [
+            "신입 교육 기간을 정해야 해요.",
+            "1주면 기본 업무는 다 익힐 수 있어요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "없던 걸로 하자.",
+        "context": [
+          "사내 동호회 지원금 얘기 나왔는데 예산이 없어요.",
+          "동호회 지원금은 없던 걸로 하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_tn_b_plan",
+      "category": "terse_new",
+      "past_meetings": [
+        {
+          "days_ago": 18,
+          "decision": "사무실 이전은 내년 3월에 한다.",
+          "context": [
+            "지금 사무실 계약이 내년 2월에 끝나요.",
+            "이전은 내년 3월로 잡죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "B안으로 간다.",
+        "context": [
+          "홈페이지 메인 배너 시안 두 개 중에 고르죠.",
+          "메인 배너는 B안으로 가죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_un_language",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "백엔드 언어는 코틀린으로 한다.",
+          "context": [
+            "신규 서비스 백엔드 언어를 정해야 해요.",
+            "팀원 대부분이 코틀린을 써 봤으니 코틀린으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신규 서비스 백엔드는 계속 코틀린으로 개발한다.",
+        "context": [
+          "자바로 바꾸자는 의견도 있었는데 지금 와서 바꾸면 일정이 밀려요.",
+          "백엔드는 코틀린으로 계속 가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_un_meeting_length",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "주간 회의는 30분으로 제한한다.",
+          "context": [
+            "회의가 매번 한 시간을 넘겨요.",
+            "주간 회의는 30분 안에 끝내는 걸로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주간 회의 시간은 30분을 넘기지 않는다.",
+        "context": [
+          "요즘 회의가 다시 길어지는 것 같아요.",
+          "30분 제한 다시 지키죠. 넘으면 따로 잡고요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_un_usertest_days",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 12,
+          "decision": "사용성 테스트 기간은 닷새로 잡는다.",
+          "context": [
+            "사용성 테스트에 며칠 필요해요?",
+            "참가자 스무 명 보려면 닷새는 필요해요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사용성 테스트는 5일 동안 진행한다.",
+        "context": [
+          "참가자 모집 끝나면 월요일부터 금요일까지 테스트할게요.",
+          "네, 닷새 그대로 잡죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_un_safety_monthly",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 38,
+          "decision": "소화기 점검은 매달 첫째 주에 한다.",
+          "context": [
+            "안전 점검에서 소화기 점검 기록이 빠졌다고 지적받았어요.",
+            "매달 첫째 주에 점검하고 기록하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "소화기는 매월 첫 주에 점검한다.",
+        "context": [
+          "점검 주기 다시 확인할게요.",
+          "지금처럼 매월 첫 주에 소화기 점검하는 걸로 갑니다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_un_refund_auto",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 23,
+          "decision": "반품 회수가 확인되면 바로 환불한다.",
+          "context": [
+            "환불이 5영업일 걸려서 불만이 많아요.",
+            "회수 확인되면 즉시 환불하도록 바꾸죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "회수 확인 즉시 환불하는 방식을 유지한다.",
+        "context": [
+          "자동 환불 붙이고 나서 환불 문의가 거의 없어졌어요.",
+          "이 방식은 그대로 가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_un_breakfast_kids",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "조식에 키즈 코너를 따로 둔다.",
+          "context": [
+            "아이 동반 고객이 많아서 조식에 아이들 먹을 게 부족해요.",
+            "키즈 코너를 따로 만들죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "조식 키즈 코너는 계속 운영한다.",
+        "context": [
+          "키즈 코너 반응이 좋아요. 주말에는 음식이 일찍 떨어지긴 하지만요.",
+          "키즈 코너는 계속 운영하고 주말에 보충만 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_mo_ward_beds",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "재활 병동 병상은 스무 개로 운영한다.",
+          "context": [
+            "재활 병동 병상 수를 정하죠. 지금 인력으로는 스무 개가 최대예요.",
+            "재활 병동은 스무 개로 갑니다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "재활 병동 병상을 스물여섯 개로 늘린다.",
+        "context": [
+          "치료사 두 명이 새로 와서 병상을 더 열 수 있어요.",
+          "다음 달부터 재활 병동 스물여섯 개로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_return_window",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "단순 변심 반품 기한은 7일이다.",
+          "context": [
+            "반품 기한을 얼마로 할지 정하죠.",
+            "법정 기준대로 7일로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "단순 변심 반품 기한을 14일로 늘린다.",
+        "context": [
+          "경쟁사들이 다 14일이에요.",
+          "우리도 반품 기한을 14일로 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_discount_split",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 50,
+          "decision": "시즌 세일은 전 품목 20% 할인으로 한다.",
+          "context": [
+            "시즌 세일 할인율을 정해야 해요.",
+            "간단하게 전 품목 20%로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "시즌 세일 할인율을 카테고리별로 의류 30%, 생활용품 10%로 나눈다.",
+        "context": [
+          "전 품목 20% 했더니 마진이 너무 줄었어요.",
+          "이번엔 의류 30%, 생활용품 10%로 나눠서 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_trip_days",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 44,
+          "decision": "수학여행은 부산으로 1박 2일 간다.",
+          "context": [
+            "수학여행 장소는 부산으로 하고 기간은 1박 2일로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "부산 수학여행을 2박 3일로 늘린다.",
+        "context": [
+          "1박 2일로는 해양 박물관을 못 넣어요.",
+          "부산 일정은 2박 3일로 늘리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_server_memory",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "새 GPU 서버는 40기가 카드로 산다.",
+          "context": [
+            "예산 보면 40기가짜리 카드가 맞을 것 같아요.",
+            "새 서버는 40기가 카드로 구매하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "새 GPU 서버 카드를 80기가로 바꾼다.",
+        "context": [
+          "장비 예산이 추가로 내려와서 80기가로 올릴 수 있어요.",
+          "큰 모델 돌리려면 80기가가 필요하니 그걸로 바꾸죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_survey_items",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "환자 만족도 설문은 스무 문항으로 한다.",
+          "context": [
+            "만족도 설문 문항을 확정하죠.",
+            "영역별로 다 넣으면 스무 문항이에요. 그대로 가죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "만족도 설문을 다섯 문항으로 줄인다.",
+        "context": [
+          "스무 문항이라 응답률이 15%밖에 안 돼요.",
+          "다섯 문항으로 줄이고 문자로 보내죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_trial_scope",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "온라인 예약은 내과에서만 시범 운영한다.",
+          "context": [
+            "온라인 예약을 시범으로 열어 보죠.",
+            "우선 내과 한 곳만 열어 볼게요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "온라인 예약 시범 운영을 정형외과까지 넓힌다.",
+        "context": [
+          "내과 시범 반응이 좋아요.",
+          "정형외과에도 같이 열어 보죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_mo_card_free",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 41,
+          "decision": "회원 카드 재발급 비용은 3천 원이다.",
+          "context": [
+            "회원 카드 재발급 비용을 받을지 정하죠.",
+            "실물 카드 원가가 있으니 3천 원 받죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "회원 카드 재발급 비용을 받지 않는다.",
+        "context": [
+          "재발급 비용 때문에 앱 카드로 안 넘어오고 항의만 늘었어요.",
+          "재발급 비용은 그냥 받지 말죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_re_db_switch",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 45,
+          "decision": "신규 서비스 데이터베이스는 MySQL을 쓴다.",
+          "context": [
+            "데이터베이스는 다들 익숙한 MySQL로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신규 서비스 데이터베이스를 PostgreSQL로 바꾼다.",
+        "context": [
+          "위치 검색 기능 때문에 PostGIS가 필요해요.",
+          "MySQL 말고 PostgreSQL로 가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_ota_exit",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 39,
+          "decision": "해외 예약은 OTA 한 곳을 통해서만 받는다.",
+          "context": [
+            "해외 예약 채널이 너무 많아서 관리가 어려워요.",
+            "OTA 한 곳으로 몰죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "해외 예약은 OTA를 빼고 자체 홈페이지로만 받는다.",
+        "context": [
+          "OTA 수수료가 18%로 올라서 남는 게 없어요.",
+          "OTA는 접고 홈페이지 예약만 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_tablet_stop",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "2학기에 태블릿 수업을 시범 도입한다.",
+          "context": [
+            "공문 내려온 태블릿 수업, 희망 학급부터 시범으로 해 보죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "태블릿 수업 시범 도입을 중단한다.",
+        "context": [
+          "와이파이가 계속 끊겨서 수업이 안 돼요.",
+          "공유기 증설 전까지는 태블릿 수업은 중단하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_label_inhouse",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "데이터 라벨링은 외주 업체에 맡긴다.",
+          "context": [
+            "2만 건을 우리끼리는 못 해요. 외주로 맡기죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "데이터 라벨링을 연구실 내부에서 직접 한다.",
+        "context": [
+          "외주 품질이 기대보다 낮아서 재작업이 더 들어요.",
+          "남은 건 우리가 직접 라벨링하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_offline_interview",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "1차 면접은 화상으로 진행한다.",
+          "context": [
+            "지원자들 편하게 1차 면접은 화상으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "1차 면접을 대면으로 바꾼다.",
+        "context": [
+          "화상 면접에서 대리 응시 의심 사례가 나왔어요.",
+          "1차 면접은 다시 대면으로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_cash_only",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 37,
+          "decision": "매점은 현금 결제만 받는다.",
+          "context": [
+            "카드 수수료 부담 때문에 매점은 현금만 받죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "매점 현금 결제를 없애고 카드와 간편결제만 받는다.",
+        "context": [
+          "요즘 학생들이 현금을 안 들고 다녀요.",
+          "현금은 받지 말고 카드랑 간편결제만 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_print_ban",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 43,
+          "decision": "회의 자료는 종이로 출력해서 나눠 준다.",
+          "context": [
+            "회의 때 화면만 보니까 집중이 안 된다는 의견이 있어요.",
+            "회의 자료는 출력해서 나눠 드리죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "회의 자료 출력을 폐지한다.",
+        "context": [
+          "종이 사용량이 너무 많다고 총무팀에서 연락 왔어요.",
+          "회의 자료 출력은 폐지하고 태블릿으로 보죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_re_mentoring_abolish",
+      "category": "reversed",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "신입 사원 멘토링은 매주 진행한다.",
+          "context": [
+            "신입 적응을 위해 멘토링을 매주 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신입 사원 멘토링 제도를 폐지한다.",
+        "context": [
+          "멘토들 업무 부담이 너무 커요. 신입들 만족도도 낮고요.",
+          "멘토링 제도는 폐지하고 온보딩 문서를 보강하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_nd_budget_vs_venue",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "신제품 런칭 행사 예산은 800만 원으로 한다.",
+          "context": [
+            "런칭 행사 예산은 800만 원으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "신제품 런칭 행사 장소는 성수동 팝업 공간으로 한다.",
+        "context": [
+          "행사 장소를 어디로 할지 정하죠.",
+          "성수동 팝업 공간이 타깃 고객 동선에 제일 맞아요."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_nd_trip_vs_insurance",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "수학여행은 부산으로 간다.",
+          "context": [
+            "학생 설문에서 부산이 제일 많았어요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "수학여행 여행자 보험은 학교 단체 보험으로 든다.",
+        "context": [
+          "보험은 개별로 들지 말고 단체 보험으로 하죠.",
+          "단체로 하면 단가가 절반이에요."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_nd_server_vs_reservation",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "새 GPU 서버는 80기가 카드로 산다.",
+          "context": [
+            "새 서버는 80기가 카드로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "GPU 사용 시간은 예약표로 나눠 쓴다.",
+        "context": [
+          "서버 들어오기 전까지 대기열이 너무 길어요.",
+          "사용 시간 예약표를 만들어서 나눠 쓰죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_nd_wedding_price_vs_room",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "소규모 웨딩 패키지 가격은 경쟁 호텔보다 10% 낮게 한다.",
+          "context": [
+            "가격은 경쟁 호텔보다 10% 낮게 잡죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "소규모 웨딩 패키지에 신랑 신부 객실 1박을 포함한다.",
+        "context": [
+          "패키지에 뭘 넣을지 정하죠.",
+          "신랑 신부 객실 1박은 꼭 넣읍시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_nd_return_vs_exchange",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "단순 변심 반품 기한은 14일이다.",
+          "context": [
+            "반품 기한은 14일로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사이즈 교환은 배송비를 받지 않는다.",
+        "context": [
+          "의류 사이즈 교환 문의가 제일 많아요.",
+          "사이즈 교환은 무료로 해 드리죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_nd_exam_vs_grading",
+      "category": "new_same_domain",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "중간고사 출제 원안은 시험 3주 전까지 낸다.",
+          "context": [
+            "원안 마감은 시험 3주 전으로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "서술형 채점 기준표를 출제 원안과 함께 제출한다.",
+        "context": [
+          "서술형 채점 때문에 민원이 많았어요.",
+          "채점 기준표를 원안이랑 같이 내기로 하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_di_shipping",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "사내 도서관은 저녁 8시까지 연다.",
+          "context": [
+            "도서관 운영 시간을 저녁 8시까지로 늘리죠."
+          ]
+        },
+        {
+          "days_ago": 30,
+          "decision": "택배 계약 단가는 건당 2,500원이다.",
+          "context": [
+            "택배사랑 건당 2,500원으로 계약했어요."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "신입 교육은 2주 동안 한다.",
+          "context": [
+            "신입 교육은 2주로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "택배 계약 단가를 건당 2,300원으로 낮춘다.",
+        "context": [
+          "새 택배사로 바꾸면 건당 200원 싸져요.",
+          "다음 분기부터 2,300원으로 가죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_di_grade_terse",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "보도자료는 행사 3일 전에 배포한다.",
+          "context": [
+            "보도자료는 행사 3일 전에 뿌리죠."
+          ]
+        },
+        {
+          "days_ago": 25,
+          "decision": "배송 파손 보상은 접수 후 7일 안에 처리한다.",
+          "context": [
+            "파손 보상은 7일 안에 처리하겠습니다."
+          ]
+        },
+        {
+          "days_ago": 14,
+          "decision": "회원 등급은 네 단계로 나눈다.",
+          "context": [
+            "회원 등급은 네 단계로 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "B안을 최종안으로 한다.",
+        "context": [
+          "회원 등급 개편안 중에 B안으로 가죠.",
+          "B안은 네 단계를 세 단계로 줄인 안이에요."
+        ]
+      },
+      "expected_thread_source": 2,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_di_parking",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "공영 주차장 협약은 두 시간 무료로 한다.",
+          "context": [
+            "공사 기간에 공영 주차장 두 시간 무료로 하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "감염 교육은 영상 강의로 한다.",
+          "context": [
+            "감염 교육은 30분 영상으로 하죠."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "만족도 설문은 다섯 문항으로 한다.",
+          "context": [
+            "설문은 다섯 문항으로 줄이죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "공영 주차장 협약을 2주 연장한다.",
+        "context": [
+          "주차장 공사가 2주 길어졌어요.",
+          "협약도 2주 연장하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_di_new_amid_three",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "세미나는 논문 두 편을 30분씩 발표한다.",
+          "context": [
+            "세미나는 두 편씩 30분으로 하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "연구비 영수증은 출장 후 일주일 안에 낸다.",
+          "context": [
+            "영수증은 일주일 안에 내죠."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "서버실 온도는 자동 센서로 기록한다.",
+          "context": [
+            "온도 기록은 센서로 바꾸죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "외부 연사는 한 달에 한 번 초청한다.",
+        "context": [
+          "외부 연사도 한 달에 한 번은 모시죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "h6_di_meeting_terse",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "회의실 예약은 그룹웨어로 한다.",
+          "context": [
+            "회의실은 그룹웨어로 예약하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "팀 정기 회의는 매주 월요일 오전 10시에 한다.",
+          "context": [
+            "정기 회의는 월요일 오전 10시로 고정하죠."
+          ]
+        },
+        {
+          "days_ago": 10,
+          "decision": "사무용품은 분기마다 한 번에 산다.",
+          "context": [
+            "사무용품은 분기별로 모아서 사죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "그건 없애기로 했다.",
+        "context": [
+          "다들 외근이 많아서 월요일 10시에 모이는 게 거의 안 돼요.",
+          "월요일 정기 회의는 없애고 필요할 때만 잡죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_di_renov_terse",
+      "category": "distractor",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "8층과 9층 객실을 비수기에 리모델링한다.",
+          "context": [
+            "8층이랑 9층 객실 마흔 개를 비수기에 리모델링하죠."
+          ]
+        },
+        {
+          "days_ago": 24,
+          "decision": "조식 원가는 1인당 천 원 올린다.",
+          "context": [
+            "조식 원가는 천 원 정도 올라가는 걸로 하죠."
+          ]
+        },
+        {
+          "days_ago": 12,
+          "decision": "성수기 아르바이트는 열 명 뽑는다.",
+          "context": [
+            "하우스키핑 아르바이트 열 명 뽑죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "10층까지 포함하기로 했다.",
+        "context": [
+          "리모델링 객실 예약률이 좋아서 범위를 늘리죠.",
+          "8층, 9층에 10층 객실도 리모델링에 포함하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_ch_maintenance_again",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "정기 점검일은 매달 둘째 화요일이다.",
+          "context": [
+            "정기 점검은 매달 둘째 화요일로 하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "정기 점검일을 매달 셋째 화요일로 옮긴다.",
+          "context": [
+            "둘째 화요일이 업데이트 배포랑 겹쳐서 셋째 화요일로 옮기죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "한 주 더 늦추기로 했다.",
+        "context": [
+          "셋째 화요일도 월말 정산이랑 겹쳐요.",
+          "점검일을 한 주 더 늦춰서 넷째 화요일로 하죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "h6_ch_label_inhouse",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "데이터 라벨링은 외주에 맡긴다.",
+          "context": [
+            "라벨링은 외주로 맡기죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "라벨링 외주 업체를 B사로 바꾼다.",
+          "context": [
+            "A사 품질이 낮아서 B사로 바꾸죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "외주를 그만두고 직접 한다.",
+        "context": [
+          "B사도 품질이 비슷해요.",
+          "외주는 그만두고 우리가 직접 라벨링하죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "h6_ch_survey_same",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "만족도 설문은 스무 문항으로 한다.",
+          "context": [
+            "설문은 스무 문항으로 하죠."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "만족도 설문을 다섯 문항으로 줄인다.",
+          "context": [
+            "응답률 때문에 다섯 문항으로 줄이죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "다섯 문항 설문을 그대로 쓴다.",
+        "context": [
+          "응답률이 41%까지 올랐어요.",
+          "다섯 문항 그대로 계속 쓰죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "h6_ch_training_budget",
+      "category": "chain",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "사내 교육 예산은 1인당 연 50만 원이다.",
+          "context": [
+            "교육 예산은 1인당 연 50만 원으로 하죠."
+          ]
+        },
+        {
+          "days_ago": 25,
+          "decision": "사내 교육 예산을 1인당 연 80만 원으로 늘린다.",
+          "context": [
+            "외부 강의 수요가 많아서 80만 원으로 늘리죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "20만 원을 더 늘린다.",
+        "context": [
+          "자격증 과정까지 넣으려면 예산이 또 부족해요.",
+          "교육 예산을 20만 원 더 늘려서 1인당 연 100만 원으로 하죠."
+        ]
+      },
+      "expected_thread_source": 1,
+      "expected_change_type": "modified"
+    }
+  ]
+}

@@ -155,6 +155,41 @@ class HybridRetriever:
                 passages[meeting_id] = text
         return passages
 
+    def segment_texts(self, meeting_ids: list[str]) -> dict[str, list[str]]:
+        """Meeting id -> the text of every one of its topic segments, for the
+        keyphrase check behind a link (``service._subjects_agree``).
+
+        Every segment, not the one ``_passages`` picks: that one is closest by
+        the segment vector, and between two meetings of one team the vector
+        does not say which segment shares the subject -- which is the question
+        the check answers. Same consent line as ``_passages``, read at the same
+        time; a meeting with no readable segment is left out.
+        """
+        if not meeting_ids:
+            return {}
+        rows = self._session.execute(
+            select(CtxEmbedding.meeting_id, CtxEmbedding.utterance_ids)
+            .where(CtxEmbedding.kind == "topic", CtxEmbedding.meeting_id.in_(meeting_ids))
+            .order_by(CtxEmbedding.meeting_id, CtxEmbedding.id)
+        ).all()
+        wanted = [utterance_id for _, ids in rows for utterance_id in ids or []]
+        if not wanted:
+            return {}
+        texts: dict[str, str] = {
+            utterance_id: text
+            for utterance_id, text in self._session.execute(
+                select(Utterance.id, Utterance.text)
+                .join(Participant, Participant.id == Utterance.participant_id)
+                .where(Utterance.id.in_(wanted), Participant.consented.is_(True))
+            )
+        }
+        segments: dict[str, list[str]] = {}
+        for meeting_id, ids in rows:
+            text = " ".join(texts[i] for i in ids or [] if i in texts)
+            if text:
+                segments.setdefault(meeting_id, []).append(text)
+        return segments
+
     def _visible(self, team_id: str, before: datetime):
         """A meeting D is allowed to link to: this team, in the past, still inside
         its retention window.

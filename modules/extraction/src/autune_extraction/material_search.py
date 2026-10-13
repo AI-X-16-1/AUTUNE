@@ -34,9 +34,12 @@ Ranking is cosine similarity with a floor
 (``ExtractionSettings.material_search_min_similarity``): a material whose
 nearest piece is under it is not a hit, so a question about nothing the team
 uploaded answers no materials, with a notice, instead of the nearest
-unrelated ones. The default was measured for KURE-v1 on made-up text, not
-on a team's materials; the setting's docstring says what it does and does
-not do.
+unrelated ones. Over the floor there is a second cut, relative to the best
+material (``ExtractionSettings.material_search_max_below_best``): a material
+whose nearest piece is further below the best one's than that is not a hit
+either, so one clear answer does not arrive with four that merely passed.
+Both defaults were measured for KURE-v1 on made-up text, not on a team's
+materials; each setting's docstring says what it does and does not do.
 """
 
 from __future__ import annotations
@@ -323,7 +326,9 @@ def search_materials(
     material, its nearest piece as an excerpt. **The caller has checked that
     the asker is a member of ``team_id``.** A material whose nearest piece is
     under the similarity floor is not a hit; with none left, ``hits`` is
-    empty and ``notice`` says nothing close enough was found.
+    empty and ``notice`` says nothing close enough was found. Nor is one
+    further below the best material than the relative cut allows; ``more``
+    counts only materials that passed both.
 
     ``query`` is masked before anything else is done with it and is kept
     nowhere; a blank or too long one raises ``ValidationError`` naming the
@@ -342,6 +347,8 @@ def search_materials(
     (vector,) = embedded(model, [masked.text])
     wanted = max(1, min(int(limit), MAX_HITS))
     floor = get_settings().material_search_min_similarity
+    margin = get_settings().material_search_max_below_best
+    best: float | None = None
 
     hits: list[MaterialHit] = []
     seen: set[str] = set()
@@ -351,6 +358,10 @@ def search_materials(
     ):
         if score < floor:
             # Nearest first: everything after this is further still.
+            break
+        if best is None:
+            best = score
+        elif score < best - margin:
             break
         if material_id in seen:
             continue

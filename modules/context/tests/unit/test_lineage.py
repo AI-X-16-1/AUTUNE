@@ -375,3 +375,19 @@ def test_the_nominaliser_geolo_reads_as_a_new_target_a_known_limit() -> None:
     assert marks_replacement(
         "재고 실사를 반기마다 하는 걸로 바꿔요.", "재고 실사는 분기마다 진행한다."
     )
+
+
+def test_a_terse_decision_threads_on_its_source_utterances() -> None:
+    """Statement to statement the pair is far apart; with both sides' source
+    utterances it is close -- the higher of the two decides, at the same threshold."""
+    heads = [_ThreadHead("thr_a", [1.0, 0.0], "", context_vector=[0.0, 1.0])]
+    assignment = _assign_decisions_to_threads(
+        [[0.0, 1.0]], heads, threshold=0.6, context_vectors=[[0.1, 0.99]]
+    )
+    assert assignment[0].thread_id == "thr_a"
+
+
+def test_without_source_utterances_the_score_is_the_statements() -> None:
+    heads = [_ThreadHead("thr_a", [1.0, 0.0])]
+    assert _assign_decisions_to_threads([[0.0, 1.0]], heads, 0.6, [None]) == {}
+    assert _assign_decisions_to_threads([[0.0, 1.0]], heads, 0.6) == {}

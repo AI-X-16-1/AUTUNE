@@ -18,20 +18,36 @@ Needs:
 
 Each case gets its own team, deleted (cascading through every ``ctx_*`` row)
 once scored, so a run leaves no synthetic data behind in the target database.
+
+A ``version: 2`` set (``dataset.EvalSeries``) runs one team per series, its
+meetings processed oldest first as production would, and scores every meeting
+from the second on as a case of its own. Because its blocks are tagged, it also
+scores two things a ``version: 1`` set cannot: whether a segment's label names
+the topic the segment is about, and whether an asserted link joins segments
+that are about a topic the linked meeting actually had.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from autune_context import service
 from autune_context.config import get_settings
 from autune_context.eval.metrics import accuracy_line, by_category, ratio, sweep_points
-from autune_context.eval.topic_linking.dataset import EvalCase, EvalMeeting, load_cases
-from autune_context.models import CtxTopicLink
+from autune_context.eval.topic_linking.dataset import (
+    EvalCase,
+    EvalMeeting,
+    EvalSeries,
+    SeriesMeeting,
+    load_cases,
+)
+from autune_context.models import CtxEmbedding, CtxTopicLink
 from autune_contracts import (
     PrivacyFlags,
     TranscriptMetadata,
@@ -46,6 +62,30 @@ from autune_core import Utterance as UtteranceRow
 # delivery". The three-month target (0.85+) is out of the six-week scope
 # (docs/modules/context.md, "Out of the six-week scope") and not checked here.
 _TARGET_ACCURACY = 0.75
+
+
+@dataclass(frozen=True)
+class SegmentOutcome:
+    """One topic segment of a series meeting, read against the block tags."""
+
+    label: str
+    topic: str | None
+    """The tag most of the segment's utterances carry; ``None`` when that is an
+    opening, closing or small-talk block."""
+    names_topic: bool
+    """The label contains one of ``EvalSeries.topics[topic]``'s words."""
+
+
+@dataclass(frozen=True)
+class LinkOutcome:
+    """One asserted link of a series meeting, read against the block tags."""
+
+    label: str
+    on_topic: bool
+    """A segment carrying this label is about a topic the linked meeting had.
+    Labels can repeat within a meeting; any segment under the label counts."""
+    from_untagged: bool
+    """Every segment under this label is an opening, closing or small talk."""
 
 
 @dataclass(frozen=True)
@@ -77,12 +117,23 @@ class CaseResult:
         """What ``asserted`` would have been with ``link_similarity_threshold``
         at ``similarity`` and ``link_confidence_threshold`` at ``rerank`` —
         every candidate row is already written, pending or not, so this needs
-        no re-run."""
+        no re-run. A meeting the keyphrase check held back (``held_back``)
+        stays out on the similarity side; one under the configured threshold
+        was never checked, and counts as passing."""
         return frozenset(
             m
             for m in self.best_similarity
-            if self.best_similarity[m] >= similarity or self.best_rerank[m] >= rerank
+            if (self.best_similarity[m] >= similarity and m not in self.held_back)
+            or self.best_rerank[m] >= rerank
         )
+
+    segments: tuple[SegmentOutcome, ...] = field(default=())
+    """Series cases only: the current meeting's topic segments."""
+    asserted_links: tuple[LinkOutcome, ...] = field(default=())
+    """Series cases only: one per asserted link row."""
+    held_back: frozenset[str] = field(default=frozenset())
+    """Past meetings dense similarity alone would have asserted that were left
+    ``pending``: the keyphrase check (``service._subjects_agree``) said no."""
 
     def index(self, meeting_id: str) -> int:
         return self.past_ids.index(meeting_id)
@@ -107,25 +158,10 @@ def run_case(case: EvalCase) -> CaseResult:
             links = s.scalars(
                 select(CtxTopicLink).where(CtxTopicLink.meeting_id == current_id)
             ).all()
-            asserted = frozenset(
-                link.linked_meeting_id
-                for link in links
-                if link.status == "asserted" and link.linked_meeting_id is not None
-            )
-            pending = frozenset(
-                link.linked_meeting_id
-                for link in links
-                if link.status == "pending" and link.linked_meeting_id is not None
-            )
-            best_similarity: dict[str, float] = {}
-            best_rerank: dict[str, float] = {}
-            for link in links:
-                if link.linked_meeting_id is not None:
-                    m = link.linked_meeting_id
-                    best_similarity[m] = max(link.similarity, best_similarity.get(m, 0.0))
-                    best_rerank[m] = max(link.rerank_score, best_rerank.get(m, 0.0))
+            asserted, pending, best_similarity, best_rerank = _link_sets(links)
 
         expected = frozenset(past_ids[i] for i in case.expected_linked_indices)
+        held_back = _held_back(asserted, best_similarity, best_rerank)
         return CaseResult(
             case_id=case.id,
             category=case.category,
@@ -135,13 +171,148 @@ def run_case(case: EvalCase) -> CaseResult:
             best_similarity=best_similarity,
             best_rerank=best_rerank,
             past_ids=tuple(past_ids),
+            held_back=held_back,
         )
     finally:
         with session_scope() as s:
             s.execute(delete(Team).where(Team.id == team_id))
 
 
-def _seed_meeting(team_id: str, meeting: EvalMeeting) -> str:
+def run_series(series: EvalSeries) -> list[CaseResult]:
+    """One team, its meetings processed oldest first; a result per meeting from
+    the second on, with every earlier meeting as its history."""
+    with session_scope() as s:
+        team = Team(name=f"eval-{series.id}")
+        s.add(team)
+        s.flush()
+        team_id = team.id
+
+    results: list[CaseResult] = []
+    try:
+        ids: list[str] = []
+        for index, meeting in enumerate(series.meetings):
+            meeting_id = _seed_meeting(team_id, meeting)
+            service.run_topic_linking(_transcript(meeting_id, meeting.lines))
+            ids.append(meeting_id)
+            if index == 0:
+                continue
+
+            with session_scope() as s:
+                links = s.scalars(
+                    select(CtxTopicLink).where(CtxTopicLink.meeting_id == meeting_id)
+                ).all()
+                asserted, pending, best_similarity, best_rerank = _link_sets(links)
+                segments = _segments(s, series, meeting, meeting_id)
+                asserted_links = tuple(
+                    _link_outcome(
+                        link.topic_label, segments, series, ids.index(link.linked_meeting_id)
+                    )
+                    for link in links
+                    if link.status == "asserted" and link.linked_meeting_id is not None
+                )
+
+            expected_indices = series.expected_linked_indices(index)
+            results.append(
+                CaseResult(
+                    case_id=f"{series.id}#{index}",
+                    category=_series_category(expected_indices, index),
+                    expected=frozenset(ids[j] for j in expected_indices),
+                    asserted=asserted,
+                    pending=pending,
+                    best_similarity=best_similarity,
+                    best_rerank=best_rerank,
+                    past_ids=tuple(ids[:index]),
+                    segments=segments,
+                    asserted_links=asserted_links,
+                    held_back=_held_back(asserted, best_similarity, best_rerank),
+                )
+            )
+        return results
+    finally:
+        with session_scope() as s:
+            s.execute(delete(Team).where(Team.id == team_id))
+
+
+def _held_back(
+    asserted: frozenset[str], best_similarity: dict[str, float], best_rerank: dict[str, float]
+) -> frozenset[str]:
+    settings = get_settings()
+    return frozenset(
+        m
+        for m, sim in best_similarity.items()
+        if sim >= settings.link_similarity_threshold
+        and m not in asserted
+        and best_rerank[m] < settings.link_confidence_threshold
+    )
+
+
+def _series_category(expected: frozenset[int], index: int) -> str:
+    if not expected:
+        return "no_link"
+    return "all_history" if len(expected) == index else "some_history"
+
+
+def _link_sets(
+    links: Sequence[CtxTopicLink],
+) -> tuple[frozenset[str], frozenset[str], dict[str, float], dict[str, float]]:
+    """(asserted, pending, best similarity, best rerank score) per linked meeting."""
+    asserted = frozenset(
+        link.linked_meeting_id
+        for link in links
+        if link.status == "asserted" and link.linked_meeting_id is not None
+    )
+    pending = frozenset(
+        link.linked_meeting_id
+        for link in links
+        if link.status == "pending" and link.linked_meeting_id is not None
+    )
+    best_similarity: dict[str, float] = {}
+    best_rerank: dict[str, float] = {}
+    for link in links:
+        if link.linked_meeting_id is not None:
+            m = link.linked_meeting_id
+            best_similarity[m] = max(link.similarity, best_similarity.get(m, 0.0))
+            best_rerank[m] = max(link.rerank_score, best_rerank.get(m, 0.0))
+    return asserted, pending, best_similarity, best_rerank
+
+
+def _segments(
+    session: Session, series: EvalSeries, meeting: SeriesMeeting, meeting_id: str
+) -> tuple[SegmentOutcome, ...]:
+    """The meeting's topic segments, each tagged by most of its utterances."""
+    line_topics = meeting.line_topics
+    rows = session.scalars(
+        select(CtxEmbedding)
+        .where(CtxEmbedding.meeting_id == meeting_id, CtxEmbedding.kind == "topic")
+        .order_by(CtxEmbedding.id)
+    ).all()
+    outcomes = []
+    for row in rows:
+        tags = Counter(line_topics[_line_index(u)] for u in row.utterance_ids or [])
+        topic = tags.most_common(1)[0][0] if tags else None
+        names = topic is not None and any(word in row.ref_label for word in series.topics[topic])
+        outcomes.append(SegmentOutcome(label=row.ref_label, topic=topic, names_topic=names))
+    return tuple(outcomes)
+
+
+def _link_outcome(
+    label: str, segments: tuple[SegmentOutcome, ...], series: EvalSeries, linked_index: int
+) -> LinkOutcome:
+    mine = [seg for seg in segments if seg.label == label]
+    had = series.meetings[linked_index].topic_set
+    return LinkOutcome(
+        label=label,
+        on_topic=any(seg.topic is not None and seg.topic in had for seg in mine),
+        from_untagged=bool(mine) and all(seg.topic is None for seg in mine),
+    )
+
+
+def _line_index(utterance_id: str) -> int:
+    """``_utterance_id``'s inverse."""
+    return int(utterance_id.rsplit("_", 1)[1])
+
+
+def _seed_meeting(team_id: str, meeting: EvalMeeting | SeriesMeeting) -> str:
     """The meeting row plus its ``utterances``, as module A leaves them before
     publishing ``TranscriptReady`` -- the re-ranker reads a past topic's text
     back from ``utterances``, so a meeting seeded without them would be scored
@@ -204,8 +375,14 @@ def _transcript(meeting_id: str, lines: list[str]) -> TranscriptReady:
     )
 
 
-def run_all(cases: list[EvalCase] | None = None) -> list[CaseResult]:
-    return [run_case(case) for case in (cases if cases is not None else load_cases())]
+def run_all(cases: list[EvalCase | EvalSeries] | None = None) -> list[CaseResult]:
+    results: list[CaseResult] = []
+    for item in cases if cases is not None else load_cases():
+        if isinstance(item, EvalSeries):
+            results += run_series(item)
+        else:
+            results.append(run_case(item))
+    return results
 
 
 def _pair_counts(results: list[CaseResult]) -> tuple[int, int, int]:
@@ -229,7 +406,7 @@ def headline(results: list[CaseResult]) -> dict[str, float]:
     """The numbers ``--mode both`` puts side by side."""
     precision, recall, f1 = _f1(*_pair_counts(results))
     negatives = [r for r in results if not r.expected]
-    return {
+    metrics = {
         "accuracy": sum(r.correct for r in results) / len(results) if results else 0.0,
         "precision": precision,
         "recall": recall,
@@ -238,6 +415,16 @@ def headline(results: list[CaseResult]) -> dict[str, float]:
             sum(bool(r.asserted) for r in negatives) / len(negatives) if negatives else 0.0
         ),
     }
+    segments = [seg for r in results for seg in r.segments]
+    if segments:
+        links = [link for r in results for link in r.asserted_links]
+        metrics["labels naming their topic"] = sum(seg.names_topic for seg in segments) / len(
+            segments
+        )
+        metrics["asserted links on topic"] = (
+            sum(link.on_topic for link in links) / len(links) if links else 0.0
+        )
+    return metrics
 
 
 def case_outcomes(results: list[CaseResult]) -> dict[str, bool]:
@@ -303,18 +490,43 @@ def report(results: list[CaseResult]) -> str:
         f"  surfaced  {ratio(surfaced, tp + fn)}  (asserted or pending: reached the user)",
         f"  no-link cases with any asserted link: {ratio(false_linked, len(negatives))}",
     ]
+    lines += _series_lines(results)
     if settings.engine_mode == "classic":
         # Only classic: the sweep re-derives ``asserted`` from the stored dense and
         # re-ranker scores, which in ``llm`` and ``hybrid`` no longer decide it.
         lines += [
             "",
             "threshold sweep (accuracy if link_similarity_threshold were t,",
-            " link_confidence_threshold held as configured):",
+            " link_confidence_threshold and the keyphrase check held as configured;",
+            " below the configured t the keyphrase check was not run and counts as passed):",
             *_sweep(
                 results, settings.link_similarity_threshold, settings.link_confidence_threshold
             ),
         ]
     return "\n".join(lines)
+
+
+def _series_lines(results: list[CaseResult]) -> list[str]:
+    """What only tagged blocks make measurable; nothing for a ``version: 1`` set."""
+    segments = [seg for r in results for seg in r.segments]
+    if not segments:
+        return []
+    links = [link for r in results for link in r.asserted_links]
+    tagged = [seg for seg in segments if seg.topic is not None]
+    named = sum(seg.names_topic for seg in segments)
+    return [
+        "",
+        "topic segments of the scored meetings, read against the block tags:",
+        f"  label names the segment's own topic   {ratio(named, len(segments))}",
+        f"    among segments about a topic        {ratio(named, len(tagged))}",
+        f"  segment is an opening, closing or small talk  "
+        f"{ratio(len(segments) - len(tagged), len(segments))}",
+        "asserted link rows, read against the block tags:",
+        f"  join a topic the linked meeting had   "
+        f"{ratio(sum(k.on_topic for k in links), len(links))}",
+        f"  made by an opening, closing or small talk  "
+        f"{ratio(sum(k.from_untagged for k in links), len(links))}",
+    ]
 
 
 def _case_line(r: CaseResult) -> str:

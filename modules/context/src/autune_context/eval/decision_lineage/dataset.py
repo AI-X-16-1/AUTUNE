@@ -26,7 +26,7 @@ disagree):
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from typing import Any
 
@@ -40,6 +40,12 @@ class EvalMeeting:
     decision: str
     """One decision statement. One decision per meeting keeps which version
     should match which unambiguous — see ``runner``'s docstring."""
+    context: list[str] = field(default_factory=list)
+    """The utterances the decision was settled in, as B would cite them in
+    ``Decision.source_utterance_ids``. Optional: empty means the decision
+    arrives with no source utterances, as in every set before v6. When given,
+    the runner stores them as the meeting's utterances (one consenting
+    speaker) and the decision points at all of them."""
 
 
 @dataclass(frozen=True)
@@ -88,4 +94,6 @@ def _parse_case(raw: dict[str, Any]) -> EvalCase:
 
 
 def _parse_meeting(raw: dict[str, Any]) -> EvalMeeting:
-    return EvalMeeting(days_ago=raw["days_ago"], decision=raw["decision"])
+    return EvalMeeting(
+        days_ago=raw["days_ago"], decision=raw["decision"], context=list(raw.get("context", []))
+    )

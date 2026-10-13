@@ -135,6 +135,9 @@ MATERIAL_ALARM_FORGET_EVERY = timedelta(hours=1)
 MATERIAL_EXPIRY_EVERY = timedelta(hours=1)
 """``forget_expired_material_uploads``."""
 
+MEMBERLESS_MATERIALS_EVERY = timedelta(hours=1)
+"""``forget_memberless_team_materials``."""
+
 MATERIAL_EXPIRY_BATCHES = 50
 """At most this many batches (``materials.FORGET_BATCH`` each) per run; what is
 left goes on the next."""
@@ -1873,6 +1876,28 @@ def forget_expired_material_uploads() -> int:
             break
     if gone:
         log.info("extraction_material_uploads_expired", count=gone)
+    return gone
+
+
+@shared_task(name="autune.extraction.periodic.forget_memberless_team_materials")
+@periodic(MEMBERLESS_MATERIALS_EVERY)
+def forget_memberless_team_materials() -> int:
+    """Delete what module B keeps for the 자료 screen of every team nobody is
+    on -- materials with their masked text, alarm rows, the keeping setting --
+    whatever that setting says (#817; the owner, 2026-10-13;
+    ``materials.forget_memberless_team_materials``). Nobody could delete them
+    otherwise: every route over them asks for a member. One transaction per
+    batch of teams. Takes nothing, and returns how many teams were emptied;
+    the log has each team's id and counts, never a title."""
+    gone = 0
+    for _ in range(MATERIAL_EXPIRY_BATCHES):
+        with session_scope() as session:
+            batch = materials.forget_memberless_team_materials(session)
+        gone += batch
+        if batch < materials.MEMBERLESS_BATCH:
+            break
+    if gone:
+        log.info("extraction_memberless_teams_emptied", count=gone)
     return gone
 
 
