@@ -55,7 +55,7 @@ describe("Dashboard", () => {
     );
     expect(screen.getByText("주간 리포트 카드")).toBeTruthy();
     expect(screen.queryByText("품질 점수")).toBeNull();
-    expect(screen.queryByText("예측")).toBeNull();
+    expect(screen.queryByText("결정 재검토 가능성")).toBeNull();
     expect(screen.queryByText("회의 리포트 카드")).toBeNull();
   });
 
@@ -66,7 +66,7 @@ describe("Dashboard", () => {
 
     expect(screen.queryByText("아직 분석된 회의가 없습니다.")).toBeNull();
     expect(screen.getByText("품질 점수")).toBeTruthy();
-    expect(screen.getByText("예측")).toBeTruthy();
+    expect(screen.getByText("결정 재검토 가능성")).toBeTruthy();
     expect(screen.getByText("회의 리포트 카드")).toBeTruthy();
     expect(screen.getByText("주간 리포트 카드")).toBeTruthy();
   });

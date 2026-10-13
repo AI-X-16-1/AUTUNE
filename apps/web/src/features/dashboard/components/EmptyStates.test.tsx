@@ -10,7 +10,7 @@ import { PredictionCard } from "./PredictionCard";
 afterEach(cleanup);
 
 describe("dashboard empty states", () => {
-  it("says the prediction needs three analysed meetings", () => {
+  it("says the review likelihood needs three analysed meetings", () => {
     render(
       <PredictionCard
         predictions={{ team_id: "team_1", prediction: null, reason: "insufficient_history" }}
