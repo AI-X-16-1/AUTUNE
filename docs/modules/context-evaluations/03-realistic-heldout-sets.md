@@ -1,10 +1,10 @@
 # Evaluation 03 — held-out sets for the next round of fixes
 
 **Written:** 2026-10-12 · **Owner:** 문민재 ·
-**Module:** Meeting Context Engine (`autune_context`) · **Status:** sets frozen, nothing
-run on them yet
+**Module:** Meeting Context Engine (`autune_context`) · **Status:** sets frozen; v4 run in
+aggregate only (section 4)
 
-Two development meetings, run through the engine in `classic` mode, showed five weaknesses
+Two demo meetings, run through the engine in `classic` mode, showed five weaknesses
 that the existing evaluation sets do not catch. Both were played from a made-up demo
 script, not a real conversation. The existing sets are short, synthetic and mostly one
 topic per meeting. This document describes two new held-out sets written to measure
@@ -38,7 +38,8 @@ no score from them is reported; the examples below are made up to show each weak
    does not join the earlier decision it settles, because what "2번 시안" means is in the
    utterances the decision was settled in, not in the statement.
 
-These two meetings are the development examples for the fixes. Neither held-out set
+These two meetings were for finding the weaknesses and for testing, not for designing
+fixes: a fix is developed on synthetic development data (section 5). Neither held-out set
 contains what was said in them or a paraphrase of it (section 4).
 
 ## 2. `topic_linking_heldout_v4.json`: series of real-length meetings
@@ -100,17 +101,21 @@ reading the context breaks.
 
   | File | `git hash-object` |
   | --- | --- |
-  | `topic_linking/fixtures/topic_linking_heldout_v4.json` | `97de44a08a197be1594d2e12e6ff57ad95d5494d` |
+  | `topic_linking/fixtures/topic_linking_heldout_v4.json` | `687e5c26e19648ebda26a02522704b5aac6d7c32` |
   | `decision_lineage/fixtures/decision_lineage_heldout_v6.json` | `438ea5b11f728a94f03bdae7af52d986c5665618` |
 
 - **No overlap.** A script compared every statement, context line and tagged line with
-  every earlier fixture, and with the two development meetings, using character bigrams.
+  every earlier fixture, and with the two demo meetings, using character bigrams.
   It flagged three near-copies of earlier lineage sets, which were rewritten. A first
-  draft had one series and ten lineage cases built on the development meetings; they were
+  draft had one series and ten lineage cases built on the demo meetings; they were
   rewritten in other domains before freezing. In review two more kinds of line were found
-  close to the development meetings: one terse decision in v6 and the closing formula
-  three teams of v4 used. Both were reworded, still before any run, and the sets were
-  frozen again at the hashes above.
+  close to the demo meetings: one terse decision in v6 and the closing formula three
+  teams of v4 used. Both were reworded and the sets frozen again. v6 had not been run.
+  v4 had: at its first freeze (`89ef975975926b0836d382430317d5d8ecf31a4e`) it had been
+  run twice, aggregates only, to measure fixes in progress alongside the review. The
+  reword touched only closing lines, which are untagged and score nothing themselves.
+  The reworded v4 was frozen as `97de44a08a197be1594d2e12e6ff57ad95d5494d`; the hash
+  above differs only in `_about`, corrected to say this.
 - **No teammate names.** The names in the text are made up.
 - **Not independent.** The engine's author wrote both sets, knowing the five problems
   above. Owner changes, cue words and openings appear because the author chose them, not
@@ -125,8 +130,9 @@ reading the context breaks.
 - **One run per change, the old code and the new side by side**, in the same process,
   as section 10 of [`01-engine-mode-comparison.md`](01-engine-mode-comparison.md) did for
   the replacement cue. Report the paired counts and a sign test.
-- **Per-case failures are not read until the change is final.** Fixes are designed from
-  the development meetings and the earlier sets. Once a failure on v4 or v6 has been read
+- **Per-case failures are not read until the change is final.** Fixes are designed on
+  synthetic development data and the earlier sets, never on the two demo meetings: those
+  are for finding weaknesses and testing only. Once a failure on v4 or v6 has been read
   to shape a change, that set no longer counts as held-out for the change, and this
   document says so.
 - **`classic` only unless stated.** Every other mode sends the sets' text to an external
