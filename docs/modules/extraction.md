@@ -1527,12 +1527,20 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
 - The assistant's tool (`tools.find_materials`, in `TOOLS`) reads through the
   same search, for the run's team only; the question is its one argument
   besides the team, and it is not in the result, a log line, `agent_runs` or
-  a waiting row (#817 10(b), held by tests). **It is off by default**
-  (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`): on, it gives masked excerpts
-  to the agent layer's model, which `privacy.md` does not allow until a
-  change to its uploaded-documents section is approved. The ask loop does
-  not offer it either until its tool set names it (`agent/.../main/ask.py`,
-  owned by the agent layer's main owner).
+  a waiting row (#817 10(b), held by tests). **No model reads what it
+  finds** (#1313): the tool is in `TEXT_WITHHELD_TOOLS`, the list the agent
+  layer's registry reads, so each item is marked `withheld`; the ask loop's
+  model is sent the summary -- a count and fixed sentences -- and each
+  item's id, the model that writes the answer is sent the summary, and the
+  title and the excerpt go from the server to the member's screen, under
+  the answer. The summary says so (`tools.SHOWN_BELOW`), since the model
+  cannot say what a document it did not read says. The ask loop offers the
+  tool in a chat about the team, not in one opened on a meeting
+  (`agent/.../main/ask.py`, `TEAM_TOOLS`), and no subagent can hold it.
+  **It is off by default** (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`): off,
+  it searches nothing and answers that it is off. A new read of a
+  material's title or text goes on the list in the change that adds it; the
+  registry refuses a tool with `material` in its name that is not on it.
 - Text a person types is screened when it is saved and refused if it
   reads as personal data (`typed_text.refuse_personal_data`; decided on
   #1130, `privacy.md` section 6). Ten checks behind eight routes: an action

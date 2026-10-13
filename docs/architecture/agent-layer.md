@@ -385,6 +385,21 @@ it off its allow-list. An undeclared tool whose name says `speaking_ratio`
 fails collection, and `Subagent` refuses the name too, as a net under the
 declaration rather than instead of it (#432 review).
 
+**`TEXT_WITHHELD_TOOLS` keeps a text away from every model, not from the
+member** (#1313). A module lists there a read whose items hold text no model
+may be given -- module B's `find_materials`, an uploaded material's title
+and excerpt (`privacy.md`, "Uploaded documents are masked before storage").
+Such a tool is registered, and the registry marks every item it returns
+`withheld` (`Finding.withheld`, set in `Tool.__call__`, whatever the module's
+own dict says). Two places send a tool's items to a model, and both leave a
+withheld item's title and body out: the ask loop's `compact` sends its ids
+alone, and `GeminiRouter.compose` writes no line for it. The model reads the
+tool's summary -- a count and fixed sentences -- and the member reads the
+title and the excerpt, which go down in `ChatReply.items` as any item does.
+Only the ask loop's `Toolbox` holds such a tool (`cuts_withheld_text`); a
+subagent that names one is not given it, since a subagent writes its own
+prompts. An undeclared tool whose name says `material` fails collection.
+
 ### The return contract — what every tool hands back
 
 ```python

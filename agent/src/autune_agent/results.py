@@ -37,6 +37,14 @@ class Finding(BaseModel):
     title: str
     body: str = ""
     score: float = 0.0
+    withheld: bool = False
+    """True when no model may read this item's title or body: it came from a
+    tool its module lists in ``TEXT_WITHHELD_TOOLS``. The registry sets it on
+    every item of such a tool (``Tool.__call__``); the ask loop and the
+    composer leave the title and the body out of what they send, and the
+    member's screen draws both from this same item. It is a field and not a
+    side list so that it goes wherever the item goes -- merged with another
+    tool's items, dumped and validated again."""
 
 
 class ToolResult(BaseModel):

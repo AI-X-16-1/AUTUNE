@@ -7,7 +7,11 @@ meeting text, and never utterances (the return contract keeps evidence as ids).
 The ask loop (main/ask.py, via ``GeminiTools``) sends the person's message, the
 function declarations (our own text: a tool name, one sentence, a parameter
 schema), compacted tool results (a summary, and per item the title, a body cut
-to 80 characters and ids), and the echoed model turn. All go through
+to 80 characters and ids), and the echoed model turn. An item marked
+``withheld`` -- an uploaded material found by ``extraction.find_materials`` --
+is the exception in both: the ask loop sends its id and nothing else, and
+composing sends no line for it, so the model is told how many materials were
+found and reads neither a title nor an excerpt (#1313). All go through
 ``autune_integrations.HttpClient``, so ``check_outbound`` sees the whole
 exchange and refuses an unmasked phone number, e-mail or account number and a
 body past ``MAX_OUTBOUND_CHARS``. The loop stops before a body passes 3,800
@@ -330,9 +334,13 @@ class GeminiRouter:
         findings = [result.summary]
         # Not ``.rstrip(": ")``: that strips a character set, and a title that
         # ends in a colon would lose it (review on #449).
+        # A withheld item has no line: its title and body are for the member,
+        # who sees them under the answer, and for no model (#1313). The
+        # summary, the tool's own fixed sentences, says how many were found.
         findings += [
             f"- {item.title}: {item.body}" if item.body else f"- {item.title}"
             for item in result.items
+            if not item.withheld
         ]
         if result.truncated:
             findings.append("(더 있음 — 상위 다섯 건만 표시)")
