@@ -59,7 +59,7 @@ export function decidedWhen(iso: string): string {
  * it went. The server applies the waiting list's rule, so only proposals the
  * person may decide are here. Read only; nothing is decided again from here.
  */
-export function DecidedApprovals() {
+export function DecidedApprovals({ teamId }: { teamId: string | null }) {
   const [items, setItems] = useState<DecidedAction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,6 +74,13 @@ export function DecidedApprovals() {
     };
   }, []);
 
+  // The team being looked at, and only it (the user, 2026-10-13). Nothing is
+  // listed until the team is known, so another team's cards never flash by.
+  const shown: DecidedAction[] | null =
+    teamId === null || items === null
+      ? null
+      : items.filter((item) => item.team_id === teamId);
+
   return (
     <>
       {error ? (
@@ -81,16 +88,16 @@ export function DecidedApprovals() {
           {error}
         </p>
       ) : null}
-      {items === null && !error ? (
+      {shown === null && !error ? (
         <p className="mt-4 text-[var(--color-ink-muted)]">불러오는 중…</p>
       ) : null}
-      {items?.length === 0 ? (
+      {shown?.length === 0 ? (
         <p className="mt-4 text-[var(--color-ink-muted)]">
-          최근 30일 동안 처리한 제안이 없습니다.
+          최근 30일 동안 이 팀에서 처리한 제안이 없습니다.
         </p>
       ) : null}
       <ul className="mt-4 flex flex-col gap-4">
-        {items?.map((item) => {
+        {shown?.map((item) => {
           const result = decidedResult(item);
           return (
             <li

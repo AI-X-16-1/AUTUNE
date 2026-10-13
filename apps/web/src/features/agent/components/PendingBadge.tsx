@@ -3,15 +3,23 @@
 import { usePendingCount } from "../pendingCount";
 
 /**
- * The count beside 승인 대기 in the sidebar: how many proposals wait for this
- * person. Nothing is drawn while none do.
+ * The count beside 승인 대기 in the sidebar: how many proposals of the team
+ * being looked at wait for this person -- what 승인 대기 lists. Nothing is
+ * drawn while none do. Other teams' proposals are a dot beside each team in
+ * the team menu (`usePendingTeams`).
  *
  * It replaced a red dot on the assistant's launcher, which said that
  * something waited without saying what or where (the user, 2026-10-13). A
  * number on the entry that leads to the queue needs no explaining.
  */
-export function PendingBadge({ pathname }: { pathname: string }) {
-  const count = usePendingCount(pathname);
+export function PendingBadge({
+  pathname,
+  teamId,
+}: {
+  pathname: string;
+  teamId: string | null;
+}) {
+  const count = usePendingCount(pathname, teamId);
   if (count === 0) return null;
   return (
     <span

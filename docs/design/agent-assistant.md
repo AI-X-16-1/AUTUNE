@@ -31,7 +31,7 @@ UI copy is Korean and is quoted as it appears on screen.
 | Contents | 18px four-point spark icon · "비서" · one shortcut pill, `Ctrl J` then `⌘J` split by a thin rule (500 11.5px, white 16% background, height 24, radius 12, nested 10px from the launcher's end so the two ends share a centre), so a Windows user does not translate the Mac shortcut |
 | Shadow | `0 4px 16px rgba(59,74,158,.28)` |
 | Hover | background `accent.hover` |
-| Alert | none on the launcher. A dot there said that something waited without saying what or where, and the team could not read it (2026-10-13). What waits is said where it can be read: a count beside 승인 대기 in the sidebar, and the first line of the open panel (section 6) |
+| Alert | none on the launcher. A dot there said that something waited without saying what or where, and the team could not read it (2026-10-13). What waits is said where it can be read: a count beside 승인 대기 in the sidebar, a red dot beside every team in the sidebar's team menu that has any, and the first line of the open panel (section 6) |
 | Shortcuts | `Ctrl+J` / `⌘J` toggles, `Esc` closes |
 
 ## 3. Panel (open)
@@ -136,9 +136,9 @@ design names module D's retrieval as the filter; see section 9.
 | State | Shown as |
 |---|---|
 | Closed | Launcher only |
-| Closed, proposals waiting | Launcher unchanged; the sidebar's 승인 대기 entry carries the count (18px `signal.critical` pill, 600 11px, `99+` above 99) |
+| Closed, proposals waiting | Launcher unchanged. The sidebar's 승인 대기 entry carries the chosen team's count (18px `signal.critical` pill, 600 11px, `99+` above 99), the count of what 승인 대기 lists, which is that team's proposals only. Every team in the team menu with any waiting has a 7px `signal.critical` dot after its name; a marked team behind "더보기" puts the dot on "더보기" |
 | Open, empty conversation | One greeting line in the message area ("{name}님, 무엇을 확인할까요?", 600 14) and three larger suggested-question chips (height 32) |
-| Open, empty, proposals waiting | Below the greeting, on `surface.sunken`: red dot · "승인을 기다리는 제안이 {n}건 있습니다 ·" · `승인 대기 열기` (accent, 600; closes the panel) |
+| Open, empty, proposals waiting (the panel's team) | Below the greeting, on `surface.sunken`: red dot · "승인을 기다리는 제안이 {n}건 있습니다 ·" · `승인 대기 열기` (accent, 600; closes the panel) |
 | Streaming | Three dots · `보내기` → `중지` |
 | Action waiting | Proposal block shown; the input stays usable |
 | Action running | The block's primary button in loading state (spinner + "생성 중") |
@@ -212,8 +212,9 @@ today. None blocks drawing the screen; each blocks the behaviour named.
    B's history has no value for it yet (`kind` is `created` or `edited`), so it
    needs a B change, filed as an issue when the screen is built.
 7. **What waits.** "Something to say first" has no source beyond the
-   approvals queue (`GET /api/agent/pending`), which feeds the sidebar count
-   and the open panel's first line; the launcher carries no alert.
+   approvals queue (`GET /api/agent/pending`), read once per page and counted
+   per team. It feeds the sidebar count, the team menu's dots and the open
+   panel's first line; the launcher carries no alert.
 8. **The asker's own speaking figures (5.4).** Answering them would carry a
    speaking ratio through an agent run and a model call. The layer keeps that
    data out entirely (`PERSONAL_ONLY_TOOLS`, agent-layer.md section 4), and
