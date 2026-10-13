@@ -286,6 +286,10 @@ one miss differs. The set cannot tell them apart, and `classic` needs no API.
   (`*_heldout_v5`) after two guard gaps were fixed. Full
   write-up, the numbers behind every claim above, and what is still unmeasured:
   [`context-evaluations/01-engine-mode-comparison.md`](context-evaluations/01-engine-mode-comparison.md).
+  Two further held-out sets, frozen on 2026-10-12 for the next round of fixes
+  (real-length meeting series; decisions with their source utterances), and the
+  rules for using them:
+  [`context-evaluations/03-realistic-heldout-sets.md`](context-evaluations/03-realistic-heldout-sets.md).
 
 ### Self-hosted serving contract
 
