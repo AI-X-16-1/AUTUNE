@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as api from "../api";
@@ -62,7 +62,7 @@ describe("ApprovalsScreen tabs", () => {
     vi.spyOn(api, "listPending").mockResolvedValue([]);
     const decided = vi.spyOn(api, "listDecided").mockResolvedValue([BASE]);
 
-    render(<ApprovalsScreen />);
+    render(<ApprovalsScreen teamId="team_1" />);
     expect(decided).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("tab", { name: "처리한 승인" }));
 
@@ -75,11 +75,45 @@ describe("ApprovalsScreen tabs", () => {
     vi.spyOn(api, "listPending").mockResolvedValue([]);
     vi.spyOn(api, "listDecided").mockResolvedValue([]);
 
-    render(<ApprovalsScreen />);
+    render(<ApprovalsScreen teamId="team_1" />);
     fireEvent.click(screen.getByRole("tab", { name: "처리한 승인" }));
 
     expect(
-      await screen.findByText("최근 30일 동안 처리한 제안이 없습니다."),
+      await screen.findByText("최근 30일 동안 이 팀에서 처리한 제안이 없습니다."),
     ).toBeTruthy();
+  });
+});
+
+describe("ApprovalsScreen, one team at a time", () => {
+  // 승인 대기 lists the team chosen in the sidebar, not every team the person
+  // approves for (the user, 2026-10-13).
+  it("lists only the chosen team's proposals in both tabs", async () => {
+    const other = { ...BASE, id: "pend_other", team_id: "team_2", title: "다른 팀 제안" };
+    vi.spyOn(api, "listPending").mockResolvedValue([
+      { ...BASE, status: "pending", title: "우리 팀 제안" },
+      { ...other, status: "pending" },
+    ]);
+    vi.spyOn(api, "listDecided").mockResolvedValue([BASE, other]);
+
+    render(<ApprovalsScreen teamId="team_1" />);
+
+    expect(await screen.findByText("우리 팀 제안")).toBeTruthy();
+    expect(screen.queryByText("다른 팀 제안")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "처리한 승인" }));
+    expect(await screen.findByText("할 일 재배정")).toBeTruthy();
+    expect(screen.queryByText("다른 팀 제안")).toBeNull();
+  });
+
+  it("lists nothing until the team is known", async () => {
+    const listed = vi
+      .spyOn(api, "listPending")
+      .mockResolvedValue([{ ...BASE, status: "pending", title: "우리 팀 제안" }]);
+
+    render(<ApprovalsScreen teamId={null} />);
+
+    await waitFor(() => expect(listed).toHaveBeenCalled());
+    expect(screen.queryByText("우리 팀 제안")).toBeNull();
+    expect(screen.getAllByText("불러오는 중…").length).toBeGreaterThan(0);
   });
 });

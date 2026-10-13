@@ -1,5 +1,6 @@
 import type { Route } from "next";
 
+import { MeetingTeam } from "@/features/transcript";
 import { TabLinks } from "@/shared/ui";
 
 /**
@@ -15,6 +16,9 @@ import { TabLinks } from "@/shared/ui";
  *
  * `live/` is deliberately outside this group. A meeting being recorded has no
  * actions, no gaps and no context yet, and S13 draws its own frame.
+ *
+ * The meeting's team becomes the team being looked at (`MeetingTeam`), so
+ * the sidebar names the team whose meeting is on screen.
  *
  * Assembly only: the tabs name routes, the routes mount screens, and every
  * screen belongs to the module that owns it.
@@ -35,6 +39,7 @@ export default async function MeetingReviewLayout({
 
   return (
     <>
+      <MeetingTeam meetingId={meetingId} />
       {/* The tab row sits directly under the shell's top bar at the page
           gutter, as S15 and S17 draw it. The way back to the meeting list is
           the sidebar now, so the "← 회의 목록" link that stood here is gone. */}

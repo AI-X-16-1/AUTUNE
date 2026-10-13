@@ -8,6 +8,8 @@ import { pinTeam, unpinTeam } from "../api";
 import { announceTeams } from "../selectedTeam";
 import type { TeamSummary } from "../types";
 
+import { PendingMark } from "./PendingMark";
+
 /**
  * Every team a person is on, in a small window over the page: where one is
  * chosen when it is not among the few a list shows, and where a team is
@@ -68,6 +70,7 @@ export function below(control: HTMLElement, rows: number): Place {
 export function TeamsWindow({
   teams,
   teamId,
+  marked,
   at,
   opener,
   onChoose,
@@ -76,6 +79,8 @@ export function TeamsWindow({
   teams: TeamSummary[];
   /** The team being looked at, marked in the list; `null` when none is. */
   teamId: string | null;
+  /** Teams with proposals waiting for this person, marked with a red dot. */
+  marked?: ReadonlySet<string>;
   at: Place;
   /** The control that opened this: a press on it is not a press outside. */
   opener: RefObject<HTMLElement | null>;
@@ -151,12 +156,13 @@ export function TeamsWindow({
               onClick={() => onChoose(team.team_id)}
               className={
                 looking
-                  ? "min-w-0 flex-1 truncate text-left text-[var(--color-accent-hover)]"
-                  : "min-w-0 flex-1 truncate text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
+                  ? "flex min-w-0 flex-1 items-center gap-2 text-left text-[var(--color-accent-hover)]"
+                  : "flex min-w-0 flex-1 items-center gap-2 text-left text-[var(--color-ink-body)] hover:text-[var(--color-ink-strong)]"
               }
               style={{ ...text, fontWeight: looking ? 600 : 500, padding: "6px 0" }}
             >
-              {team.name}
+              <span className="min-w-0 truncate">{team.name}</span>
+              {marked?.has(team.team_id) ? <PendingMark /> : null}
             </button>
             <button
               type="button"

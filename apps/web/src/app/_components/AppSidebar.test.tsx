@@ -28,14 +28,20 @@ vi.mock("@/shared/api/auth", () => ({ logout: () => logout() }));
 vi.mock("@/shared/api/client", () => ({ setSignedIn: (value: boolean) => setSignedIn(value) }));
 vi.mock("./SessionGate", () => ({ useSessionUser: () => sessionUser() }));
 // Module A's menu, which reads the person's teams; its own tests are beside it.
+const marked = vi.fn((): ReadonlySet<string> => new Set());
 vi.mock("@/features/transcript", () => ({
-  TeamMenu: () => <div data-testid="team-menu" />,
+  TeamMenu: ({ marked }: { marked?: ReadonlySet<string> }) => (
+    <div data-testid="team-menu" data-marked={[...(marked ?? [])].join(",")} />
+  ),
+  rememberedTeam: () => "team_1",
+  onTeamChosen: () => () => undefined,
 }));
 // The agent feature's count of waiting proposals; its own tests are beside it.
 vi.mock("@/features/agent", () => ({
-  PendingBadge: ({ pathname }: { pathname: string }) => (
-    <span data-testid="pending-badge" data-pathname={pathname} />
+  PendingBadge: ({ pathname, teamId }: { pathname: string; teamId: string | null }) => (
+    <span data-testid="pending-badge" data-pathname={pathname} data-team={teamId ?? ""} />
   ),
+  usePendingTeams: () => marked(),
 }));
 
 const ME = { id: "user_me", email: "me@example.com", display_name: "Me", teams: [] };
@@ -168,5 +174,15 @@ describe("AppSidebar, waiting proposals", () => {
     expect(badges).toHaveLength(1);
     expect(badges[0]!.closest("a")?.getAttribute("href")).toBe("/approvals");
     expect(badges[0]!.getAttribute("data-pathname")).toBe("/actions");
+    // The chosen team's count: what 승인 대기 lists.
+    expect(badges[0]!.getAttribute("data-team")).toBe("team_1");
+  });
+
+  it("hands the team menu the teams with proposals waiting", () => {
+    sessionUser.mockReturnValue(ME);
+    marked.mockReturnValue(new Set(["team_2"]));
+    render(<AppSidebar />);
+
+    expect(screen.getByTestId("team-menu").getAttribute("data-marked")).toBe("team_2");
   });
 });
