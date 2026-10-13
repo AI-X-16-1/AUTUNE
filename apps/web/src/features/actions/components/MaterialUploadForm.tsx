@@ -117,7 +117,8 @@ export function MaterialUploadForm({
           ? "팀이 지울 때까지 보관합니다."
           : "목록에 적힌 날에 삭제됩니다."}{" "}
         문장 속의 이름은 가려지지 않으며, 그림으로만 들어 있는 글은
-        읽지 않습니다. 한 파일 {megabytes(rules.max_bytes)}까지 · {rules.suffixes.join(" ")}
+        읽지 않습니다. 줄이나 쪽이 바뀌는 곳에서 나뉜 번호나 전자우편 주소는 가려지지 않을 수
+        있습니다. 한 파일 {megabytes(rules.max_bytes)}까지 · {rules.suffixes.join(" ")}
       </p>
       {busy ? (
         <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
