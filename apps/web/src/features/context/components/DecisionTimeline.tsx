@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Quote, StatusDot } from "@/shared/ui";
 
 import { kstDay } from "../dates";
@@ -28,6 +30,9 @@ const NLI_LABEL: Record<NliLabel, string> = {
  * "원본" would draw a swept-in `reversed` version as a blank ring with no
  * reason block, on the exact thread where a reader most wants one. Raised in
  * review of #204.
+ *
+ * Each version links to the meeting it was decided in. A version is deleted
+ * with its meeting, so the link never points at a meeting that is gone.
  */
 export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[] }) {
   return (
@@ -73,7 +78,13 @@ export function DecisionTimeline({ versions }: { versions: DecisionVersionRead[]
                 className="mt-1 text-[var(--color-ink-muted)]"
                 style={{ fontSize: "var(--text-metaSmall)" }}
               >
-                {version.meeting_id} · {kstDay(version.created_at)}
+                {kstDay(version.created_at)} ·{" "}
+                <Link
+                  href={`/meetings/${version.meeting_id}`}
+                  className="text-[var(--color-accent-default)]"
+                >
+                  결정한 회의 보기
+                </Link>
               </div>
 
               {!isOriginal && (
