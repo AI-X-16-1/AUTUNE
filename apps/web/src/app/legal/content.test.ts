@@ -65,6 +65,33 @@ describe("legal documents", () => {
     }
   });
 
+  // A team nobody is on keeps no materials (#817; the owner, 2026-10-13):
+  // module B's hourly task deletes them whatever the team chose. The policy
+  // had said a person's withdrawal does not delete a team's documents, which
+  // is no longer the whole of it for a team's only member -- so it says the
+  // exception where it says the rule, and wherever it says how long.
+  it("say a team with no member left loses its uploaded documents", () => {
+    const text = (id: string) => JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === id));
+    const privacy = text("privacy");
+    expect(privacy).toContain(
+      "회원의 탈퇴 또는 본인 발화의 삭제로는 팀의 문서 자료가 삭제되지 않습니다. 다만 팀에 구성원이 한 명도 남지 않게 된 경우(마지막 구성원이 탈퇴한 경우를 포함합니다)에는 1시간마다 확인하여, 팀이 지울 때까지 보관하도록 정한 경우에도, 그 팀의 문서 자료와 등록한 링크, 받지 않은 문서 파일의 기록을 모두 삭제하며 복구할 수 없습니다.",
+    );
+    expect(privacy).toContain(
+      "팀 구성원이 삭제하거나 팀이 삭제되거나 팀에 구성원이 한 명도 남지 않게 될 때까지 보관합니다.",
+    );
+    expect(privacy).toContain(
+      "알림을 보낸 일시는 그 기록과 함께 삭제합니다. 팀에 구성원이 한 명도 남지 않게 된 경우에는 그 전이라도 삭제합니다",
+    );
+    expect(text("terms")).toContain(
+      "팀 구성원이 삭제하거나 팀이 삭제되거나 팀에 구성원이 한 명도 남지 않게 될 때까지 보관됩니다.",
+    );
+    // Neither document still ends the kept-until-deleted case at the team's
+    // deletion alone.
+    for (const id of ["privacy", "terms"]) {
+      expect(text(id), id).not.toContain("팀이 삭제될 때까지 보관");
+    }
+  });
+
   // The server refuses any other shape (`autune_core.consents._VERSION`),
   // and a version it refuses leaves every person at the consent page.
   it("are asked for under a version the server takes", () => {
