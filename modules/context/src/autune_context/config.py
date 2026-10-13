@@ -149,9 +149,35 @@ class ContextSettings(BaseSettings):
     ``link_confidence_threshold``, so the asserted set can only be larger.
     Measured on short, synthetic meetings; re-check against real meetings
     before trusting it further."""
+    link_keyphrase_threshold: float = 0.55
+    """What an asserted link also needs, whichever score asserts it: the
+    two segments' keyphrases (``topics.keyphrases``, ``link_keyphrases`` of
+    them, embedded as one string each) at this cosine similarity or above --
+    or ``link_shared_nouns`` content nouns in common.
+
+    Why: two long meetings of one team clear ``link_similarity_threshold`` on
+    almost any pair of segments -- a segment's mean-pooled vector carries the
+    team's register and shared context as much as its subject -- and the
+    re-ranker scores 1.0 wherever two segments share a stretch of
+    near-identical text (an opening, a stock phrase). On a set of same-team
+    series every meeting was linked to every earlier one. The keyphrases carry
+    the subject and little else. Set on the development
+    sets (``topic_linking_series_dev_v1``, ``_v2``, ``_heldout_v3``): false
+    pairs on the series 32 -> 7, on v3 6 -> 0, at the cost of 5 true v3 pairs
+    and 4 v2 pairs that are left ``pending`` instead of asserted -- still in
+    front of the user, as a question. See
+    docs/modules/context-evaluations/03-realistic-heldout-sets.md."""
+    link_keyphrases: int = 5
+    """How many of a segment's top noun phrases ``link_keyphrase_threshold``
+    compares."""
+    link_shared_nouns: int = 4
+    """Content nouns two segments must share to pass the keyphrase check on
+    that count alone -- the way in for a link whose keyphrases are worded
+    differently but whose talk shares its vocabulary."""
     link_confidence_threshold: float = 0.6
     """Cross-encoder score at or above which the link is also asserted,
-    whatever its dense similarity. Below both thresholds: store it as
+    whatever its dense similarity -- if the keyphrase check passes too
+    (``link_keyphrase_threshold``). Below both thresholds: store it as
     ``pending`` and ask the user. The re-ranker scores same-topic meetings
     with different content near zero, so on its own this let almost nothing
     through; it is kept because nothing it asserted on the evaluation set was

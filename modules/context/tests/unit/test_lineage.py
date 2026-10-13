@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import pytest
 
+from autune_context import service
 from autune_context.pipeline.base import NliScores
 from autune_context.pipeline.change import (
     adds_condition,
     classify_change,
+    marks_keep,
     marks_replacement,
     marks_reversal,
     strip_keep_words,
 )
 from autune_context.service import (
     _assign_decisions_to_threads,
+    _change_hypotheses,
     _cosine,
     _ThreadHead,
 )
@@ -89,6 +92,138 @@ def test_neither_entailed_nor_contradicted_is_modified() -> None:
     change, score = classify_change(_nli(0.1, 0.8, 0.1), _nli(0.2, 0.7, 0.1), "문장", "문장")
     assert change is ChangeType.MODIFIED
     assert score == 0.8
+
+
+def test_neither_entailed_nor_contradicted_but_said_to_stay_is_unchanged() -> None:
+    change, score = classify_change(
+        _nli(0.0, 0.9, 0.1),
+        _nli(0.2, 0.7, 0.1),
+        "10시 마감은 지금대로 둡시다.",
+        "매장 영업은 밤 10시까지 한다.",
+    )
+    assert change is ChangeType.UNCHANGED
+    assert score == 0.9
+
+
+def test_a_keep_that_contradicts_is_not_rescued_by_the_keep_cue() -> None:
+    """Reaffirming the old value after a switch contradicts the switch; the keep
+    cue only speaks where NLI has no opinion."""
+    change, _ = classify_change(
+        _nli(0.0, 0.1, 0.9),
+        _nli(0.0, 0.1, 0.9),
+        "A사를 계속 쓰기로 했다.",
+        "A사 대신 B사로 바꾸기로 했다.",
+    )
+    assert change is ChangeType.MODIFIED
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "체크아웃은 그대로 11시다.",
+        "현행 유지.",
+        "요금을 동결한다.",
+        "지금대로 둔다.",
+        "기존처럼 진행한다.",
+        "변동 없다.",
+        "일정은 변경 없이 간다.",
+        "노선은 바꾸지 않기로 했다.",
+        "안 고치기로 했다.",
+        "가격은 올리지 말죠.",
+        "규칙은 변경하지 않는다.",
+    ],
+)
+def test_a_statement_that_says_nothing_changes_marks_a_keep(statement: str) -> None:
+    assert marks_keep(statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "한 시간 늘린다.",
+        "도입하지 않기로 했다.",
+        "취소한다.",
+        "목요일로 옮긴다.",
+        "그렇게 하기로 했다.",
+    ],
+)
+def test_a_change_or_a_withdrawal_is_not_a_keep(statement: str) -> None:
+    assert not marks_keep(statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "노선은 바꾸지 않기로 했다.",
+        "안 바꾸기로 했다.",
+        "건드리지 말죠.",
+        "규칙은 변경하지 않는다.",
+    ],
+)
+def test_a_negated_change_verb_is_not_a_reversal(statement: str) -> None:
+    assert not marks_reversal(statement)
+
+
+def test_a_negated_change_verb_does_not_hide_a_real_withdrawal() -> None:
+    assert marks_reversal("노선은 바꾸지 않고 심야 운행은 하지 않기로 했다.")
+
+
+_WITHDRAWN_MOVES = [
+    ("가격은 올리지 않기로 했다.", "가격을 10% 올린다."),
+    ("인력은 늘리지 않기로 했다.", "인력을 두 명 늘린다."),
+    ("요금은 인상하지 않는다.", "요금을 5% 인상한다."),
+    ("가격은 안 올리기로 했다.", "가격 인상은 다음 달부터다."),
+    ("수수료는 내리지 말죠.", "수수료를 1%로 내린다."),
+]
+
+
+@pytest.mark.parametrize(("statement", "previous"), _WITHDRAWN_MOVES)
+def test_a_negated_move_the_earlier_decision_made_withdraws_it(
+    statement: str, previous: str
+) -> None:
+    assert marks_reversal(statement, previous)
+    assert not marks_keep(statement, previous)
+
+
+@pytest.mark.parametrize(("statement", "previous"), _WITHDRAWN_MOVES)
+def test_a_withdrawn_move_is_reversed_or_modified_never_unchanged(
+    statement: str, previous: str
+) -> None:
+    contradicted, _ = classify_change(_nli(0.0, 0.1, 0.9), _nli(0.0, 0.1, 0.9), statement, previous)
+    neutral, _ = classify_change(_nli(0.0, 0.9, 0.1), _nli(0.0, 0.9, 0.1), statement, previous)
+    assert contradicted is ChangeType.REVERSED
+    assert neutral is ChangeType.MODIFIED
+
+
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        ("가격은 올리지 말죠.", "가격은 만 원이다."),
+        ("가격은 올리지 않기로 했다.", "가격은 올리지 않는다."),
+        ("인원은 줄이지 않는다.", "인원을 두 명 늘린다."),
+        ("요금은 인상하지 않는다.", "요금을 인상하지 않는다."),
+    ],
+)
+def test_a_negated_move_the_earlier_decision_did_not_make_keeps_it(
+    statement: str, previous: str
+) -> None:
+    assert marks_keep(statement, previous)
+    assert not marks_reversal(statement, previous)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "서버 유지보수는 월 2회로 한다.",
+        "유지 보수 계약은 연장한다.",
+        "계속 논의하다가 회의를 주 2회로 한다.",
+        "그대로 두다가 다음 달에 올린다.",
+    ],
+)
+def test_a_keep_word_in_a_compound_or_a_clause_that_gives_way_is_not_a_keep(
+    statement: str,
+) -> None:
+    assert not marks_keep(statement)
 
 
 @pytest.mark.parametrize(
@@ -375,3 +510,63 @@ def test_the_nominaliser_geolo_reads_as_a_new_target_a_known_limit() -> None:
     assert marks_replacement(
         "재고 실사를 반기마다 하는 걸로 바꿔요.", "재고 실사는 분기마다 진행한다."
     )
+
+
+def test_a_terse_decision_threads_on_its_source_utterances() -> None:
+    """Statement to statement the pair is far apart; with both sides' source
+    utterances it is close -- the higher of the two decides, at the same threshold."""
+    heads = [_ThreadHead("thr_a", [1.0, 0.0], "", context_vector=[0.0, 1.0])]
+    assignment = _assign_decisions_to_threads(
+        [[0.0, 1.0]], heads, threshold=0.6, context_vectors=[[0.1, 0.99]]
+    )
+    assert assignment[0].thread_id == "thr_a"
+
+
+def test_without_source_utterances_the_score_is_the_statements() -> None:
+    heads = [_ThreadHead("thr_a", [1.0, 0.0])]
+    assert _assign_decisions_to_threads([[0.0, 1.0]], heads, 0.6, [None]) == {}
+    assert _assign_decisions_to_threads([[0.0, 1.0]], heads, 0.6) == {}
+
+
+class _Version:
+    def __init__(self, statement: str, ids: list[str] | None = None) -> None:
+        self.current_statement = statement
+        self.source_utterance_ids = ids or []
+
+
+class _AxisEmbedder:
+    """One axis per subject word."""
+
+    _AXES = ("마감", "배너")
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[float(axis in t) for axis in self._AXES] + [0.05] for t in texts]
+
+
+def test_a_terse_change_is_classified_on_the_line_closest_to_the_earlier_statement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = {"u1": "손님이 늘었어요.", "u2": "10시 마감은 지금대로 둡시다."}
+    monkeypatch.setattr(service, "_consented_texts", lambda session, ids: lines)
+    versions = [_Version("영업 마감은 밤 10시다."), _Version("그대로 두기로 했다.", ["u1", "u2"])]
+
+    assert _change_hypotheses(None, _AxisEmbedder(), versions) == ["10시 마감은 지금대로 둡시다."]  # type: ignore[arg-type]
+
+
+def test_a_statement_closer_than_its_lines_is_classified_as_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lines = {"u1": "배너 얘기도 했어요."}
+    monkeypatch.setattr(service, "_consented_texts", lambda session, ids: lines)
+    versions = [_Version("영업 마감은 밤 10시다."), _Version("영업 마감을 11시로 늦춘다.", ["u1"])]
+
+    assert _change_hypotheses(None, _AxisEmbedder(), versions) == ["영업 마감을 11시로 늦춘다."]  # type: ignore[arg-type]
+
+
+def test_with_no_readable_line_every_hypothesis_is_the_statement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service, "_consented_texts", lambda session, ids: {})
+    versions = [_Version("a"), _Version("b", ["u1"]), _Version("c")]
+
+    assert _change_hypotheses(None, _AxisEmbedder(), versions) == ["b", "c"]  # type: ignore[arg-type]

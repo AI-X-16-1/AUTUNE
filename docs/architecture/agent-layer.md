@@ -1251,7 +1251,7 @@ table is what was measured, not what worked.
   Section 3.
 - **A subagent calling another subagent.** Delegation goes through the main
   agent, one level deep. Section 3.2.
-- **Open-web search in Research, for now.** Research reads what the team already holds; uploaded material has no store yet.
+- **Open-web search in Research, for now.** Research reads what the team already holds: its own meetings. Uploaded material has a store (module B, #817), and Research does not read it.
   Section 13.3.
 - **The agent sending anything itself.** Outbound goes out through whoever owns
   the content — a module, or the subagent that wrote it — and always through
@@ -1327,7 +1327,7 @@ to, and under what agreement.** Two parts, and each carries a condition:
 - **Open-web search.** This one stays out of scope for the release. A search
   query *is* the payload — there is no feature-scoped subset of it to send the
   way there is for a prompt — and a general search engine is not a processor we
-  have terms with. So **Research reads only what the team already holds** — its own meetings today, uploaded material once there is a store for it — which is enough
+  have terms with. So **Research reads only what the team already holds** — its own meetings. Uploaded material has a store now (module B, #817), but Research does not read it: the one tool over it, `extraction.find_materials`, is off by default and on no subagent's or chat tool list — which is enough
   for the scenario in section 10 and asks nothing of anyone.
 
 Research changes when that call happens. With the agent layer on

@@ -11,7 +11,10 @@ import type { MaterialSettings } from "../types";
  *
  * Both choices are said in full before either is picked, including what
  * switching back does to what is already there: every upload has kept the
- * day it was given at its upload, so those past it go within the hour. While
+ * day it was given at its upload, so those past it go at an hourly check.
+ * The sentences say how often that check is made and give no deadline: a
+ * check can miss a row stored after it read the team, and one that fails is
+ * not made up before the next (the owner, 2026-10-13). While
  * the team keeps everything, the choice that would switch back says how many
  * that is -- the server's count -- before it is picked, since picking saves
  * (docs/architecture/privacy.md section 4; the owner, 2026-10-12). Any
@@ -50,9 +53,9 @@ export function MaterialKeepSetting({
   const switchingBack = !settings.keep_until_deleted
     ? ""
     : past === undefined
-      ? " 지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료는 한 시간 안에 지워지며, 복구할 수 없습니다."
+      ? " 지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료는 1시간마다 확인하여 지우며, 복구할 수 없습니다."
       : past > 0
-        ? ` 지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 ${past}건이 한 시간 안에 지워지며, 복구할 수 없습니다.`
+        ? ` 지금 이 방식으로 바꾸면 지워지는 날이 이미 지난 자료 ${past}건은 1시간마다 확인하여 지우며, 복구할 수 없습니다.`
         : " 지금 이 방식으로 바꿔도 곧바로 지워지는 자료는 없습니다.";
 
   const choices = [
@@ -65,7 +68,7 @@ export function MaterialKeepSetting({
       keep: true,
       label: "팀이 지울 때까지 보관",
       detail:
-        "기간이 지나도 지우지 않고, 팀 구성원이 직접 삭제할 때까지 보관합니다. 나중에 기간 삭제로 되돌리면 이미 올린 자료에도 각각 올릴 때 정해진 지워지는 날이 다시 적용되어, 그날이 지난 자료는 한 시간 안에 지워집니다.",
+        "기간이 지나도 지우지 않고, 팀 구성원이 직접 삭제할 때까지 보관합니다. 나중에 기간 삭제로 되돌리면 이미 올린 자료에도 각각 올릴 때 정해진 지워지는 날이 다시 적용되어, 그날이 지난 자료는 1시간마다 확인하여 지웁니다. 팀에 구성원이 한 명도 남지 않으면 이 선택과 관계없이 1시간마다 확인하여 팀의 자료를 모두 지웁니다.",
     },
   ] as const;
 

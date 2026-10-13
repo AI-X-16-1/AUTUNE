@@ -10,10 +10,13 @@ import type { PredictionsRead } from "../types";
 const INSUFFICIENT_HISTORY = "분석한 회의가 3회 이상이면 표시됩니다.";
 
 /**
- * The misalignment-risk prediction on S26 — probability in mono, per ui-spec.
+ * The misalignment risk on S26, titled 결정 재검토 가능성 — probability in
+ * mono, per ui-spec.
  *
- * What it predicts: the chance a decision from the team's latest meeting is
- * reversed within `horizon_days`. Whether to show it at all is the server's
+ * What it is: the chance a decision from the team's latest meeting is
+ * reversed within `horizon_days`. It is not titled a prediction, because the
+ * heuristic baseline is unvalidated and the title should not claim a forecast
+ * it has not earned. Whether to show it at all is the server's
  * call (#27: three meetings; four weeks once restored); this renders whatever
  * `/predictions` returns and never re-derives the gate.
  */
@@ -24,10 +27,10 @@ export function PredictionCard({ predictions }: { predictions: PredictionsRead |
     const message =
       predictions?.reason === "insufficient_history"
         ? INSUFFICIENT_HISTORY
-        : "아직 예측이 없습니다.";
+        : "아직 결정 재검토 가능성을 계산하지 않았습니다.";
     return (
       <HoverPreview mockup={<PredictionMockup />} side="left">
-        <DashboardCard title="예측">
+        <DashboardCard title="결정 재검토 가능성">
           <p style={metaStyle}>{message}</p>
         </DashboardCard>
       </HoverPreview>
@@ -38,7 +41,7 @@ export function PredictionCard({ predictions }: { predictions: PredictionsRead |
   const heuristic = prediction.model_version?.startsWith("heuristic") ?? false;
 
   return (
-    <DashboardCard title="예측">
+    <DashboardCard title="결정 재검토 가능성">
       <div
         style={{
           fontSize: "var(--text-title)",
@@ -50,11 +53,11 @@ export function PredictionCard({ predictions }: { predictions: PredictionsRead |
         {percent}%
       </div>
       <p style={{ ...metaStyle, marginTop: "var(--space-4)" }}>
-        결정 번복 위험 · {prediction.horizon_days}일 이내
+        {prediction.horizon_days}일 안에 재검토될 확률
       </p>
       <div
         role="img"
-        aria-label={`결정 번복 위험 ${percent}%`}
+        aria-label={`결정 재검토 가능성 ${percent}%`}
         style={{
           marginTop: "var(--space-8)",
           height: "var(--bar-thickness)",

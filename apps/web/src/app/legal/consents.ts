@@ -45,6 +45,23 @@
  * question a person types. The search's sentences came in here and not
  * with the search, which answers 404 while uploads are off.
  *
+ * `2026-10-12.6` for the privacy policy and `2026-10-12.4` for the terms (the
+ * owner, 2026-10-13). A team with no member left loses its uploaded documents,
+ * its links and its records of refused files at an hourly check, whatever it
+ * chose about keeping them (#817). The policy had said a person's withdrawal
+ * does not delete a team's documents; for a team's only member that is no
+ * longer the whole of it, so a person who agreed to `.5` agreed to a text that
+ * told them otherwise. Both documents also said "until the team is deleted"
+ * where they now add "or has no member left". The effective date stays.
+ * The same rise carries four corrections of what the documents said of a
+ * team's uploaded documents (the owner, 2026-10-13): the policy lists the
+ * vectors computed from the masked text and the model's name among what is
+ * kept; it says a number or an address split by a line or page break can be
+ * kept unmasked, that a material has no way to mask one part and can be
+ * deleted, and that the check before storing is the same method again; the
+ * terms say reporting a missed part is for the transcript; and the policy
+ * says a server's access record can hold the requested address.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -63,8 +80,8 @@ export interface RequiredConsent {
 }
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
-  { document: "terms", version: "2026-10-12.3" },
-  { document: "privacy", version: "2026-10-12.5" },
+  { document: "terms", version: "2026-10-12.4" },
+  { document: "privacy", version: "2026-10-12.6" },
 ];
 
 /** The required consents this person has not given, in the page's order. */
