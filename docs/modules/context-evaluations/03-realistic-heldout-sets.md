@@ -2,7 +2,7 @@
 
 **Written:** 2026-10-12 · **Owner:** 문민재 ·
 **Module:** Meeting Context Engine (`autune_context`) · **Status:** sets frozen; fixes 1
-and 2 measured on v4 (sections 7 and 8), per-case results unread
+and 2 measured on v4 (sections 7 and 8), fix 3 on v6 (section 9); per-case results unread
 
 Two demo meetings, run through the engine in `classic` mode, showed five weaknesses
 that the existing evaluation sets do not catch. Both were played from a made-up demo
@@ -303,3 +303,51 @@ user. Precision on v3 is 1.00, and no no-link meeting there gets a false link.
   view on any set.
 - v4 has now been run four times, aggregates only (section 4), and still counts as
   held-out for the next fix.
+
+## 9. Fix 3 (2026-10-12): decision lineage reads a decision's source utterances
+
+**Development data.** `decision_lineage_context_dev_v1.json` (30 cases) is v6's format
+with other subjects: a library, a bus company, a theatre, a kindergarten, a bakery, a
+sports club. It shares no statement with v6 or any earlier set. On it, today's code
+threaded 18 of 30, and every miss was a terse statement or a distractor. Embedding each
+statement together with its source utterances and taking the higher of the two cosines,
+at the existing `lineage_match_threshold` (0.65), threaded 28 of 30. At 0.60 it threaded
+29 but put a new decision on an old thread, so the threshold stays. Classifying the
+change type on the source utterances was also tried: on the closest utterance 15 of 22
+were right, on the statement plus the last utterance 16 of 22, and on the statements
+alone 17 of 22. So change type stays on the statements.
+
+**What changed** (`service._context_vectors`, `_ThreadHead.context_vector`,
+`_assign_decisions_to_threads`): a (decision, thread head) pair scores the higher of the
+statements' cosine and the cosine of each statement embedded together with its source
+utterances: B's `source_utterance_ids` for the decision, the stored ids for the head.
+Utterances are read at match time and only from speakers who consent. A side with none
+readable uses its statement, so a set without `context` (v1–v5) scores exactly as before.
+No new threshold. `llm` mode is unchanged and reads no utterance: the judge reads
+statements, so only the cosine path fetches sources.
+
+**Development set** (old: utterances not read; new: read; one process, same cases):
+accuracy 0.567 → 0.800, 7 fixed and 0 broken (p = 0.016); threading 0.60 → 0.93.
+
+**Held-out v6** (one run, the final code, aggregates only; per-case lines not read):
+
+| | utterances not read | read |
+| --- | --- | --- |
+| Accuracy (60 cases) | 34/60 = 0.567 | **48/60 = 0.800** |
+| Fixed / broken | | **14 / 0, sign test p = 0.0001** |
+| Threading | 0.650 | **0.967** |
+| Change type among correctly threaded non-new | 0.815 | 0.783 |
+| `terse_modified` / `terse_reversed` / `terse_unchanged` | 0/6 · 0/5 · 0/5 | 5/6 · 2/5 · 2/5 |
+| `terse_new` (must stay new) | 6/6 | 6/6 |
+| `distractor` / `chain` | 3/6 · 2/4 | 6/6 · 4/4 |
+| `unchanged` / `modified` / `reversed` / `new_same_domain` | 6/6 · 6/8 · 6/8 · 5/6 | the same |
+
+- **Established on held-out data.** 14 cases fixed, none broken. Reading the utterances
+  did not put a single unrelated decision on a thread: all six `terse_new` cases stay new.
+- **What is left is change type, not threading.** Terse decisions now find their thread
+  (threading 0.97), but "없던 걸로 한다" or "지금대로 간다" against the earlier full
+  statement is often classified wrong. NLI sees two sentences that share nothing.
+  Change type among threaded cases dips (0.815 → 0.783) because 22 terse cases now reach
+  classification at all. Fixing that needs a set that v6 is not.
+- v6 has now been run once, aggregates only, and still counts as held-out for a
+  change-type fix.

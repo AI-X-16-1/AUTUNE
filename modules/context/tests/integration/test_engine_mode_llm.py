@@ -206,6 +206,53 @@ def test_a_decision_is_threaded_and_classified_by_the_llm(
         assert first.change_type == "new"
 
 
+def test_the_llm_path_reads_no_source_utterance(
+    team_id: str, llm_answers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The judge reads statements; only the cosine path compares source
+    # utterances, so in llm mode none may be read or embedded.
+    earlier = _meeting(team_id, days_ago=10)
+    later = _meeting(team_id, days_ago=0)
+    _persist(earlier, ["정렬은 최신순으로 하죠."])
+    _persist(later, ["인기순이 낫겠어요."])
+    llm_answers["default"] = _relation("reversed", 0.9)
+
+    def no_read(*args: object, **kwargs: object) -> None:
+        raise AssertionError("llm mode read source utterances")
+
+    monkeypatch.setattr(service, "_context_vectors", no_read)
+
+    for meeting_id, dec_id, statement in (
+        (earlier, "dec_1", "정렬은 최신순으로 한다"),
+        (later, "dec_2", "정렬은 인기순으로 바꾼다"),
+    ):
+        service.build_decision_lineage(
+            ExtractionResult(
+                meeting_id=meeting_id,
+                decisions=[
+                    Decision(
+                        id=dec_id,
+                        statement=statement,
+                        source_utterance_ids=[f"utt_{meeting_id}_0"],
+                        confidence=0.9,
+                    )
+                ],
+            )
+        )
+    # Run again: the meeting's own versions are matched back without reading either.
+    service.build_decision_lineage(_extraction(later, "dec_3", "정렬은 인기순으로 바꾼다"))
+
+    with session_scope() as s:
+        threads = set(
+            s.scalars(
+                select(CtxDecisionVersion.thread_id).where(
+                    CtxDecisionVersion.meeting_id.in_([earlier, later])
+                )
+            )
+        )
+    assert len(threads) == 1
+
+
 def test_a_decision_the_llm_calls_unrelated_opens_its_own_thread(
     team_id: str, llm_answers: dict[str, str]
 ) -> None:
