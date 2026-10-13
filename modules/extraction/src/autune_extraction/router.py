@@ -16,6 +16,8 @@ only with ``AUTUNE_ENV=local`` and its own opt-in (see ``dev_routes_enabled``).
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 
@@ -48,6 +50,7 @@ from . import (
 )
 from .config import get_settings
 from .notion_setup import NotionSetupError
+from .pipeline import registry
 from .schemas import (
     ActionItemCreate,
     ActionItemDetail,
@@ -94,7 +97,24 @@ from .schemas import (
     TeamRead,
 )
 
-router = APIRouter()
+
+@asynccontextmanager
+async def _started(_app: Any) -> AsyncIterator[None]:
+    """What module B does once in a process that serves this router.
+
+    apps/api includes every module's router, and FastAPI runs an included
+    router's lifespan with the app's own; the workers and beat import
+    ``tasks`` and never come here. So this is the api's start and nothing
+    else's, without a line under ``apps/`` (invariant 6).
+
+    It starts the local material embedder's load in the background where
+    uploads are on (``registry.warm_material_embedder``) and waits for
+    nothing: ``/health`` answers while the weights are read."""
+    registry.warm_material_embedder()
+    yield
+
+
+router = APIRouter(lifespan=_started)
 
 
 def dev_routes_enabled() -> bool:

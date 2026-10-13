@@ -180,7 +180,15 @@ describe("an upload with no answer", () => {
     expect(mayHaveStored(new ApiError(500, "internal_error", "boom"))).toBe(true);
     expect(uploadRefusal(dropped, RULES)).toBe(UNANSWERED);
     expect(uploadRefusal(failed, RULES)).toBe(UNANSWERED);
-    expect(UNANSWERED).toMatch(/목록에 자료가 보이지 않으면/);
+  });
+
+  it("asks for a second look at the list before a second upload: the server may still be storing it", () => {
+    // Seen through the app: the proxy gave up at 30 s, the list read at once
+    // was empty, and the file was stored 75 s later. A member told "not in the
+    // list means not stored, upload again" had it twice.
+    expect(UNANSWERED).toMatch(/아직 진행 중일 수 있으니 1~2분 뒤/);
+    expect(UNANSWERED).toMatch(/그때도 자료가 보이지 않으면 다시 올려 주세요/);
+    expect(UNANSWERED).not.toMatch(/저장되지 않은 것/);
   });
 
   it("knows a refusal stored nothing", () => {

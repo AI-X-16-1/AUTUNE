@@ -12,6 +12,7 @@ reason as ``LocalDeberta`` and ``LocalQwenResolver``.
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -66,24 +67,47 @@ class LocalKureEmbedder:
         self._checkpoint = checkpoint
         self._device = device
         self._model: Any = None
+        self._loading = threading.Lock()
 
     @property
     def model_version(self) -> str:
         return self._checkpoint
 
+    def load(self) -> None:
+        """Read the weights now instead of at the first text. Takes as long
+        as the first ``embed`` otherwise would -- over a minute where the
+        files are not in the operating system's cache -- so the api calls it
+        off the request path (``registry.warm_material_embedder``)."""
+        self._load()
+
     def _load(self) -> None:
         if self._model is not None:
             return
-        try:
-            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
-        except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
-            raise RuntimeError(
-                "the local embedder needs the 'local-models' extra: "
-                "uv sync --package autune-extraction --extra local-models"
-            ) from exc
+        # One load, whoever asks first. Without the lock two requests that
+        # both found no model each read the weights -- about 2 GB twice --
+        # and the second to finish replaced the first. A caller that finds a
+        # load under way waits for it here.
+        with self._loading:
+            if self._model is not None:
+                return
+            # Said before as well as after: a load is the slowest thing this
+            # process does, and a log with only its end cannot say how long
+            # it took or that one is under way. Before the import too -- the
+            # library's import is the longer part of a load whose files the
+            # operating system already holds.
+            log.info(
+                "extraction_embedder_loading", checkpoint=self._checkpoint, device=self._device
+            )
+            try:
+                from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+            except ModuleNotFoundError as exc:  # pragma: no cover - depends on optional extra
+                raise RuntimeError(
+                    "the local embedder needs the 'local-models' extra: "
+                    "uv sync --package autune-extraction --extra local-models"
+                ) from exc
 
-        self._model = SentenceTransformer(self._checkpoint, device=self._device)
-        log.info("extraction_embedder_loaded", checkpoint=self._checkpoint, device=self._device)
+            self._model = SentenceTransformer(self._checkpoint, device=self._device)
+            log.info("extraction_embedder_loaded", checkpoint=self._checkpoint, device=self._device)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:

@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 import autune_core.entities  # noqa: F401  (shared tables: meetings, users, ...)
 import autune_extraction.models  # noqa: F401  (ext_ tables)
 from autune_core import get_settings
+from autune_extraction.pipeline import registry
 
 
 def repo_root() -> Path:
@@ -56,3 +57,14 @@ def db_session(db_engine: sa.Engine) -> Iterator[Session]:
         session.close()
         transaction.rollback()
         connection.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_model_load_at_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A test that enters ``TestClient`` as a context starts the api, and module
+    B's start reads the local embedder's weights where uploads are on
+    (``registry.warm_material_embedder``). These tests read the developer's
+    own ``.env``; with the two switches on there, such a test would hold about
+    2 GB in a thread that outlives it. The start itself is tested in
+    ``unit/test_material_warm_up.py``, over a stand-in for the weights."""
+    monkeypatch.setattr(registry, "warm_material_embedder", lambda: None)
