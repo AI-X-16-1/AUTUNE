@@ -1368,9 +1368,19 @@ document; a sheet; a slide, a slide master, a notes master or a handout
 master. **Not reached, and so still left unread in a file that is taken:**
 what a sheet, a slide or a master names in turn -- a sheet's cell notes and
 text boxes, a slide's speaker notes, comments and SmartArt, a master's
-layouts -- and the document properties, when one has another name than the
-usual. One such name is known to be written and is read like the usual one:
+layouts. One such name is known to be written and is read like the usual one:
 openpyxl (3.1.5) writes a sheet's cell notes to `xl/comments/comment1.xml`.
+
+**The document properties are read where the package names them.** A file's
+title, subject, keywords and custom properties are looked at for a marking
+in whatever part the package's own relationships give for them -- Office
+writes `docProps/core.xml` and `docProps/custom.xml`, and three files of 597
+surveyed kept theirs under `docProps/core0.xml` and the like -- and under the
+usual names too, named or not. A package that names a properties part which
+is not in the file, or which lies outside it, is refused as `damaged`, and so
+is one whose own relationships cannot be read; nothing outside the file is
+ever fetched. The properties that say who wrote the file
+(`docProps/app.xml`: company, manager) are not read.
 
 **The gap no reader closes:** a marking or a phone number that exists only as
 a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not

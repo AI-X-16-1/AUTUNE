@@ -54,9 +54,10 @@ reaches what a document, a workbook and a presentation name themselves --
 headers, footers, notes and comments; sheets; slides and masters. It does not
 reach what a sheet, a slide or a master names in turn (a sheet's notes and
 text boxes, a slide's speaker notes, comments and SmartArt, a master's
-layouts) nor the document properties: one of those under another name is
-still left unread, and the file is taken. One such name is known to be
-written and is read: openpyxl's for a sheet's notes (``_xlsx``).
+layouts): one of those under another name is still left unread, and the file
+is taken. One such name is known to be written and is read: openpyxl's for a
+sheet's notes (``_xlsx``). The document properties are not found by name
+alone: they are read where the package names them (``_Package.properties``).
 
 **What a reader raises.** ``RefusedError`` for what it recognises, by reason
 code. Anything else -- its own or its library's -- is a damaged file, and
@@ -74,7 +75,7 @@ import posixpath
 import re
 import struct
 import zipfile
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import IO, Any, Literal, cast
@@ -348,18 +349,30 @@ class _Package:
         letter for letter. A file without the relationship part names nothing,
         and is read by name as before: a ``.docx`` with no header has no need
         of one."""
+        read = set(self.parsed)
+        if any(target not in read for _, target in self.named(part, kinds)):
+            raise RefusedError("damaged")
+
+    def named(self, part: str, kinds: Collection[str]) -> list[tuple[str, str]]:
+        """What ``part``'s own relationships name of ``kinds``: the kind and
+        the part's name for each, in the order they are written. ``""`` is the
+        package itself. A name is the one the relationship gives, made whole:
+        one that is not in the file -- a part that is missing, one outside
+        the package, an address somewhere else -- comes back as written, and
+        is no part that can be read. Nothing is ever fetched."""
         folder, _, last = part.rpartition("/")
         wanted = posixpath.join(folder, "_rels", f"{last}.rels").casefold()
-        read = set(self.parsed)
+        found: list[tuple[str, str]] = []
         for relationships in [name for name in self.names if name.casefold() == wanted]:
             for _, tag, element, _ in self.events(relationships):
                 if tag != "Relationship":
                     continue
-                if element.get("Type", "").rsplit("/", 1)[-1] not in kinds:
+                kind = element.get("Type", "").rsplit("/", 1)[-1]
+                if kind not in kinds:
                     continue
                 target = posixpath.normpath(posixpath.join(folder, element.get("Target", "")))
-                if target.lstrip("/") not in read:
-                    raise RefusedError("damaged")
+                found.append((kind, target.lstrip("/")))
+        return found
 
     def counted(self, said: str) -> str:
         """``said``, which is going into the file's text or its marks, counted
@@ -441,14 +454,36 @@ class _Package:
 
     def properties(self) -> str:
         """Title, subject, keywords, category, description and custom
-        properties (a sensitivity label is one). Not the author."""
+        properties (a sensitivity label is one). Not the author.
+
+        They are read where the package says they are (#1252): its own
+        relationships name the part that holds each kind, and Office writes
+        ``docProps/core.xml`` and ``docProps/custom.xml`` but need not. Every
+        part the package names of either kind is read, however many, and so
+        is the one under the usual name whether it is named or not -- a
+        package that names none is read as it was. One that names a
+        properties part which is not in the file, or points outside it, is
+        refused (``damaged``): what the file calls its label cannot be looked
+        at. So is one whose relationships are not XML that can be read."""
+        parts: dict[str, list[str]] = {
+            "core": ["docProps/core.xml"],
+            "custom": ["docProps/custom.xml"],
+        }
+        for kind, name in self.named("", _PROPERTY_KINDS):
+            if name not in self.names:
+                raise RefusedError("damaged")
+            if name not in parts[_PROPERTY_KINDS[kind]]:
+                parts[_PROPERTY_KINDS[kind]].append(name)
         found: list[str] = []
-        if "docProps/core.xml" in self.names:
-            found += self.texts("docProps/core.xml", _LABELS)
-        if "docProps/custom.xml" in self.names:
+        for name in parts["core"]:
+            if name in self.names:
+                found += self.texts(name, _LABELS)
+        for name in parts["custom"]:
+            if name not in self.names:
+                continue
             # A property is an element straight under the part's first: its
             # name, then what each element straight under it says.
-            for event, _, element, depth in self.events("docProps/custom.xml", opening=True):
+            for event, _, element, depth in self.events(name, opening=True):
                 if event == "start" and depth == 1:
                     found.append(element.get("name", ""))
                 elif event == "end" and depth == 2:
@@ -485,6 +520,16 @@ a few dozen tags and a part can hold millions of elements. A part made of
 other names cannot make the list longer than that."""
 
 _LABELS = frozenset({"title", "subject", "keywords", "category", "description", "contentStatus"})
+
+_PROPERTY_KINDS = {
+    "core-properties": "core",
+    "custom-properties": "custom",
+    "customProperties": "custom",
+}
+"""The kinds of part a package names that hold its properties, as the last
+step of the relationship's type, and which of the two each is. The Strict
+flavour spells the custom ones ``customProperties``. The properties that say
+who wrote the file and with what (``extended-properties``) are not read."""
 
 
 def _footer_placeholder(tag: str, element: ElementTree.Element) -> bool:
