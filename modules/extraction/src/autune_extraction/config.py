@@ -443,10 +443,11 @@ class ExtractionSettings(BaseSettings):
 
     ``fake`` by default, which finds by shared characters rather than meaning
     -- enough for tests, and for nothing that keeps a team's uploads: with
-    ``material_upload`` on, these settings refuse to load. ``hosted`` is where
-    the rule (``privacy.md``) says a material's vectors are made; it is given
-    masked text only, and nothing else here sends a material's text or a
-    question out of this process. A search finds only pieces embedded by the
+    ``material_upload`` on, these settings refuse to load. The rule
+    (``privacy.md``) has a material's vectors made in this process or on our
+    own inference server; ``hosted`` is the second, and is given masked text
+    only. Nothing else here sends a material's text or a question out of this
+    process. A search finds only pieces embedded by the
     embedder it asks with, so switching between implementations that record
     different versions leaves earlier uploads unfound until they are uploaded
     again (``material_search``)."""
