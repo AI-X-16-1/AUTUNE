@@ -128,7 +128,8 @@ _SPECS: dict[str, tuple[str, dict[str, Any]]] = {
     ),
     "intelligence.recurring_gaps": ("Gap patterns the team keeps leaving, with examples.", {}),
     "intelligence.misalignment_risk": (
-        "The model's probability that the team's decisions get reversed.",
+        "The model's probability that the team's decisions get reversed; the dashboard "
+        "calls it 결정 재검토 가능성.",
         {},
     ),
     "intelligence.role_alignment": ("How closely role pairs agree, lowest first.", {}),
