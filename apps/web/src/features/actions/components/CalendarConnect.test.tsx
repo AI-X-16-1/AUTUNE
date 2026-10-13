@@ -122,11 +122,14 @@ describe("CalendarConnect", () => {
     // What is kept is said, and not folded into "nothing is stored".
     expect(line).toContain("읽은 일정 목록·설명·주소는 저장하지 않습니다.");
     expect(line).toContain("어느 일정에 적었는지는 나중에 지울 수 있도록 기록하고");
-    // The event's day is kept too, and somebody else is shown it with a name.
+    // The event's day is kept too.
     expect(line).not.toContain("적었는지만");
     expect(line).toContain("그 일정이 시작하는 날짜도 함께 기록합니다");
-    expect(line).toContain("후속 조치를 승인하는 사람에게 다음 회의 날짜 후보로");
-    expect(line).toContain("고른 사람의 이름과 함께 보입니다");
+    // Nothing shows that day to anyone yet -- no card reads C's
+    // `gap.next_meeting_days` (#1051) -- so the card must not say an approver
+    // sees it. These two come out with the change that draws it.
+    expect(line).not.toContain("승인하는 사람에게");
+    expect(line).not.toContain("이름과 함께 보입니다");
   });
 
   it("says it to somebody already connected, and where out-of-office time is read too", async () => {
