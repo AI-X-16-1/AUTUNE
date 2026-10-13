@@ -40,6 +40,16 @@ format has and the first ``HEAD_LINES`` lines of what the file opens on:
 An ``.xls`` print footer and an old ``.ppt``'s slide footers are not read by
 these readers.
 
+**A ``.docx`` watermark is looked at too** (#1252). Word's "Confidential"
+across the page is a shape in a page header whose words are not text in the
+part: they are an attribute of the shape (``v:textpath``'s ``string``), and
+a reader of element text passes them by. The words of every such shape in a
+header or a footer go to the marking check with the file's label -- and
+nowhere else: they are not in ``text``, so they are neither kept nor
+searched. Words drawn the same way in the body of a document, and anything
+drawn in an ``.xlsx`` or a ``.pptx``, are still not seen; neither is a
+watermark that is a picture.
+
 **A PDF with a page that is only a picture is refused whole**: what such a
 page says can be neither checked for a marking nor masked. A page with a
 picture and fewer than ``MIN_PAGE_CHARS`` characters beside it -- a scan that
@@ -51,12 +61,17 @@ names; the file's own relationships may give one any name, and one under
 another name was left unread and unchecked without a word. It is still not
 read: the file is refused as ``damaged`` (``_Package.named_were_read``). This
 reaches what a document, a workbook and a presentation name themselves --
-headers, footers, notes and comments; sheets; slides and masters. It does not
-reach what a sheet, a slide or a master names in turn (a sheet's notes and
-text boxes, a slide's speaker notes, comments and SmartArt, a master's
-layouts) nor the document properties: one of those under another name is
-still left unread, and the file is taken. One such name is known to be
-written and is read: openpyxl's for a sheet's notes (``_xlsx``).
+headers, footers, notes and comments; sheets; slides and masters -- and one
+kind a level down, because the marking check looks there: the layouts a
+slide master or a slide names. It does not reach the rest of what a sheet or
+a slide names in turn (a sheet's notes and text boxes, a slide's speaker
+notes, comments and SmartArt): one of those under another name is still left
+unread, and the file is taken -- no marking is looked for in them under any
+name. One such name is known to be written and is read: openpyxl's for a
+sheet's notes (``_xlsx``). The document properties are not found by name
+alone: they are read where the package names them (``_Package.properties``).
+A workbook that names a macro sheet or a dialog sheet is refused the same
+way: they are sheets, and no reader here reads them (``_BOOK_KINDS``).
 
 **What a reader raises.** ``RefusedError`` for what it recognises, by reason
 code. Anything else -- its own or its library's -- is a damaged file, and
@@ -74,7 +89,7 @@ import posixpath
 import re
 import struct
 import zipfile
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import IO, Any, Literal, cast
@@ -348,18 +363,30 @@ class _Package:
         letter for letter. A file without the relationship part names nothing,
         and is read by name as before: a ``.docx`` with no header has no need
         of one."""
+        read = set(self.parsed)
+        if any(target not in read for _, target in self.named(part, kinds)):
+            raise RefusedError("damaged")
+
+    def named(self, part: str, kinds: Collection[str]) -> list[tuple[str, str]]:
+        """What ``part``'s own relationships name of ``kinds``: the kind and
+        the part's name for each, in the order they are written. ``""`` is the
+        package itself. A name is the one the relationship gives, made whole:
+        one that is not in the file -- a part that is missing, one outside
+        the package, an address somewhere else -- comes back as written, and
+        is no part that can be read. Nothing is ever fetched."""
         folder, _, last = part.rpartition("/")
         wanted = posixpath.join(folder, "_rels", f"{last}.rels").casefold()
-        read = set(self.parsed)
+        found: list[tuple[str, str]] = []
         for relationships in [name for name in self.names if name.casefold() == wanted]:
             for _, tag, element, _ in self.events(relationships):
                 if tag != "Relationship":
                     continue
-                if element.get("Type", "").rsplit("/", 1)[-1] not in kinds:
+                kind = element.get("Type", "").rsplit("/", 1)[-1]
+                if kind not in kinds:
                     continue
                 target = posixpath.normpath(posixpath.join(folder, element.get("Target", "")))
-                if target.lstrip("/") not in read:
-                    raise RefusedError("damaged")
+                found.append((kind, target.lstrip("/")))
+        return found
 
     def counted(self, said: str) -> str:
         """``said``, which is going into the file's text or its marks, counted
@@ -373,14 +400,27 @@ class _Package:
             raise RefusedError("too_long")
         return said
 
-    def runs(self, name: str, *, text: frozenset[str] = frozenset({"t"})) -> str:
+    def runs(
+        self,
+        name: str,
+        *,
+        text: frozenset[str] = frozenset({"t"}),
+        drawn: list[str] | None = None,
+    ) -> str:
         """A part's text in document order: every element named in ``text``,
-        with a line break after each paragraph, row or line break."""
+        with a line break after each paragraph, row or line break.
+
+        ``drawn`` is given the words a shape draws along a path, which are
+        an attribute and no element's text -- a Word watermark is one. They
+        are not part of what is returned."""
         said = io.StringIO()
         for _, tag, element, _ in self.events(name):
             if tag in text:
                 if element.text:
                     said.write(self.counted(element.text))
+            elif tag == "textpath":
+                if drawn is not None and element.get("string"):
+                    drawn.append(self.counted(element.get("string", "")))
             elif tag in ("p", "br", "tr", "row", "comment", "cm"):
                 said.write("\n")
             elif tag in ("tab", "tc"):
@@ -441,14 +481,36 @@ class _Package:
 
     def properties(self) -> str:
         """Title, subject, keywords, category, description and custom
-        properties (a sensitivity label is one). Not the author."""
+        properties (a sensitivity label is one). Not the author.
+
+        They are read where the package says they are (#1252): its own
+        relationships name the part that holds each kind, and Office writes
+        ``docProps/core.xml`` and ``docProps/custom.xml`` but need not. Every
+        part the package names of either kind is read, however many, and so
+        is the one under the usual name whether it is named or not -- a
+        package that names none is read as it was. One that names a
+        properties part which is not in the file, or points outside it, is
+        refused (``damaged``): what the file calls its label cannot be looked
+        at. So is one whose relationships are not XML that can be read."""
+        parts: dict[str, list[str]] = {
+            "core": ["docProps/core.xml"],
+            "custom": ["docProps/custom.xml"],
+        }
+        for kind, name in self.named("", _PROPERTY_KINDS):
+            if name not in self.names:
+                raise RefusedError("damaged")
+            if name not in parts[_PROPERTY_KINDS[kind]]:
+                parts[_PROPERTY_KINDS[kind]].append(name)
         found: list[str] = []
-        if "docProps/core.xml" in self.names:
-            found += self.texts("docProps/core.xml", _LABELS)
-        if "docProps/custom.xml" in self.names:
+        for name in parts["core"]:
+            if name in self.names:
+                found += self.texts(name, _LABELS)
+        for name in parts["custom"]:
+            if name not in self.names:
+                continue
             # A property is an element straight under the part's first: its
             # name, then what each element straight under it says.
-            for event, _, element, depth in self.events("docProps/custom.xml", opening=True):
+            for event, _, element, depth in self.events(name, opening=True):
                 if event == "start" and depth == 1:
                     found.append(element.get("name", ""))
                 elif event == "end" and depth == 2:
@@ -486,6 +548,16 @@ other names cannot make the list longer than that."""
 
 _LABELS = frozenset({"title", "subject", "keywords", "category", "description", "contentStatus"})
 
+_PROPERTY_KINDS = {
+    "core-properties": "core",
+    "custom-properties": "custom",
+    "customProperties": "custom",
+}
+"""The kinds of part a package names that hold its properties, as the last
+step of the relationship's type, and which of the two each is. The Strict
+flavour spells the custom ones ``customProperties``. The properties that say
+who wrote the file and with what (``extended-properties``) are not read."""
+
 
 def _footer_placeholder(tag: str, element: ElementTree.Element) -> bool:
     return tag == "ph" and element.get("type") == "ftr"
@@ -494,12 +566,21 @@ def _footer_placeholder(tag: str, element: ElementTree.Element) -> bool:
 _WORD_TEXT = frozenset({"t", "delText"})
 
 _WORD_KINDS = frozenset({"header", "footer", "footnotes", "endnotes", "comments"})
-_BOOK_KINDS = frozenset({"worksheet"})
+_BOOK_KINDS = frozenset({"worksheet", "xlMacrosheet", "xlIntlMacrosheet", "dialogsheet"})
 _SHOW_KINDS = frozenset({"slide", "slideMaster", "notesMaster", "handoutMaster"})
 """The kinds of part a document, a workbook and a presentation name in their
 own relationships that the readers below read, and so must have read
 (``_Package.named_were_read``). A chart sheet is a kind of its own and is not
-read; it is told of as a chart."""
+read; it is told of as a chart. A macro sheet and a dialog sheet are sheets
+no reader here reads -- cells and a print header like any sheet's, kept
+under ``xl/macrosheets/`` and ``xl/dialogsheets/`` -- so a workbook that
+names one is refused: what such a sheet says can be neither checked for a
+marking nor masked. One kept under a worksheet's name is read as a sheet."""
+
+_LAYOUT_KINDS = frozenset({"slideLayout"})
+"""What a slide master and a slide name that must have been read too: a
+layout is where a deck's "Confidential" is stamped, and it is read for the
+marking check."""
 
 
 def _docx(data: bytes | bytearray) -> FileText:
@@ -507,11 +588,15 @@ def _docx(data: bytes | bytearray) -> FileText:
     if "word/document.xml" not in package.names:
         raise RefusedError("damaged")
     body = package.runs("word/document.xml", text=_WORD_TEXT)
+    # A watermark is a shape in a header; Word keeps it nowhere else.
+    drawn: list[str] = []
     headers = [
-        package.runs(part, text=_WORD_TEXT) for part in package.matching(r"word/header\d*\.xml")
+        package.runs(part, text=_WORD_TEXT, drawn=drawn)
+        for part in package.matching(r"word/header\d*\.xml")
     ]
     footers = [
-        package.runs(part, text=_WORD_TEXT) for part in package.matching(r"word/footer\d*\.xml")
+        package.runs(part, text=_WORD_TEXT, drawn=drawn)
+        for part in package.matching(r"word/footer\d*\.xml")
     ]
     parts = package.matching(r"word/(footnotes|endnotes|comments)\.xml")
     found.text = [
@@ -524,6 +609,7 @@ def _docx(data: bytes | bytearray) -> FileText:
     found.head += headers
     found.foot += footers
     found.marks.append(package.properties())
+    found.marks += drawn
     package.besides("word", found)
     package.named_were_read("word/document.xml", _WORD_KINDS)
     return found.done()
@@ -706,6 +792,9 @@ def _pptx(data: bytes | bytearray) -> FileText:
     found.marks.append(package.properties())
     package.besides("ppt", found)
     package.named_were_read("ppt/presentation.xml", _SHOW_KINDS)
+    # A layout is named by its master, and by each slide laid out on it.
+    for part in (*package.matching(r"ppt/slideMasters/slideMaster\d+\.xml"), *slides):
+        package.named_were_read(part, _LAYOUT_KINDS)
     return found.done()
 
 

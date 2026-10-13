@@ -23,6 +23,13 @@ import { getNotificationPause } from "../api";
  * Nothing shows until the status is known, and nothing shows for a visitor
  * without a session: a button that could only fail is worse than none.
  *
+ * **That a date moved there comes back is said here**, connected or not: the
+ * button's label says dates go in, and the same grant reads the events Autune
+ * put there, so a day the person drags becomes the item's due date -- on the
+ * team's board, and in the team's Notion where one is connected, since the
+ * edit is synced onward like one made on the board. Only Autune's own events
+ * are asked for, by the private tag it wrote on them.
+ *
  * **Where this server also reads out-of-office time, it says so here** --
  * beside the button, before the person connects, and beside "연결됨" for
  * someone who connected earlier (PARKJAEKYUNG0525, review of #838). Putting
@@ -43,7 +50,10 @@ import { getNotificationPause } from "../api";
  * said here -- it is not a use of the calendar connection. Each sentence
  * about what is *not* read is about one read
  * only: "no title, no other event" is true of the out-of-office read and
- * false of the picker.
+ * false of the picker. What is kept from the picked event is said whole:
+ * which event the line went onto, and the day it starts
+ * (`gap_agenda_events.event_day`), which the Follow-up card offers the
+ * approver among the next meeting's dates with the picker's name beside it.
  *
  * **What a ticked 휴가 기간 writes is said here as well** (the user,
  * 2026-10-06): the same grant puts the person's own leave on their calendar
@@ -160,6 +170,15 @@ export function CalendarConnect() {
           내 Google 캘린더에 마감일 넣기
         </Button>
       )}
+      <span
+        className="basis-full text-[var(--color-ink-muted)]"
+        style={{ fontSize: "var(--text-metaSmall)" }}
+      >
+        Autune이 넣은 마감일 일정을 내 캘린더에서 다른 날로 옮기면, 그 할 일의 마감일도 10분쯤
+        안에 그 날로 바뀝니다. 바뀐 마감일은 팀 보드에 보이고, 팀이 Notion을 연결했다면
+        Notion에도 반영됩니다. 이를 위해 Autune이 넣은 일정만 다시 읽으며, 내 캘린더의 다른
+        일정은 읽지 않습니다.
+      </span>
       {readsLeave ? (
         <span
           className="basis-full text-[var(--color-ink-muted)]"
@@ -178,8 +197,10 @@ export function CalendarConnect() {
         갭 화면의 &lsquo;다음 회의 잡기&rsquo;를 직접 누를 때에만, 내 캘린더의 앞으로 2주
         일정(제목과 시간)을 읽어 고를 수 있게 보여 주고, 고른 일정의 설명과 참석자 주소를 읽어
         그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
-        이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않고, 어느
-        일정에 적었는지만 나중에 지울 수 있도록 기록합니다.
+        이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않습니다. 어느
+        일정에 적었는지는 나중에 지울 수 있도록 기록하고, 그 일정이 시작하는 날짜도 함께
+        기록합니다. 이 날짜는 후속 조치를 승인하는 사람에게 다음 회의 날짜 후보로, 고른 사람의
+        이름과 함께 보입니다.
       </span>
       <span
         className="basis-full text-[var(--color-ink-muted)]"

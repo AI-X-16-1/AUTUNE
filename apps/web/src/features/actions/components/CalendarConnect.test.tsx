@@ -28,6 +28,7 @@ afterEach(() => {
 const NONE = { starts_on: null, ends_on: null };
 const NOTICE = /부재중.*일정이 언제부터/;
 const PICKER = /다음 회의 잡기/;
+const READ_BACK = /다른 날로 옮기면/;
 const connectButton = () => screen.findByRole("button", { name: "내 Google 캘린더에 마감일 넣기" });
 
 describe("CalendarConnect", () => {
@@ -77,6 +78,33 @@ describe("CalendarConnect", () => {
     expect(container.textContent).not.toContain("일정의 제목이나 다른 일정은 읽지");
   });
 
+  it("says before the person connects that a date moved in the calendar comes back", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: false });
+    render(<CalendarConnect />);
+
+    await connectButton();
+    const line = (await screen.findByText(READ_BACK)).textContent ?? "";
+    expect(line).toContain("그 할 일의 마감일도 10분쯤 안에 그 날로 바뀝니다");
+    // Where the moved date then goes is said, not only that it is read.
+    expect(line).toContain("팀 보드에 보이고");
+    expect(line).toContain("팀이 Notion을 연결했다면 Notion에도 반영됩니다");
+    // About this read only: the picker below does read other events.
+    expect(line).toContain("이를 위해 Autune이 넣은 일정만 다시 읽으며");
+  });
+
+  it.each([
+    ["to somebody already connected", { connected: true }, { ...NONE, calendar_leave: true }],
+    ["when the server cannot be asked about out-of-office time", { connected: false }, null],
+  ])("says it %s", async (_when, state, paused) => {
+    connection.mockResolvedValue(state);
+    if (paused) pause.mockResolvedValue(paused);
+    else pause.mockRejectedValue(new Error("500"));
+    render(<CalendarConnect />);
+
+    expect(await screen.findByText(READ_BACK)).toBeTruthy();
+  });
+
   it("says what pressing '다음 회의 잡기' reads and writes, before the person connects", async () => {
     connection.mockResolvedValue({ connected: false });
     pause.mockResolvedValue({ ...NONE, calendar_leave: false });
@@ -92,7 +120,13 @@ describe("CalendarConnect", () => {
     expect(line).toContain("이미 초대된 사람들에게 Google이 내");
     expect(line).toContain("일정 변경 알림을 보냅니다");
     // What is kept is said, and not folded into "nothing is stored".
-    expect(line).toContain("어느 일정에 적었는지만");
+    expect(line).toContain("읽은 일정 목록·설명·주소는 저장하지 않습니다.");
+    expect(line).toContain("어느 일정에 적었는지는 나중에 지울 수 있도록 기록하고");
+    // The event's day is kept too, and somebody else is shown it with a name.
+    expect(line).not.toContain("적었는지만");
+    expect(line).toContain("그 일정이 시작하는 날짜도 함께 기록합니다");
+    expect(line).toContain("후속 조치를 승인하는 사람에게 다음 회의 날짜 후보로");
+    expect(line).toContain("고른 사람의 이름과 함께 보입니다");
   });
 
   it("says it to somebody already connected, and where out-of-office time is read too", async () => {
