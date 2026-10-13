@@ -6,7 +6,9 @@ those places could be missed in a file that was taken all the same:
 - the document properties, which a package may keep under any name: they are
   read where the package's own relationships say they are;
 - a deck's layouts, which a slide master and a slide name and may name
-  anything: a deck with one under another name is refused.
+  anything: a deck with one under another name is refused;
+- a Word watermark, whose words are an attribute of a shape and no element's
+  text: the words of a header's and a footer's shapes are looked at.
 
 Every value here is invented.
 """
@@ -16,12 +18,15 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.orm import Session
 
-from autune_extraction.material_reading import UnreadableFileError
+from autune_extraction import material_formats
+from autune_extraction.material_formats import RefusedError
+from autune_extraction.material_reading import MAX_TEXT_CHARS, UnreadableFileError
 from autune_extraction.materials import ConfidentialFileError
 
 from .test_material_formats import (
     AUTHOR,
     PHONE,
+    W,
     alarms,
     core,
     package,
@@ -346,3 +351,109 @@ def test_what_a_slide_names_besides_its_layout_is_still_not_reached() -> None:
     parts["ppt/notes/first.xml"] = slide("발표자 노트")
 
     assert read("a.pptx", parts).text == "첫 장"
+
+
+# --- a Word watermark -----------------------------------------------------------------
+
+VML = 'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
+SHAPE_TYPE = (
+    '<v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" adj="10800" '
+    'path="m@7,l@8,m@5,21600l@6,21600e"><v:path textpathok="t" o:connecttype="custom"/>'
+    '<v:textpath on="t" fitshape="t"/></v:shapetype>'
+)
+
+
+def drawn(words: str) -> str:
+    """A run holding the shape Word draws a text watermark with.
+
+    Made by hand in the form Word writes -- the shape type it declares, the
+    shape's name, the words as the ``string`` of its ``v:textpath`` -- and not
+    by Word: no file Word itself wrote with a watermark was at hand."""
+    return (
+        f"<w:r><w:rPr><w:noProof/></w:rPr><w:pict>{SHAPE_TYPE}"
+        '<v:shape id="PowerPlusWaterMarkObject357476642" o:spid="_x0000_s2049" '
+        'type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;'
+        "width:412.4pt;height:247.45pt;rotation:315;z-index:-251658752;"
+        'mso-position-horizontal:center;mso-position-vertical:center" o:allowincell="f" '
+        'fillcolor="silver" stroked="f"><v:fill opacity=".5"/>'
+        '<v:textpath style="font-family:&quot;Calibri&quot;;font-size:1pt" '
+        f'string="{words}"/></v:shape></w:pict></w:r>'
+    )
+
+
+def header(*runs: str, top: str = "hdr") -> str:
+    return f"<w:{top} {W} {VML}><w:p>{''.join(runs)}</w:p></w:{top}>"
+
+
+def watermarked(words: str, part: str = "word/header1.xml") -> Parts:
+    top = "ftr" if "footer" in part else "hdr"
+    return PLAIN["a.docx"] | {part: header(drawn(words), top=top)}
+
+
+@pytest.mark.parametrize(
+    "part", ["word/header1.xml", "word/header2.xml", "word/header3.xml", "word/footer1.xml"]
+)
+def test_a_watermark_that_says_the_file_is_marked_stops_it(
+    session: Session,  # noqa: F811 -- the fixture
+    part: str,
+) -> None:
+    """Word's "Confidential" across the page: the words are an attribute of
+    a shape in a header and no element's text, and the file was taken with
+    them unseen. Word puts the shape in each of a section's headers."""
+    stopped(session, "a.docx", watermarked("CONFIDENTIAL", part))
+
+
+def test_a_korean_watermark_is_looked_at_like_any_line(
+    session: Session,  # noqa: F811 -- the fixture
+) -> None:
+    stopped(session, "a.docx", watermarked(MARKING))
+
+
+def test_a_watermarks_words_are_looked_at_and_never_kept(
+    session: Session,  # noqa: F811 -- the fixture
+) -> None:
+    """They go to the marking check and nowhere else: a watermark is no way
+    for a phone number to be kept, masked or not, and it is not searched."""
+    parts = watermarked(f"초안 {PHONE}")
+    parts["word/header1.xml"] = header("<w:r><w:t>머리말</w:t></w:r>", drawn(f"초안 {PHONE}"))
+
+    found = read("a.docx", parts)
+    put_up(session, "a.docx", package(parts))
+
+    assert found.marks == f"초안 {PHONE}"
+    assert found.text == "평범한 본문입니다.\n머리말"
+    assert stored(session) == "평범한 본문입니다.\n머리말"
+    assert PHONE not in found.head + found.foot and alarms(session) == []
+
+
+def test_the_shape_type_word_declares_beside_a_watermark_says_nothing() -> None:
+    parts = PLAIN["a.docx"] | {
+        "word/header1.xml": header(f"<w:r><w:pict>{SHAPE_TYPE}</w:pict></w:r>")
+    }
+
+    assert read("a.docx", parts).marks == ""
+
+
+def test_a_watermarks_words_count_toward_the_length_a_file_may_have() -> None:
+    """In the reader itself, which refuses a file past the length where it
+    stands rather than at its end -- and so through the upload."""
+    long = package(watermarked("가" * (MAX_TEXT_CHARS + 1)))
+
+    with pytest.raises(RefusedError) as refused:
+        material_formats._docx(long)
+
+    assert refused.value.reason == "too_long" and reason("a.docx", long) == "too_long"
+
+
+def test_words_drawn_in_the_body_of_a_document_are_still_not_seen(
+    session: Session,  # noqa: F811 -- the fixture
+) -> None:
+    """The written limit: only a header's and a footer's shapes are looked
+    at. Word keeps a watermark nowhere else."""
+    body = f"<w:document {W} {VML}><w:body><w:p><w:r><w:t>평범한 본문입니다.</w:t></w:r>"
+    parts: Parts = {"word/document.xml": f"{body}{drawn(MARKING)}</w:p></w:body></w:document>"}
+
+    put_up(session, "a.docx", package(parts))
+
+    assert read("a.docx", parts).marks == ""
+    assert alarms(session) == [] and stored(session) == "평범한 본문입니다."

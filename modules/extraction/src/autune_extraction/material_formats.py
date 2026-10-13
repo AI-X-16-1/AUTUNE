@@ -40,6 +40,16 @@ format has and the first ``HEAD_LINES`` lines of what the file opens on:
 An ``.xls`` print footer and an old ``.ppt``'s slide footers are not read by
 these readers.
 
+**A ``.docx`` watermark is looked at too** (#1252). Word's "Confidential"
+across the page is a shape in a page header whose words are not text in the
+part: they are an attribute of the shape (``v:textpath``'s ``string``), and
+a reader of element text passes them by. The words of every such shape in a
+header or a footer go to the marking check with the file's label -- and
+nowhere else: they are not in ``text``, so they are neither kept nor
+searched. Words drawn the same way in the body of a document, and anything
+drawn in an ``.xlsx`` or a ``.pptx``, are still not seen; neither is a
+watermark that is a picture.
+
 **A PDF with a page that is only a picture is refused whole**: what such a
 page says can be neither checked for a marking nor masked. A page with a
 picture and fewer than ``MIN_PAGE_CHARS`` characters beside it -- a scan that
@@ -388,14 +398,27 @@ class _Package:
             raise RefusedError("too_long")
         return said
 
-    def runs(self, name: str, *, text: frozenset[str] = frozenset({"t"})) -> str:
+    def runs(
+        self,
+        name: str,
+        *,
+        text: frozenset[str] = frozenset({"t"}),
+        drawn: list[str] | None = None,
+    ) -> str:
         """A part's text in document order: every element named in ``text``,
-        with a line break after each paragraph, row or line break."""
+        with a line break after each paragraph, row or line break.
+
+        ``drawn`` is given the words a shape draws along a path, which are
+        an attribute and no element's text -- a Word watermark is one. They
+        are not part of what is returned."""
         said = io.StringIO()
         for _, tag, element, _ in self.events(name):
             if tag in text:
                 if element.text:
                     said.write(self.counted(element.text))
+            elif tag == "textpath":
+                if drawn is not None and element.get("string"):
+                    drawn.append(self.counted(element.get("string", "")))
             elif tag in ("p", "br", "tr", "row", "comment", "cm"):
                 said.write("\n")
             elif tag in ("tab", "tc"):
@@ -559,11 +582,15 @@ def _docx(data: bytes | bytearray) -> FileText:
     if "word/document.xml" not in package.names:
         raise RefusedError("damaged")
     body = package.runs("word/document.xml", text=_WORD_TEXT)
+    # A watermark is a shape in a header; Word keeps it nowhere else.
+    drawn: list[str] = []
     headers = [
-        package.runs(part, text=_WORD_TEXT) for part in package.matching(r"word/header\d*\.xml")
+        package.runs(part, text=_WORD_TEXT, drawn=drawn)
+        for part in package.matching(r"word/header\d*\.xml")
     ]
     footers = [
-        package.runs(part, text=_WORD_TEXT) for part in package.matching(r"word/footer\d*\.xml")
+        package.runs(part, text=_WORD_TEXT, drawn=drawn)
+        for part in package.matching(r"word/footer\d*\.xml")
     ]
     parts = package.matching(r"word/(footnotes|endnotes|comments)\.xml")
     found.text = [
@@ -576,6 +603,7 @@ def _docx(data: bytes | bytearray) -> FileText:
     found.head += headers
     found.foot += footers
     found.marks.append(package.properties())
+    found.marks += drawn
     package.besides("word", found)
     package.named_were_read("word/document.xml", _WORD_KINDS)
     return found.done()

@@ -1346,7 +1346,7 @@ unread text can be neither checked for a marking nor masked.
 | Format | Read and kept (masked) | Read for the marking check only, not kept | Not read (reported per file where it can be told) | Refused |
 | --- | --- | --- | --- | --- |
 | `.txt` `.md` `.csv` | all of it (UTF-8 or CP949) | -- | -- | another encoding |
-| `.docx` | body, tables, headers, footers, footnotes, endnotes, comments, tracked deletions, text boxes | title, subject, keywords, category, description, custom properties (a sensitivity label) | pictures, charts, embedded files | password-protected |
+| `.docx` | body, tables, headers, footers, footnotes, endnotes, comments, tracked deletions, text boxes | title, subject, keywords, category, description, custom properties (a sensitivity label); the words of a watermark | pictures, charts, embedded files | password-protected |
 | `.xlsx` | every sheet's name and cells -- hidden sheets, rows and columns too; a cell's value, not its formula; a number as its digits; cell comments; text boxes | print header and footer; properties as above | pictures, charts, embedded files | password-protected |
 | `.pptx` | every slide -- hidden ones too -- speaker notes, comments, SmartArt | slide masters and layouts (where a "Confidential" footer is stamped); properties | pictures, charts, embedded files | password-protected |
 | `.pdf` | each page's text layer, notes stuck on a page, form field values (the last is not tested) | title, subject, keywords | pictures beside text; attached files | **any page that is only a picture, or a picture with under 20 characters beside it** (a scan, one scanned page among written ones, a scan that carries its page number); a password to open; over 300 pages |
@@ -1384,9 +1384,22 @@ is one whose own relationships cannot be read; nothing outside the file is
 ever fetched. The properties that say who wrote the file
 (`docProps/app.xml`: company, manager) are not read.
 
+**A Word watermark is looked at.** The "Confidential" Word prints across a
+page is a shape in a page header whose words are an attribute of the shape,
+not text (`v:textpath`'s `string`). The words of every such shape in a
+`.docx` header or footer go to the marking check, with the file's label.
+They go nowhere else: they are not kept and not searched, so a watermark is
+no way for unmasked text to be stored. The form was taken from what Word
+writes and the tests' file is made by hand in it; no file Word itself wrote
+with a watermark has been run through.
+
 **The gap no reader closes:** a marking or a phone number that exists only as
-a picture -- a stamp scanned onto a page, a screenshot on a slide -- is not
-seen. No OCR is done. A PDF with a page that is only a picture is refused
+a picture -- a stamp scanned onto a page, a screenshot on a slide, a
+watermark that is a picture -- is not seen. No OCR is done. Neither are
+words drawn as a shape anywhere but a `.docx` header or footer (WordArt in a
+document's body, on a sheet or on a slide), nor a sensitivity label kept
+only as an id (`docMetadata/LabelInfo.xml` holds the label's id, not its
+name: an id says nothing a word list can match). A PDF with a page that is only a picture is refused
 whole, and so is one with a page that has a picture and almost no text
 beside it (both decided on #817, 2026-10-08: refuse): under 20
 characters, spaces not counted -- "- 3 -" and "Page 3 of 12" are under, a
@@ -1411,7 +1424,8 @@ opens on; lines that say nothing are not counted.
 | `.pdf` | the first five lines of the first page that has any | the last two lines of every page | the lines between, on every page |
 
 **The file's own label** -- its properties: title, subject, keywords, a
-sensitivity label -- is looked at in every Office format and in a PDF.
+sensitivity label -- is looked at in every Office format and in a PDF. A
+`.docx` watermark's words are looked at with it.
 
 **The words** -- this is the whole list, as `material_marking.py` has it.
 Korean: 대외비, 사외비, 극비, 기밀, 보안문서, 비밀문서, 1급·2급·3급 비밀 (the
