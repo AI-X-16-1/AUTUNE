@@ -169,50 +169,57 @@ export function CalendarConnect() {
           </Button>
         </>
       ) : (
-        <Button tone="text" size="compact" className={WRAPS} onClick={connect}>
-          내 Google 캘린더에 마감일 넣기
-        </Button>
+        <>
+          <span
+            className="text-[var(--color-ink-muted)]"
+            style={{ fontSize: "var(--text-metaSmall)" }}
+          >
+            내 Google 캘린더 연결 안 됨
+          </span>
+          <Button tone="text" size="compact" className={WRAPS} onClick={connect}>
+            내 Google 캘린더에 마감일 넣기
+          </Button>
+        </>
       )}
-      <span
+      {/* What this connection does, in one list directly under the button
+          that makes it (#1183). Every sentence is the one that was already
+          here -- the permission notice is not shortened, only grouped. */}
+      <div
         className="basis-full text-[var(--color-ink-muted)]"
         style={{ fontSize: "var(--text-metaSmall)" }}
       >
+        <p className="text-[var(--color-ink-body)]">이 연결로 하는 일</p>
+        <ul className="mt-1 grid list-disc gap-1 pl-5">
+      <li>
         Autune이 넣은 마감일 일정을 내 캘린더에서 다른 날로 옮기면, 그 할 일의 마감일도 10분쯤
         안에 그 날로 바뀝니다. 바뀐 마감일은 팀 보드에 보이고, 팀이 Notion을 연결했다면
         Notion에도 반영됩니다. 이를 위해 Autune이 넣은 일정만 다시 읽으며, 내 캘린더의 다른
         일정은 읽지 않습니다.
-      </span>
+      </li>
       {readsLeave ? (
-        <span
-          className="basis-full text-[var(--color-ink-muted)]"
-          style={{ fontSize: "var(--text-metaSmall)" }}
-        >
+        <li>
           {connected ? "연결되어 있는 동안" : "연결하면"} 마감일을 넣는 것 외에, 내 캘린더의
           &lsquo;부재중&rsquo; 일정이 언제부터 언제까지인지도 읽습니다. 그 시간에는 아침
           요약과 월요일 요약을 보내지 않기 위해서입니다. 이때는 일정의 제목이나 부재중이
           아닌 일정은 받지 않으며, 읽은 시간은 저장하지 않습니다.
-        </span>
+        </li>
       ) : null}
-      <span
-        className="basis-full text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
-      >
+      <li>
         갭 화면의 &lsquo;다음 회의 잡기&rsquo;를 직접 누를 때에만, 내 캘린더의 앞으로 2주
         일정(제목과 시간)을 읽어 고를 수 있게 보여 주고, 고른 일정의 설명과 참석자 주소를 읽어
         그 설명에 갭 질문을 적습니다. 이때 그 일정에 이미 초대된 사람들에게 Google이 내
         이름으로 일정 변경 알림을 보냅니다. 읽은 일정 목록·설명·주소는 저장하지 않습니다. 어느
         일정에 적었는지는 나중에 지울 수 있도록 기록하고, 그 일정이 시작하는 날짜도 함께
         기록합니다.
-      </span>
-      <span
-        className="basis-full text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
-      >
+      </li>
+      <li>
         &lsquo;휴가 기간&rsquo;에서 &lsquo;내 Google 캘린더에도 추가&rsquo;를 직접 체크하고
         저장할 때에만, 그 기간을 내 캘린더에 &lsquo;휴가&rsquo;라는 비공개 종일 일정으로
         넣습니다. 체크를 풀거나 기간을 해제하면 그 일정을 지우며, 기간이 지난 일정은 내
         캘린더에 남습니다. 이를 위해 내 캘린더의 다른 일정을 읽지는 않습니다.
-      </span>
+      </li>
+        </ul>
+      </div>
       {note ? (
         <span
           role="status"

@@ -324,4 +324,17 @@ describe("NotificationPauseSetting", () => {
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });
+  it("reads as a range: a name, a start and an end, and what it stops said apart", async () => {
+    // #1183: the name was a sentence of parentheses between the two dates.
+    get.mockResolvedValue(NONE);
+    render(<NotificationPauseSetting />);
+
+    await first();
+    expect(screen.getByText("휴가 기간")).toBeTruthy();
+    expect(screen.getByText("시작")).toBeTruthy();
+    expect(screen.getByText("종료")).toBeTruthy();
+    expect(
+      screen.getByText(/이 기간에는 아침 요약, 월요일 요약, 오늘 업무 보고 초안, 회의 직후 알림을 받지/),
+    ).toBeTruthy();
+  });
 });
