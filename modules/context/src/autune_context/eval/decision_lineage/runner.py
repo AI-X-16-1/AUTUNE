@@ -31,7 +31,8 @@ from autune_context.models import CtxDecisionVersion
 from autune_context.pipeline import get_embedder
 from autune_contracts import ExtractionResult
 from autune_contracts.extraction import Decision
-from autune_core import Meeting, Team, session_scope
+from autune_core import Meeting, Participant, Team, session_scope
+from autune_core import Utterance as UtteranceRow
 
 # No PRD row names this KPI (see package docstring); tracked ad hoc against
 # the same six-week bar topic-linking accuracy uses.
@@ -77,12 +78,13 @@ def run_case(case: EvalCase) -> CaseResult:
 
     try:
         past_thread_ids = [
-            _process_meeting(team_id, meeting.days_ago, meeting.decision)[1]
+            _process_meeting(team_id, meeting.days_ago, meeting.decision, meeting.context)[1]
             for meeting in case.past_meetings
         ]
 
+        current = case.current_meeting
         current_id, _ = _process_meeting(
-            team_id, case.current_meeting.days_ago, case.current_meeting.decision
+            team_id, current.days_ago, current.decision, current.context
         )
         with session_scope() as s:
             actual_thread_id, actual_previous_version_id, actual_change_type = s.execute(
@@ -114,9 +116,15 @@ def run_case(case: EvalCase) -> CaseResult:
             s.execute(delete(Team).where(Team.id == team_id))
 
 
-def _process_meeting(team_id: str, days_ago: int, statement: str) -> tuple[str, str]:
+def _process_meeting(
+    team_id: str, days_ago: int, statement: str, context: list[str]
+) -> tuple[str, str]:
     """Seeds one meeting with one decision, runs lineage, returns
-    ``(meeting_id, thread_id)``."""
+    ``(meeting_id, thread_id)``.
+
+    ``context``, when given, becomes the meeting's utterances -- one consenting
+    speaker, as module A leaves a meeting whose recording was attested -- and
+    the decision cites every one of them as B would."""
     with session_scope() as s:
         row = Meeting(
             team_id=team_id,
@@ -127,11 +135,36 @@ def _process_meeting(team_id: str, days_ago: int, statement: str) -> tuple[str, 
         s.add(row)
         s.flush()
         meeting_id = row.id
+        source_ids = [f"utt_{meeting_id}_{i}" for i in range(len(context))]
+        if context:
+            speaker = Participant(meeting_id=meeting_id, speaker_label="화자", consented=True)
+            s.add(speaker)
+            s.flush()
+            s.add_all(
+                UtteranceRow(
+                    id=utterance_id,
+                    meeting_id=meeting_id,
+                    participant_id=speaker.id,
+                    speaker_label="화자",
+                    start_sec=float(i),
+                    end_sec=float(i) + 1,
+                    text=line,
+                    confidence=0.9,
+                )
+                for i, (utterance_id, line) in enumerate(zip(source_ids, context, strict=True))
+            )
 
     service.build_decision_lineage(
         ExtractionResult(
             meeting_id=meeting_id,
-            decisions=[Decision(id=f"dec_eval_{meeting_id}", statement=statement, confidence=0.9)],
+            decisions=[
+                Decision(
+                    id=f"dec_eval_{meeting_id}",
+                    statement=statement,
+                    source_utterance_ids=source_ids,
+                    confidence=0.9,
+                )
+            ],
         )
     )
     with session_scope() as s:
