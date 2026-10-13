@@ -10,6 +10,9 @@ those places could be missed in a file that was taken all the same:
 - a Word watermark, whose words are an attribute of a shape and no element's
   text: the words of a header's and a footer's shapes are looked at.
 
+And one kind of part that is a sheet and is not read at all: a workbook that
+names a macro sheet or a dialog sheet is refused.
+
 Every value here is invented.
 """
 
@@ -26,6 +29,7 @@ from autune_extraction.materials import ConfidentialFileError
 from .test_material_formats import (
     AUTHOR,
     PHONE,
+    S,
     W,
     alarms,
     core,
@@ -38,7 +42,7 @@ from .test_material_formats import (
     stored,
     word,
 )
-from .test_material_named_parts import book, names, show
+from .test_material_named_parts import BOOK_NAMES, book, names, show
 from .test_material_stream import Parts, reason
 
 PACKAGE = "http://schemas.openxmlformats.org/package/2006/relationships/"
@@ -457,3 +461,66 @@ def test_words_drawn_in_the_body_of_a_document_are_still_not_seen(
 
     assert read("a.docx", parts).marks == ""
     assert alarms(session) == [] and stored(session) == "평범한 본문입니다."
+
+
+# --- a macro sheet, a dialog sheet -----------------------------------------------------
+
+MICROSOFT = "http://schemas.microsoft.com/office/2006/relationships/"
+UNREAD_SHEETS = [
+    (f"{MICROSOFT}xlMacrosheet", "macrosheets/sheet1.xml", "macrosheet"),
+    (f"{MICROSOFT}xlIntlMacrosheet", "macrosheets/intlsheet1.xml", "macrosheet"),
+    (f"{OFFICE}dialogsheet", "dialogsheets/sheet1.xml", "dialogsheet"),
+    (f"{STRICT}dialogsheet", "dialogsheets/sheet1.xml", "dialogsheet"),
+]
+
+
+def with_sheet(kind: str, part: str, top: str) -> Parts:
+    """A workbook of one worksheet that also names a sheet of another kind,
+    with a marking in that sheet's cells and in its print header."""
+    parts = book(("sheet1.xml", rows("출시 일정")))
+    named = parts[BOOK_NAMES]
+    assert isinstance(named, str)
+    also = f'<Relationship Id="rId99" Type="{kind}" Target="{part}"/>'
+    parts[BOOK_NAMES] = named.replace("</Relationships>", f"{also}</Relationships>")
+    parts[f"xl/{part}"] = (
+        f"<{top} {S}><sheetData><row><c t='inlineStr'><is><t>{MARKING}</t></is></c></row>"
+        f"</sheetData><headerFooter><oddHeader>&amp;C{MARKING}</oddHeader></headerFooter></{top}>"
+    )
+    return parts
+
+
+@pytest.mark.parametrize(("kind", "part", "top"), UNREAD_SHEETS)
+def test_a_workbook_that_names_a_macro_sheet_or_a_dialog_sheet_is_refused(
+    session: Session,  # noqa: F811 -- the fixture
+    kind: str,
+    part: str,
+    top: str,
+) -> None:
+    """They are sheets -- cells and a print header -- that no reader reads.
+    The workbook was taken with the sheet unread and nothing said; a marking
+    in its print header was not looked at."""
+    with pytest.raises(UnreadableFileError) as refused:
+        put_up(session, "a.xlsx", package(with_sheet(kind, part, top)))
+
+    assert refused.value.details["reason"] == "damaged"
+    assert alarms(session) == [] and stored(session) == ""
+
+
+def test_a_macro_sheet_kept_under_a_worksheets_name_is_read_like_a_sheet(
+    session: Session,  # noqa: F811 -- the fixture
+) -> None:
+    """The refusal is of a sheet that is not read. One the reader does read
+    is looked at like any sheet: its print header stops the file."""
+    parts = with_sheet(f"{MICROSOFT}xlMacrosheet", "worksheets/sheet2.xml", "macrosheet")
+
+    assert MARKING in read("a.xlsx", parts).marks
+    stopped(session, "a.xlsx", parts)
+
+
+def test_a_chart_sheet_is_still_told_of_and_the_workbook_taken() -> None:
+    parts = with_sheet(f"{OFFICE}chartsheet", "chartsheets/sheet1.xml", "chartsheet")
+    parts["xl/charts/chart1.xml"] = "<c/>"
+
+    found = read("a.xlsx", parts)
+
+    assert found.text == "시트0\n출시 일정" and found.not_read == ("charts",)

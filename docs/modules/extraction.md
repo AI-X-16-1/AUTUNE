@@ -1347,7 +1347,7 @@ unread text can be neither checked for a marking nor masked.
 | --- | --- | --- | --- | --- |
 | `.txt` `.md` `.csv` | all of it (UTF-8 or CP949) | -- | -- | another encoding |
 | `.docx` | body, tables, headers, footers, footnotes, endnotes, comments, tracked deletions, text boxes | title, subject, keywords, category, description, custom properties (a sensitivity label); the words of a watermark | pictures, charts, embedded files | password-protected |
-| `.xlsx` | every sheet's name and cells -- hidden sheets, rows and columns too; a cell's value, not its formula; a number as its digits; cell comments; text boxes | print header and footer; properties as above | pictures, charts, embedded files | password-protected |
+| `.xlsx` | every sheet's name and cells -- hidden sheets, rows and columns too; a cell's value, not its formula; a number as its digits; cell comments; text boxes | print header and footer; properties as above | pictures, charts, embedded files | password-protected; a workbook with a macro sheet or a dialog sheet |
 | `.pptx` | every slide -- hidden ones too -- speaker notes, comments, SmartArt | slide masters and layouts (where a "Confidential" footer is stamped); properties | pictures, charts, embedded files | password-protected |
 | `.pdf` | each page's text layer, notes stuck on a page, form field values (the last is not tested) | title, subject, keywords | pictures beside text; attached files | **any page that is only a picture, or a picture with under 20 characters beside it** (a scan, one scanned page among written ones, a scan that carries its page number); a password to open; over 300 pages |
 | `.xls` | every sheet's name and cells, hidden ones too; numbers as digits; cell notes | -- | text boxes, pictures, charts (not detected, so not reported) | password-protected |
@@ -1372,6 +1372,13 @@ of what a sheet or a slide names in turn -- a sheet's cell notes and text
 boxes, a slide's speaker notes, comments and SmartArt. No marking is looked
 for in those under any name; what is lost is text to search. One such name is known to be written and is read like the usual one:
 openpyxl (3.1.5) writes a sheet's cell notes to `xl/comments/comment1.xml`.
+
+**A macro sheet or a dialog sheet (#1252).** Both are sheets -- cells and a
+print header like any sheet's -- that Excel keeps apart from worksheets
+(`xl/macrosheets/`, `xl/dialogsheets/`) and that no reader here reads. A
+workbook was taken with one unread and nothing said, unlike a chart sheet,
+which is told of as a chart. A workbook whose relationships name either is
+now refused as `damaged`. None of 669 sample files holds one.
 
 **The document properties are read where the package names them.** A file's
 title, subject, keywords and custom properties are looked at for a marking

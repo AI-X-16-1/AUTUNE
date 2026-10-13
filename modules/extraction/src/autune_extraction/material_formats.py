@@ -70,6 +70,8 @@ unread, and the file is taken -- no marking is looked for in them under any
 name. One such name is known to be written and is read: openpyxl's for a
 sheet's notes (``_xlsx``). The document properties are not found by name
 alone: they are read where the package names them (``_Package.properties``).
+A workbook that names a macro sheet or a dialog sheet is refused the same
+way: they are sheets, and no reader here reads them (``_BOOK_KINDS``).
 
 **What a reader raises.** ``RefusedError`` for what it recognises, by reason
 code. Anything else -- its own or its library's -- is a damaged file, and
@@ -564,12 +566,16 @@ def _footer_placeholder(tag: str, element: ElementTree.Element) -> bool:
 _WORD_TEXT = frozenset({"t", "delText"})
 
 _WORD_KINDS = frozenset({"header", "footer", "footnotes", "endnotes", "comments"})
-_BOOK_KINDS = frozenset({"worksheet"})
+_BOOK_KINDS = frozenset({"worksheet", "xlMacrosheet", "xlIntlMacrosheet", "dialogsheet"})
 _SHOW_KINDS = frozenset({"slide", "slideMaster", "notesMaster", "handoutMaster"})
 """The kinds of part a document, a workbook and a presentation name in their
 own relationships that the readers below read, and so must have read
 (``_Package.named_were_read``). A chart sheet is a kind of its own and is not
-read; it is told of as a chart."""
+read; it is told of as a chart. A macro sheet and a dialog sheet are sheets
+no reader here reads -- cells and a print header like any sheet's, kept
+under ``xl/macrosheets/`` and ``xl/dialogsheets/`` -- so a workbook that
+names one is refused: what such a sheet says can be neither checked for a
+marking nor masked. One kept under a worksheet's name is read as a sheet."""
 
 _LAYOUT_KINDS = frozenset({"slideLayout"})
 """What a slide master and a slide name that must have been read too: a
