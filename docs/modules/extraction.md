@@ -1365,10 +1365,12 @@ own relationships may give it any name. A file whose document, workbook or
 presentation names one of these under another name is refused as `damaged`
 -- not read: a header, a footer, the footnotes, endnotes or comments of a
 document; a sheet; a slide, a slide master, a notes master or a handout
-master. **Not reached, and so still left unread in a file that is taken:**
-what a sheet, a slide or a master names in turn -- a sheet's cell notes and
-text boxes, a slide's speaker notes, comments and SmartArt, a master's
-layouts. One such name is known to be written and is read like the usual one:
+master; and a layout that a slide master or a slide names -- a layout is
+read for the marking check, so one under another name is not let past it.
+**Not reached, and so still left unread in a file that is taken:** the rest
+of what a sheet or a slide names in turn -- a sheet's cell notes and text
+boxes, a slide's speaker notes, comments and SmartArt. No marking is looked
+for in those under any name; what is lost is text to search. One such name is known to be written and is read like the usual one:
 openpyxl (3.1.5) writes a sheet's cell notes to `xl/comments/comment1.xml`.
 
 **The document properties are read where the package names them.** A file's

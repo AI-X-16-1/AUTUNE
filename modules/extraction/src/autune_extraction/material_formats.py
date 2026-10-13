@@ -51,11 +51,13 @@ names; the file's own relationships may give one any name, and one under
 another name was left unread and unchecked without a word. It is still not
 read: the file is refused as ``damaged`` (``_Package.named_were_read``). This
 reaches what a document, a workbook and a presentation name themselves --
-headers, footers, notes and comments; sheets; slides and masters. It does not
-reach what a sheet, a slide or a master names in turn (a sheet's notes and
-text boxes, a slide's speaker notes, comments and SmartArt, a master's
-layouts): one of those under another name is still left unread, and the file
-is taken. One such name is known to be written and is read: openpyxl's for a
+headers, footers, notes and comments; sheets; slides and masters -- and one
+kind a level down, because the marking check looks there: the layouts a
+slide master or a slide names. It does not reach the rest of what a sheet or
+a slide names in turn (a sheet's notes and text boxes, a slide's speaker
+notes, comments and SmartArt): one of those under another name is still left
+unread, and the file is taken -- no marking is looked for in them under any
+name. One such name is known to be written and is read: openpyxl's for a
 sheet's notes (``_xlsx``). The document properties are not found by name
 alone: they are read where the package names them (``_Package.properties``).
 
@@ -546,6 +548,11 @@ own relationships that the readers below read, and so must have read
 (``_Package.named_were_read``). A chart sheet is a kind of its own and is not
 read; it is told of as a chart."""
 
+_LAYOUT_KINDS = frozenset({"slideLayout"})
+"""What a slide master and a slide name that must have been read too: a
+layout is where a deck's "Confidential" is stamped, and it is read for the
+marking check."""
+
 
 def _docx(data: bytes | bytearray) -> FileText:
     package, found = _Package(data), _Found()
@@ -751,6 +758,9 @@ def _pptx(data: bytes | bytearray) -> FileText:
     found.marks.append(package.properties())
     package.besides("ppt", found)
     package.named_were_read("ppt/presentation.xml", _SHOW_KINDS)
+    # A layout is named by its master, and by each slide laid out on it.
+    for part in (*package.matching(r"ppt/slideMasters/slideMaster\d+\.xml"), *slides):
+        package.named_were_read(part, _LAYOUT_KINDS)
     return found.done()
 
 
