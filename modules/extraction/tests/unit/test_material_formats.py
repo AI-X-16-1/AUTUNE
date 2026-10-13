@@ -10,17 +10,26 @@ work on the real thing. Three old workbooks written by another library
 (``tests/fixtures/materials/xls``). And files built here by hand, part by
 part, which put text in each of the places it hides.
 
+Two things here no real program wrote. The Excel notes that open with their
+writer's name are laid out as Excel lays a new note out, by hand: no file
+saved by Excel was at hand, in either format. The old-format one is BIFF8
+records written here into a workbook stream and read without its container.
+And the PDF pages whose picture is inside a form object or inline are
+written object by object.
+
 Every value here and in the files made for these tests is invented.
 """
 
 from __future__ import annotations
 
 import io
+import struct
 import traceback
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 
+import olefile
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -497,6 +506,145 @@ def test_excel_sheet_names_hidden_sheets_and_rows_numbers_comments_and_boxes_are
     assert found.not_read == ("charts", "embedded_files")
 
 
+def noted(*notes: str, authors: tuple[str, ...] = (AUTHOR,)) -> dict[str, str | bytes]:
+    """A workbook whose cell has notes; each is given as the runs of its text."""
+    listed = "".join(f"<author>{name}</author>" for name in authors)
+    return {
+        "xl/workbook.xml": workbook(("예산", "visible")),
+        "xl/worksheets/sheet1.xml": sheet(
+            '<row r="1"><c t="inlineStr"><is><t>장비 예산</t></is></c></row>'
+        ),
+        "xl/comments1.xml": f"<comments {S}><authors>{listed}</authors><commentList>"
+        + "".join(f'<comment authorId="0"><text>{note}</text></comment>' for note in notes)
+        + "</commentList></comments>",
+    }
+
+
+def run(text: str, *, bold: bool = False) -> str:
+    return f'<r>{"<rPr><b/></rPr>" if bold else ""}<t xml:space="preserve">{text}</t></r>'
+
+
+def test_the_line_excel_opens_a_note_with_is_not_kept() -> None:
+    # As Excel lays a new note out: the writer's name and a colon in bold,
+    # then the note on the next line.
+    found = read("a.xlsx", noted(run(f"{AUTHOR}:", bold=True) + run("\n재무팀 확인 필요")))
+
+    assert found.text == "예산\n장비 예산\n재무팀 확인 필요"
+    assert AUTHOR not in found.text + found.marks + found.head + found.foot
+
+
+def test_a_note_whose_writer_deleted_that_line_reads_as_it_did() -> None:
+    assert (
+        read("a.xlsx", noted(run("\n재무팀 확인 필요"))).text == "예산\n장비 예산\n재무팀 확인 필요"
+    )
+
+
+def test_a_note_written_as_one_run_loses_the_same_line() -> None:
+    found = read("a.xlsx", noted(run(f"{AUTHOR}:\n재무팀 확인 필요")))
+
+    assert found.text == "예산\n장비 예산\n재무팀 확인 필요"
+
+
+def test_the_writer_of_another_sheets_note_is_one_of_the_files_authors() -> None:
+    parts = noted(run("이영희가상:\n다른 시트 사람의 메모"))
+    parts["xl/comments2.xml"] = (
+        f"<comments {S}><authors><author>이영희가상</author></authors><commentList>"
+        "<comment><text><r><t>둘째 시트 메모</t></r></text></comment></commentList></comments>"
+    )
+
+    found = read("a.xlsx", parts)
+
+    assert "이영희가상" not in found.text
+    assert "다른 시트 사람의 메모" in found.text and "둘째 시트 메모" in found.text
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "박철수가상:\n목록에 없는 사람",  # not one of the file's note authors
+        f"{AUTHOR}: 같은 줄에 이어 쓴 메모",  # not the line alone
+        f"담당은 {AUTHOR}:\n아래와 같음",  # not the name alone
+        f"확인 바람\n{AUTHOR}:\n둘째 줄의 이름",  # not the first line
+        f"{AUTHOR}\n쌍점 없는 이름",
+    ],
+)
+def test_a_name_written_any_other_way_in_a_note_stays(note: str) -> None:
+    assert read("a.xlsx", noted(run(note))).text == f"예산\n장비 예산\n{note}"
+
+
+def test_only_the_first_line_goes_from_a_note_that_repeats_it() -> None:
+    found = read("a.xlsx", noted(run(f"{AUTHOR}:\n{AUTHOR}:\n본문")))
+
+    assert found.text == f"예산\n장비 예산\n{AUTHOR}:\n본문"
+
+
+def test_each_note_is_looked_at_on_its_own() -> None:
+    found = read(
+        "a.xlsx",
+        noted(run(f"{AUTHOR}:") + run("\n첫 메모"), run("둘째 메모"), run(f"{AUTHOR}:\n셋째 메모")),
+    )
+
+    assert found.text == "예산\n장비 예산\n첫 메모\n둘째 메모\n셋째 메모"
+
+
+def old_notes(*notes: tuple[str, str]) -> bytes:
+    """An old-format workbook with a note for each (author, text), on the
+    first cells of its last sheet. ``xls/contacts.xls``'s workbook stream with
+    the three records of a note -- its object, its text, the note itself --
+    written here before the sheet's end. Given to the reader as the stream,
+    without the container; no Excel wrote it."""
+
+    def record(kind: int, body: bytes) -> bytes:
+        return struct.pack("<HH", kind, len(body)) + body
+
+    def string(text: str) -> bytes:
+        return b"\x01" + text.encode("utf-16-le")
+
+    with olefile.OleFileIO(io.BytesIO((XLS / "contacts.xls").read_bytes())) as container:
+        stream = container.openstream("Workbook").read()
+    position = end = 0
+    while position < len(stream):
+        kind, size = struct.unpack_from("<HH", stream, position)
+        if kind == 0x000A:  # the last end-of-sheet record
+            end = position
+        position += 4 + size
+    added = b""
+    for number, (author, text) in enumerate(notes, 1):
+        runs = struct.pack("<HH4x", 0, 0) + struct.pack("<HH4x", len(text), 0)
+        added += (
+            record(0x005D, struct.pack("<HHHHH12x", 0x15, 0x12, 0x19, number, 0x4011) + bytes(4))
+            + record(0x01B6, struct.pack("<HH6xHH4x", 0x0212, 0, len(text), len(runs)))
+            + record(0x003C, string(text))
+            + record(0x003C, runs)
+            + record(
+                0x001C,
+                struct.pack("<HHHHH", 0, number - 1, 0, number, len(author))
+                + string(author)
+                + b"\0",
+            )
+        )
+    return stream[:end] + added + stream[end:]
+
+
+def test_an_old_workbooks_note_loses_the_line_that_names_its_writer() -> None:
+    plain = read_file("contacts.xls", (XLS / "contacts.xls").read_bytes()).text
+
+    found = read_file(
+        "a.xls",
+        old_notes(
+            (AUTHOR, f"{AUTHOR}:\n재무팀 확인 필요"),
+            (AUTHOR, f"{AUTHOR}: 같은 줄에 이어 쓴 메모"),
+            ("", "박철수가상:\n목록에 없는 사람"),
+        ),
+    )
+
+    assert found.text == (
+        f"{plain}\n재무팀 확인 필요\n{AUTHOR}: 같은 줄에 이어 쓴 메모\n"
+        "박철수가상:\n목록에 없는 사람"
+    )
+    assert AUTHOR not in plain, "the workbook itself does not say the name"
+
+
 def test_a_number_cell_holding_a_phone_number_is_masked(session: Session) -> None:
     put_up(session, "a.xlsx", package(workbook_parts()))
     assert "운영 담당" in stored(session)
@@ -550,6 +698,117 @@ def test_a_marking_lower_down_or_on_a_later_sheet_does_not_stop_a_workbook(
 
     assert "대외비" in stored(session) and "기밀 시트의 첫 줄" in stored(session)
     assert alarms(session) == []
+
+
+# --- where a PDF page keeps its picture ---------------------------------------------
+
+WRITTEN = (
+    b"/Font << /F 3 0 R >>",
+    b"BT /F 12 Tf 72 720 Td (The budget plan for the third quarter is agreed.) Tj ET",
+)
+DRAWS = b"q 400 0 0 500 100 150 cm /X Do Q"
+INLINE = b"q 400 0 0 500 100 150 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x80 EI Q"
+PICTURED: dict[str, tuple[bytes, bytes]] = {
+    "in the page's own resources": (b"/XObject << /X 4 0 R >>", DRAWS),
+    "inside a form object": (b"/XObject << /X 5 0 R >>", DRAWS),
+    "inside a form object inside another": (b"/XObject << /X 6 0 R >>", DRAWS),
+    "written into the page's content": (b"", INLINE),
+    "written into a form object's content": (b"/XObject << /X 7 0 R >>", DRAWS),
+}
+
+
+def pdf(*pages: tuple[bytes, bytes]) -> bytes:
+    """A PDF written by hand, object by object; a page is its resources and
+    its content. Objects 3 to 8 are there for a page to name: a font, a
+    one-dot picture, a form object holding the picture, one holding that
+    form, one whose content has the picture inline, and one holding itself."""
+
+    def stream(entries: bytes, data: bytes) -> bytes:
+        return b"<< %s /Length %d >>\nstream\n%s\nendstream" % (entries, len(data), data)
+
+    form = b"/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << %s >>"
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"",  # the page tree, once the pages have their numbers
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        stream(
+            b"/Type /XObject /Subtype /Image /Width 1 /Height 1"
+            b" /ColorSpace /DeviceGray /BitsPerComponent 8",
+            b"\x80",
+        ),
+        stream(form % b"/XObject << /X 4 0 R >>", DRAWS),
+        stream(form % b"/XObject << /X 5 0 R >>", DRAWS),
+        stream(form % b"", INLINE),
+        stream(form % b"/XObject << /X 8 0 R >>", b""),
+    ]
+    kids: list[int] = []
+    for resources, content in pages:
+        kids.append(len(objects) + 1)
+        objects.append(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << %s >>"
+            b" /Contents %d 0 R >>" % (resources, len(objects) + 2)
+        )
+        objects.append(stream(b"", content))
+    objects[1] = b"<< /Type /Pages /Kids [%s] /Count %d >>" % (
+        b" ".join(b"%d 0 R" % kid for kid in kids),
+        len(kids),
+    )
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n%s\nendobj\n" % (number, body)
+    table = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    out += b"".join(b"%010d 00000 n \n" % offset for offset in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
+        len(objects) + 1,
+        table,
+    )
+    return bytes(out)
+
+
+def test_a_written_pdf_made_here_is_read_and_nothing_is_unread() -> None:
+    found = read_file("plan.pdf", pdf(WRITTEN, WRITTEN))
+
+    assert found.text.startswith("The budget plan for the third quarter is agreed.")
+    assert found.not_read == ()
+
+
+@pytest.mark.parametrize("where", PICTURED)
+def test_a_page_that_is_only_a_picture_is_refused_wherever_the_picture_is_kept(where: str) -> None:
+    with pytest.raises(UnreadableFileError) as among_written:
+        read_file("plan.pdf", pdf(WRITTEN, PICTURED[where]))
+    with pytest.raises(UnreadableFileError) as alone:
+        read_file("plan.pdf", pdf(PICTURED[where]))
+
+    assert among_written.value.reason == "page_without_text"
+    assert alone.value.reason == "no_text_layer"
+
+
+@pytest.mark.parametrize("where", PICTURED)
+def test_a_picture_beside_a_pages_text_is_said_unread_wherever_it_is_kept(where: str) -> None:
+    resources, content = PICTURED[where]
+
+    found = read_file("plan.pdf", pdf((WRITTEN[0] + b" " + resources, WRITTEN[1] + b" " + content)))
+
+    assert found.not_read == ("pictures",)
+    assert found.text.startswith("The budget plan for the third quarter is agreed.")
+
+
+def test_a_form_object_that_holds_no_picture_is_not_one() -> None:
+    # Object 8 holds only itself: looking through it ends, and finds nothing.
+    found = read_file("plan.pdf", pdf((WRITTEN[0] + b" /XObject << /X 8 0 R >>", WRITTEN[1])))
+
+    assert found.not_read == ()
+
+
+def test_a_pdf_page_refused_for_its_picture_stores_nothing(session: Session) -> None:
+    with pytest.raises(AutuneError) as refused:
+        put_up(session, "plan.pdf", pdf(WRITTEN, PICTURED["inside a form object"]))
+
+    assert str(refused.value).endswith(": page_without_text") and refused.value.status_code == 422
+    assert stored(session) == "" and materials.team_materials(session, TEAM) == []
 
 
 # --- where text hides: PowerPoint -------------------------------------------------
@@ -798,6 +1057,76 @@ def test_what_is_read_only_for_the_marking_counts_toward_the_length(
     with pytest.raises(UnreadableFileError) as refused:
         read_file("a.pptx", b"deck")
     assert refused.value.reason == "too_long"
+
+
+# --- how much of a zipped file is parsed ----------------------------------------------
+
+NOT_XML = b"<" + b"x" * 64
+"""A part no parser takes: a file that reaches it is refused as damaged, so a
+refusal for length shows the part was never parsed."""
+
+
+def test_a_zipped_file_whose_read_parts_hold_too_much_is_refused_before_they_are_parsed() -> None:
+    limit = material_formats.MAX_PARSED
+    over = package({"word/document.xml": NOT_XML.ljust(limit + 1, b"x")})
+    at = package({"word/document.xml": NOT_XML.ljust(limit, b"x")})
+    assert len(over) < 1024 * 1024, "a small upload: the size that counts is the unpacked one"
+
+    with pytest.raises(UnreadableFileError) as refused:
+        read_file("a.docx", over)
+    with pytest.raises(UnreadableFileError) as parsed:
+        read_file("a.docx", at)
+
+    assert refused.value.reason == "too_long"
+    assert parsed.value.reason == "damaged", "a part at the limit is unpacked and parsed"
+
+
+def test_the_parts_read_count_together(monkeypatch: pytest.MonkeyPatch) -> None:
+    parts: dict[str, str | bytes] = {
+        "xl/workbook.xml": workbook(("가", "visible"), ("나", "visible")),
+        "xl/worksheets/sheet1.xml": sheet(
+            '<row r="1"><c t="inlineStr"><is><t>첫 시트</t></is></c></row>'
+        ),
+        "xl/worksheets/sheet2.xml": NOT_XML,
+    }
+    first_two = len(str(parts["xl/workbook.xml"]).encode()) + len(
+        str(parts["xl/worksheets/sheet1.xml"]).encode()
+    )
+
+    monkeypatch.setattr(material_formats, "MAX_PARSED", first_two + len(NOT_XML) - 1)
+    with pytest.raises(UnreadableFileError) as refused:
+        read("a.xlsx", parts)
+    monkeypatch.setattr(material_formats, "MAX_PARSED", first_two + len(NOT_XML))
+    with pytest.raises(UnreadableFileError) as parsed:
+        read("a.xlsx", parts)
+
+    assert refused.value.reason == "too_long", "neither sheet is over the limit alone"
+    assert parsed.value.reason == "damaged"
+
+
+def test_a_part_that_is_not_read_does_not_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    parts: dict[str, str | bytes] = {
+        "word/document.xml": word("그림이 큰 문서입니다."),
+        "word/media/image1.png": b"\x89PNG" + bytes(4096),
+    }
+    monkeypatch.setattr(
+        material_formats, "MAX_PARSED", len(str(parts["word/document.xml"]).encode())
+    )
+
+    found = read("a.docx", parts)
+
+    assert found.text == "그림이 큰 문서입니다." and found.not_read == ("pictures",)
+
+
+def test_a_part_read_twice_counts_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    parts: dict[str, str | bytes] = {"word/document.xml": word("한 번만 셉니다.")}
+    data = package(parts)
+    monkeypatch.setattr(
+        material_formats, "MAX_PARSED", len(str(parts["word/document.xml"]).encode())
+    )
+    opened = material_formats._Package(data)
+
+    assert opened.read("word/document.xml") == opened.read("word/document.xml")
 
 
 def test_the_list_of_formats_is_what_the_readers_take() -> None:

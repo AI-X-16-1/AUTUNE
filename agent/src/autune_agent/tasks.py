@@ -12,6 +12,10 @@ the rest is left where it is and never logged.
 **One periodic task wakes every subagent that declared a period**
 (``Periodic``, #634). ``autune_core.periodic`` puts it on beat's schedule by its
 name; it takes no arguments and finds the due subagents and teams itself.
+
+**A second periodic task tells approvers of a stopped upload** (#817, #1201):
+module B writes the alarm and cannot know who a team's approvers are, so the
+layer looks for untold alarms itself rather than being sent an event.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from autune_contracts import (
 )
 from autune_core import periodic, session_scope
 
+from .main.material_alarms import TELL_EVERY, tell_approvers_of_stopped_uploads
 from .main.subagents import PERIODIC_TICK
 from .main.triggers import on_event, on_tick
 
@@ -67,6 +72,13 @@ def on_intelligence_meeting_report_changed(self: Any, payload: dict[str, Any]) -
 def wake_subagents(self: Any) -> None:
     with session_scope() as session:
         on_tick(session=session, task_id=self.request.id)
+
+
+@shared_task(name="autune.agent.periodic.tell_material_alarms", acks_late=True)
+@periodic(TELL_EVERY)
+def tell_material_alarms() -> None:
+    with session_scope() as session:
+        tell_approvers_of_stopped_uploads(session)
 
 
 @shared_task(name="autune.agent.live_detect", acks_late=True)

@@ -8,11 +8,16 @@ import type {
   Approvers,
   ApproverScope,
   ChatReply,
+  DecidedAction,
+  MaterialAlarm,
   PendingAction,
   RejectReason,
 } from "./types";
 
 export const listPending = () => api.agent<PendingAction[]>("/pending");
+
+/** What was approved, rejected or failed lately, newest first (#1215). */
+export const listDecided = () => api.agent<DecidedAction[]>("/decided");
 
 export const approvePending = (id: string) =>
   api.agent<PendingAction>(`/pending/${encodeURIComponent(id)}/approve`, {
@@ -37,6 +42,27 @@ export const setApproverScopes = (
     `/approvers/${encodeURIComponent(userId)}?team_id=${encodeURIComponent(teamId)}`,
     { method: "PUT", body: JSON.stringify({ scopes }) },
   );
+
+/** Stopped uploads in every team where the caller is an approver; empty for anyone else. */
+export const listMaterialAlarms = () =>
+  api.agent<MaterialAlarm[]>("/material-alarms");
+
+/** An approver has seen it: the row is deleted. Answered 204, and an
+ * empty success is not a parse failure. */
+export async function acknowledgeMaterialAlarm(
+  teamId: string,
+  alarmId: string,
+): Promise<void> {
+  try {
+    await api.agent<void>(
+      `/material-alarms/${encodeURIComponent(alarmId)}/acknowledge?team_id=${encodeURIComponent(teamId)}`,
+      { method: "POST" },
+    );
+  } catch (cause) {
+    if (cause instanceof SyntaxError) return;
+    throw cause;
+  }
+}
 
 export const sendChat = (
   scope: { teamId: string } | { meetingId: string },
