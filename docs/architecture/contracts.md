@@ -195,8 +195,10 @@ field says nothing about who spoke. A **unanimous** role (`supporting` or
 `concerns` equal to `identified`) is rejected too — it states every member's
 stance — and the producer leaves that role out. An empty list means either
 that no role cleared the gate or that stance was not computed — do not tell the
-two apart. It stays empty until the Korean classifier has a measured quality
-(#10); E shows "not enough data" until then.
+two apart. Nothing fills it yet: it waited on the Korean classifier (#10),
+which was closed on 2026-10-06 when B's classification moved to an LLM (#392),
+and what counts as `supporting` is still open (#168). E leaves the heatmap off
+S26 until it is filled (#1310).
 
 `status` is one of `needs_confirmation`, `todo`, `in_progress`, `done` — the
 four columns of the action board (S17) and, for the last three, the Jira status
