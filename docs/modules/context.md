@@ -495,10 +495,11 @@ lineage view (S22), which reads to a user as a bug.
    행사에서는 빠지죠", "계약을 끊는다", "종이 영수증으로 되돌린다" — reads
    `reversed` whatever NLI says (`pipeline.change.marks_withdrawal`), in the
    statement or in the line read in its place, unless the verb hands its clause
-   on ("화요일은 빼고 매일 연다"), takes a value ("8시에 닫는다") or was the
-   earlier decision's own word. So does bringing in-house what was given out
-   (`marks_in_house`), and, where NLI contradicts, going back to how things
-   were (예전처럼, 원래대로; `marks_as_before`).
+   on ("화요일은 빼고 매일 연다"), takes a value ("8시에 닫는다"), finishes
+   by a deadline ("이번 달까지 끝낸다") or was the earlier decision's own
+   word. So does bringing in-house what was given out (`marks_in_house`),
+   when it is about the same work, and, where NLI contradicts, going back to
+   how things were (예전처럼, 원래대로; `marks_as_before`).
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and

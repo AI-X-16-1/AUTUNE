@@ -84,10 +84,16 @@ All in `pipeline.change`, plus one argument through `service._classify_pairs_nli
      로/까지-phrase ("이번 분기로 끝낸다" is when it ends, "7시로" is a value);
    - when the earlier statement did not say the same word ("야간에 닫는다" -> "계속
      닫는다");
-   - when the statement is not a keep (`marks_keep`).
+   - when the statement is not a keep (`marks_keep`);
+   - for 끝내다 and 종료하다, when no 까지 deadline is in its clause: "이번 달까지
+     끝낸다" carries a decision out (added in review).
 2. **Bringing in-house what was given out reads `reversed`** (`marks_in_house`): the
    earlier statement has an outsourcing word (위탁, 외주, 외부, 업체, 대행, 용역, 협력,
    납품, 임대, 맡기다), and the later one has 직접, 자체, 사내, 내부, 원내, 직영 or 자사.
+   Added in review: the later one must be about the same work. A topic (은/는) it names,
+   or an object (을/를) in its last clause, must be named in the earlier one too, so
+   "검수는 우리가 직접 한다" after "번역은 외주로 돌린다" adds a step and takes nothing
+   back.
 3. **Both are read on the version's own statement as well as on the line read in its
    place.** `_classify_pairs_nli` passes the statements through; `classify_change` takes
    `statement=`.
@@ -107,7 +113,25 @@ phrase is how a meeting says it settled something, far more often than "그 서�
 ## 4. Results
 
 Old code against new, one process, same cases: A is `pipeline.change` as on main, and B
-is the shipped code (`service.classify_change` swapped between them).
+is the code as first proposed (`service.classify_change` swapped between them).
+
+**The review changes** came after these runs: the 까지 deadline, the same-work check
+for bringing in-house, and "인상 없이" after a raise (`marks_keep`). In review, 14 made-up
+pairs that take nothing back were tried with NLI fixed at entailment, and 11 read
+`reversed`. After the changes, 5 of them no longer do: the two deadlines and the three
+in-house cases. What is left is in the "Known limits" of `pipeline.change`. The cue
+functions, before and after the review changes, were then compared on every statement
+and line of every lineage set against every earlier statement in its case. Counts only
+were printed for held-out sets.
+
+- No pair differs on any development set, or on v7 or v8. A first form of the same-work
+  check broke one development case ("장비를 들여서 원내에서 합시다": the object of an
+  earlier clause), so it reads objects in the last clause only.
+- Pairs differ in one case of v3 and one of v4. With the local NLI model on those
+  cases, aggregates only: v3's differs only against a decision it is not classified
+  against, and v4's is right both before and after.
+
+So every number below stands for the code as it now is.
 
 **Development sets** (per-case lines read):
 

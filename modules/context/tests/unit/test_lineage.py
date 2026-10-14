@@ -171,6 +171,21 @@ def test_a_negated_change_verb_does_not_hide_a_real_withdrawal() -> None:
     assert marks_reversal("노선은 바꾸지 않고 심야 운행은 하지 않기로 했다.")
 
 
+@pytest.mark.parametrize(
+    ("statement", "previous", "keep"),
+    [
+        ("인상 없이 가기로 했다.", "가격을 10% 인상한다.", False),
+        ("요금은 인하 없이 간다.", "요금을 5% 인하한다.", False),
+        ("인상 없이 가기로 했다.", "가격은 만 원이다.", True),
+        ("일정은 변경 없이 간다.", "출시는 3월이다.", True),
+    ],
+)
+def test_no_move_after_that_same_move_is_no_keep(statement: str, previous: str, keep: bool) -> None:
+    assert marks_keep(statement, previous) is keep
+    neutral, _ = classify_change(_nli(0.0, 0.9, 0.1), _nli(0.0, 0.9, 0.1), statement, previous)
+    assert neutral is (ChangeType.UNCHANGED if keep else ChangeType.MODIFIED)
+
+
 _WITHDRAWN_MOVES = [
     ("가격은 올리지 않기로 했다.", "가격을 10% 올린다."),
     ("인력은 늘리지 않기로 했다.", "인력을 두 명 늘린다."),
@@ -337,6 +352,24 @@ def test_a_part_left_out_a_moved_value_or_a_restated_exit_is_no_withdrawal(
     assert not marks_withdrawal(statement, previous)
 
 
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        ("이전 작업은 이번 달까지 끝낸다.", "데이터베이스를 새 서버로 이전한다."),
+        ("개편은 다음 주까지 끝내기로 했다.", "신규 가입 화면을 개편한다."),
+        ("점검은 금요일까지 종료하기로 했다.", "전 지점 소방 점검을 한다."),
+    ],
+)
+def test_finishing_by_a_deadline_carries_a_decision_out(statement: str, previous: str) -> None:
+    assert not marks_withdrawal(statement, previous)
+    change, _ = classify_change(_nli(0.9, 0.05, 0.05), _nli(0.9, 0.05, 0.05), statement, previous)
+    assert change is ChangeType.UNCHANGED
+
+
+def test_a_deadline_in_an_earlier_clause_does_not_stop_a_withdrawal() -> None:
+    assert marks_withdrawal("이번 시즌까지만 하고 끝냅시다.", "야간 셔틀을 운행한다.")
+
+
 def test_a_number_that_names_the_subject_does_not_stop_a_withdrawal() -> None:
     assert marks_withdrawal("24시간 상담 창구는 종료한다.")
 
@@ -367,6 +400,24 @@ def test_bringing_in_house_what_was_given_out_is_a_withdrawal() -> None:
     assert marks_in_house("행사 촬영은 우리가 직접 한다.", "행사 촬영은 외부 업체에 맡긴다.")
     assert marks_in_house("급여 정산은 자체 시스템으로 한다.", "급여 정산은 대행사에 위탁한다.")
     assert not marks_in_house("행사 촬영은 우리가 직접 한다.", "행사 촬영은 두 명이 한다.")
+
+
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        ("업체와는 팀장이 직접 통화해서 일정을 잡는다.", "배송은 외부 업체에 맡긴다."),
+        ("업체 평가는 내부 기준으로 한다.", "청소는 용역 업체에 맡긴다."),
+        ("검수는 우리가 직접 한다.", "번역은 외주로 돌린다."),
+    ],
+)
+def test_doing_other_work_directly_keeps_what_was_given_out(statement: str, previous: str) -> None:
+    assert not marks_in_house(statement, previous)
+    change, _ = classify_change(_nli(0.9, 0.05, 0.05), _nli(0.9, 0.05, 0.05), statement, previous)
+    assert change is ChangeType.UNCHANGED
+
+
+def test_a_terse_in_house_statement_names_no_other_work() -> None:
+    assert marks_in_house("리조트가 직접 한다.", "장비 대여는 렌탈 업체에 위탁한다.")
 
 
 @pytest.mark.parametrize(
