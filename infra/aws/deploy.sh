@@ -72,7 +72,10 @@ eval "$app_env"
 unset app_env
 
 # autune/db: build the two URLs. RDS forces TLS (rds.force_ssl is 1 from
-# PostgreSQL 15), so sslmode=require; the password is quoted for a URL.
+# PostgreSQL 15), so sslmode=require; the password is quoted for a URL. The
+# broker is `rediss://` with the certificate checked: Celery payloads carry
+# masked transcript lines. ElastiCache must have in-transit encryption on
+# (transit_encryption_mode preferred or required) or the connection is refused.
 db_env="$(secret autune/db | python3 -c '
 import json, shlex, sys
 from urllib.parse import quote
@@ -80,7 +83,7 @@ d = json.load(sys.stdin)
 db = "postgresql+psycopg://%s:%s@%s:%s/%s?sslmode=require" % (
     quote(d["username"], safe=""), quote(d["password"], safe=""),
     d["host"], d["port"], d["dbname"])
-redis = "redis://%s:%s/0" % (d["redis_host"], d["redis_port"])
+redis = "rediss://%s:%s/0?ssl_cert_reqs=required" % (d["redis_host"], d["redis_port"])
 print("export AUTUNE_DATABASE_URL=%s" % shlex.quote(db))
 print("export AUTUNE_REDIS_URL=%s" % shlex.quote(redis))
 ')"

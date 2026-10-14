@@ -992,11 +992,13 @@ deployment:**
   (2) is kept.
 - #890 is reopened.
 
-Before the first deploy, turn on in-transit encryption for the ElastiCache
-replication group and change the broker URL that `deploy.sh` builds from
-`redis://` to `rediss://`. Celery payloads carry masked transcript lines, and a
-VPC is not a reason to send them in the clear. The setting lives outside this
-repository, so the script does not check it.
+The broker connection is encrypted: `deploy.sh` builds `rediss://` with
+`ssl_cert_reqs=required`, because Celery payloads carry masked transcript
+lines and a VPC is not a reason to send them in the clear. The matching
+setting lives outside this repository: the ElastiCache replication group must
+have in-transit encryption on (`preferred` while the first deploy is checked,
+then `required`). Without it the connection is refused and the deploy fails at
+`up --wait`, which is the visible way for it to go wrong.
 
 To stop paying for the host overnight, stop the EC2 instance and the RDS
 instance (the broker and the load balancer cannot be stopped; delete them if
