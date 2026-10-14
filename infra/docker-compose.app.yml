@@ -222,11 +222,6 @@ x-python: &python
     # of a material, a question or a team. The weights come from there too,
     # only when the `models` volume does not hold them yet.
     #
-    # NOT TURNED ON, and not to be without its own decision:
-    # AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL, which would hand masked excerpts
-    # of a material to the assistant's model. .env.example leaves it false and
-    # this file does not name it.
-    #
     # TURNING IT OFF is removing the two lines. The upload and search routes
     # answer 404 again, and the screen draws no upload form and no search
     # box. What was uploaded stays stored and listed, and a member still
@@ -241,6 +236,28 @@ x-python: &python
     # upload.
     AUTUNE_EXTRACTION_MATERIAL_UPLOAD: "true"
     AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL: local
+    # The assistant searches a team's materials, on this site (decided on #817
+    # by the four module owners, 2026-10-14: this one server, in a team's own
+    # chat only; privacy.md, "The assistant searches; no model reads.").
+    # A member who asks the assistant what the team's documents say gets the
+    # five nearest materials, each with its title and one short excerpt of the
+    # masked text, drawn under the answer on that member's own screen. It is
+    # read by the api, where the assistant's chat turn runs; the workers and
+    # beat see the line and do nothing with it.
+    #
+    # WHAT LEAVES THIS SERVER because of it: no text of a material. The model
+    # is told how many were found and each one's id, with one fixed sentence
+    # of ours -- no title, no excerpt, no question (the question is used to
+    # search and is kept nowhere, not in a log line and not in a run's
+    # record). Titles and excerpts reach the member who asked and no one else,
+    # and a chat opened on one meeting does not have the tool.
+    #
+    # TURNING IT OFF is removing this line (.env.example's default is false).
+    # The tool then answers with one fixed sentence that the assistant does not
+    # search materials on this server, and searches nothing. Uploads, the
+    # search box on the 자료 screen and what is stored are the two lines
+    # above's, and stay as they are.
+    AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL: "true"
     # Module D's NLI is the one scripts/up.sh runs without --real-models, for
     # the reason it gives: the checkpoint is a private repo (#172).
     AUTUNE_CONTEXT_NLI_IMPL: fake
