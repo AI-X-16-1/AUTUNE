@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { DashboardRead } from "../types";
+import type { DashboardRead, PredictionsRead } from "../types";
 
 import { useDashboard } from "./useDashboard";
 
@@ -80,5 +80,45 @@ describe("useDashboard", () => {
 
     await act(async () => releaseFirst(dashboard(1)));
     expect(result.current.dashboard?.meeting_count).toBe(2);
+  });
+
+  // A reload now runs on every return to the tab, so one failed request must
+  // not swap figures already on screen for the error line (#1314 review).
+  it("keeps the team's figures when a reload fails", async () => {
+    const risk: PredictionsRead = { team_id: "team_1", prediction: null, reason: "no_prediction" };
+    api.getPredictions.mockResolvedValue(risk);
+    api.getGapTitles.mockResolvedValue({ budget: ["예산 범위"] });
+    const { result } = renderHook(() => useDashboard("team_1"));
+    await waitFor(() => expect(result.current.dashboard?.meeting_count).toBe(1));
+
+    api.getDashboard.mockRejectedValue(new Error("offline"));
+    api.getGapTitles.mockRejectedValue(new Error("offline"));
+    api.getPredictions.mockRejectedValue(new Error("offline"));
+    await act(() => result.current.reload());
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.dashboard?.meeting_count).toBe(1);
+    expect(result.current.gapTitles).toEqual({ budget: ["예산 범위"] });
+    expect(result.current.predictions).toEqual(risk);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("says it could not load when nothing of the team is on screen yet", async () => {
+    api.getDashboard.mockRejectedValue(new Error("offline"));
+    const { result } = renderHook(() => useDashboard("team_1"));
+
+    await waitFor(() => expect(result.current.error?.message).toBe("offline"));
+  });
+
+  it("does not keep another team's figures when the new team's first load fails", async () => {
+    const { result, rerender } = renderHook(({ team }) => useDashboard(team), {
+      initialProps: { team: "team_1" },
+    });
+    await waitFor(() => expect(result.current.dashboard?.meeting_count).toBe(1));
+
+    api.getDashboard.mockRejectedValue(new Error("offline"));
+    rerender({ team: "team_2" });
+
+    await waitFor(() => expect(result.current.error?.message).toBe("offline"));
   });
 });
