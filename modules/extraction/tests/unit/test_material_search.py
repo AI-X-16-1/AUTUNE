@@ -87,9 +87,12 @@ def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake counts shared characters, so its scores mean nothing on the
     real embedder's scale: these tests set the floor themselves -- none, here,
     and a chosen one where the floor is what is tested. The cut relative to
-    the best material is on that scale too, and is off here the same way."""
+    the best material is on that scale too, and is off here the same way. So
+    is the word match: these are the tests of what the vectors find, and
+    ``test_material_search_words.py`` has what the words add."""
     monkeypatch.setattr(get_settings(), "material_search_min_similarity", -1.0)
     monkeypatch.setattr(get_settings(), "material_search_max_below_best", 2.0)
+    monkeypatch.setattr(get_settings(), "material_search_word_match_min_similarity", 2.0)
 
 
 def set_floor(monkeypatch: pytest.MonkeyPatch, value: float) -> None:
@@ -200,6 +203,8 @@ def test_the_question_is_masked_before_it_is_embedded_and_kept_nowhere(
             "team_id": TEAM,
             "hits": 1,
             "dropped": 0,
+            "by_title": 0,
+            "by_words": 0,
             "log_level": "info",
         }
     ]

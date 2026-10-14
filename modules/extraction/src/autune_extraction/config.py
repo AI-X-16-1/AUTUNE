@@ -522,6 +522,45 @@ class ExtractionSettings(BaseSettings):
     answer 8 times. The ``fake`` embedder's scores mean nothing on this
     scale; its tests turn this off."""
 
+    material_search_word_match_min_similarity: float = Field(default=0.3, ge=-1, le=2)
+    """A piece under the floor is still a hit when it holds every word of the
+    masked question and scores this or more (#817, ``material_search``). A
+    material whose **title** holds every word is a hit whatever its pieces
+    score; this number does not bound that. ``2`` turns the word match off,
+    the title's too: the floor and the cut alone, as before 2026-10-13.
+
+    Why it exists: the floor loses short questions. On the shelf below, a
+    one-word question scored 0.35 to 0.70 against the file that answers it
+    (median 0.53) and a file's own title, asked as a question, as low as
+    0.45; no floor keeps 90% of the one-word questions, and 0.40 for
+    everyone made 30 of 30 workplace questions no file covers find one.
+
+    **0.3 by default, measured once on made-up files and not on a team's
+    materials** (2026-10-13): KURE-v1, the 200 invented Korean files of the
+    cut's measurement, 70 answers asked four ways and each file's title
+    asked three ways, uploaded and searched through this module. The floor
+    and the cut alone kept 45 of 70 one-word answers and 62 of 70 two-word
+    ones; with the word match 64 and 67, and a phrase or a sentence as
+    before (69 and 68). A file's own title asked as a question was found
+    for 186 of 200 before and 198 with it; the title without its last word,
+    167 and 179. What it costs is beside the answer: 0.27 materials that do
+    not answer a one-word question before, 0.56 with; 0.44 and 0.54 for two
+    words; no change for a phrase or a sentence. Questions on a subject no
+    file covers found something as often as before, but for one-word
+    workplace ones: 5 of 30 before, 7 with ("지사" in "부산지사"). With 30
+    files, one word 22 of 30 before and 29 with, and 2 of 20 one-word
+    small-talk questions found a file that holds the word. With no bound at
+    all the same answers came back; at 0.35 one fewer.
+
+    **What it does not do.** It is a substring match on whole question
+    words: "지사" is in "부산지사", and a word glued to another ending
+    (모니터 asked, 모니터링 written -- found; 신청 asked, 접수 written --
+    not) is found or lost by its letters, not its meaning. A common word is
+    in many files -- "회의" in 50 of the 200, in 17 titles -- and a one-word
+    question on it answers the five nearest of those. A question with no
+    word of two letters gets no match. And a search reads the text of at
+    most ``material_search.WORD_CANDIDATES`` pieces under the floor."""
+
     material_search_tool: bool = False
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
 
