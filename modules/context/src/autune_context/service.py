@@ -10,7 +10,7 @@ contract on a Celery task, never as a direct call.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
@@ -45,6 +45,7 @@ from autune_context.pipeline.topics import (
     extract_topics,
     keyphrases,
     person_names,
+    topic_sentence,
 )
 from autune_contracts import ChangeType, ContextLinks, DecisionChange, NliLabel, TopicLink
 from autune_contracts import Utterance as UtteranceContract
@@ -2171,6 +2172,61 @@ def get_topic_links(
     asserted = [link for link in links if link.status in _PUBLISHABLE]
     pending = [link for link in links if link.status == "pending"]
     return asserted, pending
+
+
+def topic_link_sentences(
+    session: Session, meeting_id: str, labels: Iterable[str]
+) -> dict[str, str]:
+    """Label -> the sentence of ``meeting_id`` that says it (``topics.topic_sentence``),
+    for the context tab to show beside a label that is only a noun phrase.
+
+    ``labels`` are of links already read through ``_readable_topic_links``. The
+    sentence is read off the segment's utterances (``ctx_embeddings.utterance_ids``)
+    on every call and never stored: a speaker who withdraws consent, or deletes
+    their own speech, takes it away with nothing more to clear, and no copy of
+    the speech is kept beside the label. Only a consenting speaker's utterance
+    is read, the same line ``HybridRetriever._passages`` draws. The text is
+    masked, as A wrote it.
+
+    A label with no sentence -- no ``utterance_ids``, or the sentence that said it
+    is gone -- is missing from the result, and the label is shown alone. Of two
+    segments with the same label, the first stored is read.
+    """
+    wanted = set(labels)
+    if not wanted:
+        return {}
+    segments = session.execute(
+        select(CtxEmbedding.ref_label, CtxEmbedding.utterance_ids)
+        .where(
+            CtxEmbedding.meeting_id == meeting_id,
+            CtxEmbedding.kind == "topic",
+            CtxEmbedding.ref_label.in_(wanted),
+        )
+        .order_by(CtxEmbedding.id)
+    ).all()
+    ids = [utterance_id for _, utterance_ids in segments for utterance_id in utterance_ids or []]
+    if not ids:
+        return {}
+    texts: dict[str, str] = {
+        utterance_id: text
+        for utterance_id, text in session.execute(
+            select(Utterance.id, Utterance.text)
+            .join(Participant, Participant.id == Utterance.participant_id)
+            .where(
+                Utterance.id.in_(ids),
+                Utterance.meeting_id == meeting_id,
+                Participant.consented.is_(True),
+            )
+        )
+    }
+    sentences: dict[str, str] = {}
+    for label, utterance_ids in segments:
+        if label in sentences:
+            continue
+        sentence = topic_sentence(label, (texts[i] for i in utterance_ids or [] if i in texts))
+        if sentence:
+            sentences[label] = sentence
+    return sentences
 
 
 def confirm_topic_link(session: Session, link_id: int, new_status: str) -> CtxTopicLink:

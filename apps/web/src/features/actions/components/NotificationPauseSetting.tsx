@@ -118,26 +118,29 @@ export function NotificationPauseSetting() {
         className="flex flex-wrap items-center gap-2 text-[var(--color-ink-body)]"
         style={meta}
       >
-        <span>
-          휴가 기간 (아침 요약, 월요일 요약, 오늘 업무 보고 초안, 회의 직후 알림을 받지
-          않음. 월요일이 공휴일이라 다른 날 오는 월요일 요약도 같습니다)
-        </span>
-        <input
-          type="date"
-          aria-label="휴가 시작일"
-          value={first}
-          disabled={saving}
-          onChange={(event) => setFirst(event.target.value)}
-        />
+        <span className="text-[var(--color-ink-strong)]">휴가 기간</span>
+        <label className="flex items-center gap-1">
+          <span className="text-[var(--color-ink-muted)]">시작</span>
+          <input
+            type="date"
+            aria-label="휴가 시작일"
+            value={first}
+            disabled={saving}
+            onChange={(event) => setFirst(event.target.value)}
+          />
+        </label>
         <span aria-hidden="true">~</span>
-        <input
-          type="date"
-          aria-label="휴가 종료일"
-          value={last}
-          min={first || undefined}
-          disabled={saving}
-          onChange={(event) => setLast(event.target.value)}
-        />
+        <label className="flex items-center gap-1">
+          <span className="text-[var(--color-ink-muted)]">종료</span>
+          <input
+            type="date"
+            aria-label="휴가 종료일"
+            value={last}
+            min={first || undefined}
+            disabled={saving}
+            onChange={(event) => setLast(event.target.value)}
+          />
+        </label>
         <button
           type="button"
           disabled={saving || !ready}
@@ -165,6 +168,10 @@ export function NotificationPauseSetting() {
           </button>
         )}
       </div>
+      <span className="text-[var(--color-ink-muted)]" style={meta}>
+        이 기간에는 아침 요약, 월요일 요약, 오늘 업무 보고 초안, 회의 직후 알림을 받지
+        않습니다. 월요일이 공휴일이라 다른 날 오는 월요일 요약도 같습니다.
+      </span>
       <span className="text-[var(--color-ink-muted)]" style={meta}>
         {saved.starts_on !== null && saved.ends_on !== null
           ? `${saved.starts_on}부터 ${saved.ends_on}까지 보내지 않습니다. 마감 알림은 그대로 갑니다.`

@@ -166,10 +166,14 @@ the same model loaded in the API's own process, and `fake`, the default, is
 no model at all -- neither sends a text anywhere. Until #1250 is decided,
 `hosted` is not turned on in a deployment the team uses -- the dev site or
 production. A trial on a developer's own machine with made-up text is not
-barred. The tool that hands excerpts to the chatbot's model
-(`extraction.find_materials`) is on `main` too and answers nothing: its
-switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by default and
-stays off until the later change this subsection names is approved.
+barred. The tool the assistant searches a team's materials with
+(`extraction.find_materials`) is on `main` too and, switched off, searches
+nothing: its switch (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`) is off by
+default, and no code turns it on. Whether a deployment turns it on is decided
+on #817, apart from the upload switch: turning one on does not turn the other
+on. Which chats are offered the tool is the agent layer's tool lists
+(`docs/architecture/agent-layer.md`), and what the assistant does with what
+it finds is "Who reads it", below.
 
 A member may upload a file to their team's 자료: `.txt`, `.md`, `.csv`,
 `.docx`, `.xlsx`, `.pptx`, `.pdf`, `.xls`, `.ppt`, ten megabytes at most.
@@ -255,16 +259,44 @@ Every excerpt is screened again on the way out. **No language model is
 given a material's text under this rule.** The masked text goes to one model
 only, the embedder that makes the vectors -- on our own inference server or
 in the API's own process, as above -- and to nothing outside Autune's own
-servers. A tool that hands excerpts to the
-chatbot's model is a later change to this section, approved on its own. One
-thing about that tool is decided already (#817 10(b), 2026-10-08): it is
+servers.
+
+**The assistant searches; no model reads.** In a team chat a member's
+question may search the team's materials (`extraction.find_materials`, when
+its switch is on). The search is the one the 자료 screen runs, so every
+excerpt and title is screened on the way out in the same way. The tool is on
+its module's `TEXT_WITHHELD_TOOLS` list, and the agent layer holds what it
+finds to this rule:
+
+- **The member who asked** is shown each material's title and one masked
+  excerpt under the answer, as the 자료 screen shows them. No similarity score
+  is returned to anyone.
+- **The model that picks the tools** is given how many materials were found
+  and each one's id. It is not given a title or an excerpt.
+- **The model that writes the answer** is given the count and the tool's
+  fixed sentences. It is not given a title or an excerpt, so the answer says
+  that materials were found and are shown below, and cannot say what a
+  document says.
+- **`agent_runs`** keeps the tool's name and ids, as it does for every tool,
+  and no title or excerpt.
+
+The tool is offered in a team chat. It is not offered in a chat opened on a
+meeting, where the model writes the question after reading that meeting's
+lines, and no subagent is given it: a subagent writes its own prompts and
+nothing there would cut a title. A new read of `ext_materials` or
+`ext_material_chunks` goes on `TEXT_WITHHELD_TOOLS` in the change that adds
+it, and a tool whose name says `material` and is not on the list fails
+collection.
+
+One thing about the question is decided (#817 10(b), 2026-10-08): the tool is
 given the words of the question, and uses them to search and for nothing
 else. They are not returned in its result, not written to `agent_runs` or to
-a row that waits for approval -- both keep a tool's name and ids, as now --
-and not logged, and the change that builds the tool holds each of the three
-with a test.
+a row that waits for approval -- both keep a tool's name and ids -- and not
+logged.
+
 Live transcript text is not searched against materials; that boundary is a
-separate decision (#817 point 6).
+separate decision (#817 point 6), and a chat opened on a meeting does not
+search them.
 
 **A file marked confidential is refused, and the team's approvers are
 told.** Before masking, the file's name, the head of the document, its page

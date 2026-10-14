@@ -124,6 +124,9 @@ export function NotionConnect({
   if (!connection.connected) {
     return (
       <div className="flex flex-wrap items-center gap-3">
+        <span className="text-[var(--color-ink-muted)]" style={meta}>
+          Notion 연결 안 됨
+        </span>
         <Button tone="text" size="compact" onClick={connect}>
           팀 Notion 연결
         </Button>

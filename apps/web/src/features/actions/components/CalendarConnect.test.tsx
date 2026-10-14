@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CalendarConnect } from "./CalendarConnect";
@@ -225,5 +225,29 @@ describe("CalendarConnect", () => {
     expect(rules).toContain("max-w-full");
     // And no shorter than it was where the label fits on one line.
     expect(rules).toContain("min-h-[var(--control-h-compact)]");
+  });
+  it("lists what the connection does under its button, every sentence kept", async () => {
+    // #1183: the notices were four paragraphs; they are one list, unshortened.
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue({ ...NONE, calendar_leave: true });
+    render(<CalendarConnect />);
+
+    await connectButton();
+    await screen.findByText(NOTICE);
+    const list = screen.getByRole("list");
+    expect(screen.getByText("이 연결로 하는 일")).toBeTruthy();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+    expect(within(list).getByText(READ_BACK)).toBeTruthy();
+    expect(within(list).getByText(PICKER)).toBeTruthy();
+    expect(within(list).getByText(NOTICE)).toBeTruthy();
+  });
+
+  it("says the calendar is not connected, beside the button that connects it", async () => {
+    connection.mockResolvedValue({ connected: false });
+    pause.mockResolvedValue(NONE);
+    render(<CalendarConnect />);
+
+    await connectButton();
+    expect(screen.getByText("내 Google 캘린더 연결 안 됨")).toBeTruthy();
   });
 });

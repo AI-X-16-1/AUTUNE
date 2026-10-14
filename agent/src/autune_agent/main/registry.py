@@ -53,6 +53,17 @@ def is_personal_only(name: str) -> bool:
     return PERSONAL_ONLY_BACKSTOP in name.lower().replace("_", "").replace("-", "")
 
 
+TEXT_WITHHELD_BACKSTOP = "material"
+"""Caught in a tool name when a module forgot to list the tool in
+``TEXT_WITHHELD_TOOLS``. An uploaded material's title and text go to no model
+(privacy.md, "Uploaded documents are masked before storage"; #1313). The list
+is the rule; this is the net, as ``PERSONAL_ONLY_BACKSTOP`` is."""
+
+
+def reads_withheld_text(name: str) -> bool:
+    return TEXT_WITHHELD_BACKSTOP in name.lower().replace("_", "").replace("-", "")
+
+
 def refuse_tracing(environ: Mapping[str, str] = os.environ) -> None:
     on = [v for v in TRACING_VARIABLES if environ.get(v, "").strip().lower() in {"1", "true"}]
     if on:
@@ -91,6 +102,9 @@ class Tool:
     description: str
     """The function's docstring. It is the prompt: when to use it comes first."""
     fn: ToolFn
+    withheld: bool = False
+    """Whether the tool's items hold text no model may read -- the module
+    listed it in ``TEXT_WITHHELD_TOOLS``. Every item it returns is marked."""
 
     @property
     def parameters(self) -> frozenset[str]:
@@ -105,9 +119,15 @@ class Tool:
     def __call__(self, session: Session, **arguments: Any) -> ToolResult:
         raw = self.fn(session, **arguments)
         try:
-            return ToolResult.model_validate(raw)
+            result = ToolResult.model_validate(raw)
         except ValidationError as exc:
             raise ToolContractError(f"{self.name} broke the return contract: {exc}") from exc
+        if not self.withheld:
+            return result
+        # Marked here, the one place every call of the tool passes, and not by
+        # the module: a mark the module could forget is not a rule.
+        marked = [item.model_copy(update={"withheld": True}) for item in result.items]
+        return result.model_copy(update={"items": marked})
 
 
 def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
@@ -118,6 +138,13 @@ def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
     that data to its subject and nobody else, and the agent always answers on
     someone else's behalf, so such a tool is never registered at all. An
     undeclared tool whose name gives it away is a mistake and raises.
+
+    A module lists a read whose items hold text no model may be given -- an
+    uploaded material's title and excerpt -- in ``TEXT_WITHHELD_TOOLS``. Such
+    a tool is registered, and marked: every item it returns says ``withheld``,
+    and only a caller that cuts such text from what it sends a model may hold
+    it (``Toolbox``). Here too an undeclared tool whose name gives it away
+    raises.
     """
     tools: dict[str, Tool] = {}
     for module in modules:
@@ -129,6 +156,7 @@ def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
                 raise  # tools.py exists and something it imports does not
             continue
         personal = set(getattr(loaded, "PERSONAL_ONLY_TOOLS", []))
+        withheld = set(getattr(loaded, "TEXT_WITHHELD_TOOLS", []))
         for fn in getattr(loaded, "TOOLS", []):
             if fn in personal:
                 continue
@@ -136,10 +164,17 @@ def collect_tools(modules: Iterable[str] = MODULES) -> dict[str, Tool]:
                 raise ToolContractError(
                     f"{path}.{fn.__name__} looks personal-only; list it in PERSONAL_ONLY_TOOLS"
                 )
+            if fn not in withheld and reads_withheld_text(fn.__name__):
+                raise ToolContractError(
+                    f"{path}.{fn.__name__} looks like a read of uploaded materials; "
+                    "list it in TEXT_WITHHELD_TOOLS"
+                )
             doc = inspect.getdoc(fn)
             if not doc:
                 raise ToolContractError(f"{path}.{fn.__name__} has no docstring to route on")
-            tool = Tool(name=f"{module}.{fn.__name__}", description=doc, fn=fn)
+            tool = Tool(
+                name=f"{module}.{fn.__name__}", description=doc, fn=fn, withheld=fn in withheld
+            )
             tools[tool.name] = tool
     return tools
 
@@ -181,6 +216,14 @@ class Toolbox:
     (the same 404-not-403 rule as #437). Other ids a tool takes -- an action
     item, a decision -- are the tool's to check against the ``team_id`` it is
     handed; every such tool on main already takes one.
+
+    ``cuts_withheld_text`` says the caller leaves a ``withheld`` item's title
+    and body out of everything it sends a model. Only the ask loop says so
+    (``ask.compact``, and ``GeminiRouter.compose`` after it). Every other
+    caller -- a subagent, which writes its own prompts -- does not get such a
+    tool at all, whatever its allow-list names: off by default, so that a
+    caller that forgets the argument is refused the tool, not handed the text
+    (#1313).
     """
 
     def __init__(
@@ -191,6 +234,7 @@ class Toolbox:
         *,
         allowed: Iterable[str],
         scope: RunScope,
+        cuts_withheld_text: bool = False,
     ) -> None:
         # Required, with no "everything" default: a caller that forgets it
         # must fail to construct, not get every tool (review on #432).
@@ -199,7 +243,11 @@ class Toolbox:
         if missing:
             # A subagent may name a tool its module owner has not shipped yet.
             log.warning("tools not registered yet: %s", ", ".join(missing))
-        self._tools = {name: tools[name] for name in sorted(wanted & set(tools))}
+        self._tools = {
+            name: tools[name]
+            for name in sorted(wanted & set(tools))
+            if cuts_withheld_text or not tools[name].withheld
+        }
         self._session = session
         self._budget = budget
         self._scope = scope

@@ -852,7 +852,7 @@ other module's tables.
 | POST | `/materials?team_id=` | Register one: a title and a pasted link. Only a Google Drive or Docs file link is taken (the rules of `apps/web/src/shared/drive/driveLink.ts`), and only the file's id and kind are kept; 409 for a file the team already keeps. Any member |
 | GET | `/materials/upload-rules?team_id=` | What this server takes as an upload: `enabled` (`AUTUNE_EXTRACTION_MATERIAL_UPLOAD`, off by default), `max_bytes` (ten megabytes), `suffixes` (the nine formats of [What is read, per format](#what-is-read-per-format)), `max_title_chars`, `max_materials`, `search` (whether `/materials/search` answers: exactly when uploads are on) and `max_question_chars`. Members of the team only |
 | POST | `/materials/upload?team_id=` | Keep the masked text of a file (#817): a form of exactly two parts, `title` and `file`. Any member. The body is read by the route into memory after the membership check -- no `UploadFile`, no temporary file -- and the cap holds as it arrives (413 past it); read, checked for a confidentiality marking, masked and stored in this request, and the buffers wiped in a `finally`. **201** with the new row. When the team already keeps the same text, **200** with that earlier row and `already_kept: true` (#1274): nothing is written or changed -- no second copy, no place taken on the shelf (so a full shelf still answers it), the title sent is dropped, and the earlier row keeps its own title and its own day, which is not extended. The same text is the same masked pieces in the same order, character for character, of an upload of this team that a search would read (embedded by the current model, not past its day): a `.docx` and a `.txt` that say the same are one material, a text that differs by a space is another, and two that differ only in what the mask covers are the same. No digest of a text is kept to tell, and no other team's rows are read. A marked file: 422 `confidential_file` and one `ext_material_alarms` row. An unreadable one: 422 with `details.reason`. Off: the bare 404 of a route that does not exist |
-| POST | `/materials/search?team_id=` | The team's uploaded materials nearest a question, best first (#817): `{"question"}` in the body, never the address, 1 to 300 characters. Answers `hits` (at most five, one a material: `material_id`, `title`, `excerpt`, `position`), `notice` (the server's own sentence or null) and `more`. The question is masked before it is embedded and is not stored, logged or returned; an excerpt is at most 200 characters of one stored piece, and it and the title pass `screen_output` on the way out. Members of the team only; off with uploads (the bare 404) |
+| POST | `/materials/search?team_id=` | The team's uploaded materials that answer a question -- those whose title holds its words, then the nearest, then those with a piece that holds its words (#817): `{"question"}` in the body, never the address, 1 to 300 characters. Answers `hits` (at most five, one a material: `material_id`, `title`, `excerpt`, `position`), `notice` (the server's own sentence or null) and `more`. The question is masked before it is embedded and is not stored, logged or returned; an excerpt is at most 200 characters of one stored piece, and it and the title pass `screen_output` on the way out. Members of the team only; off with uploads (the bare 404) |
 | GET | `/materials/settings?team_id=` | How the team keeps its uploads: `{"keep_until_deleted": bool, "retention_days": int, "uploads_past_their_day": int}` -- `retention_days` is the team's window today, what an upload made now is given; an earlier upload keeps its own `expires_at`. `uploads_past_their_day` counts the team's uploads already past their `expires_at` -- what an hourly run deletes after a switch back to the window, said on the screen before the switch is saved; a count, no id or title. Members of the team only |
 | PUT | `/materials/settings?team_id=` | `{"keep_until_deleted": bool}`: switch between the team's retention window counted from the upload (false, the default) and keeping uploads until a member deletes them (true). Any member; who switched is not recorded. Answers as the GET |
 | DELETE | `/materials/{id}?team_id=` | Take one off the team's shelf, at once. Any member. An upload's masked text goes in the same transaction; a Drive file is not touched |
@@ -1521,18 +1521,49 @@ in a file name `_` separates words as a space does (`plan_confidential.pdf`).
   205 of 207 answers. The best one always stays, so this cut does nothing
   for a question no material answers; and the search says which file, not
   which line of a long one.
+  The floor loses short questions and questions that repeat a file's title,
+  so a material is also a hit by the question's words (2026-10-13): when
+  every word of the masked question (two letters or digits and more) is in
+  its title, whatever its pieces score; or in one of its pieces that scores
+  under the floor, at or over
+  `AUTUNE_EXTRACTION_MATERIAL_SEARCH_WORD_MATCH_MIN_SIMILARITY` (0.3 by
+  default; `2` turns the word match off) and within the cut of the best
+  hit. The floor and the cut are unchanged for everything else. An answer
+  lists the materials found by their title first, then the materials over
+  the floor, then those found by a piece's words -- five at most all the
+  same. It is a substring match: "지사" is in "부산지사", and a common word
+  is in many files ("회의" in 50 of the 200 measured, in 17 titles). The
+  words are compared in the process with rows read by the vectors' own
+  rule (the asking team, uploads not past their day, this embedder), and
+  are in no statement, so a failed one cannot print them (#356); a title or
+  excerpt found this way passes `screen_output` like any other. Measured on
+  the same 200 made-up files, not on a team's materials: one-word questions
+  kept 64 of 70 answers instead of 45, two-word ones 67 instead of 62, a
+  file's own title 198 of 200 instead of 186; a one-word question then
+  shows 0.56 materials that do not answer beside it instead of 0.27, and
+  unrelated questions find something as often as before but for 2 more of
+  30 one-word workplace ones. At most 1,000 pieces under the floor are read
+  for words.
   An upload past its `expires_at` is not searched, even in the hour before
   the task deletes it; a team that keeps its uploads until deleted has
   none such, as the task passes it over.
 - The assistant's tool (`tools.find_materials`, in `TOOLS`) reads through the
   same search, for the run's team only; the question is its one argument
   besides the team, and it is not in the result, a log line, `agent_runs` or
-  a waiting row (#817 10(b), held by tests). **It is off by default**
-  (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`): on, it gives masked excerpts
-  to the agent layer's model, which `privacy.md` does not allow until a
-  change to its uploaded-documents section is approved. The ask loop does
-  not offer it either until its tool set names it (`agent/.../main/ask.py`,
-  owned by the agent layer's main owner).
+  a waiting row (#817 10(b), held by tests). **No model reads what it
+  finds** (#1313): the tool is in `TEXT_WITHHELD_TOOLS`, the list the agent
+  layer's registry reads, so each item is marked `withheld`; the ask loop's
+  model is sent the summary -- a count and fixed sentences -- and each
+  item's id, the model that writes the answer is sent the summary, and the
+  title and the excerpt go from the server to the member's screen, under
+  the answer. The summary says so (`tools.SHOWN_BELOW`), since the model
+  cannot say what a document it did not read says. The ask loop offers the
+  tool in a chat about the team, not in one opened on a meeting
+  (`agent/.../main/ask.py`, `TEAM_TOOLS`), and no subagent can hold it.
+  **It is off by default** (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL`): off,
+  it searches nothing and answers that it is off. A new read of a
+  material's title or text goes on the list in the change that adds it; the
+  registry refuses a tool with `material` in its name that is not on it.
 - Text a person types is screened when it is saved and refused if it
   reads as personal data (`typed_text.refuse_personal_data`; decided on
   #1130, `privacy.md` section 6). Ten checks behind eight routes: an action

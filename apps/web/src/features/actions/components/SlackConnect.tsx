@@ -83,6 +83,9 @@ export function SlackConnect({
   if (!state.connected) {
     return (
       <div className="flex flex-wrap items-center gap-3" aria-label="Slack">
+        <span className="text-[var(--color-ink-muted)]" style={meta}>
+          Slack 연결 안 됨
+        </span>
         <Button
           tone="text"
           size="compact"
