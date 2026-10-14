@@ -23,7 +23,7 @@ import httpx
 
 from autune_integrations.base import HttpClient
 from autune_integrations.errors import IntegrationError
-from autune_integrations.privacy import MAX_OUTBOUND_CHARS
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS, assert_masked, find_pii
 
 
 class ModelServerClient(HttpClient):
@@ -96,12 +96,32 @@ def batches[T](
         yield batch
 
 
-def clip(text: str, limit: int) -> str:
+# How far past a cut ``clip`` looks for the end of a value cut through. Every
+# shape ``find_pii`` knows is far shorter: a card number with its separators, an
+# e-mail address.
+CUT_MARGIN = 256
+
+
+def clip(text: str, limit: int, *, destination: str) -> str:
     """``text`` cut to its first ``limit`` characters.
 
-    Only the HTTP clients cut, and only a text no request could carry: an
-    utterance, or a decision with its source utterances, over the outbound
-    cap. Cutting rather than refusing keeps one long line from failing a whole
-    meeting's linking or lineage, and what is embedded or compared is still
-    what was said, its opening part. The in-process models read it whole."""
+    The model clients cut only a text no request could carry: an utterance, or
+    a decision with its source utterances, over the outbound cap. The LLM judge
+    cuts each excerpt to ``llm_snippet_chars``. Cutting rather than refusing
+    keeps one long line from failing a whole meeting's linking or lineage, and
+    what is embedded or compared is still what was said, its opening part. The
+    in-process models read it whole.
+
+    The guard reads the request after the cut, and the opening part of a value
+    cut through ("010-1234-56") matches no pattern. So the text is checked
+    before it is cut, up to ``CUT_MARGIN`` characters past the cut: an unmasked
+    value that starts before the cut raises ``PrivacyViolationError``
+    (``assert_masked``) instead of leaving in part. The rest of the text is not
+    scanned. It is not sent, and scanning cost grows faster than the text,
+    which is why the guard caps what it reads."""
+    if len(text) <= limit:
+        return text
+    window = text[: limit + CUT_MARGIN]
+    if any(begin < limit for begin, _, _ in find_pii(window)):
+        assert_masked(window, destination=destination)
     return text[:limit]

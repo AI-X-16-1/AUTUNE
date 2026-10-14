@@ -55,7 +55,7 @@ class KureHttpEmbedder:
         return self._model_version
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        fitted = [clip(text, MAX_OUTBOUND_CHARS) for text in texts]
+        fitted = [clip(text, MAX_OUTBOUND_CHARS, destination="embedder") for text in texts]
         vectors: list[list[float]] = []
         for batch in batches(fitted, len):
             rows = self._client.request("POST", "/embed", json={"texts": batch})["embeddings"]

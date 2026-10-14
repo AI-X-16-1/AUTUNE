@@ -183,7 +183,13 @@ Rules:
   single text no request could carry is cut to the cap (half each for an NLI
   pair) rather than failing the meeting. The in-process `*_local` models read
   it whole; texts that long are rare (one utterance, or a decision with its
-  source utterances). **The re-ranker is not on the guard yet.** Its query and
+  source utterances). The guard reads what is left after the cut, and the
+  opening part of a value cut through matches no pattern, so `_serving.clip`
+  checks the text up to 256 characters past the cut first: an unmasked value
+  the cut would split raises `PrivacyViolationError` instead of leaving in
+  part. The LLM judge cuts its excerpts with the same function. A brief's
+  topic step falls back to the latest meeting when a model fails, but not on
+  a `PrivacyViolationError`: that stops the brief. **The re-ranker is not on the guard yet.** Its query and
   passages are whole topic segments, and one segment of a real-length meeting
   passes the cap on its own, so moving it means cutting segments, which
   changes which links are asserted. That needs the same cut in the local

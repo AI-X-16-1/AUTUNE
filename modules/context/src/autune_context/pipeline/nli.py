@@ -52,7 +52,10 @@ class KlueKorNliHttp:
         if not pairs:
             return []
         half = MAX_OUTBOUND_CHARS // 2
-        fitted = [[clip(premise, half), clip(hypothesis, half)] for premise, hypothesis in pairs]
+        fitted = [
+            [clip(premise, half, destination="nli"), clip(hypothesis, half, destination="nli")]
+            for premise, hypothesis in pairs
+        ]
         rows: list[dict[str, Any]] = []
         for batch in batches(fitted, lambda pair: len(pair[0]) + len(pair[1])):
             results = self._client.request("POST", "/nli", json={"pairs": batch})["results"]

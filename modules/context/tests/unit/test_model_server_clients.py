@@ -12,7 +12,7 @@ import pytest
 import autune_integrations.base
 from autune_context.config import get_settings
 from autune_context.constants import EMBEDDING_DIM
-from autune_context.pipeline._serving import batches, clip
+from autune_context.pipeline._serving import CUT_MARGIN, batches, clip
 from autune_context.pipeline.embedding import KureHttpEmbedder
 from autune_context.pipeline.nli import KlueKorNliHttp
 from autune_integrations.privacy import MAX_OUTBOUND_CHARS, PrivacyViolationError
@@ -104,4 +104,48 @@ def test_batches_keep_order_and_never_pass_the_budget() -> None:
         ["bbb", "c"],
         ["dddd"],
     ]
-    assert clip("abcdef", 4) == "abcd"
+    assert clip("abcdef", 4, destination="test") == "abcd"
+
+
+# Made-up values, each placed so the cut falls inside it.
+_SPLIT_VALUES = ["010-1234-5678", "minsu.kim@example.com", "900101-1234567"]
+
+
+@pytest.mark.parametrize("value", _SPLIT_VALUES)
+def test_a_value_the_cut_would_split_is_refused_not_sent_in_part(server, value: str) -> None:
+    text = "가" * (MAX_OUTBOUND_CHARS - 4) + value + " 입니다"
+
+    with pytest.raises(PrivacyViolationError):
+        KureHttpEmbedder(get_settings()).embed([text])
+
+    assert server == []
+
+
+@pytest.mark.parametrize("value", _SPLIT_VALUES)
+def test_nli_refuses_a_value_its_half_cap_would_split(server, value: str) -> None:
+    premise = "가" * (MAX_OUTBOUND_CHARS // 2 - 4) + value
+
+    with pytest.raises(PrivacyViolationError):
+        KlueKorNliHttp(get_settings()).classify([(premise, "바")])
+
+    assert server == []
+
+
+def test_a_value_past_the_cut_is_not_sent_and_not_refused() -> None:
+    text = "가" * 10 + " 010-1234-5678"
+
+    assert clip(text, 10, destination="test") == "가" * 10
+
+
+def test_a_masked_value_on_the_cut_is_cut_like_any_text() -> None:
+    text = "가" * 6 + "010-****-5678"
+
+    assert clip(text, 10, destination="test") == "가" * 6 + "010-"
+
+
+def test_the_check_reaches_the_end_of_any_value_it_could_split() -> None:
+    # The longest a value the cut splits can run past it and still be seen.
+    longest = "a" * (CUT_MARGIN - len("@example.com")) + "@example.com"
+
+    with pytest.raises(PrivacyViolationError):
+        clip("가" * 9 + " " + longest, 11, destination="test")
