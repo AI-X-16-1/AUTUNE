@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -119,6 +120,16 @@ afterEach(() => {
   vi.clearAllMocks();
   error = null;
 });
+
+// Waits until every team's Jira connection has been answered and the screen has
+// taken the answers, so a test that asserts the link is absent looks after the
+// answer arrived, not before it.
+async function jiraAnswered() {
+  await waitFor(() => expect(jiraConnection).toHaveBeenCalled());
+  await act(async () => {
+    await Promise.all(jiraConnection.mock.results.map((r) => r.value));
+  });
+}
 
 async function open() {
   render(<TeamActionsScreen me={null} />);
@@ -473,6 +484,7 @@ describe("TeamActionsScreen, one team's items", () => {
     });
     jira.mockResolvedValue([of("team_p", "플랫폼"), of("team_d", "디자인")]);
     const { to } = await show(null);
+    await screen.findByRole("button", { name: "Jira 열린 이슈 보기" });
     press("Jira 열린 이슈 보기");
     const listed = () =>
       within(screen.getByRole("region", { name: "Jira 열린 이슈" }))
@@ -506,7 +518,7 @@ describe("TeamActionsScreen, one team's items", () => {
   it("has no Jira link for teams that never connected it, and asks Jira nothing", async () => {
     jiraConnection.mockResolvedValue({ connected: false });
     await open();
-    await waitFor(() => expect(jiraConnection).toHaveBeenCalled());
+    await jiraAnswered();
 
     expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
     expect(jira).not.toHaveBeenCalled();
@@ -515,7 +527,7 @@ describe("TeamActionsScreen, one team's items", () => {
   it("has no Jira link when the connection could not be read", async () => {
     jiraConnection.mockResolvedValue(null);
     await open();
-    await waitFor(() => expect(jiraConnection).toHaveBeenCalled());
+    await jiraAnswered();
 
     expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
   });

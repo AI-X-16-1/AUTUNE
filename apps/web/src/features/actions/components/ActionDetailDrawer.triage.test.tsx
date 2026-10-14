@@ -186,7 +186,7 @@ describe("ActionDetailDrawer, the due date", () => {
 });
 
 describe("ActionDetailDrawer, an assignee that is a voice", () => {
-  it("reads 화자 2(이름 미지정), not SPEAKER_01", () => {
+  it("reads SPEAKER_01(이름 미지정), not a bare SPEAKER_01 and not a made-up number", () => {
     render(
       <ActionDetailDrawer
         item={{ ...WAITING, assignee_label: "SPEAKER_01" } as ActionItemRead}
@@ -195,7 +195,8 @@ describe("ActionDetailDrawer, an assignee that is a voice", () => {
     );
 
     expect(screen.queryByText("SPEAKER_01")).toBeNull();
-    expect(screen.getByText("화자 2(이름 미지정)")).toBeTruthy();
+    expect(screen.queryByText(/화자 2/)).toBeNull();
+    expect(screen.getByText("SPEAKER_01(이름 미지정)")).toBeTruthy();
   });
 
   it("tells the person what to do when the assignee can be changed", () => {
@@ -207,7 +208,7 @@ describe("ActionDetailDrawer, an assignee that is a voice", () => {
       />,
     );
 
-    expect(screen.getByText(/화자 2\(이름 미지정\)입니다\. 팀원 목록에서 고르면/)).toBeTruthy();
+    expect(screen.getByText(/SPEAKER_01\(이름 미지정\)입니다\. 팀원 목록에서 고르면/)).toBeTruthy();
   });
 
   it("shows a typed name as it was typed", () => {
