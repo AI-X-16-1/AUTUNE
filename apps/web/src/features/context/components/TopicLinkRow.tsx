@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { Button, Row, StatusDot } from "@/shared/ui";
+import { Button, MaskedText, Row, StatusDot } from "@/shared/ui";
 
 import type { TopicLinkRead } from "../types";
 
@@ -16,6 +16,11 @@ import type { TopicLinkRead } from "../types";
  * nothing else; `linked_meeting_date` can still be non-null even then (the
  * schema keeps it on purpose), but a bare date with nothing to open reads as
  * a broken link, so it is dropped along with the id.
+ *
+ * The title is the sentence of this meeting that says the topic
+ * (`topic_sentence`), so the reader sees what was said rather than a bare noun
+ * phrase; the label stands in when no sentence could be read. The sentence is
+ * transcript text, already masked, so its masked spans are drawn as such.
  */
 export function TopicLinkRow({
   link,
@@ -45,7 +50,7 @@ export function TopicLinkRow({
     <div>
       <Row
         dot={<StatusDot variant={link.status === "pending" ? "attention" : "confirmed"} hollow={link.status === "pending"} />}
-        title={link.topic_label}
+        title={link.topic_sentence ? <MaskedText>{link.topic_sentence}</MaskedText> : link.topic_label}
         meta={
           dangling
             ? "연결된 회의가 사라짐"

@@ -52,6 +52,17 @@ _NAME_WORD = re.compile(r"^[가-힣]{2,4}$")
 _TITLES = frozenset(
     "과장 차장 부장 팀장 실장 본부장 대표 사장 이사 원장 교수 선생 선배 매니저 대리 주임".split()  # noqa: SIM905
 )
+# A sentence ends at ., ? or ! before a space, or at a line break.
+_SENTENCE_BREAK = re.compile(r"(?<=[.?!])\s+|\n+")
+# Words a speaker opens a sentence with that say nothing on their own. "그" is
+# one: at the start it is a filler ("그, 결제 모듈은") or a determiner the
+# sentence reads as well without ("그 결제 모듈은").
+_FILLERS = frozenset(
+    """
+    음 음음 어 아 에 저 그 네 예 자 뭐 막
+    그리고 그러니까 근데 그런데 그래서 그럼 그러면 아무튼 일단 이제
+    """.split()  # noqa: SIM905 - a word list reads as one
+)
 
 
 @dataclass(frozen=True)
@@ -236,6 +247,59 @@ def keyphrases(text: str, names: frozenset[str] = frozenset(), *, k: int = 5) ->
 def content_nouns(text: str, names: frozenset[str] = frozenset()) -> set[str]:
     """Every word of every noun phrase in ``text`` -- see ``_label``."""
     return {word for phrase in _noun_phrases(text, names) for word in phrase}
+
+
+def topic_sentence(label: str, texts: Iterable[str], *, max_chars: int = 80) -> str | None:
+    """The first sentence of ``texts`` that says ``label``, to show beside a label
+    that is only a noun phrase; ``None`` when none says it.
+
+    ``texts`` are a segment's utterances in the order they were said. A label is
+    a run of whole words, only the last of which can carry a particle, so it is
+    found as it stands in the sentence's words (``_label``). The first sentence
+    to say it, not the one that says it most often: a segment starts where the
+    subject was raised, and the label is built the same way.
+
+    Speech starts with words that say nothing ("음, 그러니까 …"); those
+    (``_FILLERS``) are dropped from the front. A sentence over ``max_chars`` is
+    cut at word boundaries with "…", from the label's word when the label would
+    not fit otherwise, so the label is always in what is shown.
+    """
+    if not label:
+        return None
+    for text in texts:
+        for sentence in _SENTENCE_BREAK.split(text):
+            words = sentence.split()
+            line = " ".join(words)
+            if label not in line:
+                continue
+            while (
+                len(words) > 1
+                and words[0].rstrip(",.…~") in _FILLERS
+                and not line.startswith(label)
+            ):
+                words = words[1:]
+                line = " ".join(words)
+            return _clip_around(line, label, max_chars)
+    return None
+
+
+def _clip_around(line: str, label: str, max_chars: int) -> str:
+    if len(line) <= max_chars:
+        return line
+    at = line.index(label)
+    start = 0
+    if at + len(label) > max_chars - 1:
+        start = line.rfind(" ", 0, at) + 1
+    head = "…" if start else ""
+    rest = line[start:]
+    if len(head) + len(rest) <= max_chars:
+        return head + rest
+    budget = max_chars - len(head) - 1
+    must_keep = at - start + len(label)
+    cut = rest.rfind(" ", 0, budget + 1)
+    if cut < must_keep:
+        cut = max(budget, must_keep)
+    return head + rest[:cut].rstrip() + "…"
 
 
 def _phrase_counts(
