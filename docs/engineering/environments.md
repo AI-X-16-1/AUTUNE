@@ -941,6 +941,99 @@ curl -s -u autune:<password> -X POST http://<DEV_PUBLIC_HOST>/api/audio/dev/toke
 The first upload downloads Whisper and the first context task KURE-v1 and its
 re-ranker (several GB) into the `models` volume, which survives redeploys.
 
+## The release host
+
+A push to `infra/release-1014` runs `.github/workflows/release-aws.yml` on a
+GitHub-hosted runner. It deploys to one EC2 instance in ap-northeast-2 with no
+SSH, no deploy key and no long-lived AWS key:
+
+1. The runner assumes the AWS role in the repository variable
+   `AWS_DEPLOY_ROLE_ARN` through OIDC. The role's trust policy accepts only
+   this repository's `infra/release-1014` branch.
+2. It sends one SSM Run Command to the instance in `AWS_DEPLOY_INSTANCE_ID`.
+   The command fetches the pushed commit with the job's `GITHUB_TOKEN`, passed
+   as a request header and not stored in `.git/config`, and runs
+   `infra/aws/deploy.sh`.
+3. `deploy.sh` reads two Secrets Manager secrets with the instance role:
+   `autune/db` (RDS and ElastiCache endpoints and the database login) and
+   `autune/app` (one entry per environment variable: the secret key, the
+   encryption key, the LLM and Hugging Face keys, the OAuth client ids and
+   `AUTUNE_SITE_URL`, the address people reach the site on). It
+   builds the images, migrates, checks the encryption key and starts the
+   stack. No secret value is printed.
+
+The stack is `infra/docker-compose.app.yml` with
+`infra/docker-compose.release.yml` on top, as project `autune-app`:
+
+| What | Release host |
+| --- | --- |
+| `AUTUNE_ENV` | `production`: no `/dev` router, Secure cookies, and settings refuse the shipped secret key and a missing encryption key |
+| Database, broker | RDS PostgreSQL 16 (TLS required, `sslmode=require`) and ElastiCache Redis, not containers; there is no `postgres` or `redis` service |
+| `worker-audio` | CPU (`AUTUNE_AUDIO_DEVICE=cpu`, int8), no `gpus` entry. Expect transcription to run near real time, not faster |
+| Published port | nginx on 80 only, behind an ALB that terminates TLS for the address in `AUTUNE_SITE_URL` |
+| Raw audio | the same `audio-tmp` tmpfs as everywhere; swap is off on the host, so a page of it cannot reach the disk (`privacy.md` section 1) |
+| Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on |
+
+Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
+under `production`, and the nginx password block has nothing behind it.
+
+**The site's address is `app.autune.cloud`** (decided on #1343). `deploy.sh`
+has no default for `AUTUNE_SITE_URL` and stops without it. It must not be
+`autune.cloud` itself, which is the public landing page (`apps/landing`,
+#1338) and has to show that page at the address registered with the ad
+network, nor a path under it. The landing page's owner agreed to the name
+`app.autune.cloud` on two conditions that live in the code, not in this
+deployment, and that must be met before an ad script goes on the landing
+page: the session cookie takes the `__Host-` prefix, a state-changing request
+and the live WebSocket handshake are refused when their `Origin` is not the
+app's own (the Slack events route, which Slack posts without an `Origin`, is
+left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. The
+two names share a site, so until then the team trial must not carry an ad
+script; none is on the landing page today.
+
+**This host is a trial for the team's own accounts. Google does not keep
+anyone else out of it; the load balancer does.**
+
+- The Google OAuth client in `autune/app` is the main project's, whose consent
+  screen is open to anyone (#1320), and `upsert_user_from_google` creates a user
+  for any Google identity that comes back, with no list of allowed accounts.
+  So on this host Google refuses nobody. What keeps an outside account out is
+  the load balancer's security group (`autune-alb-sg`): ports 80 and 443 allow
+  only the team's public IP addresses, and nothing else reaches the sign-in
+  page. That setting lives outside this repository and nothing here checks it;
+  whoever changes it changes who can sign in. A side effect: Slack's servers
+  cannot reach `/api/slack/events` either, so do not connect Slack here.
+- The privacy policy names AWS as a processor. Article 6 of
+  `apps/web/src/app/legal/content.ts` says that what the service stores is kept
+  on servers the company runs itself and that the keeping is not entrusted, and
+  article 5 (3) says audio is given to no outside service. A database on RDS, a
+  queue on ElastiCache and a tmpfs on EC2 are an entrusted processing. So
+  article 6 lists AWS (server and database operation; all data the service
+  stores and the audio being processed; Seoul), the Cloudflare line is
+  corrected, the consent version goes up, and the notice period of article 15
+  (2) is kept.
+- #890 is reopened.
+
+The allow list comes off only after all of these: the privacy policy change
+above has run its notice period, #890 is reopened, the three cookie and
+`Origin` conditions above are in the code, and the Google client is either a
+separate project in Testing with the team as test users or the code has its
+own list of allowed accounts. Until then the host is the team's.
+
+The broker connection is encrypted: `deploy.sh` builds `rediss://` with
+`ssl_cert_reqs=required`, because Celery payloads carry masked transcript
+lines and a VPC is not a reason to send them in the clear. The matching
+setting lives outside this repository: the ElastiCache replication group must
+have in-transit encryption on (`preferred` while the first deploy is checked,
+then `required`). Without it the connection is refused and the deploy fails at
+`up --wait`, which is the visible way for it to go wrong.
+
+To stop paying for the host overnight, stop the EC2 instance and the RDS
+instance (the broker and the load balancer cannot be stopped; delete them if
+the site is idle for more than a day or two). RDS starts itself again after
+seven days. Everything in the `autune-app` project comes back with the host
+(`restart: unless-stopped`).
+
 ## Environments
 
 | Environment | Purpose | Data |
