@@ -16,6 +16,7 @@ const state = vi.fn<() => Promise<ExtractionState>>();
 const items = vi.fn<() => Promise<ActionItemRead[]>>();
 const review = vi.fn<() => Promise<MeetingReview>>();
 const patch = vi.fn<(id: string, body: unknown) => Promise<ReviewDecision>>();
+vi.mock("../hooks/useMeetingTitle", () => ({ useMeetingTitle: () => null }));
 vi.mock("../api", () => ({
   getExtractionState: () => state(),
   requestExtraction: vi.fn(),

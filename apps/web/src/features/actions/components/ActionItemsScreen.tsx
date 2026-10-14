@@ -19,6 +19,7 @@ import { listProjects } from "../api";
 import { ALL_PROJECTS, inProject, type ProjectChoice } from "../projectFilter";
 import type { Project } from "../types";
 import { useActionItems } from "../hooks/useActionItems";
+import { useMeetingTitle } from "../hooks/useMeetingTitle";
 import { useTitleReads } from "../hooks/useTitleReads";
 import { awaitsTitle } from "../titleReads";
 import { bulkActionItems } from "../api";
@@ -55,6 +56,7 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
   const { items, settled, error, add, edit, close, remove, reload, readTitles } = useActionItems({
     meeting_id: meetingId,
   });
+  const title = useMeetingTitle(meetingId);
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   // `?item=` (#1183): the 요약 tab links an item here by its id, and its window
   // opens. Read once on arrival; an id that is not this meeting's opens nothing.
@@ -103,15 +105,20 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
         >
           회의 검토
         </h1>
-        <p
-          className="mt-2 text-[var(--color-ink-muted)]"
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--text-metaSmall)",
-          }}
-        >
-          {meetingId}
-        </p>
+        {/* The meeting's title, never its id: while it is unread, when the read
+            failed and when the title is blank the line is not drawn. */}
+        {title !== null ? (
+          <p
+            className="mt-2 break-words text-[var(--color-ink-body)]"
+            style={{
+              fontSize: "var(--text-rowTitle)",
+              fontWeight: "var(--text-rowTitle-weight)",
+              lineHeight: "var(--text-rowTitle-leading)",
+            }}
+          >
+            {title}
+          </p>
+        ) : null}
 
         <div className="mt-3 flex flex-col gap-2">
           {/* Every connection, with no meeting needed, lives on S28 (#496). */}
