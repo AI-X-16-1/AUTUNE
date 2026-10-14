@@ -13,14 +13,14 @@
 #   autune/app  JSON: one entry per environment variable the stack takes,
 #               e.g. AUTUNE_SECRET_KEY, AUTUNE_ENCRYPTION_KEY,
 #               AUTUNE_LLM_API_KEY, AUTUNE_AUDIO_HF_TOKEN,
-#               AUTUNE_GOOGLE_CLIENT_ID, AUTUNE_GOOGLE_CLIENT_SECRET ...
+#               AUTUNE_GOOGLE_CLIENT_ID, AUTUNE_GOOGLE_CLIENT_SECRET,
+#               AUTUNE_SITE_URL (the address people reach the site on) ...
 #
 # No value is ever echoed. Raw audio never touches this script: the stack's
 # audio-tmp volume is a tmpfs and swap is off on this host (invariant 11).
 set -euo pipefail
 
 REGION="${AWS_REGION:-ap-northeast-2}"
-SITE_URL="${AUTUNE_SITE_URL:-https://autune.cloud}"
 PROJECT=autune-app
 COMPOSE=(docker compose -p "$PROJECT"
   -f infra/docker-compose.app.yml -f infra/docker-compose.release.yml)
@@ -92,11 +92,13 @@ unset db_env
 
 # Same refusals as the "Check configuration" step of dev.yml. Production
 # settings need the first two on their own; the rest is what the compose file
-# switches on (module B's classifier and friends are `llm`).
+# switches on (module B's classifier and friends are `llm`). The site's
+# address has no default: it is not decided, and it must not be a name on the
+# landing page's site (#1338), so nothing here may guess one.
 missing=()
 for name in AUTUNE_SECRET_KEY AUTUNE_ENCRYPTION_KEY AUTUNE_LLM_API_KEY \
             AUTUNE_AUDIO_HF_TOKEN AUTUNE_GOOGLE_CLIENT_ID \
-            AUTUNE_GOOGLE_CLIENT_SECRET; do
+            AUTUNE_GOOGLE_CLIENT_SECRET AUTUNE_SITE_URL; do
   [ -n "${!name:-}" ] || missing+=("$name")
 done
 if [ "${#missing[@]}" -gt 0 ]; then
@@ -108,7 +110,7 @@ fi
 # the /dev password. Production mounts no /dev router; nginx's entrypoint
 # still wants a value, so it gets one nobody knows.
 export COMPOSE_PROJECT_NAME="$PROJECT"
-export DEV_SITE_URL="$SITE_URL"
+export DEV_SITE_URL="$AUTUNE_SITE_URL"
 export DEV_LIVE_URL="${DEV_LIVE_URL:-}"
 DEV_BASIC_AUTH_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -d '/+=')"
 export DEV_BASIC_AUTH_PASSWORD

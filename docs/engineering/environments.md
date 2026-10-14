@@ -957,7 +957,8 @@ SSH, no deploy key and no long-lived AWS key:
 3. `deploy.sh` reads two Secrets Manager secrets with the instance role:
    `autune/db` (RDS and ElastiCache endpoints and the database login) and
    `autune/app` (one entry per environment variable: the secret key, the
-   encryption key, the LLM and Hugging Face keys, the OAuth client ids). It
+   encryption key, the LLM and Hugging Face keys, the OAuth client ids and
+   `AUTUNE_SITE_URL`, the address people reach the site on). It
    builds the images, migrates, checks the encryption key and starts the
    stack. No secret value is printed.
 
@@ -969,17 +970,33 @@ The stack is `infra/docker-compose.app.yml` with
 | `AUTUNE_ENV` | `production`: no `/dev` router, Secure cookies, and settings refuse the shipped secret key and a missing encryption key |
 | Database, broker | RDS PostgreSQL 16 (TLS required, `sslmode=require`) and ElastiCache Redis, not containers; there is no `postgres` or `redis` service |
 | `worker-audio` | CPU (`AUTUNE_AUDIO_DEVICE=cpu`, int8), no `gpus` entry. Expect transcription to run near real time, not faster |
-| Published port | nginx on 80 only, behind an ALB that terminates TLS for `autune.cloud` |
+| Published port | nginx on 80 only, behind an ALB that terminates TLS for the address in `AUTUNE_SITE_URL` |
 | Raw audio | the same `audio-tmp` tmpfs as everywhere; swap is off on the host, so a page of it cannot reach the disk (`privacy.md` section 1) |
 | Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on |
 
 Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
-under `production`, and the nginx password block has nothing behind it. The
-consent screen is in Testing, so only the team's accounts can sign in.
+under `production`, and the nginx password block has nothing behind it.
+
+**The site's address is not decided.** `deploy.sh` has no default for
+`AUTUNE_SITE_URL` and stops without it. It must not be `autune.cloud` or a
+name under it: that is the public landing page (`apps/landing`, #1338), kept on
+a site of its own so that an ad script on it shares no cookie, storage or
+origin with the app. Settle the address with the owner of that page, then add
+it to `autune/app`.
 
 **This host is a trial for the team's own accounts. It takes no one from
-outside the team until both of these are done, and neither is part of the
-deployment:**
+outside the team until all three of these are done, and none of them is part
+of the deployment:**
+
+- The Google OAuth client in `autune/app` belongs to a Google Cloud project
+  whose consent screen is in Testing with the team's accounts as test users.
+  The main project's consent screen is open to anyone (#1320), and
+  `upsert_user_from_google` creates a user for any Google identity that comes
+  back, with no list of allowed accounts, so the consent screen is the only
+  thing that keeps an outside account out. Create the client
+  in a separate Testing project, put its id and secret in `autune/app`, and
+  after the first deploy sign in once with an account that is not on the list
+  and see that Google refuses it.
 
 - The privacy policy names AWS as a processor. Article 6 of
   `apps/web/src/app/legal/content.ts` says that what the service stores is kept
