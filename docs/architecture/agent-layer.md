@@ -1342,7 +1342,7 @@ to, and under what agreement.** Two parts, and each carries a condition:
 - **Open-web search.** This one stays out of scope for the release. A search
   query *is* the payload — there is no feature-scoped subset of it to send the
   way there is for a prompt — and a general search engine is not a processor we
-  have terms with. So **Research reads only what the team already holds** — its own meetings. Uploaded material has a store now (module B, #817), but Research does not read it: the one tool over it, `extraction.find_materials`, is off by default and on no subagent's or chat tool list — which is enough
+  have terms with. So **Research reads only what the team already holds** — its own meetings. Uploaded material has a store now (module B, #817), but Research does not read it: the one tool over it, `extraction.find_materials`, is on no subagent's tool list. It is on the main agent's team-chat list (`TEAM_TOOLS` in `main/ask.py`, #1313), not on a chat opened on a meeting, and it answers only when `AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL` is on — off by default, and on a deployment only by the decision on #817. The model is told a count and ids, never a title or text (`TEXT_WITHHELD_TOOLS`). That is enough
   for the scenario in section 10 and asks nothing of anyone.
 
 Research changes when that call happens. With the agent layer on
