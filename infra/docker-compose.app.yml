@@ -234,7 +234,9 @@ x-python: &python
     # has no day: they stay until a member deletes each one, or chooses the
     # window again -- each upload then has back the day it was given at its
     # upload.
-    AUTUNE_EXTRACTION_MATERIAL_UPLOAD: "true"
+    # OFF ON THE RELEASE BRANCH (#817): whether a release deployment takes
+    # uploads is decided there first, on its own. The dev server keeps it on.
+    AUTUNE_EXTRACTION_MATERIAL_UPLOAD: "false"
     AUTUNE_EXTRACTION_MATERIAL_EMBEDDER_IMPL: local
     # The assistant searches a team's materials, on this site (decided on #817
     # by the four module owners, 2026-10-14: this one server, in a team's own
@@ -257,7 +259,10 @@ x-python: &python
     # search materials on this server, and searches nothing. Uploads, the
     # search box on the 자료 screen and what is stored are the two lines
     # above's, and stay as they are.
-    AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL: "true"
+    # OFF ON THE RELEASE BRANCH (#817): the search tool is turned on after
+    # the upload decision, and after a few days of the assistant's answers
+    # on dev. The dev server keeps it on.
+    AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL: "false"
     # Module D's NLI is the one scripts/up.sh runs without --real-models, for
     # the reason it gives: the checkpoint is a private repo (#172).
     AUTUNE_CONTEXT_NLI_IMPL: fake
