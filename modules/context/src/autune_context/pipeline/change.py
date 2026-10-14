@@ -98,6 +98,13 @@ noun is skipped. Known limits of a lexical cue:
   "기차표는 총무팀이 끊는다", "세금은 미리 뗀다", "장비는 다음 날 반납한다". Such a
   statement joins the earlier decision's thread only if it is about the same
   subject, which these rarely are.
+- The other way, the withdrawal cue stays silent where it should speak, and NLI
+  decides as it did before the cue. Any 까지 in the clause of 끝내다 or 종료하다
+  reads as a deadline, so "야간 운영은 이번 시즌까지로 끝냅시다" and "설문은 이번 주까지만
+  끝냅시다" are not read as withdrawals. ``marks_in_house`` needs the work named by
+  the earlier decision's own word, so "배송 업무는 우리가 직접 한다" after "배송은 외부
+  업체에 맡긴다" is missed (업무 is not in the earlier statement), though "배송은
+  우리가 직접 한다" is read.
 """
 
 from __future__ import annotations

@@ -560,7 +560,12 @@ lineage view (S22), which reads to a user as a bug.
    by a deadline ("이번 달까지 끝낸다") or was the earlier decision's own
    word. So does bringing in-house what was given out (`marks_in_house`),
    when it is about the same work, and, where NLI contradicts, going back to
-   how things were (예전처럼, 원래대로; `marks_as_before`).
+   how things were (예전처럼, 원래대로; `marks_as_before`). Both cues lean
+   toward staying silent, which leaves the pair to NLI as before: any 까지 in
+   the clause counts as a deadline ("이번 시즌까지로 끝냅시다" is missed), and
+   the same work must be named with the earlier decision's word ("배송 업무는
+   우리가 직접 한다" after "배송은 외부 업체에 맡긴다" is missed). The rest is in
+   the "Known limits" of `pipeline.change`.
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and
