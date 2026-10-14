@@ -155,7 +155,14 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
             <ol className="list-decimal pl-5">
               {page.actions.map((item) => (
                 <Entry key={item.id}>
-                  {item.title ?? item.description}
+                  {/* The item opens in the 할 일 tab (#1183): the page says
+                      where to go by being the way there. */}
+                  <Link
+                    href={`${actionsTab}?item=${encodeURIComponent(item.id)}` as Route}
+                    className="underline-offset-2 hover:underline"
+                  >
+                    {item.title ?? item.description}
+                  </Link>
                   <span
                     className={
                       item.overdue
@@ -182,21 +189,20 @@ export function MeetingSummaryScreen({ meetingId }: { meetingId: string }) {
         />
       </article>
 
-      <section
-        aria-label="회의록에 없는 것"
-        className="flex flex-col gap-1"
-        style={{ fontSize: "var(--text-metaSmall)" }}
-      >
-        {left.length > 0 ? (
-          <Meta>{left.join(" · ")}은 회의록에 넣지 않았습니다.</Meta>
-        ) : null}
-        {!page.overview && summary.generated_too_long ? (
-          <Meta>회의가 길어 AI 요약을 만들지 못했습니다.</Meta>
-        ) : null}
-        <Link href={actionsTab} className="text-[var(--color-accent-default)]">
-          근거 발화와 수정은 할 일 탭에서 →
-        </Link>
-      </section>
+      {left.length > 0 || (!page.overview && summary.generated_too_long) ? (
+        <section
+          aria-label="회의록에 없는 것"
+          className="flex flex-col gap-1"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {left.length > 0 ? (
+            <Meta>{left.join(" · ")}은 회의록에 넣지 않았습니다.</Meta>
+          ) : null}
+          {!page.overview && summary.generated_too_long ? (
+            <Meta>회의가 길어 AI 요약을 만들지 못했습니다.</Meta>
+          ) : null}
+        </section>
+      ) : null}
 
       {summary.projects && summary.projects.length > 0 ? (
         <ProjectGroups
