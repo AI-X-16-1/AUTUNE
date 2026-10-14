@@ -45,6 +45,24 @@ set's change types wrong. What each step here corrects
   parameter moving; and when the decision is about an owner (담당, 책임, 주관, ...),
   because a replaced owner is a moved parameter too (see below).
 
+- **A withdrawal is often said by leaving or going back** (``marks_withdrawal``):
+  "야간 운영은 이번 시즌으로 끝냅시다", "그 행사에서는 빠지죠", "계약을 끊는다",
+  "손 뗍시다", "그만한다", "종료한다", "종이 영수증으로 되돌린다". No negation, no
+  cancellation noun, and NLI often reads it as *entailed* by the decision it takes
+  back, because the subject is the same. So it is read first, before NLI, and only
+  where it cannot be something else: the verb heads the statement's last clause
+  (not "화요일은 빼고 매일 연다", a part left out), takes no value ("8시에 닫는다",
+  "세 명을 뺀다" move a parameter), was not already the earlier decision's word
+  (after "야간에 닫는다", "계속 닫는다" restates it), is not said as a keep, and --
+  for 끝내다 and 종료하다 -- has no 까지 deadline in its clause ("이번 달까지
+  끝낸다" carries the decision out). The version's own statement and the utterance
+  read in its place both count. Bringing in-house what an earlier decision gave out
+  ("외부 업체에 맡긴다" -> "우리가 직접 한다", ``marks_in_house``) is read the same
+  way, unless the later statement is about other work ("검수는 우리가 직접 한다"),
+  and so is going back to how
+  things were (예전처럼, 원래대로, ``marks_as_before``) -- but that one only where NLI
+  contradicts, since the same words restate a decision NLI agrees with.
+
 The cue lists are general Korean negation, cancellation, restriction and
 replacement vocabulary, not words lifted from the evaluation set. One kind of
 negation is not a cue: "차질 없이", "문제없이", "예외 없이" say how a decision is carried
@@ -67,6 +85,19 @@ noun is skipped. Known limits of a lexical cue:
   noun, though it is the nominaliser 것 + 으로 -- a very common way to say a decision
   aloud. And the cancellation noun in "예약 취소 기한을 5일 전으로 늘려요" still reads as
   a cancellation, which is ``marks_reversal`` and older than this cue.
+- The withdrawal cue misses an alternative said with an ordinary verb: "사람이 처음부터
+  번역한다" after machine translation, "각자 받는다" after a shared terminal, "직접
+  산다" after borrowing from a named supplier (no outsourcing word before it). It
+  misses an in-house move said as a place ("병원 안에서 한다"). And it leaves out
+  정리하다 and 마무리하다, though "그 서비스는 정리하죠" withdraws one: "그렇게
+  정리했다" and "논의를 마무리했다" are how a decision is settled, far more often.
+- The withdrawal cue outranks NLI, so where it misreads, NLI cannot correct it. A
+  piece of work ended at a period with 로 ("설문은 이번 주로 종료한다") reads as a
+  withdrawal, though it may be the plan carried out; only a 까지 deadline is told
+  apart. A leaving verb in another sense reads as one too: "처리한 이슈는 닫는다",
+  "기차표는 총무팀이 끊는다", "세금은 미리 뗀다", "장비는 다음 날 반납한다". Such a
+  statement joins the earlier decision's thread only if it is about the same
+  subject, which these rarely are.
 """
 
 from __future__ import annotations
@@ -148,6 +179,8 @@ _KEEP_NOUNS = {"유지", "동결", "존치"}
 # past followed by 대로 or 처럼.
 _AS_BEFORE_NOUNS = {"지금", "현재", "원래", "예전", "기존", "종전", "현행", "이전", "평소"}
 _AS_PARTICLES = {"대로", "처럼"}
+# The past among them: going back to it, against a decision that changed it, is a return.
+_BEFORE_NOUNS = {"원래", "예전", "종전", "이전"}
 # Verbs that change something. Negated (바꾸지 않다, 안 고치다) they say "kept".
 _CHANGE_VERBS = {"바꾸", "고치", "손대", "손보", "건드리", "뒤집", "늘리", "줄이", "올리", "내리"}
 _CHANGE_NOUNS = {"변경", "수정", "조정", "변동", "변화", "인상", "인하"}  # + 하다 / + 없다
@@ -169,7 +202,7 @@ _NEGATING_ADVERBS = {("안", "MAG"), ("못", "MAG")}
 
 # Verbs that swap one thing for another. ``바꾸``/``옮기``/``이전`` also move a
 # parameter ("목요일로 옮긴다"); what tells the two apart is the target, not the verb.
-_SWAP_VERBS = {"갈아타", "바꾸", "옮기", "맡기"}  # tag VV
+_SWAP_VERBS = {"갈아타", "바꾸", "옮기", "맡기", "넘기", "돌리"}  # tag VV
 _SWAP_NOUNS = {"전환", "교체", "대체", "이관", "이전", "통일"}  # noun + 하다
 _TARGET_PARTICLES = {"로", "으로", "에"}
 # What a noun phrase may be made of and still be one target.
@@ -187,6 +220,24 @@ _QUANTITY_OR_TIME = {
 # name (3PL). Lower-cased.
 _LATIN_UNITS = {"kb", "mb", "gb", "tb", "pb", "ms", "mbps", "gbps", "hz", "khz", "ghz",
                 "px", "dpi", "fps", "kg", "mg", "km", "cm", "mm", "k", "m", "s"}  # fmt: skip
+# Predicates that take a decision back without a negation or a cancellation noun:
+# leaving (끝내다, 닫다, 빼다, 빠지다, 끊다, 손 떼다, 내려놓다, 그만하다) and going back
+# (돌아가다, 되돌리다). Read only as the head of the statement's last clause and with
+# no value as their argument (``marks_withdrawal``).
+_EXIT_VERBS = {"끝내", "닫", "빼", "빠지", "끊", "떼", "내려놓", "돌아가", "되돌리", "되돌아가"}
+_EXIT_NOUNS = {
+    "종료", "해지", "폐지", "폐선", "폐쇄", "폐업", "철수", "해산", "탈퇴", "반납",
+    "단종", "퇴출", "복귀", "원상복구", "환원",
+}  # fmt: skip  # + 하다. Not 정리 or 마무리: "그렇게 정리했다" settles a decision.
+_EXIT_ROOTS = {"그만"}  # XR + 하다: 그만하다
+_END_PARTICLES = {"로", "으로", "까지"}
+# Bringing in-house what an earlier decision gave out: the earlier statement hands
+# the work to someone outside, the later one has it done directly or by our own.
+_OUTSOURCING = {"위탁", "외주", "외부", "업체", "대행", "용역", "협력", "납품", "임대", "맡기"}
+_IN_HOUSE = {"직접", "자체", "사내", "내부", "원내", "직영", "자사"}
+# Leaving words that also mean finishing a piece of work: with a 까지 deadline in
+# their clause ("이번 달까지 끝낸다") they carry the decision out, not take it back.
+_FINISH_WORDS = {"끝내", "종료"}
 # A decision about an owner: replacing the owner is a moved parameter, not a swap.
 _OWNER_ROLES = {"담당", "책임", "주관", "리드", "오너", "맡", "담당자", "책임자", "주관자", "리더"}
 _OWNER_TAGS = {"NNG", "NNP", "VV"}
@@ -198,11 +249,19 @@ def classify_change(
     current: str,
     previous: str,
     kept_forward: NliScores | None = None,
+    *,
+    statement: str | None = None,
 ) -> tuple[ChangeType, float]:
     """``forward`` scores (previous -> current), ``backward`` (current ->
     previous), ``kept_forward`` (previous -> ``strip_keep_words(current)``,
-    when ``current`` had any). Returns the change type and the NLI score
-    that decided it."""
+    when ``current`` had any). ``statement``: the version's own statement when
+    ``current`` is a source utterance read in its place; a withdrawal said in
+    either is one. Returns the change type and the NLI score that decided it."""
+    said = {current, statement or current}
+    if any(marks_withdrawal(text, previous) or marks_in_house(text, previous) for text in said):
+        # NLI reads "야간 스키는 이번 시즌으로 끝냅시다" as entailed by "야간 스키를
+        # 운영한다" -- the subject is the same -- so a leaving verb outranks it.
+        return ChangeType.REVERSED, max(forward.contradiction, backward.contradiction)
     entailment = max(forward.entailment, backward.entailment)
     if entailment >= _ENTAILMENT_MIN:
         if forward.entailment < _ENTAILMENT_MIN and adds_condition(current, previous):
@@ -212,7 +271,11 @@ def classify_change(
         return ChangeType.UNCHANGED, kept_forward.entailment
     contradiction = max(forward.contradiction, backward.contradiction)
     if contradiction >= _CONTRADICTION_MIN:
-        reversed_ = marks_reversal(current, previous) or marks_replacement(current, previous)
+        reversed_ = (
+            marks_reversal(current, previous)
+            or marks_replacement(current, previous)
+            or marks_as_before(current)
+        )
         return (ChangeType.REVERSED if reversed_ else ChangeType.MODIFIED), contradiction
     # Neither entailed nor contradicted: NLI has no opinion, and a swap said without
     # a negation is exactly what it scores neutral as often as contradictory.
@@ -250,14 +313,166 @@ def marks_reversal(statement: str, previous: str = "") -> bool:
     return False
 
 
+def marks_withdrawal(statement: str, previous: str = "") -> bool:
+    """Whether ``statement`` takes something back by leaving it or going back from
+    it: "야간 스키는 이번 시즌으로 끝냅시다", "셔틀버스는 계획에서 뺍시다", "그만한다",
+    "N7 노선은 폐선합시다", "비닐 봉투로 되돌린다".
+
+    Only the head of the last clause counts, so "일요일은 빼고 토요일에만 한다"
+    (a part left out, the decision kept) and "정리해서 만 5천 원 받죠" do not; and
+    not when what the predicate takes is a value -- "9시에 닫는다", "네 명을
+    뺀다" move a parameter (``_takes_value``).
+
+    Nor when ``previous`` already said that word -- after "주말 야간은 문을
+    닫는다", "주말 야간은 계속 닫는다" restates the closing -- or when the
+    statement says it keeps something (``marks_keep``)."""
+    morphemes = _morphemes(statement)
+    said_before = {form for form, _ in _morphemes(previous)} if previous else set()
+    return not marks_keep(statement, previous) and any(
+        _is_exit_predicate(morphemes, index)
+        and _exit_word(morphemes, index) not in said_before
+        and _ends_statement(morphemes, index)
+        and not _takes_value(morphemes, index)
+        and not _by_deadline(morphemes, index)
+        for index in range(len(morphemes))
+    )
+
+
+def _by_deadline(morphemes: list[tuple[str, str]], head: int) -> bool:
+    """Whether the predicate at ``head`` finishes a piece of work by a deadline:
+    "이번 달까지 끝낸다", "다음 주까지 종료하기로 했다" carry the decision out.
+    Only the finishing words (``_FINISH_WORDS``), and only a 까지 in the same
+    clause: in "이번 시즌까지만 하고 끝냅시다" it belongs to 하고."""
+    if _exit_word(morphemes, head) not in _FINISH_WORDS:
+        return False
+    start = head - 1 if morphemes[head][1] == "VV" else head - 2
+    for index in range(start, -1, -1):
+        form, tag = morphemes[index]
+        if tag.startswith("E"):
+            return False
+        if form == "까지" and tag in ("JX", "JKB"):
+            return True
+    return False
+
+
+def _exit_word(morphemes: list[tuple[str, str]], index: int) -> str:
+    """The word that carries the exit at ``index``: the verb, or the noun before 하다."""
+    form, tag = morphemes[index]
+    return form if tag == "VV" else morphemes[index - 1][0]
+
+
+def _is_exit_predicate(morphemes: list[tuple[str, str]], index: int) -> bool:
+    """A leaving or going-back verb (빼다, 돌아가다), or the 하다 of such a noun or
+    root (종료하다, 그만하다)."""
+    form, tag = morphemes[index]
+    if tag == "VV":
+        return form in _EXIT_VERBS
+    return (
+        tag.startswith(("XSV", "XSA"))
+        and index > 0
+        and morphemes[index - 1][0] in (_EXIT_NOUNS | _EXIT_ROOTS)
+    )
+
+
+def _ends_statement(morphemes: list[tuple[str, str]], head: int) -> bool:
+    """Whether the predicate at ``head`` heads the statement's last clause: its
+    first ending closes the sentence (뺍시다), or nominalises it into the decision
+    frame (빼기로 했다, 빠지는 게 낫다). A connective (빼고 …, 빼지 않는다) hands
+    the clause on."""
+    for index in range(head + 1, len(morphemes)):
+        form, tag = morphemes[index]
+        if tag in ("EP", "VX"):
+            continue
+        if tag == "EF" or tag == "ETN":
+            return True
+        if tag == "ETM":
+            after = morphemes[index + 1][0] if index + 1 < len(morphemes) else ""
+            return after in ("것", "거", "걸")
+        return False
+    return False
+
+
+def _takes_value(morphemes: list[tuple[str, str]], head: int) -> bool:
+    """Whether a phrase before ``head`` that the predicate takes -- marked as an
+    object or with 에/로/까지/부터, not a topic -- is a quantity or a time: the
+    "9시" of "9시에 닫는다", the "네 명" of "네 명을 뺀다". "24시간 운영은
+    종료한다" names its subject with a number and still withdraws it."""
+    phrase: list[tuple[str, str]] = []
+    for form, tag in morphemes[:head]:
+        if tag in _PHRASE_TAGS:
+            phrase.append((form, tag))
+            continue
+        if phrase and (tag == "JKO" or (tag == "JKB" and form == "에")) and _is_value(phrase):
+            return True
+        if phrase and tag in ("JKB", "JX") and form in _END_PARTICLES and _is_quantity(phrase):
+            return True
+        phrase = []
+    return False
+
+
+def _is_quantity(phrase: list[tuple[str, str]]) -> bool:
+    """A number, or a counter after one: "다섯 개", "9시". A period on its own --
+    "이번 분기로 끝낸다" -- is when the decision ends, not a value it moves to."""
+    return any(tag in ("SN", "MM", "NNB") for _, tag in phrase)
+
+
+def marks_as_before(statement: str) -> bool:
+    """Whether ``statement`` goes back to how things were before: 예전처럼,
+    원래대로, 이전처럼. Read only where NLI finds it contradicting the earlier
+    decision: what was before that decision is what it changed, so going back
+    takes it back. Where NLI does not, the same words say nothing changed
+    (``marks_keep``). 지금대로 and 현행처럼 are the present, never a return."""
+    morphemes = _morphemes(statement)
+    return any(
+        tag.startswith("NN") and form in _BEFORE_NOUNS and after[0] in _AS_PARTICLES
+        for (form, tag), after in zip(morphemes, [*morphemes[1:], ("", "")], strict=True)
+    )
+
+
+def marks_in_house(current: str, previous: str) -> bool:
+    """Whether ``current`` brings in-house what ``previous`` gave out: "장비 대여는
+    렌탈 업체에 위탁한다" -> "리조트가 직접 한다". An alternative that excludes the
+    earlier one, said with neither a swap verb nor a negation.
+
+    Only when ``current`` is about that same work: a topic or an object it names
+    must be one ``previous`` names too. After "번역은 외주로 돌린다", "검수는
+    우리가 직접 한다" keeps the outsourcing and adds a step of its own."""
+    before = {form for form, _ in _morphemes(previous)}
+    if not before & _OUTSOURCING:
+        return False
+    now = _morphemes(current)
+    if any(head not in before for head in _topic_heads(now)):
+        return False  # "검수는 우리가 직접 한다": other work than what was given out
+    return any(form in _IN_HOUSE for form, tag in now if tag in ("MAG", "NNG"))
+
+
+def _topic_heads(morphemes: list[tuple[str, str]]) -> list[str]:
+    """The nouns a statement is about: each one right before a topic particle
+    (은/는), and each one right before an object particle (을/를) in its last
+    clause. "업체 평가는 …" -> 평가, "… 일정을 잡는다" -> 일정; but not the 장비 of
+    "장비를 들여서 원내에서 한다", the means of an earlier clause."""
+    last_clause = max(
+        (index + 1 for index, (_, tag) in enumerate(morphemes) if tag == "EC"), default=0
+    )
+    return [
+        form
+        for index, ((form, tag), (particle, particle_tag)) in enumerate(
+            zip(morphemes, morphemes[1:], strict=False)
+        )
+        if tag in ("NNG", "NNP")
+        and (particle in ("은", "는") or (particle_tag == "JKO" and index >= last_clause))
+    ]
+
+
 def marks_keep(statement: str, previous: str = "") -> bool:
     """Whether ``statement`` says something stays as it is: a keep adverb
     (그대로, 계속), a keep noun (유지, 동결), "as now / as before" (지금대로,
     기존처럼), "no change" (변동 없이), or a change verb said with a negation
-    (바꾸지 않는다, 안 고친다) -- but not a verb with the direction ``previous``
-    moved in (``_negated_changes``)."""
+    (바꾸지 않는다, 안 고친다) -- but not a change with the direction ``previous``
+    moved in, negated or absent (``_negated_changes``; "인상 없이" after a raise)."""
     morphemes = _morphemes(statement)
-    if _negated_changes(morphemes, _directions_moved(previous)):
+    moved = _directions_moved(previous)
+    if _negated_changes(morphemes, moved):
         return True
     for index, (form, tag) in enumerate(morphemes):
         after = morphemes[index + 1] if index + 1 < len(morphemes) else ("", "")
@@ -267,9 +482,10 @@ def marks_keep(statement: str, previous: str = "") -> bool:
             return True  # 현행 유지, 유지하다 -- not 유지보수, a compound
         if tag.startswith("NN") and form in _AS_BEFORE_NOUNS and after[0] in _AS_PARTICLES:
             return True
-        if tag.startswith("NN") and form in _CHANGE_NOUNS:
+        if tag.startswith("NN") and form in _CHANGE_NOUNS and _DIRECTIONS.get(form) not in moved:
+            # 변동 없이, 변경이 없다 -- but "인상 없이" after a raise takes the raise back
             rest = morphemes[index + 1 : index + 3]
-            if any((f, t) in _ABSENCE_TOKENS for f, t in rest):  # 변동 없이, 변경이 없다
+            if any((f, t) in _ABSENCE_TOKENS for f, t in rest):
                 return True
     return False
 
