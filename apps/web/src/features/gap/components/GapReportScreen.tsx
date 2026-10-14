@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import type { ReactNode } from "react";
 
-import { Button, Tabs } from "@/shared/ui";
+import { Button, ChipToggle, Tabs } from "@/shared/ui";
 
 import { getAgendaEvents, getAskTargets } from "../api";
 import { useGapActions } from "../hooks/useGapActions";
@@ -15,6 +15,7 @@ import { useTemplates } from "../hooks/useTemplates";
 import { COVERAGE_LABELS } from "../types";
 import type { Coverage, Gap, GapExplanations, TemplateComparison } from "../types";
 import { CoveredList } from "./CoveredList";
+import { DisabledReason } from "./DisabledReason";
 import { GapList } from "./GapList";
 import { TemplateRail } from "./TemplateRail";
 import { TopicRanking } from "./TopicRanking";
@@ -51,7 +52,9 @@ function coverageByGap(
   for (const item of comparison?.items ?? []) {
     if (item.gap_id && item.coverage) known.set(item.gap_id, item.coverage);
   }
-  return gaps.every((gap) => known.has(gap.id)) && comparison !== null ? known : null;
+  // A meeting not yet compared has no verdicts to split by: "누락 0" there
+  // would read as a verdict (#1177).
+  return gaps.every((gap) => known.has(gap.id)) && comparison?.analysed === true ? known : null;
 }
 
 /**
@@ -154,6 +157,20 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
       ? comparison.items.filter((item) => item.coverage === "covered")
       : [];
   const templateNote = comparison ? `도메인 템플릿 "${comparison.name}" 대조` : undefined;
+  // Why the Slack button cannot be pressed, said beside it (#1177). A report
+  // not yet read blocks it too: the server would post gaps nobody here has
+  // seen. Whether the team has Slack connected is the server's to say, after
+  // a press.
+  const slackBlocked = cardsSent
+    ? "이번에 이미 보냈습니다"
+    : report === null
+      ? reportError
+        ? "갭을 불러오지 못했습니다"
+        : "갭을 불러오는 중입니다"
+      : !gaps.some((gap) => gap.severity === "high")
+        ? "보낼 위험도 높은 갭이 없습니다"
+        : null;
+  const slackWhy = useId();
 
   return (
     <main
@@ -167,16 +184,18 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
         {/* The one primary on the screen: the meeting's open high gaps go
             to the team's Slack channel as question cards, a few at most and
             a link for the rest (#824, plan 3). The server picks the gaps; the
-            button only waits for a report that has one -- the report leaves
+            button waits for a report that has one -- the report leaves
             dismissed gaps out, so a high one here is one the server sends.
             Once the cards went out it is not offered again on this visit:
             one press puts up to four messages on the channel. What happened
             is said in the notice under the bar. */}
+        {slackBlocked ? (
+          <DisabledReason id={slackWhy}>{slackBlocked}</DisabledReason>
+        ) : null}
         <Button
           tone="primary"
-          disabled={
-            !gaps.some((gap) => gap.severity === "high") || pending === "slack" || cardsSent
-          }
+          disabled={slackBlocked !== null || pending === "slack"}
+          aria-describedby={slackBlocked ? slackWhy : undefined}
           title={
             cardsSent
               ? "질문 카드를 이미 팀 Slack 채널에 올렸습니다"
@@ -239,18 +258,27 @@ export function GapReportScreen({ meetingId }: { meetingId: string }) {
           {tab === "gaps" ? (
             split ? (
               <div className="flex flex-col" style={{ gap: "var(--space-16)" }}>
-                <Tabs<Coverage>
-                  tabs={COVERAGES.map((coverage) => ({
-                    id: coverage,
-                    label: COVERAGE_LABELS[coverage],
-                    count:
-                      coverage === "covered"
+                {/* Chips, not tabs: the meeting's tabs and 갭 · 토픽 are
+                    already two rows of tabs above this (#1177). */}
+                <div
+                  role="group"
+                  aria-label="판정"
+                  className="flex flex-wrap"
+                  style={{ gap: "var(--space-8)" }}
+                >
+                  {COVERAGES.map((coverage) => (
+                    <ChipToggle
+                      key={coverage}
+                      selected={coverageTab === coverage}
+                      onClick={() => setCoverageTab(coverage)}
+                    >
+                      {COVERAGE_LABELS[coverage]}{" "}
+                      {coverage === "covered"
                         ? covered.length
-                        : gaps.filter((gap) => split.get(gap.id) === coverage).length,
-                  }))}
-                  active={coverageTab}
-                  onChange={setCoverageTab}
-                />
+                        : gaps.filter((gap) => split.get(gap.id) === coverage).length}
+                    </ChipToggle>
+                  ))}
+                </div>
                 {coverageTab === "covered" ? (
                   <ReadSection
                     heading={COVERAGE_HEADINGS.covered}
