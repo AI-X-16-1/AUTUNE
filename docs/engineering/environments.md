@@ -949,7 +949,13 @@ SSH, no deploy key and no long-lived AWS key:
 
 1. The runner assumes the AWS role in the repository variable
    `AWS_DEPLOY_ROLE_ARN` through OIDC. The role's trust policy accepts only
-   this repository's `infra/release-1014` branch.
+   this repository's `infra/release-1014` branch. The repository sends an
+   immutable subject, `repo:<owner>@<owner id>/<repo>@<repo id>:ref:refs/heads/infra/release-1014`
+   (read the prefix with
+   `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`). A trust
+   policy written with the repository's name alone does not match it, and the
+   job stops at "Assume the deploy role" with `Not authorized to perform
+   sts:AssumeRoleWithWebIdentity`.
 2. It sends one SSM Run Command to the instance in `AWS_DEPLOY_INSTANCE_ID`.
    The command fetches the pushed commit with the job's `GITHUB_TOKEN`, passed
    as a request header and not stored in `.git/config`, and runs
@@ -1027,6 +1033,16 @@ setting lives outside this repository: the ElastiCache replication group must
 have in-transit encryption on (`preferred` while the first deploy is checked,
 then `required`). Without it the connection is refused and the deploy fails at
 `up --wait`, which is the visible way for it to go wrong.
+
+`redis_host` in `autune/db` is the replication group's primary endpoint,
+`master.<group>.<id>.<region>.cache.amazonaws.com`. The certificate is issued
+for the group's names, so the node-group name that some console views show
+(`<group>.<id>.ng.0001.<region>.cache.amazonaws.com`) fails the hostname check.
+That mistake is quiet: the stack starts and every health check passes, because
+none of them touches the broker, and the first thing to fail is the OAuth state
+store, so "Continue with Google" returns an Internal Server Error with
+`CERTIFICATE_VERIFY_FAILED: Hostname mismatch` in the `api` log. The check
+stays on; `ssl_cert_reqs=none` is not the fix.
 
 To stop paying for the host overnight, stop the EC2 instance and the RDS
 instance (the broker and the load balancer cannot be stopped; delete them if
