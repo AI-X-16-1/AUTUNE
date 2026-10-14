@@ -25,6 +25,7 @@ vi.mock("../api", () => ({
   listProjects: async () => [],
   bulkActionItems: vi.fn(),
 }));
+vi.mock("../hooks/useMeetingTitle", () => ({ useMeetingTitle: () => null }));
 vi.mock("../hooks/useActionItems", () => ({
   useActionItems: () => ({
     items: [

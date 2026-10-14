@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import type { Route } from "next";
+import Link from "next/link";
+
+import { getJiraConnection } from "@/shared/api/auth";
 import { Button, ChipToggle, Tabs } from "@/shared/ui";
 
 import { ActionBoard } from "./ActionBoard";
@@ -134,6 +138,27 @@ export function TeamActionsScreen({
     };
   }, []);
 
+  // Whether any team in view has Jira connected (#1183): the link to its open
+  // issues is for those teams only. This is the team's own connection record,
+  // not a read of Jira, so asking costs nothing at Jira. A team whose answer
+  // did not come is taken as not connected rather than offering a link that
+  // then says "연결한 Jira 프로젝트가 없습니다".
+  const [jiraOn, setJiraOn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const ids = teamId === null ? teams.map((team) => team.id) : [teamId];
+    if (ids.length === 0) {
+      setJiraOn(false);
+      return;
+    }
+    void Promise.all(ids.map((id) => getJiraConnection({ teamId: id }))).then((answers) => {
+      if (alive) setJiraOn(answers.some((answer) => answer?.connected === true));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [teams, teamId]);
+
   const shown = inProject(lists[tab], project);
   const groups =
     view === "team"
@@ -219,11 +244,11 @@ export function TeamActionsScreen({
         <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
           <div
             role="group"
-            aria-label="보기"
+            aria-label="묶어 보기"
             className="flex items-center gap-2 text-[var(--color-ink-muted)]"
             style={{ fontSize: "var(--text-metaSmall)" }}
           >
-            보기
+            묶어 보기
             {VIEWS.map(({ id, label }) => (
               <ChipToggle key={id} selected={view === id} onClick={() => setView(id)}>
                 {label}
@@ -245,6 +270,10 @@ export function TeamActionsScreen({
           onChoose={setProject}
         />
 
+        {/* With the board's controls, not alone under it, and only for a team
+            that has Jira (#1183). */}
+        {jiraOn ? <JiraOpenIssues teamId={teamId} /> : null}
+
         <div style={{ marginTop: "var(--space-24)" }}>
           {!settled ? (
             <Note>할 일을 불러오는 중입니다.</Note>
@@ -253,8 +282,11 @@ export function TeamActionsScreen({
           ) : (
             <>
               {error !== null ? <Note>최신 목록을 불러오지 못해 이전 목록을 보여주고 있습니다.</Note> : null}
-              {shown.length === 0 ? <Note>{EMPTY[tab]}</Note> : null}
-              {groups === null || shown.length === 0 ? (
+              {shown.length === 0 ? (
+                // One line, not four empty columns (#1183): there is nothing
+                // to move and nowhere to drop it.
+                <EmptyBoard tab={tab} filtered={project !== ALL_PROJECTS && lists[tab].length > 0} />
+              ) : groups === null ? (
                 board(shown)
               ) : (
                 <div className="flex flex-col" style={{ gap: "var(--space-24)" }}>
@@ -286,7 +318,6 @@ export function TeamActionsScreen({
         </div>
 
         <SinceLastMeetingSection items={items} teamId={teamId} onOpen={setSelectedId} />
-        <JiraOpenIssues teamId={teamId} />
       </div>
 
       {selected !== undefined ? (
@@ -314,10 +345,32 @@ export function TeamActionsScreen({
 }
 
 const EMPTY: Record<Tab, string> = {
-  all: "아직 할 일이 없습니다. 회의가 분석되면 이곳에 모입니다.",
+  all: "회의를 올리면 할 일이 여기에 모입니다.",
   mine: "나에게 배정된 할 일이 없습니다.",
   overdue: "기한이 지난 할 일이 없습니다.",
 };
+
+// `filtered` is a project choice that hides items the tab does have: the team
+// has work, and a line about uploading a first meeting would be wrong (review
+// of #1325).
+function EmptyBoard({ tab, filtered }: { tab: Tab; filtered: boolean }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3">
+      <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-body)" }}>
+        {filtered ? "고른 프로젝트에는 할 일이 없습니다." : EMPTY[tab]}
+      </p>
+      {tab === "all" && !filtered ? (
+        <Link
+          href={"/meetings/new" as Route}
+          className="text-[var(--color-accent-text)]"
+          style={{ fontSize: "var(--text-body)" }}
+        >
+          회의 시작
+        </Link>
+      ) : null}
+    </div>
+  );
+}
 
 function Meta({ children }: { children: string }) {
   return (

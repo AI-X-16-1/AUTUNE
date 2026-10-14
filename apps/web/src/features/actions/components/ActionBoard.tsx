@@ -2,16 +2,47 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { Button } from "@/shared/ui";
+
 import { ActionCard } from "./ActionCard";
 import { AddActionItem } from "./AddActionItem";
 import { BulkTriage } from "./BulkTriage";
 import { CandidateBand } from "./CandidateBand";
 import { CONFIRMED_NOTICE, canDrop, confirms, groupForBoard } from "../board";
 import { useCardContext } from "../hooks/useCardContext";
-import { COLUMNS, COLUMN_LABELS } from "../types";
+import { COLUMNS, COLUMN_LABELS, isCandidate } from "../types";
 import type { ActionItemDraft, BulkActionResult } from "../api";
 import type { Moves } from "../board";
 import type { ActionItemRead, ActionStatus } from "../types";
+
+/** Remembered per browser: said once, then out of the way (#1183). */
+const DRAG_HINT_KEY = "autune.board.dragHintSeen";
+
+/**
+ * Whether the line saying a card can be dragged is still to be shown. Starts
+ * as seen, so the server render and the first paint carry no line that a
+ * returning person then watches disappear; storage that cannot be read leaves
+ * it seen too -- a hint that could never be dismissed is worse than none.
+ */
+function useDragHint(): { show: boolean; dismiss: () => void } {
+  const [seen, setSeen] = useState(true);
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(DRAG_HINT_KEY) !== "1") setSeen(false);
+    } catch {
+      // Blocked or private: stay seen.
+    }
+  }, []);
+  const dismiss = () => {
+    setSeen(true);
+    try {
+      window.localStorage.setItem(DRAG_HINT_KEY, "1");
+    } catch {
+      // Not remembered; it shows again next visit.
+    }
+  };
+  return { show: !seen, dismiss };
+}
 
 /**
  * S17. Four columns, left to right, in the order the work moves.
@@ -87,6 +118,7 @@ export function ActionBoard({
   // What is ticked in 확인 필요, for the bulk bar.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const dragHint = useDragHint();
   // The board's own state changes a tick after `dragstart`, not inside it: a
   // re-render of the card while the browser is still starting the drag
   // cancels the drag in some versions of Chrome (review of #710).
@@ -110,6 +142,7 @@ export function ActionBoard({
     setMoves((current) => ({ ...current, [id]: target }));
     try {
       await onMove(id, target);
+      dragHint.dismiss();
       if (confirmed) setNotice(CONFIRMED_NOTICE);
     } catch {
       setFailure("상태를 바꾸지 못했습니다. 잠시 후 다시 시도해 주세요.");
@@ -148,6 +181,21 @@ export function ActionBoard({
   return (
     <div style={{ display: "grid", gap: "var(--space-page)" }}>
       {add !== undefined && <AddActionItem meetingId={add.meetingId} onAdd={add.onAdd} />}
+
+      {/* Dragging worked and nothing said it did (#1183). One line, until it
+          is dismissed or a card has been moved; only where a card can be
+          moved at all, and not on an empty board. */}
+      {onMove !== undefined && dragHint.show && items.some((item) => !isCandidate(item)) ? (
+        <p
+          className="flex flex-wrap items-center gap-2 text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          카드를 끌어 다른 열로 옮길 수 있습니다. 열마다 상태가 다릅니다.
+          <Button tone="text" size="compact" onClick={dragHint.dismiss}>
+            알겠습니다
+          </Button>
+        </p>
+      ) : null}
 
       {failure !== null ? (
         <p

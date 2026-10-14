@@ -139,12 +139,14 @@ export function ActionCard({
         </div>
       ) : null}
 
-      <div
-        className="mt-1 line-clamp-2 text-[var(--color-ink-muted)]"
-        style={{ fontSize: "var(--text-metaSmall)" }}
-      >
-        {reasonFor(item)}
-      </div>
+      {reasonFor(item) !== null ? (
+        <div
+          className="mt-1 line-clamp-2 text-[var(--color-ink-muted)]"
+          style={{ fontSize: "var(--text-metaSmall)" }}
+        >
+          {reasonFor(item)}
+        </div>
+      ) : null}
 
       <div className="mt-2 flex items-center gap-2" style={{ fontSize: "var(--text-metaSmall)" }}>
         {staleLabel(item) ? (
@@ -244,8 +246,12 @@ export function ActionCard({
  * for the count when there is one, so a model's sentence has the words it
  * stands for beneath it. Two lines at most; the quotation itself is in the
  * detail window.
+ *
+ * A count of nothing is not said (#1183): "근거 발화 0건" sat under every card
+ * the server sent without sources and told a reader nothing they could act on.
+ * A card with no reason to give has no line, and a candidate still says 후보.
  */
-function reasonFor(item: ActionItemRead): string {
+function reasonFor(item: ActionItemRead): string | null {
   // Ahead of everything else: the text above may still carry what a PII
   // report corrected (#586), and only a person can say.
   if (item.needs_recheck) return "출처 발화가 정정됨 · 확인 필요";
@@ -258,9 +264,15 @@ function reasonFor(item: ActionItemRead): string {
   const deleted = item.deleted_source_count ?? 0;
   // ADR 0007: a model item whose evidence was deleted says so, rather than
   // printing "근거 발화 0건" as if the model had made it up.
-  const base =
+  const said =
     sources === 0 && deleted > 0
       ? "근거 발화 삭제됨"
-      : (item.summary ?? `근거 발화 ${sources}건`) + (deleted > 0 ? ` · ${deleted}건 삭제됨` : "");
-  return isCandidate(item) ? `후보 · ${base}` : base;
+      : [
+          item.summary ?? (sources > 0 ? `근거 발화 ${sources}건` : null),
+          deleted > 0 ? `${deleted}건 삭제됨` : null,
+        ]
+          .filter((part) => part !== null)
+          .join(" · ") || null;
+  if (isCandidate(item)) return said === null ? "후보" : `후보 · ${said}`;
+  return said;
 }
