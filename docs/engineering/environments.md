@@ -991,20 +991,18 @@ left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. The
 two names share a site, so until then the team trial must not carry an ad
 script; none is on the landing page today.
 
-**This host is a trial for the team's own accounts. It takes no one from
-outside the team until all three of these are done, and none of them is part
-of the deployment:**
+**This host is a trial for the team's own accounts. Google does not keep
+anyone else out of it; the load balancer does.**
 
-- The Google OAuth client in `autune/app` belongs to a Google Cloud project
-  whose consent screen is in Testing with the team's accounts as test users.
-  The main project's consent screen is open to anyone (#1320), and
-  `upsert_user_from_google` creates a user for any Google identity that comes
-  back, with no list of allowed accounts, so the consent screen is the only
-  thing that keeps an outside account out. Create the client
-  in a separate Testing project, put its id and secret in `autune/app`, and
-  after the first deploy sign in once with an account that is not on the list
-  and see that Google refuses it.
-
+- The Google OAuth client in `autune/app` is the main project's, whose consent
+  screen is open to anyone (#1320), and `upsert_user_from_google` creates a user
+  for any Google identity that comes back, with no list of allowed accounts.
+  So on this host Google refuses nobody. What keeps an outside account out is
+  the load balancer's security group (`autune-alb-sg`): ports 80 and 443 allow
+  only the team's public IP addresses, and nothing else reaches the sign-in
+  page. That setting lives outside this repository and nothing here checks it;
+  whoever changes it changes who can sign in. A side effect: Slack's servers
+  cannot reach `/api/slack/events` either, so do not connect Slack here.
 - The privacy policy names AWS as a processor. Article 6 of
   `apps/web/src/app/legal/content.ts` says that what the service stores is kept
   on servers the company runs itself and that the keeping is not entrusted, and
@@ -1015,6 +1013,12 @@ of the deployment:**
   corrected, the consent version goes up, and the notice period of article 15
   (2) is kept.
 - #890 is reopened.
+
+The allow list comes off only after all of these: the privacy policy change
+above has run its notice period, #890 is reopened, the three cookie and
+`Origin` conditions above are in the code, and the Google client is either a
+separate project in Testing with the team as test users or the code has its
+own list of allowed accounts. Until then the host is the team's.
 
 The broker connection is encrypted: `deploy.sh` builds `rediss://` with
 `ssl_cert_reqs=required`, because Celery payloads carry masked transcript
