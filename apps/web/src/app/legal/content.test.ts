@@ -134,4 +134,30 @@ describe("legal documents", () => {
       expect(version).toMatch(/^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/);
     }
   });
+  // The service runs on AWS's Seoul region (#1342). The policy named a tunnel
+  // through Cloudflare and a server the team runs itself; neither is true of
+  // this host, and a sentence that says what the code does not do is the
+  // thing this file is careful not to have.
+  it("name AWS as the one processor of the hosting row, and no longer a relay", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("Amazon Web Services, Inc. (서울 리전)");
+    expect(privacy).toContain("서울 리전 밖으로 옮기지 않습니다");
+    expect(privacy).toContain("서버의 임시 메모리 영역에서만 처리하도록 구성되어 있습니다");
+    // Audio is still given to no outside service, and now says where it is
+    // processed while it is.
+    expect(privacy).toContain("음성 녹음은 어떠한 외부 서비스에도 제공하지 않습니다");
+    expect(privacy).toContain("서비스가 가동되는 서버(제6조의 수탁자)에서 전사하는 동안에만 임시로 처리");
+    expect(privacy).not.toContain("Cloudflare");
+    expect(privacy).not.toContain("접속을 중계");
+    expect(privacy).not.toContain("그 보관은 위탁하지 않습니다");
+  });
+
+  // A person who agreed to `2026-10-12.6` agreed to a text that said the
+  // keeping was not entrusted and that a Cloudflare tunnel carried the
+  // connection. They are asked again.
+  it("ask again those who agreed before the hosting moved to AWS", () => {
+    const privacy = REQUIRED_CONSENTS.find((c) => c.document === "privacy");
+    expect(privacy?.version).not.toBe("2026-10-12.6");
+  });
+
 });
