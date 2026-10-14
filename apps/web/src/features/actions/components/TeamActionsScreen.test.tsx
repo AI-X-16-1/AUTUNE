@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -21,6 +22,11 @@ import type { ActionItemRead, Project, TeamName } from "../types";
 const teams = vi.fn<() => Promise<TeamName[]>>();
 const projects = vi.fn<() => Promise<Project[]>>();
 const jira = vi.fn<() => Promise<JiraProjectIssues[]>>();
+// A team's Jira connection record; every team has one unless a test says not.
+const jiraConnection = vi.fn<(scope: { teamId: string }) => Promise<{ connected: boolean } | null>>();
+vi.mock("@/shared/api/auth", () => ({
+  getJiraConnection: (scope: { teamId: string }) => jiraConnection(scope),
+}));
 vi.mock("../api", () => ({
   listMyTeams: () => teams(),
   listMyProjects: () => projects(),
@@ -106,6 +112,7 @@ beforeEach(() => {
   ];
   teams.mockResolvedValue(TEAMS);
   projects.mockResolvedValue(PROJECTS);
+  jiraConnection.mockResolvedValue({ connected: true });
 });
 
 afterEach(() => {
@@ -114,6 +121,16 @@ afterEach(() => {
   error = null;
 });
 
+// Waits until every team's Jira connection has been answered and the screen has
+// taken the answers, so a test that asserts the link is absent looks after the
+// answer arrived, not before it.
+async function jiraAnswered() {
+  await waitFor(() => expect(jiraConnection).toHaveBeenCalled());
+  await act(async () => {
+    await Promise.all(jiraConnection.mock.results.map((r) => r.value));
+  });
+}
+
 async function open() {
   render(<TeamActionsScreen me={null} />);
   await waitFor(() => expect(teams).toHaveBeenCalled());
@@ -121,6 +138,18 @@ async function open() {
 }
 
 describe("TeamActionsScreen, 보기", () => {
+  it("names the row for what it does: it groups, it does not filter", async () => {
+    await open();
+
+    const row = screen.getByRole("group", { name: "묶어 보기" });
+
+    expect(within(row).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "한번에",
+      "팀별",
+      "프로젝트별",
+    ]);
+  });
+
   it("opens on everything at once, with no team or project heading", async () => {
     await open();
 
@@ -192,6 +221,25 @@ describe("TeamActionsScreen, 보기", () => {
     expect(onScreen()).toEqual(["a"]);
     expect(inGroup("플랫폼")).toEqual(["a"]);
     expect(screen.queryByRole("region", { name: "디자인" })).toBeNull();
+  });
+
+  // Review of #1325: a project that has no item in the tab said the team has
+  // no meeting yet, with a link to start the first one.
+  it("says the project has none, not that the team has no meeting, when the filter hides them", async () => {
+    items = [
+      item("a", { team_id: "team_p", project_id: "prj_web" }),
+      item("c", { team_id: "team_p", project_id: null, due_date: "2020-01-01" }),
+    ];
+    await open();
+    fireEvent.change(screen.getByRole("combobox", { name: "프로젝트로 거르기" }), {
+      target: { value: "prj_web" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: /기한 초과/ }));
+
+    expect(onScreen()).toEqual([]);
+    expect(screen.getByText("고른 프로젝트에는 할 일이 없습니다.")).toBeTruthy();
+    expect(screen.queryByText(/회의를 올리면 할 일이 여기에 모입니다/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "회의 시작" })).toBeNull();
   });
 });
 
@@ -352,7 +400,12 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(onScreen()).toEqual([]);
     expect(screen.getByRole("status").textContent).toContain(UNNAMED_TEAM);
-    expect(screen.getByText(/아직 할 일이 없습니다/)).toBeTruthy();
+    // One line and the way to a first meeting, not four empty columns (#1183).
+    expect(screen.getByText(/회의를 올리면 할 일이 여기에 모입니다/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "회의 시작" }).getAttribute("href")).toBe(
+      "/meetings/new",
+    );
+    expect(screen.queryByRole("region", { name: "진행 전" })).toBeNull();
   });
 
   it("says the list is an earlier one, not that it failed, when the team has none of it", async () => {
@@ -450,6 +503,7 @@ describe("TeamActionsScreen, one team's items", () => {
     });
     jira.mockResolvedValue([of("team_p", "플랫폼"), of("team_d", "디자인")]);
     const { to } = await show(null);
+    await screen.findByRole("button", { name: "Jira 열린 이슈 보기" });
     press("Jira 열린 이슈 보기");
     const listed = () =>
       within(screen.getByRole("region", { name: "Jira 열린 이슈" }))
@@ -470,5 +524,39 @@ describe("TeamActionsScreen, one team's items", () => {
 
     expect(inGroup("플랫폼")).toEqual(["a", "c"]);
     expect(screen.queryByRole("region", { name: "디자인" })).toBeNull();
+  });
+  it("offers the Jira link only where a team in view has Jira connected", async () => {
+    jiraConnection.mockImplementation(async ({ teamId }) => ({ connected: teamId === "team_d" }));
+    await open();
+
+    expect(await screen.findByRole("button", { name: "Jira 열린 이슈 보기" })).toBeTruthy();
+    expect(jiraConnection).toHaveBeenCalledWith({ teamId: "team_d" });
+    expect(jiraConnection).toHaveBeenCalledWith({ teamId: "team_p" });
+  });
+
+  it("has no Jira link for teams that never connected it, and asks Jira nothing", async () => {
+    jiraConnection.mockResolvedValue({ connected: false });
+    await open();
+    await jiraAnswered();
+
+    expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
+    expect(jira).not.toHaveBeenCalled();
+  });
+
+  it("has no Jira link when the connection could not be read", async () => {
+    jiraConnection.mockResolvedValue(null);
+    await open();
+    await jiraAnswered();
+
+    expect(screen.queryByRole("button", { name: "Jira 열린 이슈 보기" })).toBeNull();
+  });
+
+  it("puts the Jira link with the board's controls, above the board", async () => {
+    await open();
+
+    const link = await screen.findByRole("button", { name: "Jira 열린 이슈 보기" });
+    const column = screen.getByRole("region", { name: "진행 전" });
+
+    expect(link.compareDocumentPosition(column) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
