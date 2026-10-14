@@ -28,7 +28,7 @@ from autune_audio.live.speakers import SpeakerTracker, speaker_cap
 from autune_audio.live.transcriber import Transcriber
 from autune_audio.schemas import LiveTicket
 from autune_core import CurrentUser, get_logger
-from autune_core.auth import SESSION_COOKIE
+from autune_core.auth import session_cookie_name
 from autune_core.db import session_scope
 from autune_core.errors import (
     ConfigurationError,
@@ -125,7 +125,7 @@ async def live(websocket: WebSocket, meeting_id: str) -> None:
         # A hello token first (a developer token, a test acting as someone),
         # else the session cookie the handshake carried: a Google sign-in is an
         # HttpOnly cookie the page cannot read to put in the hello.
-        token = message.token or websocket.cookies.get(SESSION_COOKIE)
+        token = message.token or websocket.cookies.get(session_cookie_name())
         if not token:
             raise PermissionDeniedError("no token in hello and no session cookie")
         with session_scope() as db:
