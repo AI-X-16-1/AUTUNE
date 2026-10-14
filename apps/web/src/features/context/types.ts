@@ -21,11 +21,15 @@ export type TopicLinkStatus = "asserted" | "confirmed" | "pending" | "rejected";
  * though the contract's are not — the retention sweep can delete the linked
  * meeting out from under a link row that survives it (see the schema's own
  * docstring).
+ *
+ * `topic_sentence` is the sentence of this meeting that says `topic_label`, read
+ * from the masked transcript on every request; `null` when there is none.
  */
 export interface TopicLinkRead {
   id: number;
   meeting_id: string;
   topic_label: string;
+  topic_sentence: string | null;
   linked_meeting_id: string | null;
   linked_meeting_date: string | null;
   similarity: number;

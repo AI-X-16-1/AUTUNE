@@ -23,6 +23,10 @@ class TopicLinkRead(BaseModel):
     the same deletion (see docs/modules/context.md, "Deletion" — a date is not
     reconstructed content), so it can still be non-``None`` even when
     ``linked_meeting_id`` is not.
+
+    ``topic_sentence`` is the sentence of this meeting that says ``topic_label``
+    (``service.topic_link_sentences``), read from the transcript on every
+    request and stored nowhere; ``None`` when there is none to read.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -30,6 +34,7 @@ class TopicLinkRead(BaseModel):
     id: int
     meeting_id: str
     topic_label: str
+    topic_sentence: str | None = None
     linked_meeting_id: str | None
     linked_meeting_date: date | None
     similarity: float

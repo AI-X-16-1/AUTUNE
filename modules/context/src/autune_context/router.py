@@ -20,6 +20,7 @@ from fastapi import APIRouter
 from autune_core import CurrentUser, SessionDep
 
 from . import briefs, service
+from .models import CtxTopicLink
 from .schemas import (
     AgendaItemRead,
     BriefDecisionRead,
@@ -46,9 +47,18 @@ def get_links(meeting_id: str, session: SessionDep, reader: CurrentUser) -> Topi
     """This meeting's topic links, asserted (incl. user-confirmed) and pending."""
     service.require_readable_meeting(session, meeting_id, reader)
     asserted, pending = service.get_topic_links(session, meeting_id)
+    sentences = service.topic_link_sentences(
+        session, meeting_id, [link.topic_label for link in [*asserted, *pending]]
+    )
     return TopicLinksRead(
-        asserted=[TopicLinkRead.model_validate(link) for link in asserted],
-        pending=[TopicLinkRead.model_validate(link) for link in pending],
+        asserted=[_link_read(link, sentences) for link in asserted],
+        pending=[_link_read(link, sentences) for link in pending],
+    )
+
+
+def _link_read(link: CtxTopicLink, sentences: dict[str, str]) -> TopicLinkRead:
+    return TopicLinkRead.model_validate(link).model_copy(
+        update={"topic_sentence": sentences.get(link.topic_label)}
     )
 
 
@@ -61,7 +71,9 @@ def confirm_link(
     service.require_writable_link(session, link_id, reader)
     link = service.confirm_topic_link(session, link_id, payload.status)
     session.commit()
-    return TopicLinkRead.model_validate(link)
+    return _link_read(
+        link, service.topic_link_sentences(session, link.meeting_id, [link.topic_label])
+    )
 
 
 @router.get("/decisions/{thread_id}", response_model=DecisionLineageRead)

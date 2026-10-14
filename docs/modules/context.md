@@ -454,6 +454,27 @@ stored, the read-time check covers the time before it runs and any later
 withdrawal. The brief's recap label (#437) makes the same check on
 `ctx_embeddings` directly.
 
+### A topic link's sentence is read, never stored
+
+A label is a noun phrase of at most four words (`_label`), and on its own it
+says little about what was said. So the context tab shows, as each link's title,
+the sentence of the meeting that says the label: `topic_sentence` on
+`GET /links/{meeting_id}` and on the link `POST /links/{link_id}/confirm`
+returns, from `service.topic_link_sentences`. It is the first sentence of the
+label's segment that contains the label as it stands, with the filler words a
+speaker opens with ("음, 그러니까 …") dropped from the front, and cut at word
+boundaries to 80 characters around the label (`topics.topic_sentence`). No
+model is involved.
+
+The sentence is read from the segment's utterances (`ctx_embeddings.utterance_ids`)
+on every request and is stored nowhere. Only a consenting speaker's line is read,
+and only for a link `_readable_topic_links` already lets through, so a
+withdrawal or a person deleting their own speech takes it away with nothing
+more to clear. The text is A's masked text. A label no readable sentence says,
+or whose segment row has no `utterance_ids`, comes with `topic_sentence: null`,
+and the tab shows the label instead. The sentence goes nowhere else: E, the
+Slack notice and the agent tool still carry the label alone.
+
 ### Decision lineage — from `autune.extraction.completed`
 
 Input is `ExtractionResult.decisions`. B owns *what counts as a decision in this
@@ -905,7 +926,7 @@ one mutation.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated; a link whose label is cut from speech not consented to is left out |
+| GET | `/links/{meeting_id}` | Topic links for a meeting, `asserted` and `pending` separated, each with the sentence that says its label (`topic_sentence`, read at request time); a link whose label is cut from speech not consented to is left out |
 | POST | `/links/{link_id}/confirm` | User confirms or rejects a `pending` link (`status` → `confirmed`/`rejected`); a link whose label is cut from speech not consented to is answered as not found, since the response carries the label |
 | GET | `/decisions/{thread_id}` | Full lineage timeline, oldest version first |
 | GET | `/decisions` | Filter by team, topic, change type |
