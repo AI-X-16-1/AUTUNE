@@ -23,12 +23,17 @@ class BgeRerankerKoHttp:
     """Expects ``POST {endpoint}/rerank {"query": str, "passages": [str]}`` ->
     ``{"scores": [float]}`` (sigmoid-normalised, ``[0, 1]``) and ``GET {endpoint}/info``.
 
-    A module-local ``httpx`` client, not ``autune_integrations.HttpClient``: the
-    endpoint is our own inference server, and ``check_outbound`` guards traffic
-    that leaves our infrastructure. The passages are past meetings' masked
-    segment text, not labels, so if this endpoint is ever hosted outside our
-    infrastructure, move this client onto ``HttpClient`` in the same change --
-    the same rule ``LlmClient`` already follows (see ``base.py``).
+    A module-local ``httpx`` client, not ``_serving.ModelServerClient`` like the
+    embedder and NLI, and so not behind ``check_outbound``. That the server is
+    ours is no reason to leave the guard unrun; this one is still off it
+    because the guard caps a request at ``MAX_OUTBOUND_CHARS``, and the query
+    and passages are whole topic segments: in a real-length meeting one
+    segment alone passes the cap. Moving it means cutting segments, which
+    changes what the re-ranker scores and so which links are asserted, and
+    that has to be measured on the held-out sets first, with the same cut in
+    ``BgeRerankerKoLocal`` so the evaluation still runs what production runs.
+    Until then, if this endpoint is ever hosted outside our infrastructure, it
+    must not be switched on.
     """
 
     def __init__(self, settings: ContextSettings) -> None:
