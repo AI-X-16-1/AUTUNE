@@ -12,7 +12,8 @@ What a call may carry
 Every request goes through ``LlmClient``, which runs ``check_outbound`` on the
 whole body. That caps the request at ``MAX_OUTBOUND_CHARS`` (4000) and refuses
 unmasked personal data. So excerpts are cut to ``llm_snippet_chars`` here, before
-the guard ever has to refuse, and a ``PrivacyViolationError`` is **not** caught: it
+the guard ever has to refuse (``_serving.clip``, which first refuses a value the
+cut would split), and a ``PrivacyViolationError`` is **not** caught: it
 means unmasked text reached this point, and the rule for that is to stop.
 
 Excerpts are meeting speech, so they are untrusted input to a prompt. They are
@@ -35,6 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from autune_context.pipeline._serving import clip
 from autune_context.pipeline.llm import LlmResponseError
 from autune_contracts import ChangeType
 from autune_core import get_logger
@@ -226,7 +228,7 @@ class LlmJudge:
             return list(pool.map(fn, items))
 
     def _clip(self, text: str) -> str:
-        return text if len(text) <= self._snippet_chars else text[: self._snippet_chars]
+        return clip(text, self._snippet_chars, destination="llm")
 
 
 def _unit(value: Any) -> float:

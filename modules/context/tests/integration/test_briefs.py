@@ -36,7 +36,7 @@ from autune_core import (
     Utterance,
     session_scope,
 )
-from autune_core.errors import NotFoundError
+from autune_core.errors import NotFoundError, PrivacyViolationError
 
 NOW = datetime(2026, 9, 30, 5, 50, tzinfo=UTC)
 
@@ -302,6 +302,22 @@ def test_a_model_failure_falls_back_to_the_latest_meeting(
 
     assert brief is not None
     assert brief.recap is not None and brief.recap.meeting_id == latest
+
+
+def test_a_refusal_by_the_outbound_guard_is_no_model_failure(
+    team_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unmasked text reaching the embedder stops the brief; it does not read as
+    an endpoint being down and fall back to the latest meeting."""
+    _analyzed(team_id, title="스프린트 4", days_ago=1)
+    meeting = _scheduled(team_id, title="검색 정렬 개선")
+
+    def _refused(*_args: object, **_kwargs: object) -> None:
+        raise PrivacyViolationError("refusing to send unmasked personal data to embedder")
+
+    monkeypatch.setattr(briefs, "_topic_match", _refused)
+    with pytest.raises(PrivacyViolationError):
+        _compose(meeting)
 
 
 def test_expired_and_unanalyzed_meetings_are_never_recapped(team_id: str) -> None:
