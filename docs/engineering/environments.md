@@ -975,8 +975,28 @@ The stack is `infra/docker-compose.app.yml` with
 
 Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
 under `production`, and the nginx password block has nothing behind it. The
-consent screen is in Testing, so only the team's accounts can sign in. Before
-anyone outside the team uses the site, reopen #890.
+consent screen is in Testing, so only the team's accounts can sign in.
+
+**This host is a trial for the team's own accounts. It takes no one from
+outside the team until both of these are done, and neither is part of the
+deployment:**
+
+- The privacy policy names AWS as a processor. Article 6 of
+  `apps/web/src/app/legal/content.ts` says that what the service stores is kept
+  on servers the company runs itself and that the keeping is not entrusted, and
+  article 5 (3) says audio is given to no outside service. A database on RDS, a
+  queue on ElastiCache and a tmpfs on EC2 are an entrusted processing. So
+  article 6 lists AWS (server and database operation; all data the service
+  stores and the audio being processed; Seoul), the Cloudflare line is
+  corrected, the consent version goes up, and the notice period of article 15
+  (2) is kept.
+- #890 is reopened.
+
+Before the first deploy, turn on in-transit encryption for the ElastiCache
+replication group and change the broker URL that `deploy.sh` builds from
+`redis://` to `rediss://`. Celery payloads carry masked transcript lines, and a
+VPC is not a reason to send them in the clear. The setting lives outside this
+repository, so the script does not check it.
 
 To stop paying for the host overnight, stop the EC2 instance and the RDS
 instance (the broker and the load balancer cannot be stopped; delete them if

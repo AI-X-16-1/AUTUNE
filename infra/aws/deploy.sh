@@ -31,6 +31,15 @@ cd "$(dirname "$0")/../.."
 exec 9>/var/lock/autune-deploy.lock
 flock -n 9 || { echo "another deploy is running"; exit 1; }
 
+# Raw audio stays off the disk only while swap is off (invariant 11). Swap is a
+# host setting outside this repository, so a deploy refuses to go on when
+# someone has turned it on. /proc/swaps is a header line plus one line per
+# active swap area.
+if [ "$(wc -l < /proc/swaps)" -gt 1 ]; then
+  echo "swap is on: raw audio in a tmpfs could reach the disk"
+  exit 1
+fi
+
 if ! command -v aws >/dev/null; then
   echo "installing the AWS CLI"
   apt-get install -y -qq unzip curl >/dev/null
@@ -44,19 +53,27 @@ fi
 secret() { aws secretsmanager get-secret-value --region "$REGION" \
   --secret-id "$1" --query SecretString --output text; }
 
+# Each secret's export lines are read into a variable first and evaluated
+# after. `eval "$(...)"` takes the exit status of eval, not of the command
+# inside, so a failed read (a missing permission, a refused key name) would be
+# evaluated as an empty string and the deploy would go on. An assignment takes
+# the status of the substitution, and `set -e` stops the script there.
+#
 # autune/app: each key becomes an environment variable. A name that is not an
 # upper-case identifier is refused rather than exported.
-eval "$(secret autune/app | python3 -c '
+app_env="$(secret autune/app | python3 -c '
 import json, re, shlex, sys
 for k, v in json.load(sys.stdin).items():
     if not re.fullmatch(r"[A-Z][A-Z0-9_]*", k):
         sys.exit("autune/app: %r is not an environment variable name" % k)
     print("export %s=%s" % (k, shlex.quote(str(v))))
 ')"
+eval "$app_env"
+unset app_env
 
 # autune/db: build the two URLs. RDS forces TLS (rds.force_ssl is 1 from
 # PostgreSQL 15), so sslmode=require; the password is quoted for a URL.
-eval "$(secret autune/db | python3 -c '
+db_env="$(secret autune/db | python3 -c '
 import json, shlex, sys
 from urllib.parse import quote
 d = json.load(sys.stdin)
@@ -67,6 +84,8 @@ redis = "redis://%s:%s/0" % (d["redis_host"], d["redis_port"])
 print("export AUTUNE_DATABASE_URL=%s" % shlex.quote(db))
 print("export AUTUNE_REDIS_URL=%s" % shlex.quote(redis))
 ')"
+eval "$db_env"
+unset db_env
 
 # Same refusals as the "Check configuration" step of dev.yml. Production
 # settings need the first two on their own; the rest is what the compose file
