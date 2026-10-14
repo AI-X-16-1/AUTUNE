@@ -2190,7 +2190,8 @@ def topic_link_sentences(
 
     A label with no sentence -- no ``utterance_ids``, or the sentence that said it
     is gone -- is missing from the result, and the label is shown alone. Of two
-    segments with the same label, the first stored is read.
+    segments with the same label, the first stored that still has a sentence
+    saying it is read: one whose lines are gone gives way to the next.
     """
     wanted = set(labels)
     if not wanted:
