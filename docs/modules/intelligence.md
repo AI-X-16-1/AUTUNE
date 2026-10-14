@@ -92,9 +92,16 @@ See `../architecture/async-pipeline.md`.
    to `intel_alignment` (unordered pair, `role_a < role_b`) and to the
    snapshot. The heatmap averages per-meeting scores and **leaves out any pair
    scored in fewer than three meetings** (`MIN_MEETINGS_PER_HEATMAP_CELL`,
-   privacy.md section 3: a small sample leaves the cell empty). Until B's
-   stance producer ships (#10, #168), `stance_by_role` is always empty and so
-   is the heatmap.
+   privacy.md section 3: a small sample leaves the cell empty). Nothing
+   produces `stance_by_role`: it waited on B's classifier (#10), closed on
+   2026-10-06 when B stopped training its own classifier (the dev deployment
+   classifies with an LLM, while the code default stays `local` and #392 is
+   still open), and #168 left what counts as support open. B is not building
+   a producer for now (#1312). So it is always empty, and S26 leaves the
+   heatmap card out (#1310); `/heatmap` and the chat's `role_alignment` still
+   answer, with no pairs. Even with a producer, a pair needs three identified
+   people in each role at one meeting, three meetings over, which a team of
+   five does not reach.
 5. **Prediction** — `misalignment_risk`, 14 days: the probability that a
    decision this meeting settled is **reversed** within two weeks. D already
    records reversals (`DecisionChange.change_type == "reversed"` with the
