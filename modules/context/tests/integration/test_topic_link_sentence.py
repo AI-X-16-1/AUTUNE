@@ -216,3 +216,11 @@ def test_only_the_labels_asked_for_are_read(meeting: str) -> None:
 
     assert _sentences(meeting, _LABEL) == {_LABEL: _SENTENCE}
     assert _sentences(meeting) == {}
+
+
+def test_of_two_segments_with_one_label_the_first_with_a_sentence_is_read(meeting: str) -> None:
+    _segment(meeting, _LABEL, [("다른 얘기예요.", True)])
+    _segment(meeting, _LABEL, [(_SENTENCE, True)])
+    _segment(meeting, _LABEL, [("결제 모듈 연동 테스트는 누가 맡죠?", True)])
+
+    assert _sentences(meeting, _LABEL) == {_LABEL: _SENTENCE}
