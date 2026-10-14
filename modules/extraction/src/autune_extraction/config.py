@@ -565,10 +565,13 @@ class ExtractionSettings(BaseSettings):
     """Let the assistant's ``extraction.find_materials`` tool answer (#817).
 
     **Off by default.** Off, the tool searches nothing and says it is off. On,
-    it hands masked excerpts to whatever model the agent layer runs, and
-    ``privacy.md`` ("Uploaded documents are masked before storage") says no
-    language model is given a material's text until a change to that section
-    is approved on its own. Switch it on only after that change."""
+    a member's question in the assistant searches the team's materials: the
+    member is shown each title and a masked excerpt under the answer, and the
+    model is given how many were found and their ids -- no title and no
+    text, which ``privacy.md`` ("Uploaded documents are masked before
+    storage") gives to no language model (#1313). Switch it on only after
+    that section says the assistant searches materials, and on a deployment
+    only by the decision on #817."""
 
     @field_validator("resolver_min_similarity", mode="before")
     @classmethod

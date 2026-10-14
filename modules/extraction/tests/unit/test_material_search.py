@@ -731,6 +731,45 @@ def test_the_tool_answers_nothing_close_enough_as_the_search_does(
     assert result["summary"] == NOTHING_CLOSE
 
 
+def test_the_tool_is_listed_as_a_read_whose_text_no_model_is_given() -> None:
+    # #1313: the agent layer's registry reads this list, marks the tool's
+    # items and sends a model their ids alone.
+    assert list(tools.TEXT_WITHHELD_TOOLS) == [tools.find_materials]
+    assert all(fn in tools.TOOLS for fn in tools.TEXT_WITHHELD_TOOLS)
+
+
+@pytest.mark.usefixtures("tool_on")
+def test_what_a_model_reads_of_the_tools_answer_holds_nothing_of_a_material(
+    session: Session, embedder: Recording
+) -> None:
+    # A model is sent the summary, the reason and the ids -- never an item's
+    # title or body. So none of those three may say anything of a material:
+    # with hits, with more than five, and with a hidden value in an excerpt.
+    for n in range(7):
+        body = f"창고 이전은 삼월 {n}주에 시작한다. 연락처 {PHONE}\n"
+        upload(session, body, title=f"이전 계획 {n}호")
+
+    result = tools.find_materials(session, TEAM, "창고 이전")
+
+    assert len(result["items"]) == 5
+    outside = json.dumps(
+        {key: value for key, value in result.items() if key != "items"}, ensure_ascii=False
+    )
+    for item in result["items"]:
+        assert item["title"] not in outside and item["body"].strip() not in outside
+    assert not any(word in outside for word in ("창고", "삼월", "이전", "계획"))
+    assert result["summary"] == " ".join(
+        [
+            "올린 자료 5건에서 찾았습니다.",
+            tools.SHOWN_BELOW,
+            "더 있으니 질문을 좁혀 다시 찾을 수 있습니다.",
+            STARRED,
+        ]
+    )
+    assert result["reason"] is None
+    assert result["evidence"] == [item["id"] for item in result["items"]]
+
+
 # --- the relative cut -------------------------------------------------------------
 THIRD = "회의실 예약은 사내 캘린더에서 한다. 한 번에 두 시간까지 잡는다.\n"
 ASKED = "출시 일정 점검"
@@ -758,6 +797,24 @@ def three(session: Session) -> tuple[list[str], list[float]]:
     scores = [hit.score for hit in hits]
     assert len(hits) == 3 and scores[0] > scores[1] > scores[2]
     return [hit.material_id for hit in hits], scores
+
+
+@pytest.mark.usefixtures("tool_on")
+def test_an_item_of_the_tool_carries_no_score_and_the_nearest_is_first(
+    session: Session, embedder: Recording
+) -> None:
+    # The assistant's reply sends these items to the member's screen. How
+    # near a hit is stays in the search, as on the route (``MaterialHit``
+    # has no score); the order is what says which is best.
+    ids, scores = three(session)
+    assert all(score != 0.0 for score in scores)
+
+    result = tools.find_materials(session, TEAM, ASKED)
+
+    assert [item["id"] for item in result["items"]] == ids
+    assert [item.get("score", 0.0) for item in result["items"]] == [0.0, 0.0, 0.0]
+    sent = json.dumps(result["items"], ensure_ascii=False)
+    assert not any(repr(score) in sent for score in scores)
 
 
 def test_the_cut_has_a_default_for_the_real_embedder_and_reads_the_environment(

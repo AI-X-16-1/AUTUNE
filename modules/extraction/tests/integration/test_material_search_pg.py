@@ -174,6 +174,8 @@ def test_the_assistants_run_keeps_the_tools_name_and_ids_and_not_the_question(
         budget,
         allowed=["extraction.find_materials"],
         scope=RunScope(team_id=team_id, user_id="user_asker"),
+        # The ask loop's toolbox: the one that may hold this tool (#1313).
+        cuts_withheld_text=True,
     )
 
     with capture_logs() as logs:
