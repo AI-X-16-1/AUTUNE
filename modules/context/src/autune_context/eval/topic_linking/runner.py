@@ -118,13 +118,13 @@ class CaseResult:
         at ``similarity`` and ``link_confidence_threshold`` at ``rerank`` —
         every candidate row is already written, pending or not, so this needs
         no re-run. A meeting the keyphrase check held back (``held_back``)
-        stays out on the similarity side; one under the configured threshold
-        was never checked, and counts as passing."""
+        stays out whichever score would have asserted it; one under the
+        configured thresholds was never checked, and counts as passing."""
         return frozenset(
             m
             for m in self.best_similarity
-            if (self.best_similarity[m] >= similarity and m not in self.held_back)
-            or self.best_rerank[m] >= rerank
+            if m not in self.held_back
+            and (self.best_similarity[m] >= similarity or self.best_rerank[m] >= rerank)
         )
 
     segments: tuple[SegmentOutcome, ...] = field(default=())
@@ -132,8 +132,9 @@ class CaseResult:
     asserted_links: tuple[LinkOutcome, ...] = field(default=())
     """Series cases only: one per asserted link row."""
     held_back: frozenset[str] = field(default=frozenset())
-    """Past meetings dense similarity alone would have asserted that were left
-    ``pending``: the keyphrase check (``service._subjects_agree``) said no."""
+    """Past meetings the scores alone would have asserted, by dense similarity
+    or by the re-ranker, that were left ``pending``: the keyphrase check
+    (``service._subjects_agree``) said no."""
 
     def index(self, meeting_id: str) -> int:
         return self.past_ids.index(meeting_id)
@@ -236,13 +237,18 @@ def run_series(series: EvalSeries) -> list[CaseResult]:
 def _held_back(
     asserted: frozenset[str], best_similarity: dict[str, float], best_rerank: dict[str, float]
 ) -> frozenset[str]:
+    """What ``service._link_topic`` scored enough at the configured thresholds
+    and still did not assert. In ``classic`` mode, the only mode the sweep runs
+    in, only the keyphrase check does that."""
     settings = get_settings()
     return frozenset(
         m
         for m, sim in best_similarity.items()
-        if sim >= settings.link_similarity_threshold
-        and m not in asserted
-        and best_rerank[m] < settings.link_confidence_threshold
+        if m not in asserted
+        and (
+            sim >= settings.link_similarity_threshold
+            or best_rerank[m] >= settings.link_confidence_threshold
+        )
     )
 
 
