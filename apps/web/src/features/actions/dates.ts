@@ -27,6 +27,23 @@ export function isOverdue(
   return item.due_date < today;
 }
 
+/**
+ * A day worth saving as a due date: `YYYY-MM-DD`, a real day, in a year from
+ * 2000 to 2100. A date field reports a whole date for every key typed into it
+ * (a year typed one digit at a time passes through 0002, 0020, 0202), and the
+ * server takes any year, so the field is where a nonsense year is stopped
+ * (review of #1325). Not today's year plus or minus: an old item may keep an
+ * old due date, and a plan may run years ahead.
+ */
+export function isSensibleDue(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (year < 2000 || year > 2100) return false;
+  const made = new Date(year, month - 1, day);
+  return made.getMonth() === month - 1 && made.getDate() === day;
+}
+
 export const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 /**
@@ -55,4 +72,27 @@ export function writtenDay(iso: string, year: number | null): string | null {
  */
 export function shownDue(iso: string): string {
   return writtenDay(iso, new Date().getFullYear()) ?? iso;
+}
+
+/** `date` moved by `days`, as `YYYY-MM-DD` -- local days, so no zone moves it. */
+function plusDays(date: Date, days: number): string {
+  return localToday(new Date(date.getFullYear(), date.getMonth(), date.getDate() + days));
+}
+
+/**
+ * The days a person most often means by a due date, for the detail window's
+ * quick picks (#1183): tomorrow, this week's Friday, next week's Monday.
+ *
+ * "이번 주 금" is the coming Friday -- today when today is Friday, next week's
+ * on the weekend, so a pick is never a day that has passed. A pick that lands
+ * on the same day as an earlier one is left out rather than shown twice.
+ */
+export function quickDues(now: Date = new Date()): { label: string; iso: string }[] {
+  const weekday = now.getDay();
+  const picks = [
+    { label: "내일", iso: plusDays(now, 1) },
+    { label: "이번 주 금", iso: plusDays(now, (5 - weekday + 7) % 7) },
+    { label: "다음 주 월", iso: plusDays(now, (1 - weekday + 7) % 7 || 7) },
+  ];
+  return picks.filter((pick, index) => picks.findIndex((p) => p.iso === pick.iso) === index);
 }

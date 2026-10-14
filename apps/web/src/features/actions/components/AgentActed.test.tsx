@@ -17,6 +17,7 @@ import type { ActionItemRead, CarriedOver } from "../types";
 
 const list = vi.fn<(filter: ActionItemFilter) => Promise<ActionItemRead[]>>();
 const carried = vi.fn<(meetingId: string) => Promise<CarriedOver>>();
+vi.mock("../hooks/useMeetingTitle", () => ({ useMeetingTitle: () => null }));
 vi.mock("../api", () => ({
   listActionItems: (filter: ActionItemFilter) => list(filter),
   getCarriedOver: (meetingId: string) => carried(meetingId),
