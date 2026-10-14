@@ -46,9 +46,11 @@ def new_team(session: Session, name: str) -> str:
 def no_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake embedder's scores mean nothing on the real embedder's scale,
     so the floor and the cut below the best are set here: none, except where
-    one is what is tested."""
+    one is what is tested. The word match is off the same way, and on in the
+    tests of it."""
     monkeypatch.setattr(extraction_settings(), "material_search_min_similarity", -1.0)
     monkeypatch.setattr(extraction_settings(), "material_search_max_below_best", 2.0)
+    monkeypatch.setattr(extraction_settings(), "material_search_word_match_min_similarity", 2.0)
 
 
 @pytest.fixture
@@ -172,6 +174,8 @@ def test_the_assistants_run_keeps_the_tools_name_and_ids_and_not_the_question(
         budget,
         allowed=["extraction.find_materials"],
         scope=RunScope(team_id=team_id, user_id="user_asker"),
+        # The ask loop's toolbox: the one that may hold this tool (#1313).
+        cuts_withheld_text=True,
     )
 
     with capture_logs() as logs:

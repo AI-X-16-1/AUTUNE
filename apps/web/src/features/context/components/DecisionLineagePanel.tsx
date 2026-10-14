@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { Row, StatusDot } from "@/shared/ui";
@@ -13,6 +14,9 @@ import { useDecisionThreads } from "../hooks/useDecisionThreads";
  * S22 — decision lineage. Topic list on the left, one thread's timeline on
  * the right. The graph visualisation the ui-spec mentions is Phase 2; this is
  * the MVP list-plus-timeline form.
+ *
+ * A team with no thread yet gets a word on where threads come from and a way
+ * to start a meeting, not "pick one on the left" over an empty list (#1178).
  */
 export function DecisionLineagePanel({ teamId }: { teamId: string }) {
   const { threads, loading, error } = useDecisionThreads({ team_id: teamId });
@@ -24,6 +28,8 @@ export function DecisionLineagePanel({ teamId }: { teamId: string }) {
   useEffect(() => {
     setSelected(null);
   }, [teamId]);
+
+  const empty = !loading && !error && threads.length === 0;
 
   return (
     <div className="grid gap-6 md:grid-cols-[minmax(0,280px)_1fr]">
@@ -60,7 +66,23 @@ export function DecisionLineagePanel({ teamId }: { teamId: string }) {
       </nav>
 
       <section aria-label="타임라인">
-        {selected === null && (
+        {empty && (
+          <div style={{ fontSize: "var(--text-rowBody)" }}>
+            <p className="text-[var(--color-ink-strong)]">아직 기록된 결정이 없습니다.</p>
+            <p className="mt-2 text-[var(--color-ink-muted)]">
+              회의를 분석하면 그 회의에서 내린 결정이 주제별로 여기에 모입니다. 같은 결정을 다음
+              회의에서 바꾸거나 거두면, 그 변화가 같은 주제 아래에 이어서 쌓입니다.
+            </p>
+            <Link
+              href="/meetings/new"
+              className="mt-3 inline-block text-[var(--color-accent-default)]"
+              style={{ fontSize: "var(--text-meta)" }}
+            >
+              회의 시작하기
+            </Link>
+          </div>
+        )}
+        {selected === null && threads.length > 0 && (
           <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-rowBody)" }}>
             왼쪽에서 주제를 선택하세요.
           </p>

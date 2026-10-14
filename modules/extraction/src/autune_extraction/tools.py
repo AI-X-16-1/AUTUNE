@@ -21,6 +21,10 @@ Rules from section 4 that are enforced here rather than trusted to the caller:
 - ``items`` holds at most ``MAX_ITEMS``; ``truncated`` says when more existed.
 - ``evidence`` holds ids only, never text: utterance ids, and a material's id
   for ``find_materials``.
+- ``TEXT_WITHHELD_TOOLS`` lists the reads whose items hold text no model may
+  be given -- ``find_materials``, an uploaded material's title and excerpt.
+  The agent layer shows such an item to the member who asked and sends a
+  model its id alone (#1313).
 - An expected failure (unknown meeting) is ``ok=False`` with a reason, not an
   exception.
 - Synchronous, safe to call twice: every tool only reads. The writes are
@@ -1085,13 +1089,22 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
     its 자료 screen. Do not use it for what was said in a meeting; that is the
     meeting tools.
 
-    Returns at most five of the team's uploaded materials nearest the
-    question, best first: each a title and one short excerpt of the masked
-    text Autune kept (never a whole document), with the material's id as
-    evidence. No items, and a summary that says so, when nothing is close
-    enough to the question -- then the documents do not answer it. A value
-    hidden as personal data reads as ``*`` and cannot be recovered.
+    Finds at most five of the team's uploaded materials for the question,
+    best first. **You are told how many were found and each one's id, and
+    are not given their titles or text**: Autune shows the member each
+    material's title and one short excerpt under your answer. So say that
+    they were found and are shown below, and do not describe what a document
+    says. No items, and a summary that says so, when nothing is close enough
+    to the question -- then the documents do not answer it.
     ``question`` is the words to look for, 300 characters at most.
+
+    For the layer that calls this: each item is a title and one short excerpt
+    of the masked text Autune kept (never a whole document), with the
+    material's id as evidence; a value hidden as personal data reads as ``*``
+    and cannot be recovered. The tool is in ``TEXT_WITHHELD_TOOLS``, so the
+    registry marks every item ``withheld``. An item carries no score -- the
+    member's screen is sent the items, and how near a hit is to the question
+    is not shown there or on the 자료 screen; the order says which is best.
     """
     # #817 10(b), 2026-10-08: the question is used to search and for nothing
     # else -- not in the result, not in a log line, and (as for every tool)
@@ -1112,9 +1125,13 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
         found = material_search.search_materials(session, team_id, question, limit=MAX_ITEMS)
     except ValidationError:
         return _bad_question()
+    # Fixed sentences and a count, nothing of a material: the summary is what
+    # a model reads of this result (#1313), and the answer the member gets
+    # when no model composes one.
     said = []
     if found.hits:
         said.append(f"올린 자료 {len(found.hits)}건에서 찾았습니다.")
+        said.append(SHOWN_BELOW)
         if found.more:
             said.append("더 있으니 질문을 좁혀 다시 찾을 수 있습니다.")
     if found.notice:
@@ -1127,7 +1144,8 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
             {
                 "title": hit.title,
                 "body": hit.excerpt,
-                "score": hit.score,
+                # No ``score``: how near a hit is stays in the search, as on
+                # the route (``MaterialHit``). The items are best first.
                 "id": hit.material_id,
                 "position": hit.position,
             }
@@ -1136,6 +1154,12 @@ def find_materials(session: Session, team_id: str, question: str) -> dict[str, A
         evidence=[hit.material_id for hit in found.hits],
         confidence=max([0.0, *(min(1.0, hit.score) for hit in found.hits)]),
     )
+
+
+SHOWN_BELOW = "제목과 발췌는 답 아래에 표시됩니다."
+"""Said with a count of materials found. The model that composes the answer is
+given no title and no excerpt, so this is how the answer comes to say where
+they are instead of what they say."""
 
 
 def _bad_question() -> dict[str, Any]:
@@ -1229,6 +1253,16 @@ TOOLS = [
     public_holidays,
 ]
 """Collected by the agent layer by iterating modules (invariant 6), never registered by hand."""
+
+TEXT_WITHHELD_TOOLS = [find_materials]
+"""Reads whose items hold text that goes to no model: an uploaded material's
+title and excerpt (privacy.md, "Uploaded documents are masked before storage";
+decided on #1313, 2026-10-13). The agent layer's registry reads this list as
+it reads ``PERSONAL_ONLY_TOOLS`` elsewhere: the tool is registered, each item
+it returns is marked ``withheld``, a model is sent the summary and the items'
+ids, and the title and the excerpt go from the server to the screen of the
+member who asked. A new read of ``ext_materials`` or ``ext_material_chunks``
+goes on this list in the change that adds it."""
 
 RUN_SCOPE = ("team_id",)
 """Arguments the run fills from its authenticated scope, never the model.

@@ -74,10 +74,17 @@ function TopicLinks({
 
   if (asserted.length === 0 && pending.length === 0) {
     if (quietWhenEmpty) return null;
+    // Say how a link comes about, so the tab explains itself when it has
+    // nothing to show (#1178). There is no way to add a link by hand.
     return (
-      <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-rowBody)" }}>
-        이 회의와 연결된 과거 회의가 없습니다.
-      </p>
+      <div style={{ fontSize: "var(--text-rowBody)" }}>
+        <p className="text-[var(--color-ink-strong)]">이 회의와 연결된 과거 회의가 없습니다.</p>
+        <p className="mt-2 text-[var(--color-ink-muted)]">
+          같은 팀의 이전 회의에서 다룬 주제가 이 회의에 다시 나오면, 그 회의와 자동으로 연결됩니다.
+          확실하지 않은 연결은 &lsquo;확인 필요&rsquo;로 여기에 올라오고, 맞는지 직접 고를 수
+          있습니다.
+        </p>
+      </div>
     );
   }
 

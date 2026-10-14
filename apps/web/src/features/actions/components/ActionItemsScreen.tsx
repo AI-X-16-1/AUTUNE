@@ -56,6 +56,12 @@ export function ActionItemsScreen({ meetingId }: { meetingId: string }) {
     meeting_id: meetingId,
   });
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
+  // `?item=` (#1183): the 요약 tab links an item here by its id, and its window
+  // opens. Read once on arrival; an id that is not this meeting's opens nothing.
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get("item");
+    if (asked !== null && asked !== "") setSelectedId(asked);
+  }, []);
   // The project filter (2026-10-04): the meeting's team's projects.
   const [projects, setProjects] = useState<Project[]>([]);
   const [project, setProject] = useState<ProjectChoice>(ALL_PROJECTS);

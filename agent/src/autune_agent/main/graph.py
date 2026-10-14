@@ -81,7 +81,17 @@ def build_main_graph(
 
     def ask_node(state: MainState) -> MainState:
         assert asker is not None
-        box = Toolbox(tools, session, budget, allowed=tool_set(scope), scope=scope)
+        # The one caller that may hold a tool whose text no model reads: the
+        # loop cuts it in ``compact``, and ``answer`` below composes through a
+        # router that cuts it again (``GeminiRouter.compose``).
+        box = Toolbox(
+            tools,
+            session,
+            budget,
+            allowed=tool_set(scope),
+            scope=scope,
+            cuts_withheld_text=True,
+        )
         result = ask(state["request"], model=asker, toolbox=box, declarations=declare(tools, scope))
         return {"route": ASK_ROUTE, "outcome": SubagentResult(result=result)}
 

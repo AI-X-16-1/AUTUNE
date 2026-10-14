@@ -79,6 +79,17 @@ export function IntegrationSettingsScreen({
     fontSize: "var(--text-status)",
     fontWeight: "var(--text-status-weight)",
   } as const;
+  const noTeam =
+    teams === null ? (
+      <p className="text-[var(--color-ink-muted)]" style={meta}>
+        팀을 불러오는 중입니다.
+      </p>
+    ) : teams.length === 0 || teamId === null ? (
+      <p className="text-[var(--color-ink-muted)]" style={meta}>
+        속한 팀이 없습니다. 팀에 들어가면 그 팀의 Slack, Jira, Notion을 연결하고
+        프로젝트를 등록할 수 있습니다.
+      </p>
+    ) : null;
   return (
     <main
       className="flex max-w-[860px] flex-col gap-8"
@@ -95,63 +106,41 @@ export function IntegrationSettingsScreen({
         연동
       </h1>
 
-      <section aria-label="내 연결" className="flex flex-col gap-2">
+      {/* Three different things were one page (#1183): what is connected,
+          which messages come and when, and the projects a team registers.
+          The team picked here is the one the connections and the projects
+          are of; the notifications are the person's own. */}
+      {teams !== null && teams.length > 1 && teamId !== null ? (
+        <label className="flex items-center gap-2" style={meta}>
+          팀 (연결과 프로젝트가 이 팀의 것입니다)
+          <select value={teamId} onChange={(event) => setTeamId(event.target.value)}>
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <section aria-label="연결" className="flex flex-col gap-2">
         <h2 className="text-[var(--color-ink-strong)]" style={heading}>
-          내 연결
+          연결
         </h2>
         <CalendarConnect />
-        <DueReminderSetting />
-        <NotificationPauseSetting />
-      </section>
-
-      <section aria-label="팀 연결" className="flex flex-col gap-2">
-        <h2 className="text-[var(--color-ink-strong)]" style={heading}>
-          팀 연결
-        </h2>
-        {teams === null ? (
-          <p className="text-[var(--color-ink-muted)]" style={meta}>
-            팀을 불러오는 중입니다.
-          </p>
-        ) : teams.length === 0 || teamId === null ? (
-          <p className="text-[var(--color-ink-muted)]" style={meta}>
-            속한 팀이 없습니다. 팀에 들어가면 그 팀의 Slack, Jira, Notion을
-            연결할 수 있습니다.
-          </p>
-        ) : (
+        {noTeam ?? (
           <>
-            {teams.length > 1 ? (
-              <label className="flex items-center gap-2" style={meta}>
-                팀
-                <select
-                  value={teamId}
-                  onChange={(event) => setTeamId(event.target.value)}
-                >
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <SlackConnect key={`slack-${teamId}`} teamId={teamId} />
-            <JiraConnect key={`jira-${teamId}`} teamId={teamId} />
-            <NotionConnect key={`notion-${teamId}`} teamId={teamId} />
+            <SlackConnect key={`slack-${teamId}`} teamId={teamId!} />
+            <JiraConnect key={`jira-${teamId}`} teamId={teamId!} />
+            <NotionConnect key={`notion-${teamId}`} teamId={teamId!} />
             <div>
               <Button tone="text" size="compact" onClick={() => setLogOf(teamId)}>
                 동기화 기록
               </Button>
             </div>
             {logOf === teamId ? (
-              <SyncLogDrawer teamId={teamId} onClose={() => setLogOf(null)} />
+              <SyncLogDrawer teamId={teamId!} onClose={() => setLogOf(null)} />
             ) : null}
-            <h3
-              className="mt-4 text-[var(--color-ink-strong)]"
-              style={heading}
-            >
-              프로젝트
-            </h3>
-            <ProjectSettings key={`projects-${teamId}`} teamId={teamId} />
           </>
         )}
         <p className="text-[var(--color-ink-muted)]" style={meta}>
@@ -173,6 +162,27 @@ export function IntegrationSettingsScreen({
           </Link>{" "}
           제5조(제3자 제공)와 제7조(국외 이전)에서 볼 수 있습니다.
         </p>
+      </section>
+
+      <section aria-label="알림" className="flex flex-col gap-3">
+        <h2 className="text-[var(--color-ink-strong)]" style={heading}>
+          알림
+        </h2>
+        <DueReminderSetting />
+        <NotificationPauseSetting />
+      </section>
+
+      <section aria-label="프로젝트" className="flex flex-col gap-2">
+        <h2 className="text-[var(--color-ink-strong)]" style={heading}>
+          프로젝트
+        </h2>
+        {noTeam === null ? (
+          <ProjectSettings key={`projects-${teamId}`} teamId={teamId!} />
+        ) : (
+          <p className="text-[var(--color-ink-muted)]" style={meta}>
+            팀이 정해지면 이곳에서 프로젝트를 등록합니다.
+          </p>
+        )}
       </section>
     </main>
   );

@@ -721,9 +721,11 @@ def material_upload_rules(
 def search_materials(
     payload: MaterialQuestion, team_id: str, session: SessionDep, reader: CurrentUser
 ) -> MaterialAnswer:
-    """The team's uploaded materials nearest a question, best first: a title
-    and a screened excerpt of masked text for each, five at most (#817).
-    Members of the team only; anyone else gets the 404 an unknown team gets.
+    """The team's uploaded materials that answer a question -- those whose
+    title holds its words, then the nearest, then those with a piece that
+    holds its words: a title and a screened excerpt of masked text for each,
+    five at most (#817). Members of the team only; anyone else gets the 404
+    an unknown team gets.
 
     The question travels in the body, is masked before it is embedded, and is
     written nowhere -- not to a table, not to a log line -- and not returned.

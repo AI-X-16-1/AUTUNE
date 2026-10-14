@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from autune_context.pipeline.topics import _carries_no_topic, _label, extract_topics, person_names
+from autune_context.pipeline.topics import (
+    _carries_no_topic,
+    _label,
+    extract_topics,
+    person_names,
+    topic_sentence,
+)
 from autune_contracts import Utterance
 
 
@@ -187,3 +193,43 @@ def test_a_sentence_with_no_noun_still_carries_its_topic_unless_it_is_social():
         "수고 많으셨습니다, 다들.",
     ):
         assert _carries_no_topic(text, frozenset()), text
+
+
+def test_the_sentence_is_the_first_that_says_the_label_without_its_fillers():
+    texts = [
+        "지난주 일정부터 볼게요.",
+        "음, 그러니까 결제 모듈 연동은 수요일까지 끝내야 해요. 테스트는 그다음이고요.",
+        "결제 모듈 연동 테스트는 누가 맡죠?",
+    ]
+    assert topic_sentence("결제 모듈 연동", texts) == "결제 모듈 연동은 수요일까지 끝내야 해요."
+
+
+def test_an_utterance_is_split_into_sentences_and_lines():
+    texts = ["일정은 괜찮아요. 그런데 재고 실사는\n재고 실사 인원이 부족해요"]
+    assert topic_sentence("재고 실사", texts) == "재고 실사는"
+    assert topic_sentence("인원", ["일정은 괜찮아요! 인원이 부족해요?"]) == "인원이 부족해요?"
+
+
+def test_no_sentence_when_none_says_the_label():
+    assert topic_sentence("배포 일정", ["결제 모듈 연동은 끝났어요."]) is None
+    assert topic_sentence("", ["결제 모듈 연동은 끝났어요."]) is None
+    assert topic_sentence("배포 일정", []) is None
+
+
+def test_a_long_sentence_is_cut_at_words_and_keeps_the_label():
+    words = " ".join(f"단어{i}" for i in range(30))
+    early = topic_sentence("결제 모듈", [f"결제 모듈은 {words}."], max_chars=40)
+    assert early is not None
+    assert early.startswith("결제 모듈은 ") and early.endswith("…") and len(early) <= 40
+    late = topic_sentence("결제 모듈", [f"{words} 결제 모듈은 끝났어요 {words}."], max_chars=40)
+    assert late is not None
+    assert late.startswith("…결제 모듈은 끝났어요") and late.endswith("…") and len(late) <= 40
+
+
+def test_the_label_of_a_segment_is_found_in_its_own_sentences():
+    """``_label`` and ``topic_sentence`` read the same words: a label closed by a
+    comma or a particle is still said as it stands."""
+    texts = ["결제 모듈, 그거 확인했나요?", "결제 모듈 장애가 또 났어요."]
+    label = _label(" ".join(texts))
+    assert label == "결제 모듈"
+    assert topic_sentence(label, texts) == "결제 모듈, 그거 확인했나요?"

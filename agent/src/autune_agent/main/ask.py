@@ -5,6 +5,14 @@ it proposes nothing. Every request goes through ``check_outbound``, which
 counts the whole body against 4000 characters, so the loop offers a small tool
 set per scope, declares each tool with one short sentence, feeds results back
 compacted, and stops before a request would pass ``SIZE_LIMIT``.
+
+**A material's text does not go to the model** (#1313, privacy.md "Uploaded
+documents are masked before storage"). ``extraction.find_materials`` is in the
+team set, and its module lists it in ``TEXT_WITHHELD_TOOLS``: the registry
+marks each of its items ``withheld``, ``compact`` sends the model the summary
+and each item's id and neither its title nor its body, and
+``GeminiRouter.compose`` leaves both out too. The items themselves stay in the
+loop's result whole, which is what the member's screen draws under the answer.
 """
 
 from __future__ import annotations
@@ -59,6 +67,11 @@ TEAM_TOOLS = (
     "context.decision_thread",
     "intelligence.recurring_gaps",
     "intelligence.team_trend",
+    # The team's uploaded materials (#1313). Not in the meeting set: a chat
+    # opened on a meeting answers about that meeting, and there the model
+    # would write its question from that meeting's lines -- whether a
+    # transcript is searched against materials is #817 point 6, not decided.
+    "extraction.find_materials",
 )
 DESCRIPTION_CHARS = 120
 
@@ -203,12 +216,18 @@ def _quotable(result: ToolResult, room: int) -> tuple[ToolResult, int]:
 
 
 def compact(result: ToolResult) -> dict[str, Any]:
-    """What goes back to the model: summary, and per item its title, ids and a cut body."""
+    """What goes back to the model: summary, and per item its title, ids and a cut body.
+
+    A ``withheld`` item goes back as its ids alone -- the model learns that
+    it exists and what to call it, and reads neither its title nor its body.
+    """
     items = []
     for item in result.items:
-        shown: dict[str, Any] = {"title": item.title}
-        if item.body:
-            shown["body"] = item.body[:BODY_CHARS]
+        shown: dict[str, Any] = {}
+        if not item.withheld:
+            shown["title"] = item.title
+            if item.body:
+                shown["body"] = item.body[:BODY_CHARS]
         for key in ("id", "meeting_id"):
             value = getattr(item, key, None)
             if isinstance(value, str):
