@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { RecordingFrame, StatusDot } from "@/shared/ui";
 
@@ -32,6 +32,12 @@ import { TranscriptRow } from "./TranscriptRow";
  * ever wrote an assignment. `StoredTranscript` is where a name gets attached,
  * once the meeting is processed and the participants — and, later, their
  * candidates — exist to attach one to.
+ *
+ * **The newest line stays in view.** The transcript scrolls on its own, apart
+ * from the rail, and follows each new row to the bottom -- while the reader is
+ * at the bottom. Someone who has scrolled up to re-read a line is left where
+ * they are, and following resumes once they scroll back down (the user,
+ * 2026-10-14).
  *
  * **The status bar under the transcript says only what this page knows.**
  * S13 draws model names there too; they are the server's configuration, which
@@ -88,6 +94,20 @@ export function LiveTranscript({
   research?: ReactNode;
 }) {
   const counts = classified ? countKinds(rows) : undefined;
+  const scroller = useRef<HTMLElement>(null);
+  const following = useRef(true);
+
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (element && following.current) element.scrollTop = element.scrollHeight;
+  }, [rows]);
+
+  const onScroll = () => {
+    const element = scroller.current;
+    if (!element) return;
+    following.current =
+      element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_SLACK;
+  };
 
   return (
     <>
@@ -99,8 +119,13 @@ export function LiveTranscript({
         className="grid min-h-0 flex-1"
         style={{ gridTemplateColumns: "minmax(0, 1fr) 372px" }}
       >
-        <div className="flex min-w-0 flex-col">
-          <main className="min-w-0 flex-1" style={{ padding: "var(--space-12) var(--space-24)" }}>
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <main
+            ref={scroller}
+            onScroll={onScroll}
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto"
+            style={{ padding: "var(--space-12) var(--space-24)" }}
+          >
             {rows.length === 0 ? (
               <p
                 style={{
@@ -125,7 +150,7 @@ export function LiveTranscript({
           <StatusBar microphone={microphone} />
         </div>
 
-        <div className="overflow-y-auto border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
+        <div className="min-h-0 overflow-y-auto border-l border-[var(--color-hairline)] bg-[var(--color-surface-paper)]">
           <LiveRail
             state={state}
             elapsedSeconds={elapsedSeconds}
@@ -143,6 +168,9 @@ export function LiveTranscript({
     </>
   );
 }
+
+/** How near the bottom, in px, still counts as reading the newest line. */
+const FOLLOW_SLACK = 48;
 
 /** S13's footer: the input and the masking, as far as this page can tell. */
 function StatusBar({ microphone }: { microphone?: MicrophoneStatus }) {
