@@ -65,9 +65,9 @@ brief generation are Phase 2.
 
 | Component | Model or algorithm | Hosting | Version pin |
 | --- | --- | --- | --- |
-| Dense retrieval | KURE-v1 (inherits bge-m3's dimension) | Self-hosted HTTP | HF revision, recorded per row |
+| Dense retrieval | KURE-v1 (inherits bge-m3's dimension) | Self-hosted HTTP | HF model id, recorded per row (`model_version`); the revision is the endpoint's to pin |
 | Lexical retrieval | BM25 over a kiwipiepy tokenization | In application code | `rank-bm25`, `kiwipiepy` pinned in the manifest |
-| Re-ranking | `dragonkue/bge-reranker-v2-m3-ko` | Self-hosted HTTP | HF revision, recorded per row |
+| Re-ranking | `dragonkue/bge-reranker-v2-m3-ko` | Self-hosted HTTP | HF model id, recorded per row (`model_version`); the revision is the endpoint's to pin |
 | Decision-change detection | `klue/roberta` fine-tuned on KorNLI (in-house) | Self-hosted HTTP | Training job in `modules/context/scripts/`; checkpoint id recorded per row |
 | Agenda generation | LLM | Phase 2, through `autune_integrations` | — |
 | Pre-meeting brief | Template over D's own rows; the previous-meeting choice reuses retrieval and re-ranking | — | — |
@@ -117,7 +117,14 @@ For the MVP, topics are extracted without an LLM:
    to open, close, thank or console (시간, 수고, 다행), and people's names break a
    phrase. A name is what an honorific attaches to: 지우님, and — collected over
    the whole meeting, since a transcript often spaces it — the word before a
-   detached 님/씨 (도윤 님) or before a title that carries one (한서진 팀장님). The score is words × occurrences among the repeated phrases, so a
+   detached 님/씨 (도윤 님) or before a title that carries one (한서진 팀장님),
+   when kiwipiepy reads that word as one proper noun. That test keeps a
+   department (개발 팀장님) and a common noun (고객 님께) out, and it has a cost:
+   a name kiwipiepy splits into two morphemes is not collected. 서준 reads as
+   서 + 준 and 민서 as 민 + 서, so "서준 님" yields no name, and 서준 said apart
+   from its honorific is an ordinary word that a label can contain. Written
+   together (서준님) it is still no noun and cannot. The score is words ×
+   occurrences among the repeated phrases, so a
    phrase said twice outranks one of its words said three times (#352: one-word
    labels such as `장` or `10` gave the re-ranker nothing to score). When no
    phrase repeats, the label is the segment's first phrase — a segment starts
@@ -309,9 +316,23 @@ one miss differs. The set cannot tell them apart, and `classic` needs no API.
 ### Self-hosted serving contract
 
 The three self-hosted models are reached over HTTP. Each endpoint exposes
-`/health`, `/info` (returns the model id and revision), and its inference route
-(`/embed`, `/rerank`, `/nli`). Deployment of these services is owned by `infra/`
-and is settled in Phase 0.
+`/health`, `/info`, and its inference route (`/embed`, `/rerank`, `/nli`).
+Deployment of these services is owned by `infra/` and is settled in Phase 0.
+
+`/info` returns a JSON object:
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `model_version` | Yes for the embedder; the re-ranker and NLI clients fall back to a default name without it | The bare Hugging Face model id, for example `nlpai-lab/KURE-v1`. Nothing appended: no revision, no tag. |
+| `dim` | Embedder only | The output width. `get_embedder()` refuses a model whose `dim` is not `EMBEDDING_DIM`. |
+| `revision` | No | The Hugging Face commit the endpoint serves, if it reports one. A separate field, never part of `model_version`. No client reads it today. |
+
+`model_version` is bare because it is compared as a string. This module writes
+it onto every row it produces (`ctx_embeddings.model_version`,
+`retriever_version`, `reranker_version`, `nli_version`). The extraction
+module's hosted material embedder calls the same `/info` and refuses a server
+whose `model_version` is not exactly its `AUTUNE_EXTRACTION_EMBEDDER_CHECKPOINT`;
+a revision appended to the id would fail that check against the same model.
 
 ## Pipeline
 
