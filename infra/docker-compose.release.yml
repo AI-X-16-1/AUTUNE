@@ -1,0 +1,61 @@
+# The AWS release host: what differs from the dev server's stack.
+#
+# Used as a second file on top of infra/docker-compose.app.yml, so the
+# release switches, models and modules' settings stay in one place:
+#
+#   docker compose -p autune-app \
+#     -f infra/docker-compose.app.yml -f infra/docker-compose.release.yml ...
+#
+# infra/aws/deploy.sh runs it. Needs Compose 2.24 or later (`!reset`,
+# `!override`).
+#
+# What changes against the dev stack:
+#   - AUTUNE_ENV is production. Settings then refuse the shipped secret key
+#     and a missing encryption key, send session cookies Secure, and mount no
+#     /dev router, so nothing here issues a token for an email.
+#   - The database and the broker are RDS and ElastiCache, not containers.
+#   - worker-audio runs on the CPU: this host has no GPU.
+#   - Only nginx is published, on port 80. The load balancer terminates TLS
+#     and is the only client; the security group lets nobody else in.
+#
+# Nothing in this file turns a switch on. The module settings (classifier,
+# resolver, material upload and search ...) are the ones in
+# docker-compose.app.yml on this branch.
+
+x-release-env: &release-env
+  AUTUNE_ENV: production
+  # Both are required: compose stops before starting anything if one is
+  # missing. deploy.sh builds them from the `autune/db` secret.
+  AUTUNE_DATABASE_URL: ${AUTUNE_DATABASE_URL:?set AUTUNE_DATABASE_URL}
+  AUTUNE_REDIS_URL: ${AUTUNE_REDIS_URL:?set AUTUNE_REDIS_URL}
+
+services:
+  migrate:
+    environment: *release-env
+
+  api:
+    environment: *release-env
+    # Reached through nginx only; nothing publishes 8000 on this host.
+    ports: !reset []
+
+  worker:
+    environment: *release-env
+
+  worker-audio:
+    environment:
+      <<: *release-env
+      # int8 on the CPU is chosen by the pipeline when the device is not cuda.
+      AUTUNE_AUDIO_DEVICE: cpu
+    # The base file hands the host's GPU to this container; there is none.
+    gpus: !reset null
+
+  beat:
+    environment: *release-env
+
+  nginx:
+    ports: !override ["80:80"]
+
+networks:
+  # The dev stack joins the database project's network, which is external.
+  # Here the project's own default network is enough.
+  default: !reset null

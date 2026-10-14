@@ -941,6 +941,49 @@ curl -s -u autune:<password> -X POST http://<DEV_PUBLIC_HOST>/api/audio/dev/toke
 The first upload downloads Whisper and the first context task KURE-v1 and its
 re-ranker (several GB) into the `models` volume, which survives redeploys.
 
+## The release host
+
+A push to `infra/release-1014` runs `.github/workflows/release-aws.yml` on a
+GitHub-hosted runner. It deploys to one EC2 instance in ap-northeast-2 with no
+SSH, no deploy key and no long-lived AWS key:
+
+1. The runner assumes the AWS role in the repository variable
+   `AWS_DEPLOY_ROLE_ARN` through OIDC. The role's trust policy accepts only
+   this repository's `infra/release-1014` branch.
+2. It sends one SSM Run Command to the instance in `AWS_DEPLOY_INSTANCE_ID`.
+   The command fetches the pushed commit with the job's `GITHUB_TOKEN`, passed
+   as a request header and not stored in `.git/config`, and runs
+   `infra/aws/deploy.sh`.
+3. `deploy.sh` reads two Secrets Manager secrets with the instance role:
+   `autune/db` (RDS and ElastiCache endpoints and the database login) and
+   `autune/app` (one entry per environment variable: the secret key, the
+   encryption key, the LLM and Hugging Face keys, the OAuth client ids). It
+   builds the images, migrates, checks the encryption key and starts the
+   stack. No secret value is printed.
+
+The stack is `infra/docker-compose.app.yml` with
+`infra/docker-compose.release.yml` on top, as project `autune-app`:
+
+| What | Release host |
+| --- | --- |
+| `AUTUNE_ENV` | `production`: no `/dev` router, Secure cookies, and settings refuse the shipped secret key and a missing encryption key |
+| Database, broker | RDS PostgreSQL 16 (TLS required, `sslmode=require`) and ElastiCache Redis, not containers; there is no `postgres` or `redis` service |
+| `worker-audio` | CPU (`AUTUNE_AUDIO_DEVICE=cpu`, int8), no `gpus` entry. Expect transcription to run near real time, not faster |
+| Published port | nginx on 80 only, behind an ALB that terminates TLS for `autune.cloud` |
+| Raw audio | the same `audio-tmp` tmpfs as everywhere; swap is off on the host, so a page of it cannot reach the disk (`privacy.md` section 1) |
+| Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on |
+
+Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
+under `production`, and the nginx password block has nothing behind it. The
+consent screen is in Testing, so only the team's accounts can sign in. Before
+anyone outside the team uses the site, reopen #890.
+
+To stop paying for the host overnight, stop the EC2 instance and the RDS
+instance (the broker and the load balancer cannot be stopped; delete them if
+the site is idle for more than a day or two). RDS starts itself again after
+seven days. Everything in the `autune-app` project comes back with the host
+(`restart: unless-stopped`).
+
 ## Environments
 
 | Environment | Purpose | Data |
