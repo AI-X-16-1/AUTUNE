@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { quickDues, shownDue, writtenDay } from "./dates";
+import { isSensibleDue, quickDues, shownDue, writtenDay } from "./dates";
 
 describe("writtenDay", () => {
   it("writes a day as month, day and weekday", () => {
@@ -62,5 +62,26 @@ describe("quickDues", () => {
       ["내일", "2026-10-30"],
       ["다음 주 월", "2026-11-02"],
     ]);
+  });
+});
+
+describe("isSensibleDue", () => {
+  it("takes a real day in a year from 2000 to 2100", () => {
+    expect(isSensibleDue("2026-10-14")).toBe(true);
+    expect(isSensibleDue("2000-01-01")).toBe(true);
+    expect(isSensibleDue("2100-12-31")).toBe(true);
+    expect(isSensibleDue("2028-02-29")).toBe(true);
+  });
+
+  it("refuses the years a half-typed year passes through, and days that do not exist", () => {
+    for (const bad of ["0002-10-14", "0020-10-14", "0202-10-14", "1999-12-31", "2101-01-01"]) {
+      expect(isSensibleDue(bad)).toBe(false);
+    }
+    for (const bad of ["2026-02-30", "2027-02-29", "2026-13-01", "2026-10-00"]) {
+      expect(isSensibleDue(bad)).toBe(false);
+    }
+    for (const bad of ["", "2026-10-1", "tomorrow"]) {
+      expect(isSensibleDue(bad)).toBe(false);
+    }
   });
 });

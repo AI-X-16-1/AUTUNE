@@ -12,7 +12,7 @@ import { SyncStatus } from "./SyncStatus";
 import { useAssignable } from "../hooks/useAssignable";
 import { useSourceUtterances } from "../hooks/useSourceUtterances";
 import { CLOSED_NOTICE, CONFIRMED_NOTICE, confirms } from "../board";
-import { quickDues, shownDue } from "../dates";
+import { isSensibleDue, quickDues, shownDue } from "../dates";
 import { isSpeakerLabel, speakerLabelShown } from "../speakerLabel";
 import { typedTextRefusal } from "../refusal";
 import { rowTitle } from "../title";
@@ -115,6 +115,16 @@ export function ActionDetailDrawer({
     }
   };
 
+  // The date field's text while a person edits it. A date field reports a whole
+  // date for every key pressed in it -- typing "2" over the 14th of 2026-10-14
+  // is 2026-10-02 at once -- so saving on each change wrote a day nobody meant
+  // and locked the field before the next digit (review of #1325). The change is
+  // kept here and saved when the field is left or Enter is pressed. `null` is
+  // "not being edited".
+  const [dueDraft, setDueDraft] = useState<string | null>(null);
+  const storedDue = /^\d{4}-\d{2}-\d{2}$/.test(item.due_date ?? "") ? (item.due_date ?? "") : "";
+  const dueChanged = dueDraft !== null && dueDraft !== "" && dueDraft !== storedDue;
+
   const saveDue = async (due: string | null) => {
     setFailure(null);
     setNotice(null);
@@ -126,6 +136,21 @@ export function ActionDetailDrawer({
     } finally {
       setChanging(false);
     }
+  };
+
+  // An empty field is a half-typed date (a date field reports "" until every
+  // part is filled) or a clear, and neither is saved: 기한 없애기 is the way to
+  // clear a day.
+  const commitDue = () => {
+    if (dueDraft === null) return;
+    const draft = dueDraft;
+    setDueDraft(null);
+    if (draft === "" || draft === storedDue) return;
+    if (!isSensibleDue(draft)) {
+      setFailure("기한의 날짜가 올바르지 않습니다. 연도를 확인해 주세요.");
+      return;
+    }
+    void saveDue(draft);
   };
 
   const saveAssignee = async (value: AssigneeValue) => {
@@ -375,15 +400,20 @@ export function ActionDetailDrawer({
             ) : (
               <div className="grid gap-2">
                 {/* A date field like the other two, so it reads as editable
-                    (#1183). It saves the moment a day is picked, the way the
-                    status and a member do; the quick picks are the days a
-                    person most often means. */}
+                    (#1183). It saves when the field is left or Enter is
+                    pressed -- not on each key, which a date field reports as
+                    a whole date (review of #1325); the quick picks are the
+                    days a person most often means and save at once. */}
                 <input
                   type="date"
                   aria-label="기한"
-                  value={/^\d{4}-\d{2}-\d{2}$/.test(item.due_date ?? "") ? (item.due_date ?? "") : ""}
+                  value={dueDraft ?? storedDue}
                   disabled={changing}
-                  onChange={(event) => void saveDue(event.target.value || null)}
+                  onChange={(event) => setDueDraft(event.target.value)}
+                  onBlur={commitDue}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitDue();
+                  }}
                   className="w-full border bg-transparent"
                   style={{
                     height: "var(--control-h-default)",
@@ -416,7 +446,14 @@ export function ActionDetailDrawer({
                     </Button>
                   ) : null}
                 </div>
-                {item.due_date ? (
+                {dueChanged ? (
+                  <span
+                    className="text-[var(--color-ink-muted)]"
+                    style={{ fontSize: "var(--text-metaSmall)" }}
+                  >
+                    다른 곳을 누르거나 Enter를 누르면 저장됩니다.
+                  </span>
+                ) : item.due_date ? (
                   <span
                     className="text-[var(--color-ink-muted)]"
                     style={{ fontSize: "var(--text-metaSmall)" }}

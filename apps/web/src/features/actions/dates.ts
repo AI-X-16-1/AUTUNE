@@ -27,6 +27,23 @@ export function isOverdue(
   return item.due_date < today;
 }
 
+/**
+ * A day worth saving as a due date: `YYYY-MM-DD`, a real day, in a year from
+ * 2000 to 2100. A date field reports a whole date for every key typed into it
+ * (a year typed one digit at a time passes through 0002, 0020, 0202), and the
+ * server takes any year, so the field is where a nonsense year is stopped
+ * (review of #1325). Not today's year plus or minus: an old item may keep an
+ * old due date, and a plan may run years ahead.
+ */
+export function isSensibleDue(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (year < 2000 || year > 2100) return false;
+  const made = new Date(year, month - 1, day);
+  return made.getMonth() === month - 1 && made.getDate() === day;
+}
+
 export const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 /**

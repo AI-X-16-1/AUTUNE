@@ -144,8 +144,95 @@ describe("ActionDetailDrawer, the due date", () => {
     expect(field.value).toBe("2026-10-13");
 
     fireEvent.change(field, { target: { value: "2026-10-20" } });
+    fireEvent.blur(field);
 
     await waitFor(() => expect(onDueChange).toHaveBeenCalledExactlyOnceWith("2026-10-20"));
+  });
+
+  // Review of #1325: a date field reports a whole date for every key typed in
+  // it, so typing "2" over the day of 2026-10-14 is 2026-10-02 at once, and
+  // saving on each change wrote that and locked the field before the "5".
+  it("saves once, when the field is left, not on each key typed into it", async () => {
+    const onDueChange = vi.fn(() => Promise.resolve());
+    render(
+      <ActionDetailDrawer
+        item={{ ...WAITING, due_date: "2026-10-14" } as ActionItemRead}
+        onClose={vi.fn()}
+        onDueChange={onDueChange}
+      />,
+    );
+    const field = screen.getByLabelText("기한") as HTMLInputElement;
+
+    fireEvent.change(field, { target: { value: "2026-10-02" } });
+    expect(onDueChange).not.toHaveBeenCalled();
+    expect(field.disabled).toBe(false);
+    expect(field.value).toBe("2026-10-02");
+    expect(screen.getByText(/Enter를 누르면 저장됩니다/)).toBeTruthy();
+
+    fireEvent.change(field, { target: { value: "2026-10-25" } });
+    expect(onDueChange).not.toHaveBeenCalled();
+
+    fireEvent.blur(field);
+
+    await waitFor(() => expect(onDueChange).toHaveBeenCalledExactlyOnceWith("2026-10-25"));
+  });
+
+  it("saves on Enter, and not again when the field is then left", async () => {
+    const onDueChange = vi.fn(() => Promise.resolve());
+    render(
+      <ActionDetailDrawer
+        item={{ ...WAITING, due_date: "2026-10-14" } as ActionItemRead}
+        onClose={vi.fn()}
+        onDueChange={onDueChange}
+      />,
+    );
+    const field = screen.getByLabelText("기한");
+
+    fireEvent.change(field, { target: { value: "2026-10-25" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.blur(field);
+
+    await waitFor(() => expect(onDueChange).toHaveBeenCalledExactlyOnceWith("2026-10-25"));
+  });
+
+  it("saves nothing for a field left as it was, or left half-typed", async () => {
+    const onDueChange = vi.fn(() => Promise.resolve());
+    render(
+      <ActionDetailDrawer
+        item={{ ...WAITING, due_date: "2026-10-14" } as ActionItemRead}
+        onClose={vi.fn()}
+        onDueChange={onDueChange}
+      />,
+    );
+    const field = screen.getByLabelText("기한") as HTMLInputElement;
+
+    fireEvent.change(field, { target: { value: "2026-10-14" } });
+    fireEvent.blur(field);
+    // A date field reports "" until every part of it is filled in.
+    fireEvent.change(field, { target: { value: "" } });
+    fireEvent.blur(field);
+
+    expect(onDueChange).not.toHaveBeenCalled();
+    expect(field.value).toBe("2026-10-14");
+  });
+
+  it("does not save a year nobody means, and says so", () => {
+    const onDueChange = vi.fn(() => Promise.resolve());
+    render(
+      <ActionDetailDrawer
+        item={{ ...WAITING, due_date: "2026-10-14" } as ActionItemRead}
+        onClose={vi.fn()}
+        onDueChange={onDueChange}
+      />,
+    );
+    const field = screen.getByLabelText("기한") as HTMLInputElement;
+
+    fireEvent.change(field, { target: { value: "0002-10-14" } });
+    fireEvent.blur(field);
+
+    expect(onDueChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toMatch(/연도를 확인해 주세요/);
+    expect(field.value).toBe("2026-10-14");
   });
 
   it("offers tomorrow, Friday and next Monday, and 기한 없애기 clears it", async () => {

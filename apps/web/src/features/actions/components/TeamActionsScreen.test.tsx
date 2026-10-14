@@ -222,6 +222,25 @@ describe("TeamActionsScreen, 보기", () => {
     expect(inGroup("플랫폼")).toEqual(["a"]);
     expect(screen.queryByRole("region", { name: "디자인" })).toBeNull();
   });
+
+  // Review of #1325: a project that has no item in the tab said the team has
+  // no meeting yet, with a link to start the first one.
+  it("says the project has none, not that the team has no meeting, when the filter hides them", async () => {
+    items = [
+      item("a", { team_id: "team_p", project_id: "prj_web" }),
+      item("c", { team_id: "team_p", project_id: null, due_date: "2020-01-01" }),
+    ];
+    await open();
+    fireEvent.change(screen.getByRole("combobox", { name: "프로젝트로 거르기" }), {
+      target: { value: "prj_web" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: /기한 초과/ }));
+
+    expect(onScreen()).toEqual([]);
+    expect(screen.getByText("고른 프로젝트에는 할 일이 없습니다.")).toBeTruthy();
+    expect(screen.queryByText(/회의를 올리면 할 일이 여기에 모입니다/)).toBeNull();
+    expect(screen.queryByRole("link", { name: "회의 시작" })).toBeNull();
+  });
 });
 
 describe("TeamActionsScreen, two teams' projects of one name", () => {

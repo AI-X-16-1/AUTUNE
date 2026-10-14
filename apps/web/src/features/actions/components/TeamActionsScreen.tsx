@@ -285,7 +285,7 @@ export function TeamActionsScreen({
               {shown.length === 0 ? (
                 // One line, not four empty columns (#1183): there is nothing
                 // to move and nowhere to drop it.
-                <EmptyBoard tab={tab} />
+                <EmptyBoard tab={tab} filtered={project !== ALL_PROJECTS && lists[tab].length > 0} />
               ) : groups === null ? (
                 board(shown)
               ) : (
@@ -350,13 +350,16 @@ const EMPTY: Record<Tab, string> = {
   overdue: "기한이 지난 할 일이 없습니다.",
 };
 
-function EmptyBoard({ tab }: { tab: Tab }) {
+// `filtered` is a project choice that hides items the tab does have: the team
+// has work, and a line about uploading a first meeting would be wrong (review
+// of #1325).
+function EmptyBoard({ tab, filtered }: { tab: Tab; filtered: boolean }) {
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       <p className="text-[var(--color-ink-muted)]" style={{ fontSize: "var(--text-body)" }}>
-        {EMPTY[tab]}
+        {filtered ? "고른 프로젝트에는 할 일이 없습니다." : EMPTY[tab]}
       </p>
-      {tab === "all" ? (
+      {tab === "all" && !filtered ? (
         <Link
           href={"/meetings/new" as Route}
           className="text-[var(--color-accent-text)]"
