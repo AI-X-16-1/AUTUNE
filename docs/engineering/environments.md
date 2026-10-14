@@ -977,12 +977,19 @@ The stack is `infra/docker-compose.app.yml` with
 Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
 under `production`, and the nginx password block has nothing behind it.
 
-**The site's address is not decided.** `deploy.sh` has no default for
-`AUTUNE_SITE_URL` and stops without it. It must not be `autune.cloud` or a
-name under it: that is the public landing page (`apps/landing`, #1338), kept on
-a site of its own so that an ad script on it shares no cookie, storage or
-origin with the app. Settle the address with the owner of that page, then add
-it to `autune/app`.
+**The site's address is `app.autune.cloud`** (decided on #1343). `deploy.sh`
+has no default for `AUTUNE_SITE_URL` and stops without it. It must not be
+`autune.cloud` itself, which is the public landing page (`apps/landing`,
+#1338) and has to show that page at the address registered with the ad
+network, nor a path under it. The landing page's owner agreed to the name
+`app.autune.cloud` on two conditions that live in the code, not in this
+deployment, and that must be met before an ad script goes on the landing
+page: the session cookie takes the `__Host-` prefix, a state-changing request
+and the live WebSocket handshake are refused when their `Origin` is not the
+app's own (the Slack events route, which Slack posts without an `Origin`, is
+left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. The
+two names share a site, so until then the team trial must not carry an ad
+script; none is on the landing page today.
 
 **This host is a trial for the team's own accounts. It takes no one from
 outside the team until all three of these are done, and none of them is part
