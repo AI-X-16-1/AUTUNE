@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { Wordmark } from "@/shared/ui";
 
+import { MetaPixel } from "../_components/MetaPixel";
 import { SignInCard } from "./SignInCard";
 
 /**
@@ -110,6 +111,7 @@ export default function LoginPage() {
           </Link>
         </span>
       </footer>
+      <MetaPixel />
     </div>
   );
 }

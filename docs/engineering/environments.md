@@ -255,6 +255,7 @@ nothing secret goes here.
 | Variable | Example | Notes |
 | --- | --- | --- |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the browser reaches `apps/api` |
+| `NEXT_PUBLIC_META_PIXEL_ID` | `1234567890123456` | The Meta Pixel's id, digits only. Empty (the default): nothing is loaded. Set, the pixel loads on `/login` and `/legal` only, and only on an address with no query; no screen behind a session and not `/invite`. Next inlines it at build, so it is an image build argument and changing it means rebuilding. **Set it only after the privacy policy names Meta** (`privacy.md` section 6) |
 | `NEXT_PUBLIC_LIVE_URL` | `wss://api.example.com` | Where the live transcript socket opens. Empty: the page's own origin. Set it where a proxy in front of the site drops the WebSocket `Upgrade` header; the page then fetches a ticket over its own origin for the socket's `hello`, because the session cookie does not reach another host. The ticket opens that meeting's socket once, within 60 s, and no other route (`modules/audio/src/autune_audio/live/tickets.py`). Tickets, like live sessions, are held in the API process's memory, so the API runs as one process |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | | Bearer token for every call, until sign-in (S01) exists. Build-time fallback for the value below |
 

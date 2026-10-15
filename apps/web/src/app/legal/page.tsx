@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { Band, Wordmark } from "@/shared/ui";
 
+import { MetaPixel } from "../_components/MetaPixel";
 import { COPY_NOTICE, LEGAL_DOCUMENTS } from "./content";
 import { BODY, DocumentBody, Text } from "./LegalDocumentView";
 
@@ -91,6 +92,7 @@ export default function LegalPage() {
           </article>
         ))}
       </main>
+      <MetaPixel />
     </div>
   );
 }
