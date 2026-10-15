@@ -378,6 +378,11 @@ services:
         # through the site's address the WebSocket handshake loses its
         # Upgrade header. Empty keeps it on the page's origin.
         NEXT_PUBLIC_LIVE_URL: ${DEV_LIVE_URL:-}
+        # The Meta Pixel's id, digits only. Unset: no pixel. On the release
+        # host deploy.sh exports it from the `autune/app` secret; the dev
+        # server's dev.yml sets nothing, so the dev site loads none. Not to be
+        # set before the privacy policy names Meta.
+        NEXT_PUBLIC_META_PIXEL_ID: ${NEXT_PUBLIC_META_PIXEL_ID:-}
         API_PROXY_TARGET: http://api:8000
     image: autune-web:dev
     restart: unless-stopped
