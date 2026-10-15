@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/shared/ui";
 
@@ -8,14 +8,22 @@ import type { RequiredConsent } from "../legal/consents";
 import { legalDocument } from "../legal/content";
 import { DocumentBody } from "../legal/LegalDocumentView";
 
+/** Within a few pixels of the bottom, so sub-pixel rounding cannot strand it. */
+function atEnd(el: HTMLElement) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= 4;
+}
+
 /**
  * The documents a person has to agree to, one row each.
  *
- * **A document has to be opened once before its box can be ticked** (the user,
- * 2026-10-02: "유저가 클릭해서 한번 열려야 동의가 되도록"). Opened means its text
- * was put on the screen by the person's own click, here on this page -- not
- * that it was read, which no page can know. The text is the same data, drawn
- * the same way, as `/legal`.
+ * **A document has to be scrolled to its end before its box can be ticked**
+ * (the user, 2026-10-02: "유저가 클릭해서 한번 열려야 동의가 되도록"; tightened
+ * 2026-10-15 to "스크롤을 끝까지 이동하면 동의"). The person opens it with
+ * "내용 보기"; once its panel has been scrolled to the bottom -- or it fits
+ * without scrolling -- the row's button becomes "동의", and pressing it ticks
+ * the box. The box itself unlocks at the same moment and can be ticked and
+ * unticked freely after that. Reaching the end is not proof of reading, which
+ * no page can know. The text is the same data, drawn the same way, as `/legal`.
  *
  * Nothing is sent until every box is ticked, and then all of them go in one
  * request: a person is either through the page or still on it, never half.
@@ -39,7 +47,7 @@ export function ConsentForm({
   onLeave: () => Promise<void>;
 }) {
   const [shown, setShown] = useState<string | null>(null);
-  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  const [reached, setReached] = useState<ReadonlySet<string>>(new Set());
   const [agreed, setAgreed] = useState<ReadonlySet<string>>(new Set());
   const [sending, setSending] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -47,10 +55,27 @@ export function ConsentForm({
 
   const complete = required.every((item) => agreed.has(item.document));
 
-  const toggle = (document: string) => {
+  const markReached = useCallback(
+    (document: string) =>
+      setReached((current) =>
+        current.has(document) ? current : new Set(current).add(document),
+      ),
+    [],
+  );
+
+  // A document short enough to need no scrolling has already been seen whole.
+  // `clientHeight` is 0 until the panel has a layout, so it is not mistaken for
+  // one.
+  useEffect(() => {
+    if (shown === null) return;
+    const panel = window.document.getElementById(`consent-${shown}`);
+    if (panel !== null && panel.clientHeight > 0 && atEnd(panel)) {
+      markReached(shown);
+    }
+  }, [shown, markReached]);
+
+  const toggle = (document: string) =>
     setShown((current) => (current === document ? null : document));
-    setOpened((current) => new Set(current).add(document));
-  };
 
   const tick = (document: string, on: boolean) =>
     setAgreed((current) => {
@@ -87,7 +112,12 @@ export function ConsentForm({
       <ul className="flex flex-col gap-4">
         {required.map(({ document }) => {
           const doc = legalDocument(document);
-          const wasOpened = opened.has(document);
+          const wasReached = reached.has(document);
+          const isAgreed = agreed.has(document);
+          const isShown = shown === document;
+          // At the end of the text and not yet agreed: the button is the way
+          // to agree. Otherwise it only opens and closes the text.
+          const agreeNow = isShown && wasReached && !isAgreed;
           const panel = `consent-${document}`;
           return (
             <li
@@ -96,13 +126,13 @@ export function ConsentForm({
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <label
-                  className={`flex items-center gap-2 ${wasOpened ? "text-ink-strong" : "text-ink-muted"}`}
+                  className={`flex items-center gap-2 ${wasReached ? "text-ink-strong" : "text-ink-muted"}`}
                   style={{ fontSize: "var(--text-body)" }}
                 >
                   <input
                     type="checkbox"
-                    disabled={!wasOpened || sending}
-                    checked={agreed.has(document)}
+                    disabled={!wasReached || sending}
+                    checked={isAgreed}
                     onChange={(event) => tick(document, event.target.checked)}
                   />
                   {doc.title}에 동의합니다 (필수)
@@ -110,26 +140,41 @@ export function ConsentForm({
                 <Button
                   tone="text"
                   size="compact"
-                  aria-expanded={shown === document}
+                  aria-expanded={isShown}
                   aria-controls={panel}
-                  onClick={() => toggle(document)}
+                  disabled={sending}
+                  onClick={() => {
+                    if (agreeNow) {
+                      tick(document, true);
+                      setShown(null);
+                    } else {
+                      toggle(document);
+                    }
+                  }}
                 >
-                  {shown === document ? "접기" : "내용 보기"}
+                  {agreeNow ? "동의" : isShown ? "접기" : "내용 보기"}
                 </Button>
               </div>
-              {wasOpened ? null : (
+              {wasReached ? null : (
                 <p
                   className="text-ink-muted"
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
-                  내용을 한 번 열어 본 뒤에 동의할 수 있습니다.
+                  내용 보기를 눌러 끝까지 내려 읽은 뒤에 동의할 수 있습니다.
                 </p>
               )}
-              {shown === document ? (
+              {isShown ? (
                 <div
                   id={panel}
                   role="region"
                   aria-label={doc.title}
+                  // Reaching the end is what unlocks the box, so the panel has
+                  // to be scrollable from the keyboard in every browser: Safari
+                  // does not focus a scroll area that holds nothing focusable.
+                  tabIndex={0}
+                  onScroll={(event) => {
+                    if (atEnd(event.currentTarget)) markReached(document);
+                  }}
                   className="flex max-h-[60vh] flex-col gap-6 overflow-y-auto border border-hairline bg-[var(--color-surface-panel)]"
                   style={{
                     borderRadius: "var(--radius)",

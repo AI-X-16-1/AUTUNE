@@ -1,0 +1,14 @@
+# Cloudflare Pages response headers for every path.
+#
+# script-src is 'none' on purpose: the privacy policy promises no behavioural
+# data and no outside analytics, so no script may run here until its wording
+# changes in the same pull request that adds one (#1320). Then add exactly the
+# hosts that script needs, nothing broader.
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000
