@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 
 import { Button } from "@/shared/ui";
 
@@ -8,22 +8,18 @@ import type { RequiredConsent } from "../legal/consents";
 import { legalDocument } from "../legal/content";
 import { DocumentBody } from "../legal/LegalDocumentView";
 
-/** Within a few pixels of the bottom, so sub-pixel rounding cannot strand it. */
-function atEnd(el: HTMLElement) {
-  return el.scrollHeight - el.scrollTop - el.clientHeight <= 4;
-}
-
 /**
  * The documents a person has to agree to, one row each.
  *
- * **A document has to be scrolled to its end before its box can be ticked**
- * (the user, 2026-10-02: "유저가 클릭해서 한번 열려야 동의가 되도록"; tightened
- * 2026-10-15 to "스크롤을 끝까지 이동하면 동의"). The person opens it with
- * "내용 보기"; once its panel has been scrolled to the bottom -- or it fits
- * without scrolling -- the row's button becomes "동의", and pressing it ticks
- * the box. The box itself unlocks at the same moment and can be ticked and
- * unticked freely after that. Reaching the end is not proof of reading, which
- * no page can know. The text is the same data, drawn the same way, as `/legal`.
+ * **A document has to be opened by the person's own click before its box can
+ * be ticked** (the user, 2026-10-02: "유저가 클릭해서 한번 열려야 동의가 되도록").
+ * Scrolling it to its end is not asked for: the user, 2026-10-15, took back the
+ * stricter rule of the same day ("스크롤을 끝까지 이동하면 동의") with "이용약관
+ * 다 안 읽어도 동의 가능하게". The person opens it with "내용 보기"; once it is
+ * open the row's button becomes "동의", and pressing it ticks the box. The box
+ * itself unlocks at the same moment and can be ticked and unticked freely
+ * after that. Opening is not proof of reading, which no page can know. The text
+ * is the same data, drawn the same way, as `/legal`.
  *
  * Nothing is sent until every box is ticked, and then all of them go in one
  * request: a person is either through the page or still on it, never half.
@@ -63,19 +59,12 @@ export function ConsentForm({
     [],
   );
 
-  // A document short enough to need no scrolling has already been seen whole.
-  // `clientHeight` is 0 until the panel has a layout, so it is not mistaken for
-  // one.
-  useEffect(() => {
-    if (shown === null) return;
-    const panel = window.document.getElementById(`consent-${shown}`);
-    if (panel !== null && panel.clientHeight > 0 && atEnd(panel)) {
-      markReached(shown);
-    }
-  }, [shown, markReached]);
-
-  const toggle = (document: string) =>
+  // Opening the text is what unlocks its box; closing it again does not lock
+  // it, and a document that was never opened stays locked.
+  const toggle = (document: string) => {
+    if (shown !== document) markReached(document);
     setShown((current) => (current === document ? null : document));
+  };
 
   const tick = (document: string, on: boolean) =>
     setAgreed((current) => {
@@ -115,8 +104,8 @@ export function ConsentForm({
           const wasReached = reached.has(document);
           const isAgreed = agreed.has(document);
           const isShown = shown === document;
-          // At the end of the text and not yet agreed: the button is the way
-          // to agree. Otherwise it only opens and closes the text.
+          // Open and not yet agreed: the button is the way to agree.
+          // Otherwise it only opens and closes the text.
           const agreeNow = isShown && wasReached && !isAgreed;
           const panel = `consent-${document}`;
           return (
@@ -160,7 +149,7 @@ export function ConsentForm({
                   className="text-ink-muted"
                   style={{ fontSize: "var(--text-metaSmall)" }}
                 >
-                  내용 보기를 눌러 끝까지 내려 읽은 뒤에 동의할 수 있습니다.
+                  내용 보기를 눌러 내용을 연 뒤에 동의할 수 있습니다.
                 </p>
               )}
               {isShown ? (
@@ -168,13 +157,10 @@ export function ConsentForm({
                   id={panel}
                   role="region"
                   aria-label={doc.title}
-                  // Reaching the end is what unlocks the box, so the panel has
-                  // to be scrollable from the keyboard in every browser: Safari
-                  // does not focus a scroll area that holds nothing focusable.
+                  // The text is read by scrolling it, so the panel has to be
+                  // scrollable from the keyboard in every browser: Safari does
+                  // not focus a scroll area that holds nothing focusable.
                   tabIndex={0}
-                  onScroll={(event) => {
-                    if (atEnd(event.currentTarget)) markReached(document);
-                  }}
                   className="flex max-h-[60vh] flex-col gap-6 overflow-y-auto border border-hairline bg-[var(--color-surface-panel)]"
                   style={{
                     borderRadius: "var(--radius)",
