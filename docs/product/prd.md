@@ -124,7 +124,8 @@ reports) → VP/CTO (dashboard).
 
 ### 5.5 Intelligence dashboard (E)
 - Meeting quality score (A–F) trend.
-- Cross-role alignment heatmap.
+- Cross-role alignment heatmap (deferred: it reads B's stance per role, which
+  nothing produces since #10 closed; off the dashboard until it does, #1310).
 - Gap-type distribution over time.
 - Misalignment prediction.
 - Influence map: proposal adoption rate, decision dominance, interruption

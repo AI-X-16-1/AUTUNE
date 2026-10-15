@@ -23,6 +23,7 @@ from autune_contracts import MODULES
 from autune_core import AutuneError, configure_logging, get_logger, get_settings
 from autune_core.auth_router import router as auth_router
 from autune_core.celery_app import make_celery_app
+from autune_core.origin_guard import OriginGuard
 
 configure_logging()
 log = get_logger(__name__)
@@ -65,6 +66,16 @@ def create_app(*, origins: list[str] | None = None) -> FastAPI:
             allow_headers=["*"],
         )
         log.info("cors_enabled", origins=resolved_origins)
+
+    # A request that changes state, or opens the live WebSocket, from another
+    # name of this site (autune.cloud beside app.autune.cloud) is refused.
+    # Added after CORS so it is the outer layer. Off in local development,
+    # where the browser's Host is not the one the API sees.
+    app.add_middleware(
+        OriginGuard,
+        enforce=get_settings().session_cookie_secure,
+        allowed_origins=resolved_origins,
+    )
 
     @app.exception_handler(AutuneError)
     async def _autune_error_handler(_: Request, exc: AutuneError) -> JSONResponse:

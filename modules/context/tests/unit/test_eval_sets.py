@@ -156,3 +156,18 @@ def test_the_terse_development_set_carries_context() -> None:
     cases = lineage_dataset.load_cases("decision_lineage_terse_dev_v1.json")
     assert len(cases) == 42
     assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))
+
+
+def test_lineage_heldout_v8_is_withdrawals_without_a_cue_word_and_their_traps() -> None:
+    cases = lineage_dataset.load_cases("decision_lineage_heldout_v8.json")
+
+    assert len(cases) == 60
+    assert sum(c.category.startswith("reversed_uncued_") for c in cases) == 25
+    assert sum(c.category.endswith("_trap") for c in cases) == 14
+    assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))
+
+
+def test_the_withdrawal_development_set_carries_context() -> None:
+    cases = lineage_dataset.load_cases("decision_lineage_withdrawal_dev_v1.json")
+    assert len(cases) == 40
+    assert all(m.context for c in cases for m in (*c.past_meetings, c.current_meeting))

@@ -33,12 +33,13 @@ import hashlib
 import hmac
 import re
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Cookie, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -46,13 +47,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import (
-    SESSION_COOKIE,
     CurrentUser,
     _session_token,
     clear_session_cookie,
     current_user,
     end_sessions,
     issue_token,
+    session_cookie_value,
     set_session_cookie,
     signed_in_user_or_none,
 )
@@ -116,6 +117,55 @@ router = APIRouter()
 # to whom: without the cookie, an attacker's own callback URL, opened by a
 # victim, would sign the victim in as the attacker (login CSRF).
 STATE_COOKIE = "autune_oauth_state"
+
+
+def _state_cookie_name(provider: str) -> str:
+    """The state cookie's name for one provider's flow.
+
+    Where the cookie is Secure it is ``__Host-autune_oauth_state_<provider>``
+    with ``Path=/``: a browser refuses a cookie of that name set from a
+    sibling name on the same site, which would otherwise let a script on
+    ``autune.cloud`` plant a state of its own and complete an attacker's
+    callback in a visitor's browser. ``__Host-`` needs ``Path=/``, so the
+    flows no longer keep apart by path and each takes a name of its own.
+    Local development is plain HTTP and keeps the old name and the callback's
+    path.
+    """
+    if get_settings().session_cookie_secure:
+        return f"__Host-{STATE_COOKIE}_{provider}"
+    return STATE_COOKIE
+
+
+def _set_state_cookie(response: Response, provider: str, state: str, *, local_path: str) -> None:
+    secure = get_settings().session_cookie_secure
+    response.set_cookie(
+        _state_cookie_name(provider),
+        state,
+        max_age=STATE_TTL_SECONDS,
+        httponly=True,
+        secure=secure,
+        # Lax still rides on the provider's top-level GET back to the callback.
+        samesite="lax",
+        path="/" if secure else local_path,
+    )
+
+
+def _clear_state_cookie(response: Response, provider: str, *, local_path: str) -> None:
+    secure = get_settings().session_cookie_secure
+    response.delete_cookie(
+        _state_cookie_name(provider),
+        path="/" if secure else local_path,
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def _state_cookie_reader(provider: str) -> Callable[[Request], str | None]:
+    def read(request: Request) -> str | None:
+        return request.cookies.get(_state_cookie_name(provider))
+
+    return read
 
 
 def _safe_redirect_target(raw: str) -> str:
@@ -199,16 +249,7 @@ def google_start(
         google.authorization_url(state=state, nonce=nonce, code_challenge=challenge),
         status_code=307,
     )
-    response.set_cookie(
-        STATE_COOKIE,
-        state,
-        max_age=STATE_TTL_SECONDS,
-        httponly=True,
-        secure=get_settings().session_cookie_secure,
-        # Lax still rides on Google's top-level GET back to the callback.
-        samesite="lax",
-        path=_callback_path(request),
-    )
+    _set_state_cookie(response, "google", state, local_path=_callback_path(request))
     return response
 
 
@@ -222,7 +263,7 @@ def google_callback(
     session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
-    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+    autune_oauth_state: Annotated[str | None, Depends(_state_cookie_reader("google"))] = None,
 ) -> Response:
     response: Response
     try:
@@ -240,7 +281,7 @@ def google_callback(
         # Answered here rather than by the app's handler so the state cookie is
         # cleared on a failed callback too.
         response = JSONResponse(status_code=exc.status_code, content=exc.to_dict())
-    response.delete_cookie(STATE_COOKIE, path=_callback_path(request))
+    _clear_state_cookie(response, "google", local_path=_callback_path(request))
     return response
 
 
@@ -305,7 +346,7 @@ def providers() -> dict[str, bool]:
 def logout(
     session: SessionDep,
     authorization: Annotated[str | None, Header()] = None,
-    autune_session: Annotated[str | None, Cookie()] = None,
+    autune_session: Annotated[str | None, Depends(session_cookie_value)] = None,
 ) -> Response:
     """Sign out: end every session this person has, then clear the cookie.
 
@@ -512,15 +553,7 @@ def _start_personal_connect(
         code_challenge=challenge,
     )
     response = RedirectResponse(url, status_code=307)
-    response.set_cookie(
-        STATE_COOKIE,
-        state,
-        max_age=STATE_TTL_SECONDS,
-        httponly=True,
-        secure=get_settings().session_cookie_secure,
-        samesite="lax",
-        path=_callback_path(request),
-    )
+    _set_state_cookie(response, "google", state, local_path=_callback_path(request))
     return response
 
 
@@ -872,15 +905,7 @@ def jira_start(
         ),
     )
     response = RedirectResponse(atlassian.authorization_url(state=state), status_code=307)
-    response.set_cookie(
-        STATE_COOKIE,
-        state,
-        max_age=STATE_TTL_SECONDS,
-        httponly=True,
-        secure=get_settings().session_cookie_secure,
-        samesite="lax",
-        path=_jira_callback_path(request),
-    )
+    _set_state_cookie(response, "jira", state, local_path=_jira_callback_path(request))
     return response
 
 
@@ -893,7 +918,7 @@ def jira_callback(
     session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
-    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+    autune_oauth_state: Annotated[str | None, Depends(_state_cookie_reader("jira"))] = None,
 ) -> Response:
     response: Response
     if autune_oauth_state is None or not secrets.compare_digest(
@@ -912,7 +937,7 @@ def jira_callback(
             )
         else:
             response = _finish_jira_connect(transaction, atlassian, session, code=code, error=error)
-    response.delete_cookie(STATE_COOKIE, path=_jira_callback_path(request))
+    _clear_state_cookie(response, "jira", local_path=_jira_callback_path(request))
     return response
 
 
@@ -1085,15 +1110,7 @@ def notion_start(
         ),
     )
     response = RedirectResponse(notion.authorization_url(state=state), status_code=307)
-    response.set_cookie(
-        STATE_COOKIE,
-        state,
-        max_age=STATE_TTL_SECONDS,
-        httponly=True,
-        secure=get_settings().session_cookie_secure,
-        samesite="lax",
-        path=_notion_callback_path(request),
-    )
+    _set_state_cookie(response, "notion", state, local_path=_notion_callback_path(request))
     return response
 
 
@@ -1106,7 +1123,7 @@ def notion_callback(
     session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
-    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+    autune_oauth_state: Annotated[str | None, Depends(_state_cookie_reader("notion"))] = None,
 ) -> Response:
     response: Response
     if autune_oauth_state is None or not secrets.compare_digest(
@@ -1129,7 +1146,7 @@ def notion_callback(
             )
         else:
             response = _finish_notion_connect(transaction, notion, session, code=code, error=error)
-    response.delete_cookie(STATE_COOKIE, path=_notion_callback_path(request))
+    _clear_state_cookie(response, "notion", local_path=_notion_callback_path(request))
     return response
 
 
@@ -1247,15 +1264,7 @@ def slack_start(
         ),
     )
     response = RedirectResponse(slack.authorization_url(state=state), status_code=307)
-    response.set_cookie(
-        STATE_COOKIE,
-        state,
-        max_age=STATE_TTL_SECONDS,
-        httponly=True,
-        secure=get_settings().session_cookie_secure,
-        samesite="lax",
-        path=_slack_callback_path(request),
-    )
+    _set_state_cookie(response, "slack", state, local_path=_slack_callback_path(request))
     return response
 
 
@@ -1268,7 +1277,7 @@ def slack_callback(
     session: SessionDep,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
-    autune_oauth_state: Annotated[str | None, Cookie()] = None,
+    autune_oauth_state: Annotated[str | None, Depends(_state_cookie_reader("slack"))] = None,
 ) -> Response:
     response: Response
     if autune_oauth_state is None or not secrets.compare_digest(
@@ -1295,7 +1304,7 @@ def slack_callback(
             )
         else:
             response = _finish_slack_connect(transaction, slack, session, code=code, error=error)
-    response.delete_cookie(STATE_COOKIE, path=_slack_callback_path(request))
+    _clear_state_cookie(response, "slack", local_path=_slack_callback_path(request))
     return response
 
 
@@ -1497,15 +1506,7 @@ def slack_identity_start(
         ),
     )
     response = RedirectResponse(slack.identity_url(state=state, nonce=nonce), status_code=307)
-    response.set_cookie(
-        STATE_COOKIE,
-        state,
-        max_age=STATE_TTL_SECONDS,
-        httponly=True,
-        secure=get_settings().session_cookie_secure,
-        samesite="lax",
-        path=_slack_callback_path(request),
-    )
+    _set_state_cookie(response, "slack", state, local_path=_slack_callback_path(request))
     return response
 
 
@@ -1649,9 +1650,7 @@ def slack_identity_confirm(
     nothing. A browser with no session gets a page saying where to open it."""
     try:
         user = current_user(
-            _session_token(
-                request.headers.get("authorization"), request.cookies.get(SESSION_COOKIE)
-            ),
+            _session_token(request.headers.get("authorization"), session_cookie_value(request)),
             session,
         )
     except AutuneError:
