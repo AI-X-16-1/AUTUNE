@@ -5,8 +5,9 @@
 **Deciders:** 강민구 (proposer); 김민경, 박재경, 문민재, 이승환 to agree or object on the PR.
 
 This is a draft for discussion. Nothing in it is built. The numbers under
-"Evidence" are from one local run on invented text (2026-10-15); the floors
-and the product's own search are not yet measured ("Evaluation").
+"Evidence" are from local runs on invented text (2026-10-15 and 2026-10-16),
+on exact scores; the product's own search through pgvector and real reports
+are not yet measured ("Evaluation").
 
 ## Context
 
@@ -82,7 +83,14 @@ fetched at first use (the release host's egress and "no outside API" must hold),
 memory per file next to the 10 MB / 300,000-character limits, and whether a
 scanned page is still refused rather than OCR'd by default.
 
-A local run of D against today's readers was made on 2026-10-15; see "Evidence".
+**E. The structure the readers can already see, in the embedded text.** Keep
+today's readers and B's cutter. Find a piece's heading path in the reader's
+text (a `#` line of `.md`, a heading style of `.docx`, a short line that
+starts `2.`, `2.1` or `2.1.1`) and embed the path with the piece, while the
+stored piece stays as it is. No dependency, no column, no converter.
+
+A local run of D against today's readers was made on 2026-10-15, and of B, D
+and E on invented reports on 2026-10-16; see "Evidence".
 
 ## Evidence
 
@@ -193,9 +201,11 @@ floor until the questions nothing answers get hits as often as today (about
 
 - **The cut below the best stays at 0.05.** At 0.03 four answers are lost; at
   0.07 the wrong hits per question rise to about 0.8.
-- **The heading path in the vector buys nothing** (212 against 213 at floor
-  0.5, 210 against 210 at the matched floors). Nothing here supports the
-  parent and section columns of stage 3.
+- **The heading path in the vector bought nothing on this shelf** (212 against
+  213 at floor 0.5, 210 against 210 at the matched floors): its documents do
+  not repeat a shape. On reports that do, it is the largest gain ("Reports
+  whose sections repeat"). The path is embedded, not stored, so no parent or
+  section column is needed either way.
 - **The word match and the title match never fired**, at any floor, in any
   variant: every hit came from the vector. Their lower bound is not measured
   by this shelf, and the questions, written as sentences, rarely have all
@@ -255,6 +265,78 @@ marks, the `.pptx` reader could write them without a converter; this has not
 been tried. The slides are invented, a title and a few lines each, and OCR
 being off, a picture or a chart is read by neither.
 
+### Reports whose sections repeat
+
+Ten invented reports (six `.docx` with heading styles, four `.pdf` with
+larger bold lines), about 4,600 characters and three heading levels each, in
+the 200-file shelf. Each has eight subjects (branch, system, supplier...)
+treated in the same shape. The subject's name is in the heading; the numbers
+under it do not repeat it, as a report often reads ("이탈률은 3.2%로 집계됐다"
+under "2.2 해운대 지사"). Seven questions each, 70 in all, with a key: three
+metrics asked with the subject's name, a plan date, a date in the sentence
+that names the subject, a metric asked in other words, a team from the plan
+table. Searched with no floor; the excerpt of the nearest piece of the report
+is checked for the key.
+
+| Pieces | Report among the hits | The excerpt holds the answer | Any of the 2 nearest | Any of the 3 nearest |
+| --- | --- | --- | --- | --- |
+| A. today, 500 characters | 100% | 23% (16/70) | 61% | 63% |
+| B. recursive 200, reader text | 100% | 43% (30) | 56% | 60% |
+| D. split on numbered headings, piece only | 100% | 27% (19) | 47% | 53% |
+| **E. as D, heading path put in the embedded text** | 100% | **71%** (50) | 94% | **100%** |
+| C. `.docx` heading styles, with path | 100% | 73% (51) | 81% | 84% |
+| F. Docling Markdown, 200, piece only | 100% | 30% (21) | 43% | 50% |
+| G. Docling, the path Docling gave | 100% | 53% (37) | 74% | 79% |
+| **H. Docling, level taken from the heading's number** | 100% | **81%** (57) | 97% | **100%** |
+
+By kind of question (A, E, H): a metric under a subject's heading 3%, 83%,
+97%; a reworded question 20%, 70%, 90%; a plan date 60%, 90%, 100%; a date in
+a sentence that names the subject 50%, 60%, 80%; the team from a table row
+20%, 30%, 10%. By format, E gives 74% on `.docx` and 68% on `.pdf`; C gives
+86% and 54% (a PDF has no styles to read); H gives 81% and 82%.
+
+- **Splitting on headings does nothing by itself** (D, 27%, against 23% to
+  43% for A and B). What helps is the heading path in the text that is
+  embedded, because the subject's name is only there (E, C, G, H).
+- **The reader's text is enough for most of it.** E needs no converter: a
+  short line that starts `2.`, `2.1` or `2.1.1` is a heading. Docling's
+  addition over E is 10 points on the excerpt shown and 3 points on two
+  excerpts (94% to 97%).
+- **Docling's own levels lose the subject in a PDF** (G, 53%): every heading
+  of a PDF comes out as one level, so the path of "2.2.1 지표" is "지표".
+  Taking the level from the number (H) repairs it, and is the same idea as E.
+- **The table row stays hard** (10% to 40% in every variant): rows are
+  alike, and the nearest row is often another. Showing two or three pieces
+  answers it (90% to 100% at two or three nearest).
+- **Limits.** A stress test by construction: the subject's name sits only in
+  the heading, and the eight sections are of one shape, which is where a path
+  helps most. A real report will gain less. Headings are numbered in all ten;
+  an unnumbered heading in a PDF is found by nothing here. One generator wrote
+  the ten, one person wrote the questions, and 70 questions are not
+  independent. On the 200-file shelf, where documents do not repeat, the path
+  did not help (212 against 213 at floor 0.5).
+
+### Where a security label sits
+
+Nine invented files (`.pdf` and `.docx`) with the label "대외비" in one place
+each, run through today's marking check and through Docling's output:
+
+| Place of the label | Today's check | Docling Markdown alone | Markdown + page header and footer items |
+| --- | --- | --- | --- |
+| cover page, top right (a body paragraph) | stops | stops | stops |
+| every page, bottom (pdf) | stops | **misses** | stops |
+| every page, top (pdf) | stops | **misses** | stops |
+| cover and every page bottom (pdf) | stops | stops (the cover) | stops |
+| cover, top right (docx body) | stops | stops | stops |
+| header (docx) | stops | **misses** | stops |
+| footer (docx) | stops | **misses** | stops |
+| two unmarked files | passes | passes | passes |
+
+Docling files a repeated header or footer under its page furniture and leaves
+it out of the Markdown; the label on a cover is body text and is kept. Not
+tried: a text box, a watermark, a label inside a picture, a document property
+on these two formats, a label on a middle page only.
+
 ### Memory and disk
 
 A conversion of a byte stream (`DocumentStream` over `BytesIO`, never a path),
@@ -272,9 +354,10 @@ four invented files, on the proposer's Windows machine:
 
 ### The hybrid, over the same files
 
-Today's reader decides refusal and marking, unchanged; Docling gives the body
-only when it read the file and kept at least 95% of the letters and digits the
-reader read.
+This is what option D would look like behind today's check, measured in case
+it is taken later. Today's reader decides refusal and marking, unchanged;
+Docling gives the body only when it read the file and kept at least 95% of the
+letters and digits the reader read.
 
 | | 36 fixtures | 200-file shelf |
 | --- | --- | --- |
@@ -293,157 +376,153 @@ verdict as today by construction, since the same code decides them.
 
 ## Proposed decision
 
-The proposer's decision of 2026-10-15: **the marking check stays as it is, and
-the body is made as Markdown.** In the order the upload runs:
+**Cut the masked text into pieces of 200 characters with a recursive
+splitter (B), and embed each piece with the heading path the reader's text
+already shows (E). Keep today's readers and today's marking check as they
+are, and run them first. Do not add a document converter (D) and do not add
+parent-child pieces (C).**
 
-1. **Today's reader** (`read_file`) reads the file. A file it cannot read is
+In the order the upload runs:
+
+1. **The reader** (`read_file`) reads the file. A file it cannot read is
    refused whole, as now.
-2. **Today's marking check** (`file_marking` over `FileText.edges()`) runs on
-   the reader's head, foot and label. A marked file is stopped, an alarm row
-   written, nothing stored, as now. Docling has not run yet.
-3. **The body** is Docling's Markdown for `.pdf`, `.docx`, `.pptx` and `.xlsx`
-   when Docling read the file and kept at least 95% of the reader's letters
-   and digits; otherwise the reader's text. `.txt`, `.md`, `.csv`, `.xls` and
-   `.ppt` are always the reader's text. Docling runs with OCR off, no remote
-   service and no network, on the byte stream in the request's memory.
-4. **The whole body is masked** as one string, as now, before it is cut: not
-   item by item, so a value that runs over a table cell is still one value.
-5. **Markdown chunking**: a heading line starts a section, and the section is
-   the parent; its heading path is kept with it.
-6. **Recursive splitting** inside a section, coarsest separator first (a blank
-   line, a line break, a sentence end, a space, a hard cut) into children of
-   **200 characters**, without overlap.
-7. **Each child passes `assert_masked`**, then the duplicate check, the
-   embedding of the child (with its heading path, if stage 3 is taken) and the
-   store.
+2. **The marking check** (`file_marking` over `FileText.edges()`) runs on the
+   reader's head, foot and label. A marked file is stopped, an alarm row
+   written, nothing stored, as now.
+3. **The whole text is masked** as one string, as now.
+4. **The headings are found in the masked text**: a `#` line of `.md`, a
+   heading style of `.docx` (the reader learns to mark them), and in every
+   other format a short line that starts `2.`, `2.1` or `2.1.1`. A heading
+   path is its ancestors' lines, by level. A file with none has an empty path
+   and is cut as in B.
+5. **Each section is split recursively**, coarsest separator first (a blank
+   line, a line break, a sentence end, a space, a hard cut), into pieces of at
+   most **200 characters**, without overlap. Joined, the pieces are the masked
+   text again.
+6. **Each piece is embedded as `path` + line break + `piece`** (the piece
+   alone when the path is empty) and **stored as the piece alone**. The
+   embedded string and the stored piece both pass `assert_masked`. The path is
+   cut to a fixed length so that it cannot outweigh the piece.
+7. **The search** applies a similarity floor of 0.51, and a hit may carry the
+   excerpts of the two or three nearest pieces of its material.
 
 Stage it, so each step can be measured and undone alone:
 
-- **Stage 1: the cutter** (6) on the reader's text. No dependency, no schema
-  change. This is the step the numbers support most firmly (214 to 217 of 220
-  at top-5).
-- **Stage 2: the Docling body** (3, 4, 5 without the parent columns), behind
-  its own setting so it can be switched off without a deploy of old code.
-- **Stage 3: `parent` and `section` columns** and the heading path in the
-  vector, only if stage 2 stays.
+- **Stage 1: the cutter and the floor** (5 and the 0.51). No dependency, no
+  schema change, no change to the readers.
+- **Stage 2: the heading path in the embedded text** (4 and 6). The `.docx`
+  reader learns heading styles; nothing else about a reader changes.
+- **Stage 3: several excerpts per hit** (7). A change to `MaterialHit`, which
+  is module B's own type in `schemas.py`, not a contract; the agent tool and
+  the web page that read it are looked at first.
 
-What the numbers support now: **stage 1 alone, with the similarity floor at
-0.51** (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY`). It finds 94.5% of
-the answers against 93.2%, and gives hits to the questions nothing answers a
-little less often (52.9% against 54.3%). Stage 2 adds about one percentage
-point of answers (95.5% against 94.5% at the matched floors) for a
-dependency, about 1 GB more in each API worker, a second read of each file
-and a change to `privacy.md`. It is worth taking if uploads turn out to be
-mostly slides, where Docling's body held all 40 questions against 37 for the
-reader, and not before. Stage 3 has no support in this evidence: the heading
-path in the vector did not improve the result and the parent has no reader.
+### The four named options, and why not
 
-**Show more than one piece of a material** is a possible stage 1b, before
-any model: the hit keeps one title and up to the 2 or 3 nearest pieces'
-excerpts of that material. It is read off the table under "Does the excerpt
-hold the answer" and changes `MaterialHit` (module B's own `schemas.py`, not a
-contract) and what the agent tool and the web page do with it; neither has
-been read for it here.
+| Option | Decision | Why, from the evidence |
+| --- | --- | --- |
+| Recursive text splitter, 200 characters | **use** | The excerpt shown holds the answer 63% to 79% on the long files and two-section documents (89% with Docling's body). No dependency, no privacy rule moves. |
+| Document converter (Docling) and Markdown | **not now** | It cannot make the marking check or the refusals: Markdown alone misses a header or footer label (4 of 4 placements). Behind today's check it adds about 1 GB to each worker that converts, a second read of each file and a change to `privacy.md`, for 10 points of the excerpt shown on the long files and on the reports (89% against 79%, and 81% against 71%; why it does better on the long tables was not examined) and about 1 point of answers found on the 200-file shelf. |
+| Markdown chunking (split on headings) | **only as the path** | A split on headings alone gained nothing (27% against 23% to 43%). The gain is the heading path in the embedded text, and that comes from the reader's text without a conversion. |
+| Parent-child chunking | **no** | The parent has no reader: no model is given a material's text (#817 10(b)), an answer is at most 200 characters, and a child of 200 characters is already the excerpt cap. The path in the embedded text does what a parent's context was for, with no column. |
 
-Not proposed: Docling deciding marking or refusal (Evidence: it fails both);
-OCR; overlap between pieces.
+### When to look at a converter again
+
+The case that was not tried and that nothing here handles is a PDF whose
+headings carry no number. A converter's layout model finds them where a text
+rule cannot, but its levels come flat from a PDF and have to be repaired, as
+H was. It would run behind today's marking check and only for the body, and
+it would be a new decision with its own measurement on real reports, on the
+release host's memory limit.
 
 ### What this changes in the code that exists
 
-- **The upload reads a file twice** (the reader, then Docling) and holds
-  about 1 GB more in each API worker process that converts. The release
-  host's container limit and the concurrency of uploads are not known here.
-- **The conversion runs in the upload request**, as the reader does, because
-  the file is not kept and its bytes go to no task (#817).
-- **The refusal and the marking check do not move**, which is the point of the
-  order: they are the privacy rules of #817 and they run before Docling.
-- **`privacy.md` names Docling.** The sentence that the masked text goes to
-  the embedder only is about masked text; Docling sees the file before it is
-  masked, in the same process, as the readers do. It is named there and the
-  owners agree to it.
-- **The same text is no longer one material across formats.** `_kept_already`
-  documents that the same text from a `.docx` and from a `.txt` is one
-  material; a `.docx` body is now Markdown and the `.txt` is not.
-- **The excerpt has little left to choose.** A child of at most 200 characters
-  is within `EXCERPT_CHARS`, so `excerpt_of` returns the whole child. The
-  docstrings that call the cap "under half of a stored piece" and the tests
-  that assert it change.
-- **The parent has no reader** (#817 10(b): no model reads a material, an
-  answer is at most 200 characters), so the section is a grouping and the
-  heading path in the vector is what it buys.
-- **The floors move** (similarity, relative cut, word match): measured at 500
-  characters, measured again at 200, not carried over.
-- **Dependency** (invariant 8): Docling and CPU PyTorch in
-  `modules/extraction/pyproject.toml`; a 1.1 GB virtual environment on the
-  proposer's machine, and model weights fetched once from Hugging Face that
-  have to be in the image, since nothing is fetched at request time.
-- **Masking on Markdown** needs tests with a number in a table row, in a
-  link's text and in an emphasised run.
+- **No dependency, no migration, no column.** The embedded string is not the
+  stored text; the embedding of a stored row says nothing more.
+- **`cut` is replaced** by the splitter of 5; `CHUNK_CHARS` goes from 500 to
+  200. The docstrings that call the excerpt cap "under half of a stored
+  piece" and the tests that assert it change: with pieces of at most 200
+  characters, `excerpt_of` returns the whole piece.
+- **The `.docx` reader** marks heading lines. Its text for the marking check
+  (`edges()`) is not changed, and a test shows that the same files are stopped.
+- **A piece and its path are masked text.** The headings are found after the
+  masking, so the path holds no unmasked value. A heading that held a masked
+  run stays a masked run.
+- **`_kept_already` compares pieces "cut the same way".** An old upload and a
+  re-upload of one file are no longer one material, as the ADR already said of
+  any new cut.
+- **Old rows are not re-cut** unless the owners decide it (open decision 3).
+  Two generations are searched side by side; their scores are not on one
+  scale, which the floor of 0.51 has to be read against.
+- **Upload time grows with the number of pieces** (305 against 229 on the
+  200-file shelf, about 1.3 times). It is measured through the product below.
+- **`privacy.md` is not changed**: no reader of unmasked text is added, and
+  the masked text still goes to the embedder only.
 
 ## Open decisions for the owners
 
-1. **Docling as a dependency** (invariant 8), with the memory and time it
-   costs per upload request, and `privacy.md` naming it.
-2. **Piece size.** 200 is the proposal; 500 stays the alternative.
-3. **Upload time and memory.** More pieces and a conversion make a longer
-   request; is a limit on pieces per upload, or on concurrent conversions,
-   needed?
-4. **Old uploads.** Leave old rows with their old cut, or re-cut on a
-   migration (read the stored masked text back and embed it again).
-5. **The 95% rule** of step 3: kept as it is, or a different line, or the
-   worksheet's name added back so that tables stop falling back.
-6. **The similarity floor** (`material_search_min_similarity`) at 200
-   characters: 0.51 for the reader's text, 0.52 for the Docling body, by the
-   replay above. It is changed with the cut, in the same pull request, and is
-   measured again through the product (below).
-7. **One excerpt or several.** Up to 2 or 3 pieces of the same material per
-   hit (stage 1b): the excerpt holds the answer in 79% of the 38 keyed
-   questions with one piece of 200 characters, 95% with two, 100% with three.
-   Whether a longer hit is read well on the page, and in the chatbot's answer,
-   is a product question.
-8. **A model that reads a material** is not proposed and not needed by this
-   evidence; it would change #817 10(b) and `privacy.md`, and would need a
+1. **Piece size.** 200 is the proposal; 500 stays the alternative, and the
+   floor goes with it.
+2. **The similarity floor** (`material_search_min_similarity`): 0.51 for
+   pieces of 200 (0.52 if the body were Docling's), changed with the cut in
+   the same pull request, and measured again through the product.
+3. **Old uploads.** Leave the old rows with their old cut, or re-cut them on a
+   migration. The stored pieces joined are the masked text again, so a re-cut
+   is possible; the heading styles of a `.docx` are not in them, only its
+   numbered lines.
+4. **One excerpt or several** (stage 3): up to two or three pieces of one
+   material per hit. Whether a longer hit reads well on the page and in the
+   chatbot's answer is a product question.
+5. **Headings without numbers** in a PDF: accept an empty path (cut as in B),
+   or look at a converter later, under "When to look at a converter again".
+6. **The length of a path** that is embedded with a piece.
+7. **A model that reads a material** is not proposed and not needed by this
+   evidence; it would change #817 10(b) and `privacy.md` and would need a
    local model, since material text goes to no outside API.
 
 ## Evaluation
 
-Done: the runs under Evidence, on invented text, on one machine.
-The floors at 200 characters, with the 70 questions nothing answers, on shelves
-of 30 to 200 files (replayed, exact scores). Whether the excerpt holds the
-answer, on 38 keyed questions (long files and two-section documents).
+Done, on invented text, on one machine: the marking check against Docling's
+output, the text kept, retrieval over 220 questions, the floors at 200
+characters with the 70 questions nothing answers on shelves of 30 to 200
+files (replayed, exact scores), whether the excerpt holds the answer on 38
+keyed questions, ten repeating-structure reports, and nine label placements.
 
 To do before stage 1 is merged:
 
 - **Through the product**: `store_upload` and `search_materials` on PostgreSQL
   with pgvector, not exact scores, so `CANDIDATES` is in and the floor of 0.51
-  is confirmed. A shelf in which the word match fires is needed to measure it.
+  is confirmed. A shelf in which the word match fires is needed to measure it;
+  on this shelf it never did.
 - **A shelf with more long files**, so that the piece size is tested where it
-  can matter, and more `.pdf`, `.docx`, `.pptx` for the Docling body (41 of
-  the 200 files are what Docling's Markdown was used on).
-- **Keys for the other 182 questions**, so that "the excerpt holds the
-  answer" is measured on tables, slides and prose too, not on the 38.
+  can matter.
 - **A boundary test**: a sentence, a table row and a heading that straddle the
   old 500 boundary stay whole.
+- **Upload time**: the request's time for a 10 MB file at 200 characters.
 
 To do before stage 2 is merged:
 
-- **A 10 MB file**: time and memory in the server's container, and file
-  access traced there, not only in Python.
-- **A marked file through the whole path**, for each of the five places in
-  each format, to show that Docling never runs on a stopped file.
-- **Masking on Markdown** with the shapes above, and a value broken across a
-  line in a PDF, which Docling's joining of lines may or may not help.
+- **Real reports**: five to ten that are not confidential, run through the
+  same ten-report measurement, and a set with unnumbered headings. The ten
+  invented ones are a stress test and say how much a path can gain, not how
+  much it will.
+- **A marked file through the whole path**, for each place in each format, to
+  show that the `.docx` reader's heading marks change nothing in the check.
+- **Keys for the other 182 questions**, so that "the excerpt holds the answer"
+  is measured on tables, slides and prose too.
 
 ## Consequences
 
 - Stage 1 moves piece boundaries without touching a privacy rule: the cut runs
   after the reader, the marking check and the masking, and every piece still
   passes `assert_masked`.
-- Stage 2 keeps the marking check and the refusal as they are, and adds a
-  reader of unmasked text in the same process, with a cost in memory and time
-  that is paid on every PDF, `.docx`, `.pptx` and `.xlsx` upload.
-- Stored rows of two generations live side by side until the old ones expire;
-  `_kept_already` will not call an old and a new upload of one file the same.
-- Adopting Docling makes "readers are pure Python, no converter, no OCR"
-  (`material_reading.py`, `pyproject.toml`) untrue for the body, and those two
-  statements change with it.
+- Stage 2 adds text to what is embedded but not to what is stored or shown;
+  the path comes from the masked text, so it carries nothing that was not
+  already cleared.
+- Stage 3 shows up to three excerpts of one material, 600 characters at most,
+  never the document.
+- Stored rows of two generations live side by side until the old ones expire.
+- "Readers are pure Python, no converter, no OCR" (`material_reading.py`,
+  `pyproject.toml`) stays true.
+- A converter is not closed off: the evidence says what it would have to beat
+  and where (unnumbered headings in a PDF), and that it would run behind the
+  marking check, not instead of it.
