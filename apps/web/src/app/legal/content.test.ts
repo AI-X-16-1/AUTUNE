@@ -162,6 +162,17 @@ describe("legal documents", () => {
     expect(privacy).not.toContain("서비스가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며");
   });
 
+  // Only the privacy policy changed, so only its date moves; the terms and
+  // the other policy keep the date they were already in force from.
+  it("moves the privacy policy's effective date alone", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("2026년 10월 15일");
+    expect(privacy).not.toContain("2026년 10월 12일");
+    const terms = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "terms"));
+    expect(terms).toContain("2026년 10월 12일");
+    expect(terms).not.toContain("2026년 10월 15일");
+  });
+
   // A person who agreed to `2026-10-12.6` agreed to a text that said the
   // keeping was not entrusted and that a Cloudflare tunnel carried the
   // connection. They are asked again.

@@ -70,8 +70,10 @@
  * the Cloudflare rows of articles 3, 6 and 7 stay but are scoped to the dev
  * site, which is still reached through the tunnel, and article 5 (3) says
  * where audio is processed while it is. The terms did not change, so theirs
- * stays. **The effective date is not moved here:** it is the policy owner's,
- * with the notice of article 15 (2) in front of it.
+ * stays. **The policy's effective date moves to 2026-10-15** (the day the
+ * release host opens), on its own constant so the terms keep theirs. Article
+ * 15 (2) asks for 7 days' notice, which this does not give; the release host
+ * has no earlier user, and the policy owners' agreement is on the pull request.
  *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to

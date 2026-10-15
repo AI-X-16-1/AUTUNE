@@ -286,6 +286,14 @@ const OFFICER_NAME = "강민구";
 const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
 const EFFECTIVE = "2026년 10월 12일";
+// The privacy policy alone moved (#1342): the AWS processor and the dev-site
+// scoping of Cloudflare apply from the day the release host opens, and the
+// terms and the other policy did not change, so theirs stays EFFECTIVE. The
+// release host has its own database and no earlier user; a dev-site user is
+// asked again under the new consent version. Article 15 (2) asks for a notice
+// 7 days ahead, which this date does not give: the policy owners' agreement
+// to that is recorded on the pull request, not assumed here.
+const PRIVACY_EFFECTIVE = "2026년 10월 15일";
 
 /**
  * Shown above the documents. Their text cannot be selected on the page (the
@@ -881,7 +889,7 @@ const PRIVACY: LegalDocument = {
     {
       heading: "제15조(개인정보 처리방침의 변경)",
       blocks: [
-        p(["① 이 개인정보 처리방침은 ", EFFECTIVE, "부터 적용됩니다."]),
+        p(["① 이 개인정보 처리방침은 ", PRIVACY_EFFECTIVE, "부터 적용됩니다."]),
         p(
           "② 회사는 이 개인정보 처리방침을 변경하는 경우 변경 내용과 시행일을 시행일 7일 전부터 서비스 화면에 공지합니다. 다만, 정보주체의 권리에 중대한 변경이 있는 경우에는 시행일 30일 전부터 공지합니다.",
         ),
