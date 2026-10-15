@@ -168,6 +168,10 @@ export function ConsentForm({
                   id={panel}
                   role="region"
                   aria-label={doc.title}
+                  // Reaching the end is what unlocks the box, so the panel has
+                  // to be scrollable from the keyboard in every browser: Safari
+                  // does not focus a scroll area that holds nothing focusable.
+                  tabIndex={0}
                   onScroll={(event) => {
                     if (atEnd(event.currentTarget)) markReached(document);
                   }}

@@ -65,6 +65,14 @@ describe("ConsentForm", () => {
     expect(rowButton("terms").textContent).toBe("접기");
   });
 
+  it("lets the open text be reached and scrolled from the keyboard", () => {
+    form();
+
+    open("terms");
+
+    expect(screen.getByRole("region", { name: title("terms") }).tabIndex).toBe(0);
+  });
+
   it("turns the button into 동의 at the end of the text, and unlocks only that document's box", () => {
     form();
 
