@@ -181,4 +181,19 @@ describe("legal documents", () => {
     expect(privacy?.version).not.toBe("2026-10-12.6");
   });
 
+  // The release host loads the Meta Pixel before sign-in. The policy said no
+  // behavioural data was collected for advertising and nothing went to a
+  // third party for it; those sentences go, and whoever agreed to them is
+  // asked again.
+  it("name the Meta Pixel, where it runs, and how to refuse it", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("Meta Platforms, Inc.");
+    expect(privacy).toContain("로그인한 뒤의 서비스 화면, 팀 초대 링크의 화면 및 개발용 사이트");
+    expect(privacy).toContain("'광고 측정 거부' 버튼");
+    expect(privacy).not.toContain("행태정보를 수집·이용·제공하지 않으며");
+    expect(privacy).not.toContain("광고 목적으로 제3자에게 제공하지 않습니다.");
+    const version = REQUIRED_CONSENTS.find((c) => c.document === "privacy")?.version;
+    expect(version).not.toBe("2026-10-12.7");
+  });
+
 });

@@ -210,6 +210,15 @@
  *   제2조 and 제3조 say the record gains the time the message went and is
  *   deleted when an approver has seen it; 제4조 says the DM itself stays in
  *   Slack. Nobody who received it or acknowledged it is recorded.
+ * - the release host loads the Meta Pixel on `/login`, `/consent` and
+ *   `/legal` and nowhere else (`shared/lib/metaPixel`): a page view on each,
+ *   and a sign-up on a first agreement. Meta collects it directly, so it is
+ *   제12조 ⑥, not a processor row of 제6조; 제5조 ④ no longer says nothing
+ *   reaches a third party for advertising. 제12조 ⑦ ("does not read the page")
+ *   is `autoConfig` off in the code AND automatic advanced matching off in
+ *   Meta's Events Manager -- the second is a setting outside this repository,
+ *   and turning it on makes the sentence untrue. The refusal of 제12조 ⑧ is
+ *   `legal/PixelOptOut`.
  * A sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
@@ -282,6 +291,10 @@ const table = (head: string[], ...rows: Line[][]): Block => ({
 const OPERATOR = "AI-X-16-1 팀";
 const HOSTING = "Amazon Web Services";
 const RELAY = "Cloudflare, Inc.";
+// The Meta Pixel's collector (`shared/lib/metaPixel`): it sets and reads its
+// own cookies and receives the events directly, so it is a third party
+// collecting behavioural data (제12조), not a processor of 제6조.
+const PIXEL_COLLECTOR = "Meta Platforms, Inc.";
 const OFFICER_NAME = "강민구";
 const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
@@ -327,6 +340,7 @@ const PRIVACY: LegalDocument = {
           "팀 자료의 보관 및 검색: 팀 구성원이 팀의 자료에 올린 문서 파일의 글을 가림 처리하여 보관, 같은 팀의 구성원이 입력한 질문에 가까운 자료의 검색 및 그 가림 처리된 글의 일부의 열람 제공",
           "외부 서비스 연동: 이용자 또는 이용자가 속한 팀이 연결한 외부 서비스로의 결과 전달",
           "고충 처리: 민원인의 신원 확인, 민원 사항의 확인, 처리 결과의 통보",
+          "광고 효과의 측정: 정식 서비스의 로그인 전 화면 방문 및 가입 완료 여부의 측정(제12조 제6항)",
         ),
         p(
           "회사는 「개인정보 보호법」 제15조 제1항 제1호(정보주체의 동의) 및 제4호(정보주체와 체결한 계약의 이행)에 근거하여 개인정보를 처리합니다.",
@@ -425,6 +439,15 @@ const PRIVACY: LegalDocument = {
               "의 접속 기록에 남을 수 있습니다",
             ],
             "서비스 이용 과정에서 자동 생성",
+          ],
+          [
+            "광고 측정을 위한 행태정보",
+            [
+              "정식 서비스의 로그인 화면, 약관 동의 화면 및 이 문서의 화면을 방문한 사실과 그 화면의 주소, 처음으로 약관에 동의하여 가입을 마친 사실. 이 정보는 회사가 보관하지 않으며, ",
+              PIXEL_COLLECTOR,
+              "가 직접 수집합니다(제12조 제6항)",
+            ],
+            "Meta 픽셀을 통하여 자동 수집",
           ],
         ),
         p(
@@ -601,7 +624,7 @@ const PRIVACY: LegalDocument = {
           "③ 음성 녹음은 어떠한 외부 서비스에도 제공하지 않습니다. 음성 녹음은 서비스가 가동되는 서버(제6조의 수탁자)에서 전사하는 동안에만 임시로 처리하며, 전사가 끝나면 즉시 삭제합니다.",
         ),
         p(
-          "④ 회사는 개인정보를 판매하거나 광고 목적으로 제3자에게 제공하지 않습니다.",
+          "④ 회사는 개인정보를 판매하지 않습니다. 회사가 광고와 관련하여 제3자에게 정보가 전달되도록 하는 것은 제12조 제6항에 기재한 광고 효과의 측정에 한하며, 회의 정보, 전사문, 분석 결과, 팀이 올린 문서 자료 및 회원 정보(전자우편 주소, 이름)는 광고 목적으로 제공하지 않습니다.",
         ),
       ],
     },
@@ -826,7 +849,7 @@ const PRIVACY: LegalDocument = {
           "① 회사는 로그인 절차를 진행하고 로그인 상태를 유지하기 위하여 쿠키(cookie)를 사용합니다.",
         ),
         p(
-          "② 쿠키는 로그인 요청의 확인 및 세션의 식별에만 사용하며, 웹브라우저의 스크립트가 읽을 수 없도록 설정합니다.",
+          "② 회사가 설정하는 쿠키는 로그인 요청의 확인 및 세션의 식별에만 사용하며, 웹브라우저의 스크립트가 읽을 수 없도록 설정합니다. 제6항의 Meta 픽셀이 저장하는 쿠키는 제6항부터 제8항까지에 따릅니다.",
         ),
         p(
           "③ 이용자는 웹브라우저의 설정을 통하여 쿠키의 저장을 거부할 수 있습니다. 쿠키의 저장을 거부하는 경우 로그인이 필요한 서비스를 이용할 수 없습니다.",
@@ -838,12 +861,32 @@ const PRIVACY: LegalDocument = {
           "이용자가 마지막으로 선택한 팀의 식별자: 다른 화면으로 이동하여도 같은 팀을 보여 주기 위한 것으로, 이용자가 팀을 선택한 때에만 기록합니다.",
           "회의별로, 이전 회의에서 넘어온 할 일 안내를 확인하였다는 표시",
           "팀 초대 링크의 초대 토큰: 초대 링크를 연 뒤 로그인을 거치는 동안 해당 탭에만 임시로 보관하며, 초대를 수락하거나 거절하면 삭제하고 탭을 닫으면 사라집니다.",
+          "제7항에 따라 광고 측정을 거부하였다는 표시",
         ),
         p(
           "⑤ 이용자는 웹브라우저의 설정을 통하여 제4항의 저장을 거부하거나 저장된 값을 삭제할 수 있습니다. 이 경우 선택한 팀이 유지되지 않는 등 해당 편의 기능만 동작하지 않으며, 서비스는 그대로 이용할 수 있습니다.",
         ),
+        p([
+          "⑥ 회사는 광고의 효과를 측정하기 위하여 정식 서비스의 로그인 화면, 약관 동의 화면 및 이 문서의 화면에 ",
+          PIXEL_COLLECTOR,
+          "의 Meta 픽셀을 설치하여, 같은 회사가 다음과 같이 행태정보를 직접 수집하도록 합니다. 로그인한 뒤의 서비스 화면, 팀 초대 링크의 화면 및 개발용 사이트(autune.shelldocs.cloud)에서는 Meta 픽셀을 불러오지 않습니다.",
+        ]),
+        table(
+          ["구분", "내용"],
+          ["수집하는 자", [PIXEL_COLLECTOR, " (미국)"]],
+          [
+            "수집하는 행태정보",
+            "위 화면을 방문한 사실, 방문 일시와 그 화면의 주소, 처음으로 약관에 동의하여 가입을 마친 사실, 웹브라우저 및 기기의 종류, 접속 IP 주소, 이 사이트에 Meta 픽셀이 저장하는 웹브라우저 식별자(_fbp 쿠키). 이용자가 같은 웹브라우저에서 Facebook 또는 Instagram에 로그인한 경우 Meta Platforms, Inc.는 자신의 쿠키로 해당 계정과 연결할 수 있습니다",
+          ],
+          ["수집 방법", "이용자가 위 화면을 여는 때 및 가입을 마치는 때 웹브라우저가 Meta Platforms, Inc.에 직접 전송"],
+          ["수집 목적", "광고를 보고 방문하거나 가입한 수의 측정 및 광고 대상의 설정"],
+          ["보유 및 이용 기간", "Meta Platforms, Inc.가 정한 기간"],
+        ),
         p(
-          "⑥ 회사는 온라인 맞춤형 광고 등을 위한 행태정보를 수집·이용·제공하지 않으며, 이용 행태를 분석하는 외부 도구를 사용하지 않습니다.",
+          "⑦ 회사는 Meta 픽셀이 화면의 글이나 입력란의 내용을 스스로 읽지 않도록 설정하며, 전자우편 주소, 이름, 회의 정보, 전사문 및 분석 결과를 Meta Platforms, Inc.에 전송하지 않습니다.",
+        ),
+        p(
+          "⑧ 이용자는 이 문서의 화면에 있는 '광고 측정 거부' 버튼을 눌러 해당 웹브라우저에서 제6항의 수집을 거부할 수 있습니다. 거부하면 그 웹브라우저에서는 Meta 픽셀을 불러오지 않으며, Meta 픽셀이 이 사이트에 저장한 웹브라우저 식별자를 삭제합니다. 거부 표시는 해당 웹브라우저에만 저장되므로, 다른 웹브라우저나 기기에서는 따로 거부하여야 하고 웹브라우저의 저장 공간을 지우면 다시 거부하여야 합니다. 웹브라우저의 설정에서 제3자 쿠키나 추적을 차단하는 방법으로도 거부할 수 있습니다. 거부하더라도 서비스 이용에는 제한이 없습니다.",
         ),
       ],
     },

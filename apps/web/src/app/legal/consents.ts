@@ -75,6 +75,16 @@
  * 15 (2) asks for 7 days' notice, which this does not give; the release host
  * has no earlier user, and the policy owners' agreement is on the pull request.
  *
+ * `2026-10-12.8`, the privacy policy alone: the release host loads the Meta
+ * Pixel on the screens before sign-in (the privacy owner, 2026-10-15). The
+ * policy had said no behavioural data is collected for advertising and no
+ * outside tool analyses use (제12조 ⑥), and that nothing is given to a third
+ * party for advertising (제5조 ④); a person who agreed to `.7` agreed to that.
+ * 제12조 now names Meta as the collector, what it collects, on which screens,
+ * and the refusal button on `/legal`. The effective date stays 2026-10-15:
+ * the same day as `.7`, so the version counts after the dot. The terms did
+ * not change, so theirs stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -94,7 +104,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.4" },
-  { document: "privacy", version: "2026-10-12.7" },
+  { document: "privacy", version: "2026-10-12.8" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

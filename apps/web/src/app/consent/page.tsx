@@ -10,6 +10,7 @@ import {
   logout,
 } from "@/shared/api/auth";
 import { setSignedIn } from "@/shared/api/client";
+import { trackRegistration } from "@/shared/lib/metaPixel";
 import { Band, Wordmark } from "@/shared/ui";
 
 import {
@@ -47,6 +48,10 @@ function next() {
 export default function ConsentPage() {
   const router = useRouter();
   const [missing, setMissing] = useState<RequiredConsent[] | null>(null);
+  // Nothing agreed to before, as the server read it: this agreement is the
+  // sign-up the pixel counts. Unreadable is not a first time -- a person
+  // asked again after a document changed must not count twice.
+  const [firstTime, setFirstTime] = useState(false);
 
   useEffect(() => {
     let current = true;
@@ -63,6 +68,7 @@ export default function ConsentPage() {
       // agrees, and if the record cannot be written either the form says so.
       const left =
         given === null ? [...REQUIRED_CONSENTS] : missingConsents(given);
+      setFirstTime(given !== null && given.length === 0);
       if (left.length === 0) router.replace(next());
       else setMissing(left);
     })();
@@ -127,6 +133,7 @@ export default function ConsentPage() {
             required={missing}
             onAgree={async (consents) => {
               await agreeToConsents(consents);
+              if (firstTime) trackRegistration();
               router.replace(next());
             }}
             onLeave={async () => {

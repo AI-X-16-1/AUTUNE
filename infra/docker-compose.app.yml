@@ -386,6 +386,10 @@ services:
         # through the site's address the WebSocket handshake loses its
         # Upgrade header. Empty keeps it on the page's origin.
         NEXT_PUBLIC_LIVE_URL: ${DEV_LIVE_URL:-}
+        # The Meta Pixel's id, set only on the release host (Secrets Manager
+        # `autune/app`, exported by infra/aws/deploy.sh). Empty everywhere
+        # else, and an empty id builds a web that loads no pixel.
+        NEXT_PUBLIC_META_PIXEL_ID: ${NEXT_PUBLIC_META_PIXEL_ID:-}
         API_PROXY_TARGET: http://api:8000
     image: autune-web:dev
     restart: unless-stopped

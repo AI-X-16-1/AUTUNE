@@ -18,13 +18,15 @@ COPY packages/contracts/ts packages/contracts/ts
 # both are build arguments: changing either means rebuilding this image.
 # NEXT_PUBLIC_API_URL is the API as the *browser* reaches it for HTTP calls;
 # NEXT_PUBLIC_LIVE_URL is where the browser opens the live socket, empty for
-# the page's own origin; API_PROXY_TARGET is the API as this container
-# reaches it.
+# the page's own origin; NEXT_PUBLIC_META_PIXEL_ID is the Meta Pixel, empty
+# for none; API_PROXY_TARGET is the API as this container reaches it.
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_LIVE_URL=""
+ARG NEXT_PUBLIC_META_PIXEL_ID=""
 ARG API_PROXY_TARGET=http://api:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_LIVE_URL=$NEXT_PUBLIC_LIVE_URL \
+    NEXT_PUBLIC_META_PIXEL_ID=$NEXT_PUBLIC_META_PIXEL_ID \
     API_PROXY_TARGET=$API_PROXY_TARGET \
     NEXT_TELEMETRY_DISABLED=1
 

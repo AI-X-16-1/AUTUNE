@@ -5,6 +5,7 @@ import { Band, Wordmark } from "@/shared/ui";
 
 import { COPY_NOTICE, LEGAL_DOCUMENTS } from "./content";
 import { BODY, DocumentBody, Text } from "./LegalDocumentView";
+import { PixelOptOut } from "./PixelOptOut";
 
 /**
  * The privacy policy, the terms of service and the information security policy
@@ -70,6 +71,8 @@ export default function LegalPage() {
         <p className="text-ink-muted" style={{ fontSize: "var(--text-meta)" }}>
           <Text line={COPY_NOTICE} />
         </p>
+
+        <PixelOptOut />
 
         {LEGAL_DOCUMENTS.map((doc) => (
           <article

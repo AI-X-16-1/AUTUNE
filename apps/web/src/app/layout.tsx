@@ -13,6 +13,8 @@ import type { Metadata } from "next";
 import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "./globals.css";
 
+import { MetaPixel } from "./_components/MetaPixel";
+
 export const metadata: Metadata = {
   title: "Autune",
   description: "회의 녹음 하나로 할 일 추적과 갭 탐지까지",
@@ -46,7 +48,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // these two elements' own attributes only -- a real mismatch inside the
     // tree is still reported.
     <html lang="ko" data-theme="light" suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        {children}
+        {/* Nothing without a pixel id at build time; see the component. */}
+        <MetaPixel />
+      </body>
     </html>
   );
 }
