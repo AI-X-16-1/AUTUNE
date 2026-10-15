@@ -17,10 +17,11 @@ import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Where the app is served today. The landing page lives on a different site
-// from the app on purpose (#1320): an ad script on this page must never share
-// an origin, or a site, with the app's session.
-const DEFAULT_APP_ORIGIN = "https://autune.shelldocs.cloud";
+// Where the app is served today (#1343). A sibling name, so another origin on
+// the same site: an ad script on this page reaches no storage or DOM of the
+// app, and the app's __Host- cookies and Origin guard (#1346) keep its session
+// out of reach of a script here.
+const DEFAULT_APP_ORIGIN = "https://app.autune.cloud";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "src");

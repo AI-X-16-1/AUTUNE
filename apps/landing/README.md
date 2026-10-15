@@ -7,20 +7,23 @@ framework, no script.
 ## Why it is not a page of `apps/web`
 
 The landing page is the only place Autune may ever carry an ad (#1320), and an
-ad script runs with the full rights of the page it is on. So the landing page
-sits on a different site from the app:
+ad script runs with the full rights of the page it is on. In the app, such a
+script could read meeting records on screen and call `/api/*` with the
+signed-in person's session (the API is proxied on the app's own origin,
+`apps/web/next.config.ts`). So the ad stays here, on another origin.
 
-- In the app, a third-party script could read meeting records on screen and
-  call `/api/*` with the signed-in person's session (the API is proxied on the
-  app's own origin, `apps/web/next.config.ts`).
-- A sibling subdomain would still be the same site: the session cookie is
-  `SameSite=Lax` (`packages/core/src/autune_core/auth.py`), so it would ride
-  along on requests that script sends to the app, and the API checks no
-  request origin.
+The app is at `app.autune.cloud` (#1343): another origin, but the same site as
+this page. A script here can set cookies for all of `autune.cloud`, and a
+`SameSite=Lax` cookie rides along on requests it sends to the app. Three
+things in the app close that, and must stay before an ad script lands here
+(#1346):
 
-Today the app is on its own domain and this page on `autune.cloud`, two sites.
-If the app ever moves under `autune.cloud`, add an origin check on
-state-changing requests and a `__Host-` session cookie first.
+- the session cookie is `__Host-autune_session`, which a sibling name cannot
+  set or overwrite;
+- the OAuth state cookies are `__Host-` too, so no script here can plant a
+  state and sign a visitor into someone else's account;
+- `OriginGuard` refuses a state-changing request or a live WebSocket handshake
+  from any origin but the app's own.
 
 ## Rules this page keeps
 
