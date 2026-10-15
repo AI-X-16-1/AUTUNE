@@ -136,9 +136,11 @@ describe("legal documents", () => {
   });
   // The service runs on AWS's Seoul region (#1342). The policy named a tunnel
   // through Cloudflare and a server the team runs itself; neither is true of
-  // this host, and a sentence that says what the code does not do is the
-  // thing this file is careful not to have.
-  it("name AWS as the one processor of the hosting row, and no longer a relay", () => {
+  // the release host, but the dev site is still reached through the tunnel and
+  // this one text is served to both, so Cloudflare stays, scoped to the dev
+  // site, until the dev site is closed. A sentence that says what the code
+  // does not do is the thing this file is careful not to have.
+  it("name AWS as the hosting processor, and Cloudflare only as the dev site's relay", () => {
     const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
     expect(privacy).toContain("Amazon Web Services (서울 리전)");
     expect(privacy).toContain("서울 리전 밖으로 옮기지 않습니다");
@@ -147,9 +149,12 @@ describe("legal documents", () => {
     // processed while it is.
     expect(privacy).toContain("음성 녹음은 어떠한 외부 서비스에도 제공하지 않습니다");
     expect(privacy).toContain("서비스가 가동되는 서버(제6조의 수탁자)에서 전사하는 동안에만 임시로 처리");
-    expect(privacy).not.toContain("Cloudflare");
-    expect(privacy).not.toContain("접속을 중계");
-    expect(privacy).not.toContain("그 보관은 위탁하지 않습니다");
+    // The relay is named, and only for the dev site: no sentence says it
+    // carries the service's traffic or that the keeping is not entrusted.
+    expect(privacy).toContain("개발용 사이트(autune.shelldocs.cloud)의 접속 중계");
+    expect(privacy).toContain("그 보관은 이 수탁자에게 위탁하지 않습니다");
+    expect(privacy).not.toContain("서비스 접속의 중계");
+    expect(privacy).not.toContain("서비스가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며");
   });
 
   // A person who agreed to `2026-10-12.6` agreed to a text that said the

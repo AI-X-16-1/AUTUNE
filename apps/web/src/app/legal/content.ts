@@ -274,11 +274,14 @@ const table = (head: string[], ...rows: Line[][]): Block => ({
 // own AWS account. AWS is the one processor of the hosting row (제6조). The
 // policy names the service and its region only: the legal entity is the one the
 // account's AWS Customer Agreement names, it has to be confirmed on the billing
-// page, and it is added to HOSTING once it is. Cloudflare answers
-// DNS for the app's name and serves the landing page, and carries none of the
-// service's traffic, so it is no longer a row of 제6조 or 제7조.
+// page, and it is added to HOSTING once it is. The dev site
+// (autune.shelldocs.cloud) is still reached through a Cloudflare tunnel and is
+// open to any Google account (#1320, #1344), and this text is served from
+// main to both sites, so Cloudflare stays a row of 제3조, 제6조 and 제7조 until
+// the dev site is closed; it is removed in a PR of its own then.
 const OPERATOR = "AI-X-16-1 팀";
 const HOSTING = "Amazon Web Services";
+const RELAY = "Cloudflare, Inc.";
 const OFFICER_NAME = "강민구";
 const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
@@ -409,7 +412,9 @@ const PRIVACY: LegalDocument = {
             [
               "쿠키(세션 식별자). 접속 일시, 접속 IP 주소 및 요청한 주소(팀을 가리키는 번호가 포함될 수 있습니다)는 서비스의 데이터베이스에 저장하지 않으나, 회사가 운영하는 서버(",
               HOSTING,
-              "의 서버)의 접속 기록에 남을 수 있습니다",
+              "의 서버) 및 개발용 사이트(autune.shelldocs.cloud)의 접속을 중계하는 ",
+              RELAY,
+              "의 접속 기록에 남을 수 있습니다",
             ],
             "서비스 이용 과정에서 자동 생성",
           ],
@@ -606,6 +611,11 @@ const PRIVACY: LegalDocument = {
             "서비스가 보관하는 모든 개인정보(제3조에 기재한 항목)와 전사하는 동안의 음성 녹음. 음성 녹음은 전사가 끝나는 즉시 삭제되며, 서버의 임시 메모리 영역에서만 처리하도록 구성되어 있습니다. 접속 IP 주소 및 접속 일시는 서버의 접속 기록에 남을 수 있습니다.",
           ],
           [
+            RELAY,
+            "개발용 사이트(autune.shelldocs.cloud)의 접속 중계. 개발용 사이트가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며, 그 보관은 이 수탁자에게 위탁하지 않습니다.",
+            "이용자와 개발용 사이트 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시. 통신 내용은 전송하는 동안에만 처리되며 보관되지 않습니다. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있습니다.",
+          ],
+          [
             "Google LLC (Gemini API)",
             "언어 모델을 이용한 발화 분류, 모호한 동의 발화의 판정, 발화의 맥락 해석, 회의 요약 작성, 할 일 및 결정 사항의 짧은 제목 작성 및 논의 누락 확인",
             "가림 처리된 회의 문장(해당 발화와 그 전후 문장). 모호한 동의 발화의 판정의 경우 분류에서 모호하다고 판단된 발화에 한합니다. 회의 요약 작성의 경우 분석에 동의한 화자의 가림 처리된 회의 문장 전체와 그 회의에서 추출된 결정 사항 및 할 일. 짧은 제목 작성의 경우 서비스가 회의에서 추출하여 작성한 할 일 및 결정 사항의 문장에 한하며, 이용자가 직접 입력하거나 수정한 문장은 전송하지 않습니다",
@@ -662,6 +672,14 @@ const PRIVACY: LegalDocument = {
             "제5조 및 제6조에 기재한 항목",
             "본인 인증, 일정 등록, 팀 초대 메일의 발송, 언어 모델을 이용한 분석 및 AI 비서 응답 생성",
             "제5조 및 제6조에 기재한 기간",
+          ],
+          [
+            RELAY,
+            "미국 및 Cloudflare 네트워크가 있는 국가",
+            "이용자가 개발용 사이트에 접속하는 때마다 정보통신망을 통하여 전송",
+            "이용자와 개발용 사이트 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시",
+            "개발용 사이트 접속의 중계",
+            "통신 내용은 전송하는 동안에만 처리하며 보관하지 않음. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있음",
           ],
           [
             "Slack Technologies, LLC",

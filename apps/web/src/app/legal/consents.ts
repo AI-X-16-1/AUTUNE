@@ -66,8 +66,9 @@
  * Seoul region (#1342). The policy said the keeping of what the service stores
  * was not entrusted and that a Cloudflare tunnel carried the connection to a
  * server the team runs; on the release host both are untrue, and a person
- * who agreed to `.6` agreed to a text that said so. Article 6 lists AWS, the
- * Cloudflare rows of articles 3, 6 and 7 are gone, and article 5 (3) says
+ * who agreed to `.6` agreed to a text that said so. Article 6 lists AWS,
+ * the Cloudflare rows of articles 3, 6 and 7 stay but are scoped to the dev
+ * site, which is still reached through the tunnel, and article 5 (3) says
  * where audio is processed while it is. The terms did not change, so theirs
  * stays. **The effective date is not moved here:** it is the policy owner's,
  * with the notice of article 15 (2) in front of it.
