@@ -209,6 +209,52 @@ floor until the questions nothing answers get hits as often as today (about
   characters should matter most. A difference of three to five questions of
   220 is a direction, not a ranking.
 
+### Does the excerpt hold the answer
+
+The search says which material; the person reads one excerpt of at most 200
+characters of its nearest piece. 38 questions have a key, a string only the
+answering sentence holds: the 18 on the three long files (keys of the earlier
+measurement) and the 20 on the five documents of two or more sections (keys
+chosen from the files). Searched with no floor; the nearest piece of the
+material cut to the excerpt with `excerpt_of`; text and key compared with
+whitespace and Markdown table bars removed. At 500 characters the long files
+give 9 of 18 pieces and 8 of 18 excerpts holding the answer, as the product's
+own run did.
+
+| Pieces | Material among the hits | The excerpt shown holds the answer | Any of the 2 nearest pieces' excerpts | Any of the 3 nearest |
+| --- | --- | --- | --- | --- |
+| today, 500 characters | 94.7% (36/38) | 63.2% (24) | 81.6% (31) | 86.8% (33) |
+| reader text, recursive 200 | 100% (38) | 78.9% (30) | 94.7% (36) | 100% (38) |
+| Docling body, recursive 200 | 100% (38) | 89.5% (34) | 97.4% (37) | 97.4% (37) |
+
+On the 18 long-file questions alone the excerpt shown holds the answer 44%
+(8), 67% (12) and 83% (15) of the time.
+
+- **What is left is not a reading problem.** The four misses of the Docling
+  variant are all reworded questions where the material was found and its
+  nearest piece was another piece. A model given that piece would not have the
+  answer; one given the whole file would, and that is what #817 10(b) rules
+  out.
+- **Showing more than one piece of the same material closes most of it
+  without a model**: 2 or 3 pieces of 200 characters are 400 to 600
+  characters, still never the document.
+- **Limits.** 38 questions, 8 files, text written by the proposer; the 20
+  two-section keys were chosen after reading the files. The Docling variant
+  makes 410 pieces against 305, because a Markdown table is padded to column
+  width; why it does better on the long tables was not examined.
+
+### What Docling's Markdown changed on slides
+
+On the 40 slide questions at floor 0.5 the answer is among the hits for 35
+(reader, 500 or 200 characters) and 40 (Docling Markdown). The words in the
+twenty decks are the same in both, to the word: the difference is layout
+marks (`#` before a title, `-` before a bullet, blank lines). A deck is
+shorter than 200 characters in both, so the cut is not what changed; the
+embedding of the marked text is. The cause was not examined. If it is the
+marks, the `.pptx` reader could write them without a converter; this has not
+been tried. The slides are invented, a title and a few lines each, and OCR
+being off, a picture or a chart is read by neither.
+
 ### Memory and disk
 
 A conversion of a byte stream (`DocumentStream` over `BytesIO`, never a path),
@@ -292,6 +338,13 @@ mostly slides, where Docling's body held all 40 questions against 37 for the
 reader, and not before. Stage 3 has no support in this evidence: the heading
 path in the vector did not improve the result and the parent has no reader.
 
+**Show more than one piece of a material** is a possible stage 1b, before
+any model: the hit keeps one title and up to the 2 or 3 nearest pieces'
+excerpts of that material. It is read off the table under "Does the excerpt
+hold the answer" and changes `MaterialHit` (module B's own `schemas.py`, not a
+contract) and what the agent tool and the web page do with it; neither has
+been read for it here.
+
 Not proposed: Docling deciding marking or refusal (Evidence: it fails both);
 OCR; overlap between pieces.
 
@@ -343,12 +396,21 @@ OCR; overlap between pieces.
    characters: 0.51 for the reader's text, 0.52 for the Docling body, by the
    replay above. It is changed with the cut, in the same pull request, and is
    measured again through the product (below).
+7. **One excerpt or several.** Up to 2 or 3 pieces of the same material per
+   hit (stage 1b): the excerpt holds the answer in 79% of the 38 keyed
+   questions with one piece of 200 characters, 95% with two, 100% with three.
+   Whether a longer hit is read well on the page, and in the chatbot's answer,
+   is a product question.
+8. **A model that reads a material** is not proposed and not needed by this
+   evidence; it would change #817 10(b) and `privacy.md`, and would need a
+   local model, since material text goes to no outside API.
 
 ## Evaluation
 
 Done: the runs under Evidence, on invented text, on one machine.
 The floors at 200 characters, with the 70 questions nothing answers, on shelves
-of 30 to 200 files (replayed, exact scores).
+of 30 to 200 files (replayed, exact scores). Whether the excerpt holds the
+answer, on 38 keyed questions (long files and two-section documents).
 
 To do before stage 1 is merged:
 
@@ -358,7 +420,8 @@ To do before stage 1 is merged:
 - **A shelf with more long files**, so that the piece size is tested where it
   can matter, and more `.pdf`, `.docx`, `.pptx` for the Docling body (41 of
   the 200 files are what Docling's Markdown was used on).
-- **Whether the excerpt holds the answer**, with answer words in the labels.
+- **Keys for the other 182 questions**, so that "the excerpt holds the
+  answer" is measured on tables, slides and prose too, not on the 38.
 - **A boundary test**: a sentence, a table row and a heading that straddle the
   old 500 boundary stay whole.
 
