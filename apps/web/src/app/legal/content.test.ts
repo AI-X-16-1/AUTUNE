@@ -181,4 +181,20 @@ describe("legal documents", () => {
     expect(privacy?.version).not.toBe("2026-10-12.6");
   });
 
+  // The landing page carries the Meta Pixel and the service does not (#1356's
+  // review). The policy said no behavioural data was collected for
+  // advertising and nothing went to a third party for it; those sentences
+  // go, and whoever agreed to them is asked again.
+  it("name the landing page's Meta Pixel, keep it off the service, and say how to refuse it", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("Meta Platforms, Inc.");
+    expect(privacy).toContain("소개 페이지(autune.cloud)에 ");
+    expect(privacy).toContain("서비스(로그인 화면과 이 문서의 화면을 포함합니다)와 개발용 사이트(autune.shelldocs.cloud)에는 Meta 픽셀을 설치하지 않습니다");
+    expect(privacy).toContain("소개 페이지 하단의 '광고 측정 거부' 버튼");
+    expect(privacy).not.toContain("행태정보를 수집·이용·제공하지 않으며");
+    expect(privacy).not.toContain("광고 목적으로 제3자에게 제공하지 않습니다.");
+    const version = REQUIRED_CONSENTS.find((c) => c.document === "privacy")?.version;
+    expect(version).not.toBe("2026-10-12.7");
+  });
+
 });

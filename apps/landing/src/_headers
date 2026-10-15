@@ -1,11 +1,12 @@
 # Cloudflare Pages response headers for every path.
 #
-# script-src is 'none' on purpose: the privacy policy promises no behavioural
-# data and no outside analytics, so no script may run here until its wording
-# changes in the same pull request that adds one (#1320). Then add exactly the
-# hosts that script needs, nothing broader.
+# The script, image and connect sources are filled in by build.mjs. Without a
+# Meta Pixel id they are script-src 'none', img-src 'self' and no connect-src:
+# no script runs here. With one, they name exactly the hosts the pixel uses
+# (privacy policy 제12조) and nothing broader. Any other script lands only in a
+# pull request that changes the policy's wording too (#1320).
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'none'; %CSP_SCRIPTS%; style-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
   Referrer-Policy: strict-origin-when-cross-origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
