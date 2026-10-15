@@ -9,9 +9,12 @@ from autune_context.pipeline.base import NliScores
 from autune_context.pipeline.change import (
     adds_condition,
     classify_change,
+    marks_as_before,
+    marks_in_house,
     marks_keep,
     marks_replacement,
     marks_reversal,
+    marks_withdrawal,
     strip_keep_words,
 )
 from autune_context.service import (
@@ -168,6 +171,21 @@ def test_a_negated_change_verb_does_not_hide_a_real_withdrawal() -> None:
     assert marks_reversal("노선은 바꾸지 않고 심야 운행은 하지 않기로 했다.")
 
 
+@pytest.mark.parametrize(
+    ("statement", "previous", "keep"),
+    [
+        ("인상 없이 가기로 했다.", "가격을 10% 인상한다.", False),
+        ("요금은 인하 없이 간다.", "요금을 5% 인하한다.", False),
+        ("인상 없이 가기로 했다.", "가격은 만 원이다.", True),
+        ("일정은 변경 없이 간다.", "출시는 3월이다.", True),
+    ],
+)
+def test_no_move_after_that_same_move_is_no_keep(statement: str, previous: str, keep: bool) -> None:
+    assert marks_keep(statement, previous) is keep
+    neutral, _ = classify_change(_nli(0.0, 0.9, 0.1), _nli(0.0, 0.9, 0.1), statement, previous)
+    assert neutral is (ChangeType.UNCHANGED if keep else ChangeType.MODIFIED)
+
+
 _WITHDRAWN_MOVES = [
     ("가격은 올리지 않기로 했다.", "가격을 10% 올린다."),
     ("인력은 늘리지 않기로 했다.", "인력을 두 명 늘린다."),
@@ -284,6 +302,147 @@ def test_an_owner_replaced_with_daesin_reads_as_a_reversal_a_known_limit() -> No
     a new owner is ``modified``, but vocabulary cannot tell a person from a
     vendor after 대신 (see ``pipeline.change``)."""
     assert marks_reversal("김민경 대신 강민구가 맡기로 했다.")
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "사내 독서 모임은 이번 분기로 끝냅시다.",
+        "견학 프로그램은 일정에서 뺍시다.",
+        "공동 마케팅에서는 빠지죠.",
+        "그 업체와는 거래를 끊는다.",
+        "정기 배송 사업에서는 손 뗍시다.",
+        "야외 상영회는 그만한다.",
+        "회원 적립 제도는 종료한다.",
+        "2호점은 폐업하기로 했다.",
+        "종이 영수증으로 되돌린다.",
+        "기존 메신저로 돌아간다.",
+        "빼기로 했다.",
+        "우리는 공동 구매에서 빠지는 게 낫겠어요.",
+    ],
+)
+def test_leaving_or_going_back_marks_a_withdrawal(statement: str) -> None:
+    assert marks_withdrawal(statement)
+
+
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        # a part left out: the decision stands
+        ("화요일은 빼고 매일 연다.", ""),
+        ("주말반만 빼고 강좌를 연다.", ""),
+        # a value as the argument: a parameter moved
+        ("매장은 8시에 닫는다.", ""),
+        ("인원에서 세 명을 뺀다.", ""),
+        ("마감 20분 전에는 주방을 닫죠.", ""),
+        ("메뉴는 일곱 개로 정리합시다.", ""),
+        # not the last clause, or negated
+        ("자료를 정리해서 다음 주에 공유한다.", ""),
+        ("그렇게 정리했다.", ""),
+        ("논의를 마무리했다.", ""),
+        ("빼지 않기로 했다.", ""),
+        # the earlier decision already said it, or a keep
+        ("주차장은 계속 닫는다.", "주차장은 야간에 닫는다."),
+        ("야간 출입문은 그대로 닫아 둔다.", ""),
+    ],
+)
+def test_a_part_left_out_a_moved_value_or_a_restated_exit_is_no_withdrawal(
+    statement: str, previous: str
+) -> None:
+    assert not marks_withdrawal(statement, previous)
+
+
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        ("이전 작업은 이번 달까지 끝낸다.", "데이터베이스를 새 서버로 이전한다."),
+        ("개편은 다음 주까지 끝내기로 했다.", "신규 가입 화면을 개편한다."),
+        ("점검은 금요일까지 종료하기로 했다.", "전 지점 소방 점검을 한다."),
+    ],
+)
+def test_finishing_by_a_deadline_carries_a_decision_out(statement: str, previous: str) -> None:
+    assert not marks_withdrawal(statement, previous)
+    change, _ = classify_change(_nli(0.9, 0.05, 0.05), _nli(0.9, 0.05, 0.05), statement, previous)
+    assert change is ChangeType.UNCHANGED
+
+
+def test_a_deadline_in_an_earlier_clause_does_not_stop_a_withdrawal() -> None:
+    assert marks_withdrawal("이번 시즌까지만 하고 끝냅시다.", "야간 셔틀을 운행한다.")
+
+
+def test_a_number_that_names_the_subject_does_not_stop_a_withdrawal() -> None:
+    assert marks_withdrawal("24시간 상담 창구는 종료한다.")
+
+
+def test_a_withdrawal_is_reversed_even_where_nli_reads_entailment() -> None:
+    """The shared subject makes NLI entail "X를 끝낸다" from "X를 한다"."""
+    change, _ = classify_change(
+        _nli(0.02, 0.30, 0.68),
+        _nli(0.90, 0.05, 0.05),
+        "사내 독서 모임은 이번 분기로 끝냅시다.",
+        "사내 독서 모임을 운영한다.",
+    )
+    assert change is ChangeType.REVERSED
+
+
+def test_a_withdrawal_said_in_the_statement_counts_when_a_line_is_classified() -> None:
+    change, _ = classify_change(
+        _nli(0.02, 0.95, 0.03),
+        _nli(0.05, 0.90, 0.05),
+        "문의가 너무 적어요.",
+        "전화 상담을 운영한다.",
+        statement="전화 상담은 종료한다.",
+    )
+    assert change is ChangeType.REVERSED
+
+
+def test_bringing_in_house_what_was_given_out_is_a_withdrawal() -> None:
+    assert marks_in_house("행사 촬영은 우리가 직접 한다.", "행사 촬영은 외부 업체에 맡긴다.")
+    assert marks_in_house("급여 정산은 자체 시스템으로 한다.", "급여 정산은 대행사에 위탁한다.")
+    assert not marks_in_house("행사 촬영은 우리가 직접 한다.", "행사 촬영은 두 명이 한다.")
+
+
+@pytest.mark.parametrize(
+    ("statement", "previous"),
+    [
+        ("업체와는 팀장이 직접 통화해서 일정을 잡는다.", "배송은 외부 업체에 맡긴다."),
+        ("업체 평가는 내부 기준으로 한다.", "청소는 용역 업체에 맡긴다."),
+        ("검수는 우리가 직접 한다.", "번역은 외주로 돌린다."),
+    ],
+)
+def test_doing_other_work_directly_keeps_what_was_given_out(statement: str, previous: str) -> None:
+    assert not marks_in_house(statement, previous)
+    change, _ = classify_change(_nli(0.9, 0.05, 0.05), _nli(0.9, 0.05, 0.05), statement, previous)
+    assert change is ChangeType.UNCHANGED
+
+
+def test_a_terse_in_house_statement_names_no_other_work() -> None:
+    assert marks_in_house("리조트가 직접 한다.", "장비 대여는 렌탈 업체에 위탁한다.")
+
+
+@pytest.mark.parametrize(
+    ("statement", "expected"),
+    [
+        ("예전처럼 창구에서 접수한다.", True),
+        ("원래대로 수기로 적는다.", True),
+        ("지금대로 둔다.", False),
+        ("현행처럼 간다.", False),
+    ],
+)
+def test_going_back_to_how_things_were_marks_a_return(statement: str, expected: bool) -> None:
+    assert marks_as_before(statement) is expected
+
+
+def test_going_back_reverses_only_where_nli_contradicts() -> None:
+    previous = "접수는 온라인으로만 받는다."
+    contradicted, _ = classify_change(
+        _nli(0.0, 0.1, 0.9), _nli(0.0, 0.1, 0.9), "예전처럼 창구에서 접수한다.", previous
+    )
+    neutral, _ = classify_change(
+        _nli(0.0, 0.9, 0.1), _nli(0.0, 0.9, 0.1), "예전처럼 창구에서 접수한다.", previous
+    )
+    assert contradicted is ChangeType.REVERSED
+    assert neutral is ChangeType.UNCHANGED
 
 
 def test_cosine_is_1_for_identical_and_0_for_orthogonal() -> None:

@@ -11,6 +11,7 @@ from autune_context.config import ContextSettings
 from autune_context.pipeline.llm import FakeLlm
 from autune_context.pipeline.llm_judge import LlmJudge
 from autune_contracts import ChangeType
+from autune_core.errors import PrivacyViolationError
 
 
 def _settings(**overrides) -> ContextSettings:
@@ -138,6 +139,14 @@ def test_excerpts_are_cut_to_the_snippet_limit():
     _system, user = llm.prompts[0]
     assert user.count("가") == 10
     assert user.count("나") == 10
+
+
+def test_an_excerpt_the_cut_would_split_a_value_of_is_refused():
+    """Cut first and the guard would see "010-1234-5", which matches nothing."""
+    llm = FakeLlm(default=_topic(True, 0.5))
+    with pytest.raises(PrivacyViolationError):
+        _judge(llm, llm_snippet_chars=10).topic_relatedness("가" * 4 + "010-1234-5678", ["나"])
+    assert llm.prompts == []
 
 
 def test_the_configured_token_budget_is_what_the_client_is_given():

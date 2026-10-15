@@ -165,13 +165,30 @@ connection failed; the invitation link can still be copied. `gmail.send` reads
 nothing; reading a mailbox (`gmail.readonly`, a *restricted* scope) is #431's
 question and is not asked for.
 
-**Two cookies, two jobs.** `autune_session` is the signed session (7 days,
-`HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
-only for the 600 seconds of one sign-in, is scoped to the callback's own path,
-and holds the OAuth `state`: the callback refuses a request whose cookie does
-not match the `state` in the query, so a callback URL opened in somebody else's
-browser cannot sign them in as whoever started it. Redis proves a state was
-issued; the cookie is what proves to whom.
+**Two cookies, two jobs.** The session cookie is the signed session (7 days,
+`HttpOnly`, `SameSite=Lax`, `Secure` outside local). The OAuth state cookie
+lives only for the 600 seconds of one sign-in and holds the OAuth `state`: the
+callback refuses a request whose cookie does not match the `state` in the
+query, so a callback URL opened in somebody else's browser cannot sign them in
+as whoever started it. Redis proves a state was issued; the cookie is what
+proves to whom.
+
+Their names depend on the environment. Where cookies are `Secure` (everywhere
+but local) they are `__Host-autune_session` and
+`__Host-autune_oauth_state_<provider>` (`google`, `jira`, `notion`, `slack`),
+with `Path=/` and no `Domain`: a browser takes a `__Host-` cookie only on those
+terms and refuses one a sibling name on the same site (`autune.cloud` beside
+`app.autune.cloud`) tries to set, and the unprefixed names are not read there at
+all. The prefix needs `Path=/`, so the state cookies are told apart by name,
+not by the callback's path. Local development is plain HTTP and keeps
+`autune_session` and `autune_oauth_state`, the callback's path included. Moving
+to the prefixed names signs everyone out once.
+
+A request that changes state, or opens the live WebSocket, and carries an
+`Origin` whose host is neither the API's own `Host` nor one of
+`AUTUNE_CORS_ALLOWED_ORIGINS` is refused with 403 (`origin_guard.py`). A request
+with no `Origin` goes through: Slack posts to `/api/slack/events` with none and
+is authenticated by its signature. The check is off in local development.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
 **Google flows also carry PKCE** (#704). Sign-in and the personal connects

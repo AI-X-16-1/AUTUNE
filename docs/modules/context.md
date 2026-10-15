@@ -155,7 +155,7 @@ autune_context/pipeline/
 │                   #   plus an opt-in worker_process_init hook that warms and logs each model
 ├── base.py         # Protocols: Embedder, Reranker, NliModel, LlmClient (+ result dataclasses)
 ├── registry.py     # config string → implementation, lru_cache, startup dimension guard
-├── _serving.py     # shared /health + /info probe for the self-hosted HTTP clients
+├── _serving.py     # /health + /info probe, and the guarded client the embedder and NLI use
 ├── embedding.py    # KureHttpEmbedder / KureLocalEmbedder / FakeEmbedder
 ├── reranking.py    # BgeRerankerKoHttp / ...Local / Fake
 ├── nli.py          # KlueKorNliHttp / ...Local / Fake
@@ -182,6 +182,25 @@ Rules:
   written onto every output row, so results stay traceable across redeploys. The
   `*Http` client also probes `/health` in its constructor, so an unreachable
   endpoint fails the warm-up rather than the first task.
+- **The embedder and NLI clients go through the outbound guard** even though the
+  server is ours (`_serving.ModelServerClient`, an `autune_integrations.HttpClient`):
+  that a server is our own is the reasoning that leaves a guard unrun, and the
+  extraction module's hosted clients already work this way. The guard caps a
+  request at 4,000 characters, so texts and pairs go in batches under it, and a
+  single text no request could carry is cut to the cap (half each for an NLI
+  pair) rather than failing the meeting. The in-process `*_local` models read
+  it whole; texts that long are rare (one utterance, or a decision with its
+  source utterances). The guard reads what is left after the cut, and the
+  opening part of a value cut through matches no pattern, so `_serving.clip`
+  checks the text up to 256 characters past the cut first: an unmasked value
+  the cut would split raises `PrivacyViolationError` instead of leaving in
+  part. The LLM judge cuts its excerpts with the same function. A brief's
+  topic step falls back to the latest meeting when a model fails, but not on
+  a `PrivacyViolationError`: that stops the brief. **The re-ranker is not on the guard yet.** Its query and
+  passages are whole topic segments, and one segment of a real-length meeting
+  passes the cap on its own, so moving it means cutting segments, which
+  changes which links are asserted. That needs the same cut in the local
+  re-ranker and a measurement on the held-out sets first.
 - **The embedding dimension is a compile-time fact.** `ctx_embeddings.embedding`
   is `vector(N)` where `N = autune_context.constants.EMBEDDING_DIM`, fixed at
   migration time. `get_embedder()` raises at startup unless the chosen model's
@@ -312,6 +331,8 @@ one miss differs. The set cannot tell them apart, and `classic` needs no API.
   How a terse decision changed, with a third held-out set (`*_heldout_v7`, 0.60 →
   0.75):
   [`context-evaluations/04-terse-decision-change-type.md`](context-evaluations/04-terse-decision-change-type.md).
+  A withdrawal said without a cue word, with a fourth held-out set (`*_heldout_v8`):
+  [`context-evaluations/05-withdrawal-without-a-cue-word.md`](context-evaluations/05-withdrawal-without-a-cue-word.md).
 
 ### Self-hosted serving contract
 
@@ -530,7 +551,21 @@ lineage view (S22), which reads to a user as a bug.
    둡시다". A statement that says nothing changes (그대로, 유지, 지금대로, 바꾸지
    않는다) and that NLI neither entails nor contradicts reads `unchanged`
    (`pipeline.change.marks_keep`) — except a negated move the earlier
-   decision made: after "10% 올린다", "올리지 않기로 했다" withdraws it.
+   decision made: after "10% 올린다", "올리지 않기로 했다" withdraws it. A
+   withdrawal said by leaving or going back — "이번 시즌으로 끝냅시다", "그
+   행사에서는 빠지죠", "계약을 끊는다", "종이 영수증으로 되돌린다" — reads
+   `reversed` whatever NLI says (`pipeline.change.marks_withdrawal`), in the
+   statement or in the line read in its place, unless the verb hands its clause
+   on ("화요일은 빼고 매일 연다"), takes a value ("8시에 닫는다"), finishes
+   by a deadline ("이번 달까지 끝낸다") or was the earlier decision's own
+   word. So does bringing in-house what was given out (`marks_in_house`),
+   when it is about the same work, and, where NLI contradicts, going back to
+   how things were (예전처럼, 원래대로; `marks_as_before`). Both cues lean
+   toward staying silent, which leaves the pair to NLI as before: any 까지 in
+   the clause counts as a deadline ("이번 시즌까지로 끝냅시다" is missed), and
+   the same work must be named with the earlier decision's word ("배송 업무는
+   우리가 직접 한다" after "배송은 외부 업체에 맡긴다" is missed). The rest is in
+   the "Known limits" of `pipeline.change`.
 
    **Matching happens before this meeting's own previous versions are deleted.**
    B's `dec_` id is stable across a rebuild whose sources did not change and

@@ -268,15 +268,32 @@ const table = (head: string[], ...rows: Line[][]): Block => ({
   rows,
 });
 
-// Filled by module B's owner on 2026-10-11. The service runs on a server the
-// team operates; Cloudflare, Inc. carries the connection to it (a tunnel), so
-// it is the one processor of the hosting row and is listed under 제7조.
+// Filled by module B's owner on 2026-10-11, and changed for the AWS release
+// host (#1342): the service runs on an EC2 server, an RDS database and an
+// ElastiCache queue in AWS's Seoul region (ap-northeast-2), in the operator's
+// own AWS account. AWS is the one processor of the hosting row (제6조). The
+// policy names the service and its region only: the legal entity is the one the
+// account's AWS Customer Agreement names, it has to be confirmed on the billing
+// page, and it is added to HOSTING once it is. The dev site
+// (autune.shelldocs.cloud) is still reached through a Cloudflare tunnel and is
+// open to any Google account (#1320, #1344), and this text is served from
+// main to both sites, so Cloudflare stays a row of 제3조, 제6조 and 제7조 until
+// the dev site is closed; it is removed in a PR of its own then.
 const OPERATOR = "AI-X-16-1 팀";
+const HOSTING = "Amazon Web Services";
 const RELAY = "Cloudflare, Inc.";
 const OFFICER_NAME = "강민구";
 const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
 const EFFECTIVE = "2026년 10월 12일";
+// The privacy policy alone moved (#1342): the AWS processor and the dev-site
+// scoping of Cloudflare apply from the day the release host opens, and the
+// terms and the other policy did not change, so theirs stays EFFECTIVE. The
+// release host has its own database and no earlier user; a dev-site user is
+// asked again under the new consent version. Article 15 (2) asks for a notice
+// 7 days ahead, which this date does not give: the policy owners' agreement
+// to that is recorded on the pull request, not assumed here.
+const PRIVACY_EFFECTIVE = "2026년 10월 15일";
 
 /**
  * Shown above the documents. Their text cannot be selected on the page (the
@@ -401,7 +418,9 @@ const PRIVACY: LegalDocument = {
           [
             "자동 생성 정보",
             [
-              "쿠키(세션 식별자). 접속 일시, 접속 IP 주소 및 요청한 주소(팀을 가리키는 번호가 포함될 수 있습니다)는 서비스의 데이터베이스에 저장하지 않으나, 회사가 운영하는 서버와 접속을 중계하는 ",
+              "쿠키(세션 식별자). 접속 일시, 접속 IP 주소 및 요청한 주소(팀을 가리키는 번호가 포함될 수 있습니다)는 서비스의 데이터베이스에 저장하지 않으나, 회사가 운영하는 서버(",
+              HOSTING,
+              "의 서버) 및 개발용 사이트(autune.shelldocs.cloud)의 접속을 중계하는 ",
               RELAY,
               "의 접속 기록에 남을 수 있습니다",
             ],
@@ -578,7 +597,9 @@ const PRIVACY: LegalDocument = {
             "해당 서비스의 약관 및 이용자의 설정에 따름. 보낸 메일은 초대한 회원의 Gmail 보낸편지함에 남습니다.",
           ],
         ),
-        p("③ 음성 녹음은 어떠한 외부 서비스에도 제공하지 않습니다."),
+        p(
+          "③ 음성 녹음은 어떠한 외부 서비스에도 제공하지 않습니다. 음성 녹음은 서비스가 가동되는 서버(제6조의 수탁자)에서 전사하는 동안에만 임시로 처리하며, 전사가 끝나면 즉시 삭제합니다.",
+        ),
         p(
           "④ 회사는 개인정보를 판매하거나 광고 목적으로 제3자에게 제공하지 않습니다.",
         ),
@@ -593,9 +614,14 @@ const PRIVACY: LegalDocument = {
         table(
           ["수탁자", "위탁하는 업무의 내용", "위탁하는 개인정보의 항목"],
           [
+            `${HOSTING} (서울 리전)`,
+            "서비스의 가동에 필요한 서버, 데이터베이스 및 작업 대기열의 운영. 서비스가 보관하는 자료와 처리 중인 음성 녹음은 서울 리전의 서버에서 처리되며, 회사는 이 서버에 있는 자료를 서울 리전 밖의 다른 AWS 리전으로 옮기지 않습니다. 이 표의 다른 수탁자와 제7조에 적은 국외 이전은 이와 별개입니다.",
+            "서비스가 보관하는 모든 개인정보(제3조에 기재한 항목)와 전사하는 동안의 음성 녹음. 음성 녹음은 전사가 끝나는 즉시 삭제되며, 서버의 임시 메모리 영역에서만 처리하도록 구성되어 있습니다. 접속 IP 주소 및 접속 일시는 서버의 접속 기록에 남을 수 있습니다.",
+          ],
+          [
             RELAY,
-            "서비스 접속의 중계. 서비스가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며, 그 보관은 위탁하지 않습니다.",
-            "이용자와 서비스 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시. 통신 내용은 전송하는 동안에만 처리되며 보관되지 않습니다. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있습니다.",
+            "개발용 사이트(autune.shelldocs.cloud)의 접속 중계. 개발용 사이트가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며, 그 보관은 이 수탁자에게 위탁하지 않습니다.",
+            "이용자와 개발용 사이트 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시. 통신 내용은 전송하는 동안에만 처리되며 보관되지 않습니다. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있습니다.",
           ],
           [
             "Google LLC (Gemini API)",
@@ -658,9 +684,9 @@ const PRIVACY: LegalDocument = {
           [
             RELAY,
             "미국 및 Cloudflare 네트워크가 있는 국가",
-            "이용자가 서비스에 접속하는 때마다 정보통신망을 통하여 전송",
-            "이용자와 서비스 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시",
-            "서비스 접속의 중계",
+            "이용자가 개발용 사이트에 접속하는 때마다 정보통신망을 통하여 전송",
+            "이용자와 개발용 사이트 사이에 오가는 통신 내용, 접속 IP 주소 및 접속 일시",
+            "개발용 사이트 접속의 중계",
             "통신 내용은 전송하는 동안에만 처리하며 보관하지 않음. 접속 기록은 Cloudflare, Inc.가 정한 기간 동안 남을 수 있음",
           ],
           [
@@ -863,7 +889,7 @@ const PRIVACY: LegalDocument = {
     {
       heading: "제15조(개인정보 처리방침의 변경)",
       blocks: [
-        p(["① 이 개인정보 처리방침은 ", EFFECTIVE, "부터 적용됩니다."]),
+        p(["① 이 개인정보 처리방침은 ", PRIVACY_EFFECTIVE, "부터 적용됩니다."]),
         p(
           "② 회사는 이 개인정보 처리방침을 변경하는 경우 변경 내용과 시행일을 시행일 7일 전부터 서비스 화면에 공지합니다. 다만, 정보주체의 권리에 중대한 변경이 있는 경우에는 시행일 30일 전부터 공지합니다.",
         ),
