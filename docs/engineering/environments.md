@@ -972,7 +972,7 @@ The stack is `infra/docker-compose.app.yml` with
 | `worker-audio` | CPU (`AUTUNE_AUDIO_DEVICE=cpu`, int8), no `gpus` entry. Expect transcription to run near real time, not faster |
 | Published port | nginx on 80 only, behind an ALB that terminates TLS for the address in `AUTUNE_SITE_URL` |
 | Raw audio | the same `audio-tmp` tmpfs as everywhere; swap is off on the host, so a page of it cannot reach the disk (`privacy.md` section 1) |
-| Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on |
+| Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on. On this branch `AUTUNE_EXTRACTION_MATERIAL_UPLOAD` and `AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL` are `true` (#817), with the embedder `local` in the `api` container (about 2 GB of the host's 32 GiB; the weights are downloaded from huggingface.co at the first start) |
 
 Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
 under `production`, and the nginx password block has nothing behind it.
