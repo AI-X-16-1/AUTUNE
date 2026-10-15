@@ -165,6 +165,50 @@ What it says, and what it does not:
   scores; a shelf of long files (about 150 of the 200 files fit one piece at
   500, so the piece size matters only on the rest).
 
+### The floors at 200 characters
+
+`material_search.search_materials` replayed on exact cosine scores, with its own
+constants (`CANDIDATES`, the floor, the cut below the best, the title and word
+match), over the 200-file shelf and its 290 questions: 220 with an answer and
+70 that nothing answers. At 500 characters the replay gives the 205 of 220 and
+0.57 wrong per question that the original measurement gave. Floor 0.5 and cut
+0.05, the settings now:
+
+| Pieces | Answer among the hits | Asked what nothing answers, and given hits | Wrong per question |
+| --- | --- | --- | --- |
+| today, 500 characters | 93.2% (205) | 54.3% (38) | 0.57 |
+| reader text, recursive 200 | 95.0% (209) | 58.6% (41) | 0.50 |
+| Docling body (hybrid), recursive 200 | 96.8% (213) | 65.7% (46) | 0.51 |
+| as above, heading path in the vector | 96.4% (212) | 60.0% (42) | 0.53 |
+
+Shorter pieces score higher, so the same floor lets more through. Raising the
+floor until the questions nothing answers get hits as often as today (about
+54%):
+
+| Pieces | Floor | Answer among the hits | Given hits, nothing answers | Wrong per question |
+| --- | --- | --- | --- | --- |
+| today, 500 characters | 0.50 | 93.2% (205) | 54.3% (38) | 0.57 |
+| reader text, recursive 200 | 0.51 | 94.5% (208) | 52.9% (37) | 0.47 |
+| Docling body, recursive 200 | 0.52 | 95.5% (210) | 52.9% (37) | 0.41 |
+
+- **The cut below the best stays at 0.05.** At 0.03 four answers are lost; at
+  0.07 the wrong hits per question rise to about 0.8.
+- **The heading path in the vector buys nothing** (212 against 213 at floor
+  0.5, 210 against 210 at the matched floors). Nothing here supports the
+  parent and section columns of stage 3.
+- **The word match and the title match never fired**, at any floor, in any
+  variant: every hit came from the vector. Their lower bound is not measured
+  by this shelf, and the questions, written as sentences, rarely have all
+  their words in one piece.
+- **Shelf size.** At 30 files the three 200-character variants find 88 of 90
+  against 87; the gain grows with the shelf (209 to 213 against 205 of 220 at
+  151 and 200 files).
+- **Limits.** One person wrote the files and the questions, the text is
+  invented, the scores are exact (not pgvector's index and its 50
+  candidates), and the three long files are too few to show where 200
+  characters should matter most. A difference of three to five questions of
+  220 is a direction, not a ranking.
+
 ### Memory and disk
 
 A conversion of a byte stream (`DocumentStream` over `BytesIO`, never a path),
@@ -237,6 +281,17 @@ Stage it, so each step can be measured and undone alone:
 - **Stage 3: `parent` and `section` columns** and the heading path in the
   vector, only if stage 2 stays.
 
+What the numbers support now: **stage 1 alone, with the similarity floor at
+0.51** (`AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY`). It finds 94.5% of
+the answers against 93.2%, and gives hits to the questions nothing answers a
+little less often (52.9% against 54.3%). Stage 2 adds about one percentage
+point of answers (95.5% against 94.5% at the matched floors) for a
+dependency, about 1 GB more in each API worker, a second read of each file
+and a change to `privacy.md`. It is worth taking if uploads turn out to be
+mostly slides, where Docling's body held all 40 questions against 37 for the
+reader, and not before. Stage 3 has no support in this evidence: the heading
+path in the vector did not improve the result and the parent has no reader.
+
 Not proposed: Docling deciding marking or refusal (Evidence: it fails both);
 OCR; overlap between pieces.
 
@@ -284,17 +339,22 @@ OCR; overlap between pieces.
    migration (read the stored masked text back and embed it again).
 5. **The 95% rule** of step 3: kept as it is, or a different line, or the
    worksheet's name added back so that tables stop falling back.
+6. **The similarity floor** (`material_search_min_similarity`) at 200
+   characters: 0.51 for the reader's text, 0.52 for the Docling body, by the
+   replay above. It is changed with the cut, in the same pull request, and is
+   measured again through the product (below).
 
 ## Evaluation
 
 Done: the runs under Evidence, on invented text, on one machine.
+The floors at 200 characters, with the 70 questions nothing answers, on shelves
+of 30 to 200 files (replayed, exact scores).
 
 To do before stage 1 is merged:
 
-- **The floors at 200**, with the 70 questions nothing answers, on shelves of
-  30 to 200 files, as the floors were first measured.
 - **Through the product**: `store_upload` and `search_materials` on PostgreSQL
-  with pgvector, not exact scores, so `CANDIDATES` and the word match are in.
+  with pgvector, not exact scores, so `CANDIDATES` is in and the floor of 0.51
+  is confirmed. A shelf in which the word match fires is needed to measure it.
 - **A shelf with more long files**, so that the piece size is tested where it
   can matter, and more `.pdf`, `.docx`, `.pptx` for the Docling body (41 of
   the 200 files are what Docling's Markdown was used on).
