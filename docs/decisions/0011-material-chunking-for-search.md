@@ -65,12 +65,11 @@ in the middle when it fits. Pure Python, same readers, same schema. Size and
 the boundary rules are constants next to `CHUNK_CHARS`.
 
 **C. Small embedded pieces, larger parent pieces (parent-child).** Embed
-children of about 200 characters; the parent is the 500-character piece that
-holds them. The search ranks children and answers with the parent's material
-and position. Schema: the existing `ext_material_chunks` row stays the parent
-and a new table `ext_material_child_vectors (material_id, position, start,
-end, embedding)` holds one vector per child, with offsets into the parent's
-text, so the masked text is stored once. Deleting a material cascades to both.
+children of about 200 characters; the parent is the larger piece that holds
+them (a 500-character piece, or a Markdown section). The search ranks children and answers with the parent's material
+and position. Schema: because children do not overlap, a parent's text is its children
+joined, so one nullable `parent` column on `ext_material_chunks` is enough (see
+"Proposed decision"); no second copy of the text and no new table.
 
 **D. A document converter in front of the cut (Docling or similar).** Convert
 PDF, DOCX, PPTX and XLSX to structured Markdown first, then cut on its headings
@@ -84,38 +83,98 @@ scanned page is still refused rather than OCR'd by default.
 
 ## Proposed decision
 
-Stage it, and let the evaluation below decide each step.
+The configuration the proposer asked to have written down (2026-10-15), to be
+evaluated before it is built. It is options D, B and C together:
 
-1. **Stage 1: B.** It changes one function and its constants, adds no table,
-   no dependency and no new place that holds text. It can be reverted by
-   re-deploying `cut`.
-2. **Stage 2: C only if** stage 1 does not close the gap on the evaluation set
-   and a question of the form "the answer is in one sentence of a long piece"
-   is where it fails.
-3. **Stage 3: D only after a spike**, and only with the owners' answer to the
-   dependency question below.
+1. **Docling converts the uploaded file to Markdown.** It replaces the
+   `material_formats` readers as the source of the body text.
+2. **Markdown chunking.** A heading line starts a section; the section is the
+   parent, and its heading path travels with it.
+3. **Recursive splitting inside a section**, coarsest separator first: a blank
+   line, a line break, a sentence end, a space, a hard cut.
+4. **Parent-child.** The children are what is embedded and searched; a child
+   belongs to one parent section.
+5. **Children of 200 characters.**
 
-Not proposed: overlap between pieces. It breaks "joined, the pieces are the
-masked text" (which `_kept_already` and the excerpt rely on), duplicates masked
-text in the database, and leaves a sentence in two excerpts. Boundary-aware
-cuts are the cheaper way to the same goal.
+Stage it, so that each step can be measured and reverted alone: the cutter
+(2-3, 5) first, on the text the readers give today; the converter (1) only
+after a spike; the parent grouping (4) last. Overlap between pieces is not
+proposed: it breaks "joined, the pieces are the masked text" (which
+`_kept_already` relies on) and puts one sentence in two excerpts.
+
+### What this configuration changes in the code that exists
+
+- **Where the conversion runs.** The file is not kept and its bytes go to no
+  task (#817), so the conversion happens in the upload request, as the readers
+  do. A Docling conversion is much slower than a pure-Python read. How slow, on
+  the release host, for a 10 MB file, is a number the spike has to produce;
+  moving it to a task would mean keeping the original, which is refused.
+- **The marking check keeps its own reading.** It looks at the head, the page
+  footers and the file's label (`FileText.edges`), not the body, and a file
+  whose text cannot be read is refused whole. A Markdown export of the body is
+  not that. Whatever replaces the readers must give the marking check the same
+  head, footers and label, or the readers stay for that check. It is not
+  weakened to fit the converter (`docs/architecture/privacy.md`, #817 point 9).
+- **OCR stays off.** Today a page that is only a picture refuses the file,
+  because text that was not read can be neither checked nor masked. A converter
+  that reads such a page by OCR changes that rule; that is a separate decision,
+  not a default of a library.
+- **No network in the conversion.** Models are in the image, nothing is
+  fetched at request time, no remote service is enabled, and nothing of the
+  file leaves the host.
+- **Masking runs on Markdown.** A number inside a table row, a link's text or
+  an emphasised run must still be found by the masker, and every child still
+  passes `assert_masked` before it is stored. Tests with those shapes come with
+  the change.
+- **The same text is no longer one material across formats.** `_kept_already`
+  documents that the same text from a `.docx` and from a `.txt` is one
+  material. After conversion the `.docx` carries Markdown syntax the `.txt`
+  does not; the two differ.
+- **The excerpt has nothing left to choose.** A child of 200 characters is the
+  excerpt cap (`EXCERPT_CHARS`), so `excerpt_of` returns the whole child and
+  its centring on the question's words does nothing. The docstrings that say
+  the cap is "under half of a stored piece" and the tests that assert it change
+  with the piece size.
+- **The parent has no reader.** Nothing returns a parent's text: no model reads
+  a material (#817 10(b)) and an answer is at most 200 characters. With a 200
+  character child the parent is only a grouping. What does help a short child
+  is its heading path: embedding the heading path together with the child's
+  masked text gives the vector the context a bare 200 characters lack, with no
+  parent read anywhere. This is the part of C that is kept; a parent that is
+  read by a local model is a privacy decision of its own, not made here.
+- **Schema.** Additive, on module B's own branch: `ext_material_chunks` gets a
+  nullable `parent` (an integer, the section's index) and a nullable `section`
+  (the heading path, masked text, so it passes `assert_masked` too). Children
+  do not overlap, so a parent's text is its children joined in `position`
+  order: no second copy of the text and no parent table. Old rows have both
+  columns null.
+- **Rows and vectors.** A file at the 300,000-character limit is about 600
+  pieces at 500 and about 1,500 at 200, all embedded in the request.
+- **The floors move.** The similarity floor, the relative cut and the
+  word-match floor were measured with KURE-v1 on made-up text at 500
+  characters. They are measured again at 200, not carried over.
+- **The dependency.** Docling goes in `modules/extraction/pyproject.toml`
+  (invariant 8) and the lock is regenerated. Third-party documentation reports
+  about 1.8 GB for the install with CPU-only PyTorch and about 1.4 GB of model
+  weights fetched from Hugging Face on first use (MIT licence). These are not
+  measured here; the spike measures them on the release host's image, its
+  150 GB volume and its CI time.
 
 ## What parent-child can and cannot buy
 
 C's usual reason is to retrieve on a small piece and hand a larger one to a
 language model. **Here no language model reads a material's text** (#817 10(b),
-`material_search`'s docstring). So today the parent is never read by anything;
-the gain is only a more exact match on a short child. Where the child is
-itself the excerpt (at most 200 characters, which is the existing cap), the
-excerpt gets better too. If the owners later allow a local model to read a
-parent, that is a privacy decision of its own (a new reader of the text) and is
-not made by this ADR.
+`material_search`'s docstring), so the larger piece has no consumer. What the
+configuration above does buy is a more exact match on a short child, and,
+where the child is the excerpt, an excerpt that is a whole sentence or two
+rather than a window cut out of 500 characters.
 
 ## Open decisions for the owners
 
-1. **Piece size.** Stay at 500, or move to about 300? Every step down is more
-   rows and more vectors per upload: a file at the 300,000-character limit is
-   about 600 pieces at 500, about 1,000 at 300, about 1,500 at 200.
+1. **Piece size.** 200 is what is asked for here; 500 stays the alternative.
+   Every step down is more rows and more vectors per upload: about 600 pieces
+   at 500, about 1,000 at 300, about 1,500 at 200 for a file at the
+   300,000-character limit.
 2. **Upload time.** Vectors are computed in the upload request (no text goes to
    a task). More pieces is a longer request. Is a limit on pieces per upload
    needed, or a different place to embed?
@@ -127,7 +186,8 @@ not made by this ADR.
    on made-up text with 500-character pieces. A different piece size moves
    them. They have to be re-measured with the change, not carried over.
 5. **A converter dependency (D)**: acceptable at all, given the readers are
-   pure Python on purpose?
+   pure Python on purpose? If yes, is OCR for scanned pages off (as above), and
+   is a request-time conversion of a 10 MB file acceptable on the release host?
 
 ## Evaluation (to do, before stage 1 is merged)
 
@@ -150,9 +210,10 @@ not made by this ADR.
   the cut runs after masking and every piece still passes `assert_masked`.
 - Stored rows of two generations live side by side until the old ones expire;
   `_kept_already` will not call an old and a new upload of one file the same.
-- C adds a table that is a second place a piece is addressed (vectors only; the
-  text is not copied). It needs a line in `docs/architecture/privacy.md` and
-  `docs/modules/extraction.md` in the same change.
+- C adds two nullable columns to `ext_material_chunks` (`parent`, `section`),
+  both masked text or an index. It needs a line in
+  `docs/architecture/privacy.md` and `docs/modules/extraction.md` in the same
+  change, and the `section` text passes `assert_masked` like a piece does.
 - D, if ever, changes what "readers are pure Python, no converter, no OCR"
   means in `material_reading.py`'s docstring and in `pyproject.toml`'s comment,
   and needs the owners' agreement before it is a dependency.
