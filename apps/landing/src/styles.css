@@ -870,3 +870,16 @@ h3 {
     margin-left: 0;
   }
 }
+
+/* The refusal of the Meta Pixel (pixel.js), shown only when the pixel is built in. */
+.site-footer__choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.site-footer__choice[hidden] {
+  display: none;
+}
