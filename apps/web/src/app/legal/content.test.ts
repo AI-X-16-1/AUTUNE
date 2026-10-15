@@ -140,7 +140,7 @@ describe("legal documents", () => {
   // thing this file is careful not to have.
   it("name AWS as the one processor of the hosting row, and no longer a relay", () => {
     const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
-    expect(privacy).toContain("Amazon Web Services, Inc. (서울 리전)");
+    expect(privacy).toContain("Amazon Web Services (서울 리전)");
     expect(privacy).toContain("서울 리전 밖으로 옮기지 않습니다");
     expect(privacy).toContain("서버의 임시 메모리 영역에서만 처리하도록 구성되어 있습니다");
     // Audio is still given to no outside service, and now says where it is

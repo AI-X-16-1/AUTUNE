@@ -272,12 +272,13 @@ const table = (head: string[], ...rows: Line[][]): Block => ({
 // host (#1342): the service runs on an EC2 server, an RDS database and an
 // ElastiCache queue in AWS's Seoul region (ap-northeast-2), in the operator's
 // own AWS account. AWS is the one processor of the hosting row (제6조). The
-// legal entity is the one the account's AWS Customer Agreement names; the
-// billing page shows it and it has to be confirmed there. Cloudflare answers
+// policy names the service and its region only: the legal entity is the one the
+// account's AWS Customer Agreement names, it has to be confirmed on the billing
+// page, and it is added to HOSTING once it is. Cloudflare answers
 // DNS for the app's name and serves the landing page, and carries none of the
 // service's traffic, so it is no longer a row of 제6조 or 제7조.
 const OPERATOR = "AI-X-16-1 팀";
-const HOSTING = "Amazon Web Services, Inc.";
+const HOSTING = "Amazon Web Services";
 const OFFICER_NAME = "강민구";
 const OFFICER_TITLE = "팀원";
 const OFFICER_EMAIL = "kjfcvx12@gmail.com";
