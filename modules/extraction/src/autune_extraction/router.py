@@ -742,6 +742,7 @@ def search_materials(
                 title=hit.title,
                 excerpt=hit.excerpt,
                 position=hit.position,
+                more_excerpts=list(hit.more_excerpts),
             )
             for hit in found.hits
         ],
