@@ -337,6 +337,49 @@ it out of the Markdown; the label on a cover is body text and is kept. Not
 tried: a text box, a watermark, a label inside a picture, a document property
 on these two formats, a label on a middle page only.
 
+### Piece size, 30 to 500 characters
+
+The same recursive splitter at eight maximum sizes, over the 200-file shelf
+plus the ten reports (210 materials, 220 questions with an answer, 70 with
+none). Each size gets its own floor: the lowest at which no more than 38 of
+the 70 unanswerable questions are given a hit, today's rate, so the sizes are
+compared at one level of wrong hits. A size of 500 is today's cut (366 pieces,
+identical numbers). The splitter ends a piece at a boundary, so the mean piece
+is shorter than the size (143 at 200, 266 at 500). A size of 10 was not run:
+30 is already worse, and 10 is a word.
+
+| Size | Answer material found | Excerpt holds the answer, 38 keyed (1 / 3 nearest) | Ten reports, path embedded (1 / 3 nearest) | Pieces, today = 1 | Floor |
+| --- | --- | --- | --- | --- | --- |
+| 30 | 87.7% | 55% / 66% | 79% / 89% | 13.2 | 0.59 |
+| 50 | 90.0% | 74% / 84% | 80% / 91% | 8.5 | 0.57 |
+| 100 | 90.9% | 79% / 89% | 79% / 96% | 4.0 | 0.53 |
+| 150 | 93.2% | 82% / 97% | 79% / 94% | 2.6 | 0.51 |
+| **200** | 92.3% | 79% / **100%** | 71% / **100%** | 1.9 | 0.52 |
+| 300 | 93.2% | 68% / 95% | 69% / 93% | 1.4 | 0.51 |
+| 400 | 91.8% | 82% / 95% | 67% / 93% | 1.1 | 0.51 |
+| 500 (today) | 91.4% | 66% / 89% | 67% / 93% | 1.0 | 0.51 |
+
+- **Finding the material is flat from 50 characters up** (90% to 93%; the
+  spread is six questions of 220, inside the noise). Only 30 is clearly lower.
+- **What the excerpt holds peaks at 100 to 200 and collapses under 50**,
+  where a sentence no longer fits in a piece. 38 questions are 2.6 points
+  each, so 400's 82% against 300's 68% is read as noise, not a trend.
+- **Two or three excerpts are best at 150 to 200** (97% and 100%).
+- **With the path embedded, small pieces do better on the reports** (79% to
+  80% at 30 to 150, against 71% at 200). That is five questions of 70 from one
+  generator, and it is not taken as a reason to go under 200.
+- **The floor moves with the size**, from 0.51 to 0.59, and by 0.01 with the
+  shelf: the ten reports on it make it 0.52 at 200 where the shelf without
+  them gave 0.51.
+- **Cost is rows, not embedding time.** On the proposer's CPU (6 threads,
+  KURE-v1, batches of 32, 12,000 characters of the shelf), characters per
+  second were 873 at 100, 1,047 at 200 and 1,128 at 500: 300,000 characters,
+  the product's cap, take about 344 s, 287 s and 266 s. Pieces and rows go up
+  1.9 times at 200 on the shelf (1.3 times without the reports, whose short
+  lines and tables split into 2.7 times as many).
+- **Limits.** One run on invented text, questions written by one person,
+  exact cosine, one machine's CPU; the release host's CPU is not measured.
+
 ### Memory and disk
 
 A conversion of a byte stream (`DocumentStream` over `BytesIO`, never a path),
@@ -453,15 +496,21 @@ release host's memory limit.
 - **Old rows are not re-cut** unless the owners decide it (open decision 3).
   Two generations are searched side by side; their scores are not on one
   scale, which the floor of 0.51 has to be read against.
-- **Upload time grows with the number of pieces** (305 against 229 on the
-  200-file shelf, about 1.3 times). It is measured through the product below.
+- **Upload time is set by the characters, not the pieces**: on a CPU the
+  same 300,000 characters take about 287 s at 200 and 266 s at 500, 8% more
+  ("Piece size"), and the path adds its own characters to what is embedded.
+  Rows go up 1.3 times on the 200-file shelf (305 against 229) and more on
+  reports with many short lines. It is measured through the product below.
 - **`privacy.md` is not changed**: no reader of unmasked text is added, and
   the masked text still goes to the embedder only.
 
 ## Open decisions for the owners
 
-1. **Piece size.** 200 is the proposal; 500 stays the alternative, and the
-   floor goes with it.
+1. **Piece size.** 200 is the proposal. The measurement ("Piece size, 30 to
+   500 characters") puts 100 to 200 as the good band and 150 on a par with
+   200; 500 and anything under 50 are worse on what the excerpt holds. A
+   smaller size costs rows (4.0 times at 100, against 1.9 at 200), not
+   embedding time. The floor goes with the size.
 2. **The similarity floor** (`material_search_min_similarity`): 0.51 for
    pieces of 200 (0.52 if the body were Docling's), changed with the cut in
    the same pull request, and measured again through the product.
@@ -497,7 +546,10 @@ To do before stage 1 is merged:
   can matter.
 - **A boundary test**: a sentence, a table row and a heading that straddle the
   old 500 boundary stay whole.
-- **Upload time**: the request's time for a 10 MB file at 200 characters.
+- **Upload time**: the request's time for a 10 MB file at 200 characters on
+  the release host's CPU. 300,000 characters is about 4.5 minutes on the
+  proposer's machine at either 200 or 500, which an upload request may not
+  survive; that is true of today's cut too and is not changed by this ADR.
 
 To do before stage 2 is merged:
 
