@@ -23,13 +23,15 @@
     />
     <link rel="stylesheet" href="/fonts/pretendard.css" />
     <link rel="stylesheet" href="/styles.css" />
+    <!-- %META_PIXEL% -->
   </head>
   <body>
     <!--
-      A static page with no script, no cookie and no browser storage. It stays
-      that way until the privacy policy says otherwise (#1320): the policy
-      promises no behavioural data and no outside analytics, and _headers
-      enforces it with script-src 'none'.
+      A static page. Its one script is the Meta Pixel (pixel.js), present only
+      in a build given LANDING_META_PIXEL_ID: build.mjs puts its tag where
+      "%META_PIXEL%" stands and widens _headers for it. Without an id the page
+      has no script, no cookie and no browser storage, and _headers keeps
+      script-src 'none'. Privacy policy 제12조 says what the pixel collects.
 
       Links into the app carry a placeholder that build.mjs replaces with the
       app's address.
@@ -405,6 +407,10 @@
           <a href="%APP_ORIGIN%/legal#terms">서비스 이용약관</a>
           <a href="%APP_ORIGIN%/legal#security">정보보호 정책</a>
         </nav>
+        <p class="site-footer__choice" id="pixel-choice" hidden>
+          <span data-pixel-label>이 브라우저에서 광고 측정(Meta 픽셀)을 거부할 수 있습니다.</span>
+          <button class="button button--text" type="button">광고 측정 거부</button>
+        </p>
         <p class="site-footer__copy">© 2026 Autune</p>
       </div>
     </footer>
