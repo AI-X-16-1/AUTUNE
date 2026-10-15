@@ -143,7 +143,12 @@ describe("legal documents", () => {
   it("name AWS as the hosting processor, and Cloudflare only as the dev site's relay", () => {
     const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
     expect(privacy).toContain("Amazon Web Services (서울 리전)");
-    expect(privacy).toContain("서울 리전 밖으로 옮기지 않습니다");
+    // The sentence is about the AWS servers only. Gemini, Slack and the
+    // rest receive text abroad (제7조), so a bare "never leaves Seoul" would
+    // be untrue of the policy it sits in.
+    expect(privacy).toContain("서울 리전 밖의 다른 AWS 리전으로 옮기지 않습니다");
+    expect(privacy).toContain("제7조에 적은 국외 이전은 이와 별개입니다");
+    expect(privacy).not.toContain("서울 리전 밖으로 옮기지 않습니다");
     expect(privacy).toContain("서버의 임시 메모리 영역에서만 처리하도록 구성되어 있습니다");
     // Audio is still given to no outside service, and now says where it is
     // processed while it is.
