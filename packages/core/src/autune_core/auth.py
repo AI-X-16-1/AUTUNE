@@ -12,8 +12,9 @@ Two halves:
   verified directly, no auth BaaS.
 
 The session travels either as ``Authorization: Bearer <jwt>`` (service clients,
-tests) or as the ``autune_session`` cookie (the browser). ``current_user``
-accepts both.
+tests) or as the session cookie (the browser): ``__Host-autune_session``, or
+``autune_session`` in local development (``session_cookie_name``).
+``current_user`` accepts both.
 
 **Signing out ends every session the person has, on the server.** A session
 is a signed token, and until 2026-10-02 signing out only cleared the
@@ -47,7 +48,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import jwt
-from fastapi import Cookie, Depends, Header, Response
+from fastapi import Depends, Header, Request, Response
 from sqlalchemy.orm import Session
 
 from .db import get_session
@@ -59,6 +60,26 @@ ALGORITHM = "HS256"
 DEFAULT_TTL = timedelta(days=7)
 
 SESSION_COOKIE = "autune_session"
+"""The session cookie's name where the connection is not HTTPS (local
+development). See ``session_cookie_name``."""
+
+HOST_SESSION_COOKIE = "__Host-autune_session"
+
+
+def session_cookie_name() -> str:
+    """The name the session cookie has in this environment.
+
+    Everywhere the cookie is ``Secure`` it carries the ``__Host-`` prefix. A
+    browser then takes it only if it is Secure, has ``Path=/`` and no
+    ``Domain``, and refuses one of that name set from a sibling name on the
+    same site (``autune.cloud`` setting a cookie for ``app.autune.cloud``).
+    The unprefixed name is read nowhere outside local development, so a
+    cookie a sibling plants under it is never looked at.
+
+    The prefix needs ``Secure``, and local development is plain HTTP, so it
+    keeps the old name there.
+    """
+    return HOST_SESSION_COOKIE if get_settings().session_cookie_secure else SESSION_COOKIE
 
 
 def issue_token(user_id: str, ttl: timedelta = DEFAULT_TTL) -> str:
@@ -82,7 +103,7 @@ def decode_token(token: str) -> dict[str, Any]:
 def set_session_cookie(response: Response, token: str, ttl: timedelta = DEFAULT_TTL) -> None:
     """Attach the session as an HttpOnly cookie. Used by the OAuth callback."""
     response.set_cookie(
-        SESSION_COOKIE,
+        session_cookie_name(),
         token,
         max_age=int(ttl.total_seconds()),
         httponly=True,
@@ -96,7 +117,7 @@ def clear_session_cookie(response: Response) -> None:
     # The attributes the cookie was set with: a browser matches a deletion to
     # the cookie by name and path, and the rest should not differ either.
     response.delete_cookie(
-        SESSION_COOKIE,
+        session_cookie_name(),
         path="/",
         secure=get_settings().session_cookie_secure,
         httponly=True,
@@ -104,9 +125,19 @@ def clear_session_cookie(response: Response) -> None:
     )
 
 
+def session_cookie_value(request: Request) -> str | None:
+    """The session cookie this environment reads, or ``None``.
+
+    A dependency, not a ``Cookie()`` parameter: the name depends on the
+    environment (``session_cookie_name``) and a parameter's alias is fixed
+    when the route is declared.
+    """
+    return request.cookies.get(session_cookie_name())
+
+
 def _session_token(
     authorization: Annotated[str | None, Header()] = None,
-    autune_session: Annotated[str | None, Cookie()] = None,
+    autune_session: Annotated[str | None, Depends(session_cookie_value)] = None,
 ) -> str:
     """The raw JWT, from the Authorization header if present, else the cookie."""
     if authorization and authorization.lower().startswith("bearer "):
