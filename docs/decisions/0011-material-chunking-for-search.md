@@ -446,13 +446,14 @@ In the order the upload runs:
    alone when the path is empty) and **stored as the piece alone**. The
    embedded string and the stored piece both pass `assert_masked`. The path is
    cut to a fixed length so that it cannot outweigh the piece.
-7. **The search** applies a similarity floor of 0.51, and a hit may carry the
-   excerpts of the two or three nearest pieces of its material.
+7. **The search** applies a similarity floor of 0.51 to 0.52 (the value is
+   set when measured through the product, open decision 2), and a hit may
+   carry the excerpts of the two or three nearest pieces of its material.
 
 Stage it, so each step can be measured and undone alone:
 
-- **Stage 1: the cutter and the floor** (5 and the 0.51). No dependency, no
-  schema change, no change to the readers.
+- **Stage 1: the cutter and the floor** (5 and the 0.51 to 0.52). No
+  dependency, no schema change, no change to the readers.
 - **Stage 2: the heading path in the embedded text** (4 and 6). The `.docx`
   reader learns heading styles; nothing else about a reader changes.
 - **Stage 3: several excerpts per hit** (7). A change to `MaterialHit`, which
@@ -495,7 +496,7 @@ release host's memory limit.
   any new cut.
 - **Old rows are not re-cut** unless the owners decide it (open decision 3).
   Two generations are searched side by side; their scores are not on one
-  scale, which the floor of 0.51 has to be read against.
+  scale, which the floor of 0.51 to 0.52 has to be read against.
 - **Upload time is set by the characters, not the pieces**: on a CPU the
   same 300,000 characters take about 287 s at 200 and 266 s at 500, 8% more
   ("Piece size"), and the path adds its own characters to what is embedded.
@@ -511,9 +512,14 @@ release host's memory limit.
    200; 500 and anything under 50 are worse on what the excerpt holds. A
    smaller size costs rows (4.0 times at 100, against 1.9 at 200), not
    embedding time. The floor goes with the size.
-2. **The similarity floor** (`material_search_min_similarity`): 0.51 for
-   pieces of 200 (0.52 if the body were Docling's), changed with the cut in
-   the same pull request, and measured again through the product.
+2. **The similarity floor** (`material_search_min_similarity`): **0.51 to
+   0.52** for pieces of 200, changed with the cut in the same pull request.
+   0.51 is the value on the 200-file shelf alone and 0.52 with the ten reports
+   on it (the lowest floor that keeps the unanswerable questions at today's
+   rate), so it moves by 0.01 with what a shelf holds. It is not settled
+   here: it is fixed after a measurement through the product (pgvector, the
+   release host), and the proposer's choice until then is 0.52, the value
+   that held the wrong hits on the larger shelf.
 3. **Old uploads.** Leave the old rows with their old cut, or re-cut them on a
    migration. The stored pieces joined are the masked text again, so a re-cut
    is possible; the heading styles of a `.docx` are not in them, only its
@@ -539,9 +545,9 @@ keyed questions, ten repeating-structure reports, and nine label placements.
 To do before stage 1 is merged:
 
 - **Through the product**: `store_upload` and `search_materials` on PostgreSQL
-  with pgvector, not exact scores, so `CANDIDATES` is in and the floor of 0.51
-  is confirmed. A shelf in which the word match fires is needed to measure it;
-  on this shelf it never did.
+  with pgvector, not exact scores, so `CANDIDATES` is in and the floor
+  (0.51 or 0.52) is fixed. A shelf in which the word match fires is needed
+  to measure it; on this shelf it never did.
 - **A shelf with more long files**, so that the piece size is tested where it
   can matter.
 - **A boundary test**: a sentence, a table row and a heading that straddle the
