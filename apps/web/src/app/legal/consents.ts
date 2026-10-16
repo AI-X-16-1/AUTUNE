@@ -100,7 +100,11 @@
  * or file id; 제12조 ⑨ says Google's scripts load only when the button is
  * pressed and that Google may collect browser information under its own
  * policy. A person who agreed to `.9` read a text with no Drive path and no
- * Google script on the service. The effective date stays 2026-10-15; whether
+ * Google script on the service. The same version also corrects the 자료 row of
+ * 제2조: the upload form now fills an empty title with the chosen file's name
+ * (extension dropped), so "the file's name is not stored" is true only when
+ * the member changes the title (mkkim68's review of #1370). The effective
+ * date stays 2026-10-15; whether
  * 제15조 (2)'s 7 days apply to this is the owners' call, on the pull request.
  * The terms did not change, so theirs stays.
  *
