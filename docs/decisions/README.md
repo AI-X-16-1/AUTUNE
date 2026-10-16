@@ -61,3 +61,4 @@ Written in English, like every document here.
 | [0008](0008-intel-schema.md) | Module E's `intel_` tables: natural keys, and `intel_reports` deletion is deferred | Accepted |
 | [0009](0009-frontend-testing.md) | Frontend tests are component-level, and the app-wide privacy rule is not one of them | Accepted |
 | [0010](0010-agent-layer-placement.md) | The agent layer is a top-level peer of `modules/` and `apps/` | Accepted |
+| [0011](0011-material-chunking-for-search.md) | How an uploaded material is cut into pieces for search | Proposed |
