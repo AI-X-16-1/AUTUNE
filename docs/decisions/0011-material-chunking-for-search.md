@@ -380,7 +380,90 @@ is shorter than the size (143 at 200, 266 at 500). A size of 10 was not run:
   1.9 times at 200 on the shelf (1.3 times without the reports, whose short
   lines and tables split into 2.7 times as many).
 - **Limits.** One run on invented text, questions written by one person,
-  exact cosine, one machine's CPU; the release host's CPU is not measured.
+  exact cosine, one machine's CPU. The release host's embedder time is in
+  "The release host's embedder", below.
+
+### Overlap, 0 to 40 characters
+
+The recursive 200 cut over the same 210 materials (220 questions with an
+answer, 70 with none), with each piece also given the last 20 or 40 characters
+of the piece before it: **stored** (in the piece, so in the excerpt too) or
+**embedded only** (the stored piece stays as cut). The floor is replayed
+through exact cosine at 0.52, as in "The floors at 200 characters". Reports:
+the 70 questions of "Reports whose sections repeat". Two runs, one with the
+heading path embedded (E) and one without it and without the heading lines
+being found (B: a piece may run across a heading line).
+
+With the path (E):
+
+| Overlap | Answer in top 5 (of 220) | Kept at the floor / wrong hits per question | Excerpt holds the answer, 38 keyed (1, 2, 3 pieces) | Reports, first excerpt (of 70) |
+| --- | --- | --- | --- | --- |
+| none | 215 | 204 / 0.59 | 30 / 36 / 38 | 50 |
+| stored 20 | 215 | 204 / 0.61 | 32 / 37 / 37 | 49 |
+| stored 40 | 215 | 205 / 0.62 | 32 / 36 / 38 | 47 |
+| embedded 20 | 215 | 204 / 0.61 | 31 / 37 / 37 | 49 |
+| embedded 40 | 215 | 205 / 0.62 | 30 / 36 / 38 | 47 |
+
+Without the path (B):
+
+| Overlap | Answer in top 5 (of 220) | Kept at the floor / wrong hits per question | Excerpt holds the answer, 38 keyed (1, 2, 3 pieces) | Reports, first / 2 / 3 pieces (of 70) |
+| --- | --- | --- | --- | --- |
+| none | 214 | 203 / 0.63 | 30 / 36 / 38 | 30 / 39 / 42 |
+| stored 20 | 214 | 204 / 0.64 | 32 / 37 / 37 | 59 / 65 / 68 |
+| stored 40 | 213 | 207 / 0.64 | 32 / 36 / 38 | 57 / 66 / 68 |
+| embedded 20 | 214 | 204 / 0.64 | 31 / 37 / 37 | 59 / 65 / 68 |
+| embedded 40 | 213 | 207 / 0.64 | 30 / 36 / 38 | 56 / 66 / 68 |
+
+- **With the path, overlap does nothing** the questions can see: 215 in the
+  top five in every row, and the reports' first excerpt 50 against 47 to 49.
+  The differences are one or two questions of 38 and of 220, which is noise.
+- **Without the path, 20 characters nearly double the reports' first
+  excerpt** (30 to 59 of 70), and the same when it is embedded only; 40 is no
+  better than 20. A likely reason, not tested: a piece that opens after a
+  heading line is cut at 200, and the tail of the one before it ends in that
+  heading line, which holds the subject's name, so the tail carries what the
+  path carries. On these reports the tail alone (59) was higher than the path
+  alone (50), and the two together (49) did not add up; why was not examined.
+- **On the shelf of unlike documents it changed nothing** (top five 213 to 215
+  of 220 in every row; the floor stays 0.51 to 0.52).
+- **What this is evidence of.** The tail is insurance for a document whose
+  headings the reader did not find (an unnumbered heading in a PDF, open
+  decision 5): there the path is empty and a piece may run across a heading
+  line, which is the "without the path" run. Where the headings are found it
+  adds nothing. The cut that ships never carries a tail across a heading line,
+  so that run is a model of the case and not a measurement of the shipped
+  code with the path switched off.
+- **Limits.** Ten invented reports of one generator and 70 questions written
+  by one person, the stress case in which the subject's name is only in the
+  heading; 29 questions of 70 is not noise there, and says nothing about the
+  size on a real report. "Stored" was run to see whether it differs from
+  "embedded only"; it does not, and the proposal is "embedded only" because it
+  leaves the stored piece, the excerpt and the same-text check as they were.
+- **Cost.** 20 characters on a piece of 143 on average is 14% more embedded
+  characters, so about 14% more upload time; no row and no byte is added.
+
+### The release host's embedder
+
+The container's embedder (`get_material_embedder`, KURE-v1 on the CPU of the
+release host, 8 vCPU, no GPU), run on 2026-10-16 in the api container on
+invented Korean cut at spaces. The embedder alone: no masking, no database, no
+splitter.
+
+| Characters | Piece size | Pieces | Seconds | Characters per second |
+| --- | --- | --- | --- | --- |
+| 12,000 | 100 / 200 / 500 | 121 / 61 / 25 | 9.0 / 9.1 / 9.5 | 1,330 / 1,310 / 1,270 |
+| 60,000 | 100 / 200 / 500 | 604 / 301 / 121 | 44.9 / 44.4 / 46.3 | 1,340 / 1,350 / 1,300 |
+
+- **The size of a piece hardly matters** (500 is 3% to 4% slower); the cost is
+  the characters. The release host is faster than the proposer's CPU (1,047
+  characters per second at 200 there).
+- **300,000 characters, the cap, would take about 230 s** by that rate. That
+  is a linear estimate, not a run, and the whole request (reading, masking,
+  database) was not timed. With the tail of 20 it is about 14% more.
+- **Load and memory.** The model loads in 12 s when cached; a new process
+  holding it is 3.26 GiB. The api container went from 1.80 GiB idle to 2.96
+  GiB after one upload and 3.05 GiB after one assistant answer; the host
+  holds 2.6 of 31.5 GiB. The peak during processing was not captured.
 
 ### Memory and disk
 
@@ -423,7 +506,8 @@ verdict as today by construction, since the same code decides them.
 
 **Cut the masked text into pieces of 200 characters with a recursive
 splitter (B), and embed each piece with the heading path the reader's text
-already shows (E). Keep today's readers and today's marking check as they
+already shows (E), with the last 20 characters of the piece before it in
+front of the piece (O). Keep today's readers and today's marking check as they
 are, and run them first. Do not add a document converter (D) and do not add
 parent-child pieces (C).**
 
@@ -442,12 +526,16 @@ In the order the upload runs:
    and is cut as in B.
 5. **Each section is split recursively**, coarsest separator first (a blank
    line, a line break, a sentence end, a space, a hard cut), into pieces of at
-   most **200 characters**, without overlap. Joined, the pieces are the masked
-   text again.
-6. **Each piece is embedded as `path` + line break + `piece`** (the piece
-   alone when the path is empty) and **stored as the piece alone**. The
-   embedded string and the stored piece both pass `assert_masked`. The path is
-   cut to a fixed length so that it cannot outweigh the piece.
+   most **200 characters**, without overlap in what is stored (6 puts a tail in
+   the embedded text only). Joined, the pieces are the masked text again.
+6. **Each piece is embedded as `path` + line break + `tail` + `piece`** (the
+   piece alone when the path is empty and it opens its section) and **stored
+   as the piece alone**. `tail` is the last **20 characters** of the piece
+   before it in the same section, never across a heading line. It is a slice
+   of the masked text that runs into the piece, it is embedded only, and the
+   pieces joined are still the masked text. The embedded string and the stored
+   piece both pass `assert_masked`. The path is cut to a fixed length so that
+   it cannot outweigh the piece.
 7. **The search** applies a similarity floor of 0.51 to 0.52 (the value is
    set when measured through the product, open decision 2), and a hit may
    carry the excerpts of the two or three nearest pieces of its material.
@@ -457,7 +545,9 @@ Stage it, so each step can be measured and undone alone:
 - **Stage 1: the cutter and the floor** (5 and the 0.51 to 0.52). No
   dependency, no schema change, no change to the readers.
 - **Stage 2: the heading path in the embedded text** (4 and 6). The `.docx`
-  reader learns heading styles; nothing else about a reader changes.
+  reader learns heading styles; nothing else about a reader changes. The tail
+  of 6 is its own switch (`material_embed_overlap_chars`; 0 embeds the piece
+  as before).
 - **Stage 3: several excerpts per hit** (7). A change to `MaterialHit`, which
   is module B's own type in `schemas.py`, not a contract; the agent tool and
   the web page that read it are looked at first.
@@ -494,7 +584,9 @@ release host's memory limit.
   (`edges()`) is not changed, and a test shows that the same files are stopped.
 - **A piece and its path are masked text.** The headings are found after the
   masking, so the path holds no unmasked value. A heading that held a masked
-  run stays a masked run.
+  run stays a masked run. The tail is a slice of the masked text, so the
+  embedded string is masked text with the path in front and `assert_masked`
+  runs on it as on the piece.
 - **`_kept_already` compares pieces "cut the same way".** An old upload and a
   re-upload of one file are no longer one material, as the ADR already said of
   any new cut.
@@ -503,7 +595,9 @@ release host's memory limit.
   scale, which the floor of 0.51 to 0.52 has to be read against.
 - **Upload time is set by the characters, not the pieces**: on a CPU the
   same 300,000 characters take about 287 s at 200 and 266 s at 500, 8% more
-  ("Piece size"), and the path adds its own characters to what is embedded.
+  ("Piece size"), and the path and the tail add their
+  own characters to what is embedded (20 on a piece of 143 on average is 14%
+  more).
   Rows go up 1.3 times on the 200-file shelf (305 against 229) and more on
   reports with many short lines. It is measured through the product below.
 - **`privacy.md` is not changed**: no reader of unmasked text is added, and
@@ -546,6 +640,13 @@ release host's memory limit.
    excerpts), or the rule is restated with this reading. The proposer's
    reading is the first; it is the owners' to confirm, and `privacy.md` is
    unchanged either way until they do.
+9. **The tail in the embedded text** (`material_embed_overlap_chars`). The
+   proposal is 20 characters, embedded only. The evidence ("Overlap, 0 to 40
+   characters") is that it adds nothing where the headings are found and
+   nearly doubles the reports' first excerpt where they are not, at 14% more
+   embedded characters and no stored byte. 0 is a valid answer if the owners
+   would rather not pay the time for a case that decision 5 may take to a
+   converter later; 40 is not better than 20.
 
 ## Evaluation
 
@@ -553,7 +654,9 @@ Done, on invented text, on one machine: the marking check against Docling's
 output, the text kept, retrieval over 220 questions, the floors at 200
 characters with the 70 questions nothing answers on shelves of 30 to 200
 files (replayed, exact scores), whether the excerpt holds the answer on 38
-keyed questions, ten repeating-structure reports, and nine label placements.
+keyed questions, ten repeating-structure reports, overlap of 0, 20 and 40
+characters with and without the path, the embedder's time on the release
+host, and nine label placements.
 
 To do before stage 1 is merged:
 
@@ -566,9 +669,11 @@ To do before stage 1 is merged:
 - **A boundary test**: a sentence, a table row and a heading that straddle the
   old 500 boundary stay whole.
 - **Upload time**: the request's time for a 10 MB file at 200 characters on
-  the release host's CPU. 300,000 characters is about 4.5 minutes on the
-  proposer's machine at either 200 or 500, which an upload request may not
-  survive; that is true of today's cut too and is not changed by this ADR.
+  the release host. The embedder alone is measured there (about 1,300
+  characters per second, so about 230 s for 300,000 characters by a linear
+  estimate, 14% more with the tail); reading, masking and the database are
+  not. An upload request may not survive that; it is true of today's cut too
+  and is not changed by this ADR.
 
 To do before stage 2 is merged:
 
