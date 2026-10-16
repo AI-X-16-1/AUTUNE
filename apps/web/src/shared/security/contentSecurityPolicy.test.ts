@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { drivePreviewUrl } from "../drive/driveLink";
-import { contentSecurityPolicy, DRIVE_PREVIEW_ORIGINS } from "./contentSecurityPolicy";
+import {
+  contentSecurityPolicy,
+  DRIVE_PREVIEW_ORIGINS,
+  PICKER_CONNECT_SOURCES,
+  PICKER_SCRIPT_SOURCES,
+} from "./contentSecurityPolicy";
 
 /** The sources of one directive, or undefined when the policy has none. */
 function sources(policy: string, name: string): string[] | undefined {
@@ -38,6 +43,30 @@ describe("contentSecurityPolicy", () => {
     expect(sources(built, "connect-src")).toEqual(["'self'"]);
     const live = contentSecurityPolicy({ development: false, liveUrl: "wss://api.example.com/x" });
     expect(sources(live, "connect-src")).toEqual(["'self'", "wss://api.example.com"]);
+  });
+
+  it("opens for Google's Picker only in a build that turns it on", () => {
+    // Off, and the flag left out, are the policy of a build without the feature.
+    expect(contentSecurityPolicy({ development: false, drivePicker: false })).toBe(built);
+    const on = contentSecurityPolicy({ development: false, drivePicker: true });
+    expect(sources(on, "script-src")).toEqual(["'self'", "'unsafe-inline'", ...PICKER_SCRIPT_SOURCES]);
+    expect(sources(on, "connect-src")).toEqual(["'self'", ...PICKER_CONNECT_SOURCES]);
+    // The other directives do not move.
+    for (const name of ["default-src", "style-src", "frame-src", "object-src", "frame-ancestors"]) {
+      expect(sources(on, name)).toEqual(sources(built, name));
+    }
+  });
+
+  it("names the Picker's origins as narrowly as the run showed", () => {
+    const on = contentSecurityPolicy({ development: false, drivePicker: true });
+    const all = [...(sources(on, "script-src") ?? []), ...(sources(on, "connect-src") ?? [])];
+    // No scheme-only, wildcard or whole-googleapis.com source.
+    expect(all.filter((source) => source.includes("*") || source === "https:")).toEqual([]);
+    expect(sources(on, "connect-src")).not.toContain("https://www.googleapis.com");
+    // The download URL the Picker code builds falls under the connect source.
+    expect("https://www.googleapis.com/drive/v3/files/abc/export?mimeType=x").toMatch(
+      new RegExp(`^${PICKER_CONNECT_SOURCES[0]}`),
+    );
   });
 
   it("ignores a live URL that is blank or not a socket address", () => {

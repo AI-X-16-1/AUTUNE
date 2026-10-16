@@ -24,6 +24,13 @@ const config: NextConfig = {
     const policy = contentSecurityPolicy({
       development: process.env.NODE_ENV === "development",
       liveUrl: process.env.NEXT_PUBLIC_LIVE_URL,
+      // The same rule as `drivePickerConfig()`: the button exists only when all
+      // three are set, and the policy opens for Google only then.
+      drivePicker: [
+        process.env.NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID,
+        process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY,
+        process.env.NEXT_PUBLIC_GOOGLE_PICKER_APP_ID,
+      ].every((value) => (value ?? "").trim() !== ""),
     });
     return [{ source: "/:path*", headers: [{ key: "Content-Security-Policy", value: policy }] }];
   },
