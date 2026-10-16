@@ -208,4 +208,24 @@ describe("legal documents", () => {
     expect(version).not.toBe("2026-10-12.8");
   });
 
+  // A member may choose a file from their own Google Drive (#1369). The policy
+  // says the member's browser fetches it, that the server never reaches Drive
+  // or keeps a token or file id, and when Google's scripts load; whoever
+  // agreed to `.9` is asked again.
+  it("say how a file chosen from Google Drive arrives, and when Google's scripts load", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("구성원이 본인의 Google Drive에서 파일을 고르는 경우");
+    expect(privacy).toContain("회사의 서버는 Google Drive에 접속하지 않으며");
+    expect(privacy).toContain("Google Drive의 접근 토큰과 파일 식별자를 받거나 저장하지 않습니다");
+    expect(privacy).toContain("스크립트를 불러오는 계기는 이 버튼뿐이며, 버튼을 누르기 전에는 불러오지 않고");
+    // The form puts the file's name in an empty title, so the policy cannot say the
+    // name is not stored without saying when it is.
+    expect(privacy).toContain("그 이름이 제목으로 저장됩니다");
+    expect(privacy).not.toContain("파일의 원본, 파일의 이름 및 올린 사람은 저장하지 않습니다");
+    expect(privacy).toContain("웹브라우저를 새로고침하거나 탭을 닫기 전까지는 남아 있습니다");
+    expect(privacy).not.toContain("다른 화면에서도 불러오지 않습니다");
+    const version = REQUIRED_CONSENTS.find((c) => c.document === "privacy")?.version;
+    expect(version).not.toBe("2026-10-12.9");
+  });
+
 });
