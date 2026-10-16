@@ -5,10 +5,10 @@ import { ConsentForm } from "./ConsentForm";
 import { missingConsents, REQUIRED_CONSENTS } from "../legal/consents";
 import { LEGAL_DOCUMENTS } from "../legal/content";
 
-// The consent page's rule (the user, 2026-10-02, tightened 2026-10-15): a
-// document has to be opened by the person's own click and scrolled to its end
-// before it can be agreed to, and nothing is sent until every one of them is.
-// jsdom has no layout, so the panel's geometry is set by hand.
+// The consent page's rule (the user, 2026-10-02, kept on 2026-10-15 after the
+// scroll-to-the-end rule of that morning was taken back): a document has to be
+// opened by the person's own click before it can be agreed to, and nothing is
+// sent until every one of them is. Scrolling it is not asked for.
 
 afterEach(cleanup);
 
@@ -19,21 +19,10 @@ const box = (document: string) =>
 const rowButton = (document: string) =>
   (box(document).closest("li") as HTMLElement).querySelector("button") as HTMLButtonElement;
 const open = (document: string) => fireEvent.click(rowButton(document));
-const scrollTo = (document: string, at: "middle" | "end") => {
-  const region = screen.getByRole("region", { name: title(document) });
-  Object.defineProperty(region, "scrollHeight", { configurable: true, value: 1000 });
-  Object.defineProperty(region, "clientHeight", { configurable: true, value: 400 });
-  Object.defineProperty(region, "scrollTop", {
-    configurable: true,
-    value: at === "end" ? 600 : 100,
-  });
-  fireEvent.scroll(region);
-};
-/** Open a document, scroll it to its end and press its "동의" button. */
+/** Open a document, then tick its box. */
 const agree = (document: string) => {
   open(document);
-  scrollTo(document, "end");
-  fireEvent.click(rowButton(document));
+  fireEvent.click(box(document));
 };
 const submit = () => screen.getByRole("button", { name: "동의하고 계속" }) as HTMLButtonElement;
 
@@ -54,14 +43,13 @@ describe("ConsentForm", () => {
     expect(submit().disabled).toBe(true);
   });
 
-  it("shows a document's own text when it is opened, but keeps its box locked until the end", () => {
+  it("shows a document's own text when it is opened, and needs no scrolling to agree", () => {
     form();
 
     open("terms");
-    scrollTo("terms", "middle");
 
     expect(screen.getByRole("region", { name: title("terms") }).textContent).toContain("제1조");
-    expect(box("terms").disabled).toBe(true);
+    expect(box("terms").disabled).toBe(false);
     expect(rowButton("terms").textContent).toBe("접기");
   });
 
@@ -73,23 +61,46 @@ describe("ConsentForm", () => {
     expect(screen.getByRole("region", { name: title("terms") }).tabIndex).toBe(0);
   });
 
-  it("turns the button into 동의 at the end of the text, and unlocks only that document's box", () => {
+  it("unlocks only the box of the document that was opened", () => {
     form();
 
     open("terms");
-    scrollTo("terms", "end");
 
-    expect(rowButton("terms").textContent).toBe("동의");
     expect(box("terms").disabled).toBe(false);
     expect(box("privacy").disabled).toBe(true);
   });
 
-  it("ticks the box when 동의 is pressed, and lets it be unticked and ticked again", () => {
+  it("never agrees from the row's button: opening and closing leaves the box unticked", () => {
+    form();
+
+    open("terms");
+    expect(box("terms").checked).toBe(false);
+    expect(rowButton("terms").textContent).toBe("접기");
+
+    open("terms");
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(rowButton("terms").textContent).toBe("내용 보기");
+    expect(box("terms").checked).toBe(false);
+    expect(submit().disabled).toBe(true);
+  });
+
+  it("does not agree on a double click of the row's button", () => {
+    form();
+
+    open("terms");
+    open("terms");
+    open("terms");
+
+    expect(box("terms").checked).toBe(false);
+    expect(submit().disabled).toBe(true);
+  });
+
+  it("ticks the box on its own click, and lets it be unticked and ticked again", () => {
     form();
 
     agree("terms");
     expect(box("terms").checked).toBe(true);
-    expect(rowButton("terms").textContent).toBe("내용 보기");
+    expect(rowButton("terms").textContent).toBe("접기");
 
     fireEvent.click(box("terms"));
     expect(box("terms").checked).toBe(false);
@@ -109,14 +120,15 @@ describe("ConsentForm", () => {
     }
   });
 
-  it("does not unlock a box for a document that was only opened and closed again", () => {
+  it("keeps a box unlocked once its document was opened, even after it is closed again", () => {
     form();
 
     open("terms");
     open("terms");
 
     expect(screen.queryByRole("region")).toBeNull();
-    expect(box("terms").disabled).toBe(true);
+    expect(box("terms").disabled).toBe(false);
+    expect(box("privacy").disabled).toBe(true);
   });
 
   it("sends nothing until every document is agreed to, then all of them at once", async () => {
