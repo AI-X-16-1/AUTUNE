@@ -32,7 +32,8 @@ things in the app close that, and must stay before an ad script lands here
   `LANDING_META_PIXEL_ID` the build ships no script and `_headers` keeps
   `script-src 'none'`. With it, `build.mjs` adds the tag and opens the CSP to
   `connect.facebook.net` and `www.facebook.com` only. The pixel runs with
-  `autoConfig` off, sends one `PageView`, and is never loaded in a browser
+  `autoConfig` off, sends one `PageView` and one `Lead` per press of a
+  "시작하기" link (`data-pixel-lead`), and is never loaded in a browser
   that pressed the footer's "광고 측정 거부" (privacy policy 제12조 ⑥–⑧).
   Automatic advanced matching stays off in Meta's Events Manager. Any other
   script lands only in a pull request that changes the policy's wording,

@@ -8,6 +8,10 @@
 //   on its own. Automatic advanced matching is a setting in Meta's Events
 //   Manager and must stay off there as well.
 // - One PageView per load; this page has no client-side navigation.
+// - One Lead per press of a "시작하기" link (`data-pixel-lead`), so an ad can
+//   be measured by who went on to the app. Not the header's "로그인": that is
+//   someone who already has an account. The event carries no button text;
+//   with autoConfig off the pixel reads nothing from the page.
 // - The refusal of privacy policy 제12조: the footer button keeps a mark in
 //   this site's localStorage, and with it set Meta's script is never loaded.
 (function () {
@@ -50,6 +54,11 @@
     fbq("set", "autoConfig", false, id);
     fbq("init", id);
     fbq("track", "PageView");
+    document.addEventListener("click", function (event) {
+      var link = event.target.closest && event.target.closest("a[data-pixel-lead]");
+      if (!link || refused() || !window.fbq) return;
+      window.fbq("track", "Lead");
+    });
   }
 
   function showChoice() {

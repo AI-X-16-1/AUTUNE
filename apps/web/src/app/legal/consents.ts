@@ -93,6 +93,27 @@
  * that implied the cookie stayed on the landing page. The effective date
  * stays 2026-10-15. The terms did not change, so theirs stays.
  *
+ * `2026-10-12.10`, the privacy policy alone (#1369): a member may choose a
+ * file from their own Google Drive for the 자료 upload, in their own browser,
+ * and the 자료 screen then loads Google's scripts. 제2조 and 제2조 ⑤ say how the
+ * file arrives and that the server never reaches Drive or keeps a Drive token
+ * or file id; 제12조 ⑨ says Google's scripts load only when the button is
+ * pressed and that Google may collect browser information under its own
+ * policy. A person who agreed to `.9` read a text with no Drive path and no
+ * Google script on the service. The same version also corrects the 자료 row of
+ * 제2조: the upload form now fills an empty title with the chosen file's name
+ * (extension dropped), so "the file's name is not stored" is true only when
+ * the member changes the title (mkkim68's review of #1370). The effective
+ * date stays 2026-10-15; whether
+ * 제15조 (2)'s 7 days apply to this is the owners' call, on the pull request.
+ * The same `.10` also carries the landing page's `Lead` (the privacy owner,
+ * 2026-10-16): the pixel tells Meta when a "시작하기" link is pressed, so an
+ * ad can be measured by who went on to the app with no script on the app's
+ * origin, and 제12조 ⑥'s table adds that fact to what is collected, when it
+ * is sent and why. Both came in before `.10` reached the release host, so
+ * nobody had agreed to a `.10` without either, and one rise asks everyone
+ * once. The terms did not change, so theirs stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -112,7 +133,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.4" },
-  { document: "privacy", version: "2026-10-12.9" },
+  { document: "privacy", version: "2026-10-12.10" },
 ];
 
 /** The required consents this person has not given, in the page's order. */
