@@ -386,6 +386,12 @@ services:
         # through the site's address the WebSocket handshake loses its
         # Upgrade header. Empty keeps it on the page's origin.
         NEXT_PUBLIC_LIVE_URL: ${DEV_LIVE_URL:-}
+        # The Drive button on the materials upload (#1369): drawn only when all three
+        # are set, empty is off. deploy.sh exports every key of the autune/app
+        # secret, so the release host takes them from there.
+        NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID:-}
+        NEXT_PUBLIC_GOOGLE_PICKER_API_KEY: ${NEXT_PUBLIC_GOOGLE_PICKER_API_KEY:-}
+        NEXT_PUBLIC_GOOGLE_PICKER_APP_ID: ${NEXT_PUBLIC_GOOGLE_PICKER_APP_ID:-}
         API_PROXY_TARGET: http://api:8000
     image: autune-web:dev
     restart: unless-stopped
