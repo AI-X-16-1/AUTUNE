@@ -224,6 +224,10 @@
  *   says so, and that the service neither reads nor keeps it: the API reads
  *   only its own session and OAuth-state cookies (`autune_core.auth`,
  *   `auth_router`) and logs no request headers.
+ * - the pixel also sends a `Lead` when a "시작하기" link on the landing page
+ *   is pressed (apps/landing/src/pixel.js, `data-pixel-lead`), so an ad can
+ *   be measured by who went on to the app without any script on the app's
+ *   origin. 제12조 ⑥'s table names it among what is collected, when, and why.
  * A sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
@@ -881,10 +885,10 @@ const PRIVACY: LegalDocument = {
           ["수집하는 자", [PIXEL_COLLECTOR, " (미국)"]],
           [
             "수집하는 행태정보",
-            "소개 페이지를 방문한 사실, 방문 일시와 그 주소, 직전에 보던 페이지의 주소, 웹브라우저 및 기기의 종류, 접속 IP 주소, Meta 픽셀이 저장하는 웹브라우저 식별자(_fbp 쿠키). 이용자가 같은 웹브라우저에서 Facebook 또는 Instagram에 로그인한 경우 Meta Platforms, Inc.는 자신의 쿠키로 해당 계정과 연결할 수 있습니다",
+            "소개 페이지를 방문한 사실, 소개 페이지에서 '시작하기' 버튼을 눌러 서비스로 이동한 사실, 방문 일시와 그 주소, 직전에 보던 페이지의 주소, 웹브라우저 및 기기의 종류, 접속 IP 주소, Meta 픽셀이 저장하는 웹브라우저 식별자(_fbp 쿠키). 이용자가 같은 웹브라우저에서 Facebook 또는 Instagram에 로그인한 경우 Meta Platforms, Inc.는 자신의 쿠키로 해당 계정과 연결할 수 있습니다",
           ],
-          ["수집 방법", "이용자가 소개 페이지를 여는 때 웹브라우저가 Meta Platforms, Inc.에 직접 전송"],
-          ["수집 목적", "광고를 보고 방문한 수의 측정 및 광고 대상의 설정"],
+          ["수집 방법", "이용자가 소개 페이지를 여는 때와 '시작하기' 버튼을 누르는 때 웹브라우저가 Meta Platforms, Inc.에 직접 전송"],
+          ["수집 목적", "광고를 보고 방문한 수와 그중 서비스로 이동한 수의 측정 및 광고 대상의 설정"],
           ["보유 및 이용 기간", "Meta Platforms, Inc.가 정한 기간"],
         ),
         p(

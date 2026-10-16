@@ -208,4 +208,14 @@ describe("legal documents", () => {
     expect(version).not.toBe("2026-10-12.8");
   });
 
+  // The landing page's pixel sends a Lead when "시작하기" is pressed. The
+  // policy names it, and whoever agreed to `.9` is asked again.
+  it("name the press of 시작하기 among what the landing page's pixel collects", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("소개 페이지에서 '시작하기' 버튼을 눌러 서비스로 이동한 사실");
+    expect(privacy).toContain("이용자가 소개 페이지를 여는 때와 '시작하기' 버튼을 누르는 때");
+    const version = REQUIRED_CONSENTS.find((c) => c.document === "privacy")?.version;
+    expect(version).not.toBe("2026-10-12.9");
+  });
+
 });

@@ -93,6 +93,15 @@
  * that implied the cookie stayed on the landing page. The effective date
  * stays 2026-10-15. The terms did not change, so theirs stays.
  *
+ * `2026-10-12.10`, the privacy policy alone (the privacy owner, 2026-10-16):
+ * the landing page's pixel also tells Meta when a "시작하기" link is pressed
+ * (a `Lead`), so an ad can be measured by who went on to the app with no
+ * script on the app's origin. 제12조 ⑥'s table adds that fact to what is
+ * collected, when it is sent and why. A person who agreed to `.9` agreed to
+ * a list without it. The effective date stays 2026-10-15; the terms did not
+ * change. Versions are compared for equality only, so `.10` after `.9` needs
+ * no ordering.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -112,7 +121,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.4" },
-  { document: "privacy", version: "2026-10-12.9" },
+  { document: "privacy", version: "2026-10-12.10" },
 ];
 
 /** The required consents this person has not given, in the page's order. */
