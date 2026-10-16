@@ -536,6 +536,10 @@ class MaterialHit(BaseModel):
     excerpt: str
     position: int
     """Which stored piece of the material the excerpt is from, from 0."""
+    more_excerpts: list[str] = []
+    """Excerpts of the material's next-nearest pieces, nearest first. Empty
+    unless ``AUTUNE_EXTRACTION_MATERIAL_SEARCH_EXCERPTS`` is above 1. Additive:
+    a reader that does not know the field is unaffected."""
 
 
 class MaterialAnswer(BaseModel):

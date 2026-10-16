@@ -26,6 +26,10 @@ bind this step (10(b), 2026-10-08):
   ``EXCERPT_CHARS`` of one stored piece, never a whole document; at most
   ``MAX_HITS`` materials. Every excerpt and title passes ``screen_output``
   on its way out, and a hit the screen still refuses is dropped, not shown.
+  With ``material_search_excerpts`` above 1 (off by default), a hit also
+  carries the excerpts of its next-nearest pieces among the ``CANDIDATES``
+  read, each cut and screened the same way; one the screen refuses is left
+  out and the hit stays.
 - **No model but the embedder.** This function hands nothing to a language
   model. The assistant's tool over it (``tools.find_materials``) is off by
   default for that reason.
@@ -112,10 +116,14 @@ MAX_HITS = 5
 screen's."""
 
 EXCERPT_CHARS = 200
-"""The longest excerpt: under half of a stored piece (``materials.CHUNK_CHARS``),
-one piece per material. Five hits are at most a thousand characters of a
-team's documents -- never a whole one. #817 set no number; this is the
-conservative one until the team does."""
+"""The longest excerpt, of one stored piece: with pieces of 200 characters
+(``materials.CHUNK_CHARS``) the piece itself, and the first 200 of an older,
+longer one. With ``material_search_excerpts`` at 1, five hits are at most a
+thousand characters of a team's documents; at 3 they are at most three
+thousand. A material of 200 characters or less is shown whole at 1, and one of
+600 or less at 3: "never a whole document" holds only for a longer one. What
+#817 10(b) allows once a piece is the excerpt is open decision 8 of ADR 0011.
+#817 set no number; this is the conservative one until the team does."""
 
 CANDIDATES = 50
 """Nearest pieces read before they are grouped by material. Five materials
@@ -174,6 +182,10 @@ class MaterialHit:
     score: float
     """Cosine similarity of the excerpt's piece to the question, -1 to 1.
     Under the floor for a material found by its words."""
+    more_excerpts: tuple[str, ...] = ()
+    """Excerpts of the material's next-nearest pieces, nearest first, as many
+    as ``material_search_excerpts`` allows less the first -- none by default.
+    Masked, screened and cut as ``excerpt`` is."""
 
 
 @dataclass(frozen=True)
@@ -432,6 +444,34 @@ def _notice(question_hid: bool, asks_personal: bool, hits: list[MaterialHit]) ->
     return " ".join(said) or None
 
 
+def _more_of(
+    candidates: list[_Piece],
+    material_id: str,
+    position: int,
+    masked_question: str,
+    floor: float,
+    count: int,
+) -> tuple[str, ...]:
+    """Excerpts of up to ``count`` other pieces of ``material_id`` among the
+    nearest ``candidates`` (nearest first) that score ``floor`` or more. A
+    piece whose excerpt the screen refuses is left out; the hit stays."""
+    if count <= 0:
+        return ()
+    out: list[str] = []
+    for m, _title, other, text, score in candidates:
+        if len(out) >= count:
+            break
+        if m != material_id or other == position or score < floor:
+            continue
+        try:
+            shown = screen_output(excerpt_of(text, masked_question))
+        except PrivacyViolationError:
+            continue
+        if shown and shown not in out:
+            out.append(shown)
+    return tuple(out)
+
+
 def search_materials(
     session: Session,
     team_id: str,
@@ -479,7 +519,8 @@ def search_materials(
 
     best: float | None = None
     near: dict[str, _Piece] = {}
-    for row in _nearest(session, reach, vector):
+    candidates = _nearest(session, reach, vector)
+    for row in candidates:
         if row[4] < floor:
             # Nearest first: everything after this is further still.
             break
@@ -510,6 +551,7 @@ def search_materials(
                     break
                 worded.setdefault(row[0], row)
 
+    extra = max(1, settings.material_search_excerpts) - 1
     found: dict[str, tuple[_Piece, str]] = {}
     for how, rows in (("title", named), ("vector", near.values()), ("words", worded.values())):
         for row in rows:
@@ -528,6 +570,9 @@ def search_materials(
                 position=position,
                 excerpt=screen_output(excerpt_of(text, masked.text)),
                 score=round(score, 4),
+                more_excerpts=_more_of(
+                    candidates, material_id, position, masked.text, floor, extra
+                ),
             )
         except PrivacyViolationError:
             dropped += 1

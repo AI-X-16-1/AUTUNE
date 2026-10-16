@@ -212,8 +212,8 @@ def test_the_pieces_join_back_into_the_text_and_none_is_too_long() -> None:
 
     assert "".join(pieces) == text
     assert all(0 < len(piece) <= materials.CHUNK_CHARS for piece in pieces)
-    # A piece ends at a line break where one falls in its second half.
-    assert pieces[0].endswith("\n")
+    # A piece ends at a sentence end where the text has no line break to fit.
+    assert pieces[0].endswith(". ")
 
 
 def test_a_short_text_is_one_piece() -> None:
