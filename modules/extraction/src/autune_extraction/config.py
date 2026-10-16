@@ -461,14 +461,79 @@ class ExtractionSettings(BaseSettings):
     notice (제4조 ⑤) are true only while it is a server Autune runs. Pointing
     it at an outside embedding service is a change to both, not a setting."""
 
-    material_search_min_similarity: float = Field(default=0.5, ge=-1, le=1)
+    material_chunk_chars: int = Field(default=200, ge=50, le=1000)
+    """The longest piece an upload's masked text is cut into, one
+    ``ext_material_chunks`` row each (#817, ADR 0011; it was 500 before).
+
+    **200 by default, from 30 to 500 measured once on made-up text**
+    (2026-10-16, 210 invented files, 290 and 70 questions): the material was
+    found 90% to 93% of the time from 50 characters up and 88% at 30; what
+    the excerpt held was best at 100 to 200 and fell under 50; 500 was not
+    the best on either. A smaller piece costs rows, not embedding time (the
+    same characters are embedded). A change applies to uploads from then on:
+    stored rows keep the cut they were made with, and an upload of a text
+    that is already kept under another size is another material
+    (``materials._kept_already`` compares pieces cut the same way)."""
+
+    material_heading_path: bool = True
+    """Put the headings above a piece in front of it in the text that is
+    embedded (#817, ADR 0011). The stored piece and every excerpt are the piece
+    alone; only its vector changes. A heading is a markdown ``#`` line or a
+    short line numbered ``2.``, ``2.1``, ``2.1.1`` (``material_pieces``).
+
+    On ten invented reports whose sections repeat one shape, the excerpt held
+    the answer 23% of the time with pieces of 500 characters, 43% with pieces
+    of 200 and 71% with the path (2026-10-16). On a shelf of unlike documents
+    it changed nothing (212 against 213 answers of 220). ``false`` embeds the
+    piece alone, as before; rows already stored are not changed either way."""
+
+    material_embed_overlap_chars: int = Field(default=20, ge=0, le=100)
+    """How many characters of the piece before it are put in front of a piece
+    in the text that is embedded (#817, ADR 0011), within one section. Like the
+    path it moves the vector only: the stored piece, every excerpt and
+    ``_kept_already`` are the piece alone, and the pieces joined are still the
+    masked text.
+
+    On ten invented reports (70 questions) with no heading path, 20 characters
+    took the excerpt holding the answer from 30 to 59; with the path it made
+    50 into 49: the path carries what the overlap carries. On a shelf of unlike
+    documents it changed nothing (top five 214 of 220 either way). 40 was no
+    better than 20 (2026-10-16). ``0`` embeds the piece as before; rows
+    already stored are not changed either way."""
+
+    material_search_excerpts: int = Field(default=1, ge=1, le=3)
+    """How many excerpts one hit carries: its nearest piece's, and up to this
+    many less one of the material's other pieces among the nearest the search
+    read, each at most ``material_search.EXCERPT_CHARS`` and screened like the
+    first (#817, ADR 0011, open decision 4).
+
+    **1 by default: one excerpt per material is what #817 10(b) answered.**
+    More than one is a product decision this setting does not make. Measured
+    on made-up text, the excerpt held the answer 79% of the time with one
+    piece and 95% to 100% with the two or three nearest.
+
+    **Do not raise it above 1 before ADR 0011's open decision 8 is answered**
+    (what #817 10(b) rests on once a piece is the whole excerpt). Nothing but
+    this setting stands between a deployment and up to 600 characters of one
+    material per hit, and 3,000 over five hits."""
+
+    material_search_min_similarity: float = Field(default=0.52, ge=-1, le=1)
     """Below this cosine similarity to the masked question, an uploaded
     material's nearest piece is not a hit (#817, ``material_search``). A
     search with nothing at or above it answers no materials and says nothing
     close enough was found, rather than the nearest unrelated ones.
 
-    **0.5 by default, measured once on made-up text and not on a team's
-    materials.** With the embedder a team would run, KURE-v1 (``local`` or
+    **0.52 by default, for pieces of 200 characters** (ADR 0011, 2026-10-16,
+    exact scores, not yet through the product): the lowest floor at which no
+    more than 38 of 70 questions nothing answers found a material, the rate
+    of 0.5 with pieces of 500. Without the ten reports on the shelf it is
+    0.51; it moves by 0.01 with what a shelf holds and by 0.06 or so across
+    piece sizes (0.59 at 30, 0.53 at 100). Set it from a measurement on the
+    deployment's own shelf.
+
+    **The paragraph below is the earlier measurement, for pieces of 500
+    characters: 0.5 by default, measured once on made-up text and not on a
+    team's materials.** With the embedder a team would run, KURE-v1 (``local`` or
     ``hosted``), 30 invented Korean documents and 160 questions (2026-10-12):
     a material that answers the question scored 0.45 to 0.80, median 0.65;
     one that does not, 0.16 to 0.66, median 0.40. The two overlap, so no

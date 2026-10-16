@@ -92,8 +92,10 @@ from autune_core.errors import AutuneError, ConflictError, NotFoundError, Valida
 from autune_integrations.document_masking import mask_document
 from autune_integrations.privacy import assert_masked
 
+from .config import get_settings
 from .material_formats import NotRead
 from .material_marking import Marking, file_marking
+from .material_pieces import Piece, pieces_of
 from .material_reading import read_file
 from .models import (
     DRIVE_KINDS,
@@ -117,10 +119,12 @@ archive: past this, delete one first."""
 MAX_TITLE_CHARS = 120
 MAX_LINK_CHARS = 2000
 
-CHUNK_CHARS = 500
+CHUNK_CHARS = 200
 """The longest piece of an upload's masked text in one ``ext_material_chunks``
-row. A piece ends after a line break, else after a space, where one falls in
-its second half."""
+row, unless ``ExtractionSettings.material_chunk_chars`` says otherwise (ADR
+0011; it was 500). A piece is cut at the coarsest separator that lets it fit
+-- a blank line, a line break, a sentence end, a space -- and at the size only
+as the last resort (``material_pieces``)."""
 
 ALARM_KEPT = timedelta(days=30)
 """How long an unacknowledged alarm row is kept (#817, #1198). In a small team
@@ -405,22 +409,25 @@ def register(session: Session, team_id: str, *, title: str, link: str) -> ExtMat
 
 def cut(masked: str, size: int = CHUNK_CHARS) -> list[str]:
     """``masked`` in pieces of at most ``size`` characters, in order; joined,
-    they are ``masked`` again. A piece ends after a line break, else after a
-    space, when one falls in its second half -- else at ``size``."""
-    pieces: list[str] = []
-    start = 0
-    while len(masked) - start > size:
-        window = masked[start : start + size]
-        end = window.rfind("\n") + 1
-        if end <= size // 2:
-            end = window.rfind(" ") + 1
-        if end <= size // 2:
-            end = size
-        pieces.append(window[:end])
-        start += end
-    if start < len(masked):
-        pieces.append(masked[start:])
-    return pieces
+    they are ``masked`` again. Each is cut at the coarsest separator that lets
+    it fit (``material_pieces.split_recursive``). A heading above a piece is
+    not part of what this returns: ``cut_with_paths`` gives it with the piece."""
+    return [piece.text for piece in pieces_of(masked, size, with_path=False)]
+
+
+def cut_with_paths(masked: str) -> list[Piece]:
+    """The pieces of ``masked`` as ``store_upload`` stores them, each with the
+    heading path and the tail of the piece before it that are embedded before
+    it, at the size and with the switches of the settings
+    (``material_chunk_chars``, ``material_heading_path``,
+    ``material_embed_overlap_chars``)."""
+    settings = get_settings()
+    return pieces_of(
+        masked,
+        settings.material_chunk_chars,
+        with_path=settings.material_heading_path,
+        overlap=settings.material_embed_overlap_chars,
+    )
 
 
 def embedded(embedder: Embedder, texts: list[str]) -> list[list[float]]:
@@ -535,9 +542,17 @@ def store_upload(
     masked = mask_document(found.text).text
     not_read = found.not_read
     del found
-    pieces = cut(masked)
-    for piece in pieces:
-        assert_masked(piece, destination="ext_material_chunks")
+    cut_pieces = cut_with_paths(masked)
+    pieces = [piece.text for piece in cut_pieces]
+    for piece in cut_pieces:
+        assert_masked(piece.text, destination="ext_material_chunks")
+        if piece.embedded != piece.text:
+            # What the embedder is given is the path, the tail of the piece
+            # before it and the piece. Both are slices of the masked text, and
+            # a pattern across the cut between two pieces is only seen in the
+            # one string they make: so it is looked at again as that string,
+            # whichever of the two the piece has.
+            assert_masked(piece.embedded, destination="material_embedder")
     embedder = get_material_embedder()
     now = datetime.now(UTC)
     same = _kept_already(session, team_id, pieces, model=embedder.model_version, now=now)
@@ -547,7 +562,7 @@ def store_upload(
     _refuse_a_full_shelf(session, team_id, field="file")
     # Vectors from the masked pieces and nothing else, in this request: no
     # text or path goes to a task (#817).
-    vectors = embedded(embedder, pieces)
+    vectors = embedded(embedder, [piece.embedded for piece in cut_pieces])
     row = ExtMaterial(
         team_id=team_id,
         title=clean,

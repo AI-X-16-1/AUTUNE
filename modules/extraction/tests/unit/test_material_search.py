@@ -143,8 +143,15 @@ def test_each_piece_gets_a_vector_of_the_columns_width_made_from_masked_text(
     assert len(chunks) > 1
     assert all(len(chunk.embedding) == MATERIAL_EMBEDDING_DIM for chunk in chunks)  # type: ignore[arg-type]
     assert row.embedding_model == "fake"
-    # The embedder was handed the stored pieces, which are masked -- and nothing else.
-    assert embedder.seen == [chunk.text for chunk in chunks]
+    # The embedder was handed the stored pieces, which are masked -- and nothing
+    # else but the masked tail of the piece before it (``material_pieces.Piece.lead``).
+    assert len(embedder.seen) == len(chunks)
+    overlap = get_settings().material_embed_overlap_chars
+    for index, (seen, chunk) in enumerate(zip(embedder.seen, chunks, strict=True)):
+        assert seen.endswith(chunk.text)
+        lead = seen.removesuffix(chunk.text)
+        assert len(lead) <= overlap
+        assert lead == "" or chunks[index - 1].text.endswith(lead)
     assert not any(PHONE in text for text in embedder.seen)
 
 
@@ -431,7 +438,7 @@ def test_the_floor_has_a_default_for_the_real_embedder_and_reads_the_environment
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     field = ExtractionSettings.model_fields["material_search_min_similarity"]
-    assert field.default == 0.5
+    assert field.default == 0.52
 
     monkeypatch.setenv("AUTUNE_EXTRACTION_MATERIAL_SEARCH_MIN_SIMILARITY", "0.55")
     assert ExtractionSettings().material_search_min_similarity == 0.55
@@ -557,8 +564,10 @@ def test_the_excerpt_is_the_window_around_the_line_that_answers() -> None:
 
 
 def test_the_rollback_excerpt_reaches_the_person_through_the_search(
-    session: Session, embedder: Recording
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # An upload stored before ADR 0011: pieces of 500, longer than an excerpt.
+    monkeypatch.setattr(get_settings(), "material_chunk_chars", 500)
     upload(session, ROLLBACK, title="배포 체크리스트")
 
     [hit] = search_materials(session, TEAM, "배포할 때 롤백은 어떻게 하나요").hits
@@ -859,6 +868,9 @@ def test_the_cut_is_measured_from_the_best_material_not_from_the_one_before(
 ) -> None:
     """The third material is nearer the second than the cut is wide, and
     still further from the best than the cut allows."""
+    # Pieces of 500, as these documents were measured; at 200 every piece of
+    # the three scores alike under the ``fake`` embedder.
+    monkeypatch.setattr(get_settings(), "material_chunk_chars", 500)
     for n, share in enumerate((6, 4, 2)):
         upload(session, LAUNCH * share + BUDGET * (6 - share) + THIRD, title=f"자료 {n}")
     hits = search_materials(session, TEAM, ASKED).hits
@@ -975,7 +987,10 @@ def test_the_route_answers_within_the_cut_and_returns_no_score(
     body = answer.json()
     assert [hit["material_id"] for hit in body["hits"]] == ids[:2]
     assert body["more"] is False and body["notice"] is None
-    assert all(set(hit) == {"material_id", "title", "excerpt", "position"} for hit in body["hits"])
+    assert all(
+        set(hit) == {"material_id", "title", "excerpt", "position", "more_excerpts"}
+        for hit in body["hits"]
+    )
     assert "score" not in answer.text and "similar" not in answer.text
 
 
