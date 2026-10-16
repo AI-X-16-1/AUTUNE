@@ -198,8 +198,18 @@ export function LiveMeetingScreen({
   // S13 is drawn without the app's sidebar; this bar is the screen's whole
   // frame, in every phase, so the gate before recording and the upload after
   // it sit in the same place the transcript does.
-  const frame = (body: React.ReactNode) => (
-    <div className="flex min-h-screen flex-col bg-[var(--color-surface-panel)]">
+  //
+  // While recording the frame is exactly the window's height and the page
+  // itself never scrolls: the transcript and the rail scroll on their own, so
+  // reading the newest line does not push the timer and the research panel
+  // out of sight, and reading the research does not hide the newest line (the
+  // user, 2026-10-14).
+  const frame = (body: React.ReactNode, fixed = false) => (
+    <div
+      className={`flex flex-col bg-[var(--color-surface-panel)] ${
+        fixed ? "h-dvh overflow-hidden" : "min-h-screen"
+      }`}
+    >
       <LiveTopBar meetingId={meetingId} state={recording} elapsedSeconds={live.elapsedSeconds} />
       {body}
     </div>
@@ -337,7 +347,7 @@ export function LiveMeetingScreen({
       {live.liveLost && (
         <p
           role="status"
-          className="text-ink-muted"
+          className="flex-none text-ink-muted"
           style={{ fontSize: "var(--text-meta)", padding: "var(--space-12) var(--space-24) 0" }}
         >
           라이브 전사가 끊겼습니다. 녹음은 계속되고, 정지하면 전체 녹음이 올라갑니다.
@@ -358,6 +368,7 @@ export function LiveMeetingScreen({
         research={consented ? <LiveResearchPanel docs={liveResearch.docs} /> : undefined}
       />
     </>,
+    true,
   );
 }
 

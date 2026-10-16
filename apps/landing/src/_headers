@@ -1,0 +1,15 @@
+# Cloudflare Pages response headers for every path.
+#
+# The script, image and connect sources are filled in by build.mjs. Without a
+# Meta Pixel id they are script-src 'none', img-src 'self' and no connect-src:
+# no script runs here. With one, they name exactly the hosts the pixel uses
+# (privacy policy 제12조) and nothing broader. Any other script lands only in a
+# pull request that changes the policy's wording too (#1320).
+/*
+  Content-Security-Policy: default-src 'none'; %CSP_SCRIPTS%; style-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Strict-Transport-Security: max-age=31536000

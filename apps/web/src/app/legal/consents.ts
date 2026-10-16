@@ -62,6 +62,29 @@
  * terms say reporting a missed part is for the transcript; and the policy
  * says a server's access record can hold the requested address.
  *
+ * `2026-10-12.7` for the privacy policy alone: the service moves to AWS's
+ * Seoul region (#1342). The policy said the keeping of what the service stores
+ * was not entrusted and that a Cloudflare tunnel carried the connection to a
+ * server the team runs; on the release host both are untrue, and a person
+ * who agreed to `.6` agreed to a text that said so. Article 6 lists AWS,
+ * the Cloudflare rows of articles 3, 6 and 7 stay but are scoped to the dev
+ * site, which is still reached through the tunnel, and article 5 (3) says
+ * where audio is processed while it is. The terms did not change, so theirs
+ * stays. **The policy's effective date moves to 2026-10-15** (the day the
+ * release host opens), on its own constant so the terms keep theirs. Article
+ * 15 (2) asks for 7 days' notice, which this does not give; the release host
+ * has no earlier user, and the policy owners' agreement is on the pull request.
+ *
+ * `2026-10-12.8`, the privacy policy alone: the landing page (autune.cloud)
+ * carries the Meta Pixel (the privacy owner, 2026-10-15). The policy had said
+ * no behavioural data is collected for advertising and no outside tool
+ * analyses use (제12조 ⑥), and that nothing is given to a third party for
+ * advertising (제5조 ④); a person who agreed to `.7` agreed to that. 제12조
+ * now names Meta as the collector, what it collects, that the service itself
+ * carries no pixel, and the refusal button on the landing page. The effective
+ * date stays 2026-10-15, the same day as `.7`, so the version counts after
+ * the dot. The terms did not change, so theirs stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -81,7 +104,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.4" },
-  { document: "privacy", version: "2026-10-12.6" },
+  { document: "privacy", version: "2026-10-12.8" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

@@ -134,4 +134,67 @@ describe("legal documents", () => {
       expect(version).toMatch(/^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/);
     }
   });
+  // The service runs on AWS's Seoul region (#1342). The policy named a tunnel
+  // through Cloudflare and a server the team runs itself; neither is true of
+  // the release host, but the dev site is still reached through the tunnel and
+  // this one text is served to both, so Cloudflare stays, scoped to the dev
+  // site, until the dev site is closed. A sentence that says what the code
+  // does not do is the thing this file is careful not to have.
+  it("name AWS as the hosting processor, and Cloudflare only as the dev site's relay", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("Amazon Web Services (서울 리전)");
+    // The sentence is about the AWS servers only. Gemini, Slack and the
+    // rest receive text abroad (제7조), so a bare "never leaves Seoul" would
+    // be untrue of the policy it sits in.
+    expect(privacy).toContain("서울 리전 밖의 다른 AWS 리전으로 옮기지 않습니다");
+    expect(privacy).toContain("제7조에 적은 국외 이전은 이와 별개입니다");
+    expect(privacy).not.toContain("서울 리전 밖으로 옮기지 않습니다");
+    expect(privacy).toContain("서버의 임시 메모리 영역에서만 처리하도록 구성되어 있습니다");
+    // Audio is still given to no outside service, and now says where it is
+    // processed while it is.
+    expect(privacy).toContain("음성 녹음은 어떠한 외부 서비스에도 제공하지 않습니다");
+    expect(privacy).toContain("서비스가 가동되는 서버(제6조의 수탁자)에서 전사하는 동안에만 임시로 처리");
+    // The relay is named, and only for the dev site: no sentence says it
+    // carries the service's traffic or that the keeping is not entrusted.
+    expect(privacy).toContain("개발용 사이트(autune.shelldocs.cloud)의 접속 중계");
+    expect(privacy).toContain("그 보관은 이 수탁자에게 위탁하지 않습니다");
+    expect(privacy).not.toContain("서비스 접속의 중계");
+    expect(privacy).not.toContain("서비스가 보관하는 자료는 회사가 직접 운영하는 서버에 보관하며");
+  });
+
+  // Only the privacy policy changed, so only its date moves; the terms and
+  // the other policy keep the date they were already in force from.
+  it("moves the privacy policy's effective date alone", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("2026년 10월 15일");
+    expect(privacy).not.toContain("2026년 10월 12일");
+    const terms = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "terms"));
+    expect(terms).toContain("2026년 10월 12일");
+    expect(terms).not.toContain("2026년 10월 15일");
+  });
+
+  // A person who agreed to `2026-10-12.6` agreed to a text that said the
+  // keeping was not entrusted and that a Cloudflare tunnel carried the
+  // connection. They are asked again.
+  it("ask again those who agreed before the hosting moved to AWS", () => {
+    const privacy = REQUIRED_CONSENTS.find((c) => c.document === "privacy");
+    expect(privacy?.version).not.toBe("2026-10-12.6");
+  });
+
+  // The landing page carries the Meta Pixel and the service does not (#1356's
+  // review). The policy said no behavioural data was collected for
+  // advertising and nothing went to a third party for it; those sentences
+  // go, and whoever agreed to them is asked again.
+  it("name the landing page's Meta Pixel, keep it off the service, and say how to refuse it", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("Meta Platforms, Inc.");
+    expect(privacy).toContain("소개 페이지(autune.cloud)에 ");
+    expect(privacy).toContain("서비스(로그인 화면과 이 문서의 화면을 포함합니다)와 개발용 사이트(autune.shelldocs.cloud)에는 Meta 픽셀을 설치하지 않습니다");
+    expect(privacy).toContain("소개 페이지 하단의 '광고 측정 거부' 버튼");
+    expect(privacy).not.toContain("행태정보를 수집·이용·제공하지 않으며");
+    expect(privacy).not.toContain("광고 목적으로 제3자에게 제공하지 않습니다.");
+    const version = REQUIRED_CONSENTS.find((c) => c.document === "privacy")?.version;
+    expect(version).not.toBe("2026-10-12.7");
+  });
+
 });

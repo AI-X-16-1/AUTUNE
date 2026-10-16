@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Autune — 회의 녹음으로 할 일과 결정까지 정리하는 회의 인텔리전스</title>
+    <meta
+      name="description"
+      content="회의 녹음을 올리면 말한 사람별로 받아 적고, 할 일과 결정을 정리합니다. 논의되지 않고 넘어간 부분과 지난 회의에서 정한 내용까지 짚어 줍니다."
+    />
+    <meta name="theme-color" content="#F4F3EF" />
+    <meta name="color-scheme" content="light" />
+    <link rel="canonical" href="https://autune.cloud/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta property="og:url" content="https://autune.cloud/" />
+    <meta property="og:site_name" content="Autune" />
+    <meta property="og:title" content="Autune — 회의는 녹음만 하세요. 정리는 Autune이 합니다." />
+    <meta
+      property="og:description"
+      content="말한 사람별 전사, 할 일과 결정 정리, 놓친 논의 찾기, 지난 회의 연결까지."
+    />
+    <link rel="stylesheet" href="/fonts/pretendard.css" />
+    <link rel="stylesheet" href="/styles.css" />
+    <!-- %META_PIXEL% -->
+  </head>
+  <body>
+    <!--
+      A static page. Its one script is the Meta Pixel (pixel.js), present only
+      in a build given LANDING_META_PIXEL_ID: build.mjs puts its tag where
+      "%META_PIXEL%" stands and widens _headers for it. Without an id the page
+      has no script, no cookie and no browser storage, and _headers keeps
+      script-src 'none'. Privacy policy 제12조 says what the pixel collects.
+
+      Links into the app carry a placeholder that build.mjs replaces with the
+      app's address.
+    -->
+    <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+
+    <header class="site-header">
+      <div class="container site-header__inner">
+        <a class="brand" href="/" aria-label="Autune 홈">
+          <svg class="wordmark" viewBox="-46 -52 712 170.5" role="img" aria-hidden="true">
+            <path
+              d="M7 50A45.5 45.5 0 1 0 98 50A45.5 45.5 0 1 0 7 50ZM98 7V93M138 7V58.5A37 37 0 0 0 212 58.5M212 7V93M272 -29V69A24 24 0 0 0 296 93H300M246 7H300M522 50H613A45.5 45.5 0 1 0 602.36 79.25"
+              fill="none"
+              stroke="#16191F"
+              stroke-width="14"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M336 7V58.5A37 37 0 0 0 410 58.5V41.5A37 37 0 0 1 484 41.5V93"
+              fill="none"
+              stroke="#3B4A9E"
+              stroke-width="14"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </a>
+        <nav class="site-nav" aria-label="페이지 목차">
+          <a href="#features">기능</a>
+          <a href="#how">동작 방식</a>
+          <a href="#privacy">개인정보 보호</a>
+          <a href="#faq">자주 묻는 질문</a>
+        </nav>
+        <a class="button button--ghost button--small" href="%APP_ORIGIN%/login">로그인</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero">
+        <div class="container hero__inner">
+          <div class="hero__copy">
+            <p class="eyebrow">회의 인텔리전스</p>
+            <h1 class="hero__title">회의는 녹음만 하세요.<br />정리는 Autune이 합니다.</h1>
+            <p class="hero__lead">
+              녹음을 올리면 말한 사람별로 받아 적고, 할 일과 결정을 정리합니다. 논의되지 않고 넘어간
+              부분과 지난 회의에서 정한 내용까지 짚어 줍니다.
+            </p>
+            <div class="hero__actions">
+              <a class="button button--primary" href="%APP_ORIGIN%/login">시작하기</a>
+              <a class="button button--text" href="#how">어떻게 동작하나요</a>
+            </div>
+            <p class="hero__note">지금은 비공개 베타입니다. 등록된 계정만 로그인할 수 있습니다.</p>
+          </div>
+
+          <figure class="demo" aria-label="Autune 회의 기록 예시 화면">
+            <div class="demo__bar">
+              <span class="demo__title">주간 제품 회의</span>
+              <span class="demo__status"><span class="dot" aria-hidden="true"></span>정리 완료</span>
+            </div>
+            <div class="demo__block">
+              <p class="demo__label">말한 사람별 전사</p>
+              <ol class="demo__lines">
+                <li>
+                  <span class="who">민지</span><span class="when">00:12</span>
+                  <span class="said">검색 개인화는 이번 분기에 진행하죠.</span>
+                </li>
+                <li>
+                  <span class="who">준호</span><span class="when">00:18</span>
+                  <span class="said">API 명세는 제가 금요일까지 공유하겠습니다.</span>
+                </li>
+                <li>
+                  <span class="who">서연</span><span class="when">00:25</span>
+                  <span class="said">자세한 건 <mark class="masked">***-****-****</mark>로 연락 주세요.</span>
+                </li>
+              </ol>
+            </div>
+            <dl class="demo__results">
+              <div>
+                <dt>할 일</dt>
+                <dd>API 명세 공유 · 준호 · 금요일까지</dd>
+              </div>
+              <div>
+                <dt>결정</dt>
+                <dd>검색 개인화를 이번 분기에 진행</dd>
+              </div>
+              <div class="is-gap">
+                <dt>놓친 논의</dt>
+                <dd>성능 요구사항, 콜드스타트 처리</dd>
+              </div>
+              <div>
+                <dt>지난 회의</dt>
+                <dd>9월 22일 회의에서 ‘실시간 개인화’로 합의</dd>
+              </div>
+            </dl>
+            <figcaption>예시 화면입니다. 실제 회의 내용이 아닙니다.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="problems-title">
+        <div class="container">
+          <p class="eyebrow">왜 필요한가요</p>
+          <h2 class="section__title" id="problems-title">회의가 끝나면 생기는 세 가지 문제</h2>
+          <ol class="problems">
+            <li class="problem">
+              <span class="problem__number">01</span>
+              <h3>정리가 안 됩니다</h3>
+              <p>
+                “다음 주까지 올리겠습니다”가 노트에 묻힙니다. 누군가 30분에서 1시간을 들여 정리해도 빠지는
+                것이 생기고, 다음 회의는 “그거 했나요?”로 시작합니다.
+              </p>
+            </li>
+            <li class="problem">
+              <span class="problem__number">02</span>
+              <h3>빠진 채로 넘어갑니다</h3>
+              <p>
+                결정은 했는데 성능 요구사항이나 예외 처리는 아무도 묻지 않았습니다. 개발을 시작할 때가 되어서야
+                “정해진 게 없는데요?”가 나옵니다.
+              </p>
+            </li>
+            <li class="problem">
+              <span class="problem__number">03</span>
+              <h3>맥락이 끊깁니다</h3>
+              <p>
+                같은 주제로 몇 주째 회의하는데 지난번에 무엇을 정했는지 기억나지 않습니다. 결정이 언제, 왜
+                바뀌었는지도 알기 어렵습니다.
+              </p>
+            </li>
+          </ol>
+          <p class="section__closing">
+            Autune은 회의 하나에서 멈추지 않습니다. 회의와 회의 사이를 이어 기록합니다.
+          </p>
+        </div>
+      </section>
+
+      <!--
+        Ad slot, not placed yet (#1320). When the privacy policy wording and the
+        AdFit unit land together, the banner goes here, between two sections and
+        away from every button, link and the header, in a box of fixed size so
+        nothing shifts when it loads (AdFit operating policy 5.3.1 and 5.4).
+        Never inside an iframe, and never on a page of the app.
+      -->
+
+      <section class="section section--panel" id="features" aria-labelledby="features-title">
+        <div class="container">
+          <p class="eyebrow">기능</p>
+          <h2 class="section__title" id="features-title">회의 하나에서 끝나지 않는 기록</h2>
+          <ul class="features">
+            <li class="feature">
+              <svg class="feature__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 6h10M4 11h16M4 16h12M4 21h7" fill="none" stroke="#3B4A9E" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+              <h3>말한 사람별 전사</h3>
+              <p>
+                녹음 파일을 올리거나 회의 중에 실시간으로 받아 적습니다. 누가 언제 말했는지 함께 남습니다.
+              </p>
+            </li>
+            <li class="feature">
+              <svg class="feature__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M4 6.5l2 2 3.5-4M12.5 7h7.5M4 13.5l2 2 3.5-4M12.5 14h7.5M5 20h2.5M12.5 20h7.5"
+                  fill="none"
+                  stroke="#3B4A9E"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <h3>할 일과 결정 정리</h3>
+              <p>
+                “제가 하겠습니다”와 “이렇게 하죠”를 찾아 할 일과 결정으로 정리합니다. 담당자와 기한도 함께
+                적고, 확인한 뒤 Notion이나 Jira로 보낼 수 있습니다.
+              </p>
+            </li>
+            <li class="feature">
+              <svg class="feature__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="#3B4A9E" stroke-width="1.8" />
+                <path d="M15.5 15.5L20 20M10.5 7.5v3.5M10.5 13.6v.1" fill="none" stroke="#3B4A9E" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+              <h3>놓친 논의 찾기</h3>
+              <p>
+                회의에서 다뤄야 했지만 논의되지 않고 넘어간 항목을 찾아 알려 줍니다. 빠진 채로 일이 시작되기
+                전에 확인할 수 있습니다.
+              </p>
+            </li>
+            <li class="feature">
+              <svg class="feature__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M10 14a4 4 0 0 0 5.7 0l3.1-3.1a4 4 0 0 0-5.7-5.7l-1.4 1.4M14 10a4 4 0 0 0-5.7 0l-3.1 3.1a4 4 0 0 0 5.7 5.7l1.4-1.4"
+                  fill="none"
+                  stroke="#3B4A9E"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <h3>지난 회의와 연결</h3>
+              <p>
+                같은 주제를 다룬 지난 회의를 찾아 이어 줍니다. 결정이 언제 어떻게 바뀌었는지도 기록에 남습니다.
+              </p>
+            </li>
+            <li class="feature">
+              <svg class="feature__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 20V10M10 20V4M16 20v-7M21 20H3" fill="none" stroke="#3B4A9E" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+              <h3>팀 대시보드와 리포트</h3>
+              <p>
+                회의가 쌓이면 회의 품질, 할 일 완료 현황, 다시 검토될 수 있는 결정을 한눈에 보여 줍니다. 회의마다
+                리포트도 만들어 줍니다.
+              </p>
+            </li>
+            <li class="feature">
+              <svg class="feature__icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-7l-4.5 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"
+                  fill="none"
+                  stroke="#3B4A9E"
+                  stroke-width="1.8"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <h3>말로 묻는 AI 비서</h3>
+              <p>
+                “지난주에 정한 할 일 보여 줘”처럼 물으면 회의 기록에서 찾아 답합니다. 화면을 뒤지지 않아도 됩니다.
+              </p>
+            </li>
+          </ul>
+          <p class="integrations">
+            <span class="integrations__label">연결되는 도구</span>
+            <span class="chip">Slack</span><span class="chip">Notion</span><span class="chip">Jira</span
+            ><span class="chip">Google 캘린더</span>
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="how" aria-labelledby="how-title">
+        <div class="container">
+          <p class="eyebrow">동작 방식</p>
+          <h2 class="section__title" id="how-title">이렇게 동작합니다</h2>
+          <ol class="steps">
+            <li class="step">
+              <span class="step__number">1</span>
+              <h3>받아 적기</h3>
+              <p>녹음 파일을 올리거나, 회의 중에 실시간으로 받아 적습니다.</p>
+            </li>
+            <li class="step">
+              <span class="step__number">2</span>
+              <h3>가리고 지우기</h3>
+              <p>개인정보를 가린 뒤에 저장하고, 원본 음성은 바로 지웁니다.</p>
+            </li>
+            <li class="step">
+              <span class="step__number">3</span>
+              <h3>정리하기</h3>
+              <p>할 일, 결정, 놓친 논의, 지난 회의와의 연결을 정리합니다.</p>
+            </li>
+            <li class="step">
+              <span class="step__number">4</span>
+              <h3>보내기</h3>
+              <p>화면에서 확인하고 Slack, Notion, Jira로 보냅니다.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section section--ink" id="privacy" aria-labelledby="privacy-title">
+        <div class="container">
+          <p class="eyebrow eyebrow--on-ink">개인정보 보호</p>
+          <h2 class="section__title" id="privacy-title">개인정보는 설계 단계에서 지킵니다</h2>
+          <p class="section__lead">
+            회의 녹음은 가장 민감한 데이터입니다. 아래 원칙은 나중에 덧붙인 약속이 아니라, 코드가 지키는
+            규칙입니다.
+          </p>
+          <ul class="principles">
+            <li class="principle">
+              <h3>원본 음성은 바로 지웁니다</h3>
+              <p>받아 적기가 끝나면 녹음 파일을 지웁니다. 녹음 파일은 저장해 두지 않습니다.</p>
+            </li>
+            <li class="principle">
+              <h3>저장하기 전에 가립니다</h3>
+              <p>
+                전화번호, 이메일, 주민등록번호, 계좌번호 같은 개인정보는 저장하기 전에 자동으로 가립니다. 자동으로
+                가리는 것이라 놓치는 부분이 있을 수 있고, 이름은 가리지 않습니다.
+              </p>
+            </li>
+            <li class="principle">
+              <h3>발언 비중은 본인만 봅니다</h3>
+              <p>한 사람의 발언 비중은 그 사람 말고는 아무도 볼 수 없습니다. 팀장도 관리자도 마찬가지입니다.</p>
+            </li>
+            <li class="principle">
+              <h3>기간이 지나면 지웁니다</h3>
+              <p>
+                회의 기록은 팀이 정한 보유 기간(기본 90일)이 지나면 지워집니다. 그 전에도 언제든 직접 지울 수
+                있습니다.
+              </p>
+            </li>
+          </ul>
+          <p class="section__more">
+            <a href="%APP_ORIGIN%/legal#privacy">개인정보 처리방침 전문 보기</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="section" id="faq" aria-labelledby="faq-title">
+        <div class="container container--narrow">
+          <p class="eyebrow">자주 묻는 질문</p>
+          <h2 class="section__title" id="faq-title">궁금한 점</h2>
+          <div class="faq">
+            <details>
+              <summary>어떤 회의에 쓰면 좋나요?</summary>
+              <p>
+                여러 직군이 함께하는 정기 회의처럼, 할 일과 결정이 많고 같은 주제가 몇 주씩 이어지는 회의에 잘
+                맞습니다.
+              </p>
+            </details>
+            <details>
+              <summary>녹음 파일은 어디에 남나요?</summary>
+              <p>
+                남지 않습니다. 받아 적기가 끝나면 바로 지웁니다. 남는 것은 개인정보를 가린 전사문과 정리한
+                결과입니다. 누가 말했는지 알아보는 기능이 켜져 있으면 목소리 특징값도 남습니다. 목소리 특징값은
+                녹음이 아니라 숫자이며, 본인이 언제든 지울 수 있습니다.
+              </p>
+            </details>
+            <details>
+              <summary>팀장이 제 발언 비중을 볼 수 있나요?</summary>
+              <p>볼 수 없습니다. 한 사람의 발언 비중은 그 사람 말고는 누구도 볼 수 없게 만들었습니다.</p>
+            </details>
+            <details>
+              <summary>지금 바로 쓸 수 있나요?</summary>
+              <p>지금은 비공개 베타로 운영하고 있어, 등록된 계정만 로그인할 수 있습니다.</p>
+            </details>
+            <details>
+              <summary>누가 만드나요?</summary>
+              <p>AI-X-16-1 팀의 다섯 명이 함께 만들고 있습니다.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta" aria-labelledby="cta-title">
+        <div class="container cta__inner">
+          <h2 class="cta__title" id="cta-title">다음 회의부터, 정리는 Autune에 맡기세요</h2>
+          <a class="button button--primary" href="%APP_ORIGIN%/login">시작하기</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container site-footer__inner">
+        <div class="site-footer__brand">
+          <svg class="wordmark wordmark--small" viewBox="-46 -52 712 170.5" role="img" aria-label="Autune">
+            <path
+              d="M7 50A45.5 45.5 0 1 0 98 50A45.5 45.5 0 1 0 7 50ZM98 7V93M138 7V58.5A37 37 0 0 0 212 58.5M212 7V93M272 -29V69A24 24 0 0 0 296 93H300M246 7H300M522 50H613A45.5 45.5 0 1 0 602.36 79.25"
+              fill="none"
+              stroke="#16191F"
+              stroke-width="14"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M336 7V58.5A37 37 0 0 0 410 58.5V41.5A37 37 0 0 1 484 41.5V93"
+              fill="none"
+              stroke="#3B4A9E"
+              stroke-width="14"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <p>운영: AI-X-16-1 팀</p>
+        </div>
+        <nav class="site-footer__links" aria-label="약관과 정책">
+          <a href="%APP_ORIGIN%/legal#privacy">개인정보 처리방침</a>
+          <a href="%APP_ORIGIN%/legal#terms">서비스 이용약관</a>
+          <a href="%APP_ORIGIN%/legal#security">정보보호 정책</a>
+        </nav>
+        <p class="site-footer__choice" id="pixel-choice" hidden>
+          <span data-pixel-label>이 브라우저에서 광고 측정(Meta 픽셀)을 거부할 수 있습니다.</span>
+          <button class="button button--text" type="button">광고 측정 거부</button>
+        </p>
+        <p class="site-footer__copy">© 2026 Autune</p>
+      </div>
+    </footer>
+  </body>
+</html>

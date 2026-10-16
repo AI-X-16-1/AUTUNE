@@ -165,13 +165,30 @@ connection failed; the invitation link can still be copied. `gmail.send` reads
 nothing; reading a mailbox (`gmail.readonly`, a *restricted* scope) is #431's
 question and is not asked for.
 
-**Two cookies, two jobs.** `autune_session` is the signed session (7 days,
-`HttpOnly`, `SameSite=Lax`, `Secure` outside local). `autune_oauth_state` lives
-only for the 600 seconds of one sign-in, is scoped to the callback's own path,
-and holds the OAuth `state`: the callback refuses a request whose cookie does
-not match the `state` in the query, so a callback URL opened in somebody else's
-browser cannot sign them in as whoever started it. Redis proves a state was
-issued; the cookie is what proves to whom.
+**Two cookies, two jobs.** The session cookie is the signed session (7 days,
+`HttpOnly`, `SameSite=Lax`, `Secure` outside local). The OAuth state cookie
+lives only for the 600 seconds of one sign-in and holds the OAuth `state`: the
+callback refuses a request whose cookie does not match the `state` in the
+query, so a callback URL opened in somebody else's browser cannot sign them in
+as whoever started it. Redis proves a state was issued; the cookie is what
+proves to whom.
+
+Their names depend on the environment. Where cookies are `Secure` (everywhere
+but local) they are `__Host-autune_session` and
+`__Host-autune_oauth_state_<provider>` (`google`, `jira`, `notion`, `slack`),
+with `Path=/` and no `Domain`: a browser takes a `__Host-` cookie only on those
+terms and refuses one a sibling name on the same site (`autune.cloud` beside
+`app.autune.cloud`) tries to set, and the unprefixed names are not read there at
+all. The prefix needs `Path=/`, so the state cookies are told apart by name,
+not by the callback's path. Local development is plain HTTP and keeps
+`autune_session` and `autune_oauth_state`, the callback's path included. Moving
+to the prefixed names signs everyone out once.
+
+A request that changes state, or opens the live WebSocket, and carries an
+`Origin` whose host is neither the API's own `Host` nor one of
+`AUTUNE_CORS_ALLOWED_ORIGINS` is refused with 403 (`origin_guard.py`). A request
+with no `Origin` goes through: Slack posts to `/api/slack/events` with none and
+is authenticated by its signature. The check is off in local development.
 `packages/core/src/autune_core/auth_router.py` has the reasoning.
 
 **Google flows also carry PKCE** (#704). Sign-in and the personal connects
@@ -949,7 +966,13 @@ SSH, no deploy key and no long-lived AWS key:
 
 1. The runner assumes the AWS role in the repository variable
    `AWS_DEPLOY_ROLE_ARN` through OIDC. The role's trust policy accepts only
-   this repository's `infra/release-1014` branch.
+   this repository's `infra/release-1014` branch. The repository sends an
+   immutable subject, `repo:<owner>@<owner id>/<repo>@<repo id>:ref:refs/heads/infra/release-1014`
+   (read the prefix with
+   `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`). A trust
+   policy written with the repository's name alone does not match it, and the
+   job stops at "Assume the deploy role" with `Not authorized to perform
+   sts:AssumeRoleWithWebIdentity`.
 2. It sends one SSM Run Command to the instance in `AWS_DEPLOY_INSTANCE_ID`.
    The command fetches the pushed commit with the job's `GITHUB_TOKEN`, passed
    as a request header and not stored in `.git/config`, and runs
@@ -972,7 +995,7 @@ The stack is `infra/docker-compose.app.yml` with
 | `worker-audio` | CPU (`AUTUNE_AUDIO_DEVICE=cpu`, int8), no `gpus` entry. Expect transcription to run near real time, not faster |
 | Published port | nginx on 80 only, behind an ALB that terminates TLS for the address in `AUTUNE_SITE_URL` |
 | Raw audio | the same `audio-tmp` tmpfs as everywhere; swap is off on the host, so a page of it cannot reach the disk (`privacy.md` section 1) |
-| Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on |
+| Switches | exactly those of `docker-compose.app.yml` on the release branch; this file turns nothing on. On this branch `AUTUNE_EXTRACTION_MATERIAL_UPLOAD` and `AUTUNE_EXTRACTION_MATERIAL_SEARCH_TOOL` are `true` (#817), with the embedder `local` in the `api` container (about 2 GB of the host's 32 GiB; the weights are downloaded from huggingface.co at the first start) |
 
 Sign-in is Google only here: the `/api/audio/dev/token` route is not mounted
 under `production`, and the nginx password block has nothing behind it.
@@ -1025,6 +1048,16 @@ setting lives outside this repository: the ElastiCache replication group must
 have in-transit encryption on (`preferred` while the first deploy is checked,
 then `required`). Without it the connection is refused and the deploy fails at
 `up --wait`, which is the visible way for it to go wrong.
+
+`redis_host` in `autune/db` is the replication group's primary endpoint,
+`master.<group>.<id>.<region>.cache.amazonaws.com`. The certificate is issued
+for the group's names, so the node-group name that some console views show
+(`<group>.<id>.ng.0001.<region>.cache.amazonaws.com`) fails the hostname check.
+That mistake is quiet: the stack starts and every health check passes, because
+none of them touches the broker, and the first thing to fail is the OAuth state
+store, so "Continue with Google" returns an Internal Server Error with
+`CERTIFICATE_VERIFY_FAILED: Hostname mismatch` in the `api` log. The check
+stays on; `ssl_cert_reqs=none` is not the fix.
 
 To stop paying for the host overnight, stop the EC2 instance and the RDS
 instance (the broker and the load balancer cannot be stopped; delete them if

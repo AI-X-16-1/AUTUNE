@@ -1,0 +1,1478 @@
+{
+  "version": 1,
+  "_about": "Held-out set (2026-10-13), frozen before the withdrawal cue it measures was designed: decisions withdrawn without a negation or a cancel/stop/replace word (an exit verb, a return to how things were, a replacement without a swap verb), and the modifications, keeps and new decisions such a cue could misread (a part left out, a date moved on, a rota, a keep said with 예전처럼). Same format as v6 and v7 (every meeting carries `context`). Subjects: a public library, a fitness gym, a newsroom, a festival committee, a car repair shop, a museum and a community orchestra. Names and organisations are made up.",
+  "cases": [
+    {
+      "id": "w_lib_night",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "주말 야간 개관을 한다.",
+          "context": [
+            "주말 밤에도 열지 정해 봅시다.",
+            "토요일은 밤 9시까지 열어 보죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "닫기로 했다.",
+        "context": [
+          "밤에 오는 이용자가 거의 없습니다.",
+          "주말 야간은 그냥 문 닫읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_lib_kiosk",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "대출은 무인 대출기로만 받는다.",
+          "context": [
+            "대출 창구를 어떻게 할지요.",
+            "이제 무인 대출기로만 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "대출을 다시 데스크에서 받는다.",
+        "context": [
+          "무인기가 하루에도 몇 번씩 멈춰요.",
+          "예전처럼 데스크에서 대출해 드립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_lib_club",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 41,
+          "decision": "독서 모임 진행은 외부 강사에게 맡긴다.",
+          "context": [
+            "독서 모임은 누가 이끌까요?",
+            "전문 강사를 모셔서 맡기죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사서들이 직접 하기로 했다.",
+        "context": [
+          "강사료가 올해 예산을 넘습니다.",
+          "모임 진행은 우리 사서들이 돌아가면서 직접 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_lib_hours",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 23,
+          "decision": "열람실은 밤 10시까지 연다.",
+          "context": [
+            "시험 기간 민원이 많아요.",
+            "열람실을 밤 10시까지 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "월요일은 빼고 10시까지 연다.",
+        "context": [
+          "월요일은 정기 청소가 있는 날이에요.",
+          "월요일만 빼고 열람실은 10시까지 열죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_lib_fee",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 37,
+          "decision": "연체료는 받지 않는다.",
+          "context": [
+            "연체료를 받을지 정해야 해요.",
+            "연체료는 받지 맙시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "원래 하던 대로 한다.",
+        "context": [
+          "연체료를 받자는 의견이 또 나왔는데요.",
+          "연체료는 원래대로 안 받는 쪽으로 가죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_lib_copier",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "어린이실 책상을 새로 들인다.",
+          "context": [
+            "어린이실 책상이 너무 낡았어요.",
+            "어린이실 책상은 새 걸로 들이죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "복사기 한 대를 정리한다.",
+        "context": [
+          "복사기가 세 대인데 한 대는 거의 안 씁니다.",
+          "안 쓰는 복사기 한 대는 정리합시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_lib_bookstore",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 44,
+          "decision": "지역 서점과 도서 공동구매를 한다.",
+          "context": [
+            "책 구입 방식을 바꿔 보죠.",
+            "동네 서점들과 공동으로 구매합시다."
+          ]
+        },
+        {
+          "days_ago": 26,
+          "decision": "도서관 소식지는 매달 낸다.",
+          "context": [
+            "소식지 발행 주기를 정하죠.",
+            "소식지는 한 달에 한 번 냅시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지역 서점 공동구매에서 빠진다.",
+        "context": [
+          "공동구매 정산이 석 달째 밀렸어요.",
+          "우리는 서점 공동구매에서 빠지는 게 낫겠어요."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_lib_request",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "희망 도서 신청은 한 사람당 월 3권까지 받는다.",
+          "context": [
+            "희망 도서 신청이 몰려요.",
+            "한 사람이 한 달에 세 권까지만 신청하게 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "5권으로 늘린다.",
+        "context": [
+          "세 권은 적다는 이용자가 많아요.",
+          "희망 도서는 한 달에 다섯 권까지 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_gym_yoga",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "그룹 요가 수업을 연다.",
+          "context": [
+            "새 그룹 수업을 하나 넣죠.",
+            "저녁에 요가 수업을 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "시간표에서 내리기로 했다.",
+        "context": [
+          "요가 신청자가 계속 두세 명뿐이에요.",
+          "요가 수업은 다음 달 시간표에서 내립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_gym_card",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "회원 출입은 앱 QR로 한다.",
+          "context": [
+            "출입 방식을 바꿀 때가 됐어요.",
+            "플라스틱 카드 말고 앱 QR로 들어오게 하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "카드로 돌아간다.",
+        "context": [
+          "어르신 회원들이 QR 화면을 못 띄우세요.",
+          "그냥 예전 플라스틱 카드로 돌아갑시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_gym_pt",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "PT는 외부 트레이너와 계약해서 운영한다.",
+          "context": [
+            "PT를 어떻게 운영할까요?",
+            "프리랜서 트레이너들과 계약해서 돌립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "PT는 직영으로 돌린다.",
+        "context": [
+          "외부 트레이너가 자주 바뀌어서 회원 불만이 커요.",
+          "PT는 우리가 직접 고용해서 직영으로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_gym_shower",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 22,
+          "decision": "샤워실은 밤 11시까지 쓴다.",
+          "context": [
+            "샤워실 이용 시간을 정하죠.",
+            "샤워실은 영업 끝날 때까지 11시까지 씁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "샤워실은 밤 10시 반까지 쓴다.",
+        "context": [
+          "11시가 넘으면 청소가 너무 늦게 끝나요.",
+          "마감 30분 전에는 샤워실을 닫죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_gym_weekend",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "주말 운영은 오후 6시까지 한다.",
+          "context": [
+            "주말 운영 시간을 정해야죠.",
+            "주말에는 오후 6시까지만 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주말은 예전처럼 6시에 닫는다.",
+        "context": [
+          "주말 연장 얘기가 또 나왔는데요.",
+          "주말은 예전처럼 6시에 닫읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_gym_locker",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "러닝머신 다섯 대를 교체한다.",
+          "context": [
+            "러닝머신 소음이 심해요.",
+            "러닝머신 다섯 대는 새 기계로 교체하죠."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "장기 방치 사물함을 정리한다.",
+        "context": [
+          "주인 없는 짐이 든 사물함이 많아요.",
+          "석 달 넘게 안 찾아간 짐은 정리하죠."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_gym_diet",
+      "category": "reversed_cued",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "회원 대상 영양 상담을 한다.",
+          "context": [
+            "회원 서비스를 늘려 보죠.",
+            "영양사를 불러 상담을 해 드립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "영양 상담은 하지 않기로 했다.",
+        "context": [
+          "상담 신청이 한 달에 한 건도 없어요.",
+          "영양 상담은 하지 맙시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_gym_ptprice",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "PT 10회권은 50만 원에 판다.",
+          "context": [
+            "PT 가격을 정하죠.",
+            "10회권은 50만 원으로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "55만 원으로 올린다.",
+        "context": [
+          "트레이너 수당이 올랐습니다.",
+          "10회권은 55만 원 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_gym_clean",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "청소는 직원 한 명이 매일 한다.",
+          "context": [
+            "청소 담당을 정하죠.",
+            "청소는 막내 직원이 매일 맡아 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "청소는 직원들이 돌아가며 한다.",
+        "context": [
+          "한 사람이 매일 하니 너무 힘들어해요.",
+          "청소는 요일별로 돌아가면서 합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_news_weekend",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 39,
+          "decision": "주말판 종이 신문을 발행한다.",
+          "context": [
+            "주말판을 낼지 정하죠.",
+            "토요일자 종이 주말판을 냅시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주말판 종이 신문 발행을 끝낸다.",
+        "context": [
+          "주말판 부수가 계속 떨어집니다.",
+          "종이 주말판은 이번 달로 끝냅시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_news_photo",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "사진은 통신사 사진을 받아 쓴다.",
+          "context": [
+            "사진 수급을 정하죠.",
+            "사진은 통신사 것을 받아 씁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "우리 기자가 찍기로 했다.",
+        "context": [
+          "통신사 사진은 다른 매체랑 똑같아요.",
+          "현장 사진은 우리 사진기자가 직접 찍읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_news_comments",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "온라인 기사 댓글 창을 닫는다.",
+          "context": [
+            "댓글 관리가 안 됩니다.",
+            "온라인 기사 댓글 창은 닫읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "다시 열기로 했다.",
+        "context": [
+          "독자들이 의견 낼 곳이 없다고 항의해요.",
+          "댓글 창은 다시 엽시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_news_columnists",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 42,
+          "decision": "칼럼은 외부 필진 다섯 명으로 운영한다.",
+          "context": [
+            "칼럼 필진 구성을 정하죠.",
+            "외부 필진 다섯 명을 모십시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "외부 필진에서 두 명을 뺀다.",
+        "context": [
+          "원고료 예산이 줄었어요.",
+          "필진은 세 명으로 꾸립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_news_sub",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "디지털 구독료는 월 9천 원으로 한다.",
+          "context": [
+            "디지털 구독료를 정하죠.",
+            "월 9천 원으로 시작합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "1만 2천 원으로 정했다.",
+        "context": [
+          "9천 원으로는 운영비가 안 나와요.",
+          "구독료는 한 달 1만 2천 원 받죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_news_correction",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "정정 보도는 1면 하단에 싣는다.",
+          "context": [
+            "정정 보도 위치를 정하죠.",
+            "정정 보도는 1면 아래에 실읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "지금처럼 1면 하단에 싣는다.",
+        "context": [
+          "정정 보도를 뒤로 빼자는 말이 있던데요.",
+          "정정 보도는 지금처럼 1면 하단에 둡시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_news_intern",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "편집국 회의는 매일 아침 9시에 한다.",
+          "context": [
+            "편집 회의 시간을 정하죠.",
+            "매일 아침 9시에 모입시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "사회부 인턴 한 명을 뽑는다.",
+        "context": [
+          "사회부 일손이 부족해요.",
+          "사회부에 인턴을 한 명 뽑읍시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_news_exchange",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 45,
+          "decision": "지역 방송과 뉴스 교류 협약을 맺는다.",
+          "context": [
+            "지역 방송사에서 제안이 왔어요.",
+            "뉴스 교류 협약을 맺읍시다."
+          ]
+        },
+        {
+          "days_ago": 21,
+          "decision": "기자 교육은 분기마다 한다.",
+          "context": [
+            "기자 교육을 정례화하죠.",
+            "석 달에 한 번씩 교육합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "협약을 해지한다.",
+        "context": [
+          "방송사가 우리 기사를 출처 없이 써요.",
+          "지역 방송과의 교류 협약은 해지합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_news_interview",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 20,
+          "decision": "인터뷰 기사는 목요일자에 싣는다.",
+          "context": [
+            "인터뷰 기사 게재일을 정하죠.",
+            "목요일자에 실읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "다음 주로 넘긴다.",
+        "context": [
+          "인터뷰 상대가 일정을 미뤘어요.",
+          "인터뷰 기사는 다음 주 목요일자로 넘기죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_fest_fireworks",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 38,
+          "decision": "축제 마지막 날 불꽃놀이를 한다.",
+          "context": [
+            "폐막 행사를 정하죠.",
+            "마지막 날 밤에 불꽃놀이를 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "불꽃놀이는 뺀다.",
+        "context": [
+          "소방서에서 허가 내주기 어렵답니다.",
+          "불꽃놀이는 프로그램에서 뺍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_fest_sound",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "축제 무대 음향은 소리마루음향에 맡긴다.",
+          "context": [
+            "무대 음향 업체를 정하죠.",
+            "소리마루음향에 맡깁시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "무대 음향은 구청 장비를 빌려서 한다.",
+        "context": [
+          "업체 견적이 작년의 두 배예요.",
+          "음향은 구청 장비를 빌려서 우리가 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_fest_street",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "축제 기간에 중앙로를 차 없는 거리로 만든다.",
+          "context": [
+            "축제 기간 교통을 정하죠.",
+            "중앙로는 차량을 막고 걷는 거리로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "중앙로 통제는 원래대로 돌린다.",
+        "context": [
+          "상인들이 매출이 준다고 반대합니다.",
+          "차량 통제는 풀고 원래대로 돌립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_fest_days",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "축제는 금토일 사흘 연다.",
+          "context": [
+            "축제 기간을 정하죠.",
+            "금요일부터 일요일까지 사흘 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "일요일은 빼고 이틀 연다.",
+        "context": [
+          "일요일은 행사 인력을 구하기 어렵습니다.",
+          "일요일은 빼고 금토 이틀만 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_fest_meals",
+      "category": "unchanged_trap",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "자원봉사자에게 식권을 준다.",
+          "context": [
+            "자원봉사자 처우를 정하죠.",
+            "봉사자분들께 식권을 드립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "식권은 하던 대로 준다.",
+        "context": [
+          "식권 대신 간식만 주자는 의견이 있었어요.",
+          "식권은 하던 대로 드립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_fest_parking",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "축제 포스터는 3월에 배포한다.",
+          "context": [
+            "포스터 배포 시기를 정하죠.",
+            "포스터는 3월에 뿌립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "주차 안내 요원 열 명을 둔다.",
+        "context": [
+          "작년에 주차 때문에 민원이 많았어요.",
+          "주차장마다 안내 요원을 둬서 열 명 배치합시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_fest_singer",
+      "category": "reversed_cued",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "개막식에 가수를 초청한다.",
+          "context": [
+            "개막식 무대를 정하죠.",
+            "개막식에 가수를 한 팀 부릅시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "가수 초청은 취소한다.",
+        "context": [
+          "섭외비가 예산을 넘었어요.",
+          "가수 초청은 취소합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_fest_booth",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 28,
+          "decision": "부스 참가비는 10만 원이다.",
+          "context": [
+            "부스 참가비를 정하죠.",
+            "참가비는 10만 원 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "부스 참가비를 7만 원으로 내린다.",
+        "context": [
+          "참가 신청이 작년보다 적어요.",
+          "부스 참가비는 7만 원으로 내립시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_fest_video",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 25,
+          "decision": "축제 홍보 영상은 2분짜리로 만든다.",
+          "context": [
+            "홍보 영상 길이를 정하죠.",
+            "홍보 영상은 2분 정도로 만듭시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "홍보 영상을 다시 30초로 줄여 만든다.",
+        "context": [
+          "2분짜리는 끝까지 보는 사람이 없어요.",
+          "영상은 다시 30초짜리로 짧게 만들죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_car_mobile",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 37,
+          "decision": "주말 출장 정비를 한다.",
+          "context": [
+            "주말 영업을 어떻게 할까요?",
+            "주말에는 출장 정비를 나갑시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "손 떼기로 했다.",
+        "context": [
+          "출장 나가면 가게가 텅 비어요.",
+          "출장 정비에서는 이제 손 뗍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_car_parts",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 43,
+          "decision": "부품은 정품 대리점에서 산다.",
+          "context": [
+            "부품 구매처를 정하죠.",
+            "부품은 정품 대리점에서 삽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "도매몰에서 받기로 했다.",
+        "context": [
+          "대리점 가격이 너무 비싸졌어요.",
+          "부품은 이제 온라인 도매몰에서 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_car_booking",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "예약은 앱으로만 받는다.",
+          "context": [
+            "예약 창구를 정리하죠.",
+            "예약은 앱으로만 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "예약을 전화로도 다시 받는다.",
+        "context": [
+          "앱을 못 쓰는 손님이 그냥 돌아가세요.",
+          "전화 예약도 다시 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_car_log",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 32,
+          "decision": "정비 기록은 종이 대신 태블릿에 남긴다.",
+          "context": [
+            "정비 기록 방식을 바꾸죠.",
+            "종이 말고 태블릿에 기록합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "정비 기록은 다시 종이에 쓴다.",
+        "context": [
+          "태블릿이 기름때 때문에 자꾸 고장 나요.",
+          "기록은 다시 종이로 합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_car_oil",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "엔진오일 교환 공임은 2만 원이다.",
+          "context": [
+            "오일 교환 공임을 정하죠.",
+            "공임은 2만 원 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "오일 공임은 지금 받는 대로 받는다.",
+        "context": [
+          "공임을 올리자는 얘기가 있었는데요.",
+          "오일 공임은 지금 받는 대로 받읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_car_tow",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "정비소 간판을 바꾼다.",
+          "context": [
+            "간판이 낡아서 잘 안 보여요.",
+            "간판을 새로 답시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "견인차 한 대를 더 들인다.",
+        "context": [
+          "견인 요청을 다 못 받고 있어요.",
+          "견인차를 한 대 더 들입시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_car_hours",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 24,
+          "decision": "정비소는 평일 오후 7시까지 연다.",
+          "context": [
+            "평일 영업시간을 정하죠.",
+            "평일은 저녁 7시까지 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "8시까지로 늘린다.",
+        "context": [
+          "퇴근하고 오시는 손님이 많아요.",
+          "평일은 8시까지 엽시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_car_tires",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 41,
+          "decision": "중고 타이어를 매입해서 판다.",
+          "context": [
+            "부수입을 만들어 보죠.",
+            "중고 타이어를 사서 되팝시다."
+          ]
+        },
+        {
+          "days_ago": 22,
+          "decision": "직원 작업복은 회사가 빨아 준다.",
+          "context": [
+            "작업복 세탁을 정하죠.",
+            "작업복은 회사에서 세탁해 줍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "중고 타이어 매입 판매는 그만한다.",
+        "context": [
+          "재고가 창고에 쌓이기만 해요.",
+          "중고 타이어 장사는 그만합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_car_quote",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 21,
+          "decision": "정비 견적은 당일에 알려 준다.",
+          "context": [
+            "견적 안내 시점을 정하죠.",
+            "견적은 그날 바로 알려 드립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "견적은 다시 확인해서 다음 날 알려 준다.",
+        "context": [
+          "급하게 낸 견적이 자꾸 틀려요.",
+          "견적은 한 번 더 확인하고 다음 날 알려 드리죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_mus_night",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 39,
+          "decision": "야간 개장을 매주 금요일에 한다.",
+          "context": [
+            "야간 개장을 해 보죠.",
+            "금요일마다 밤 9시까지 엽시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "올해로 마무리한다.",
+        "context": [
+          "야간 관람객이 생각보다 적어요.",
+          "금요일 야간 개장은 올해까지 하고 마무리하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_mus_guide",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 34,
+          "decision": "전시 해설은 오디오 가이드 기기를 빌려준다.",
+          "context": [
+            "전시 해설 방식을 정하죠.",
+            "오디오 가이드 기기를 대여합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "전시 해설은 관람객 휴대폰으로 QR을 찍어 듣게 한다.",
+        "context": [
+          "기기 분실과 고장이 너무 많아요.",
+          "해설은 각자 휴대폰으로 QR 찍어서 듣게 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_mus_ticket",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 30,
+          "decision": "기획 전시실 관람료를 따로 받는다.",
+          "context": [
+            "기획전 관람료를 정하죠.",
+            "기획 전시실은 표를 따로 끊게 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "통합권 하나로 돌아간다.",
+        "context": [
+          "따로 받으니 관람객들이 기획전을 건너뛰어요.",
+          "예전처럼 통합권 하나로 다 보게 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_mus_group",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 27,
+          "decision": "단체 관람은 30명까지 받는다.",
+          "context": [
+            "단체 관람 인원을 정하죠.",
+            "한 팀에 30명까지 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "단체 관람 인원을 20명으로 줄이고 해설사를 붙인다.",
+        "context": [
+          "30명이면 전시실이 너무 붐벼요.",
+          "단체는 20명으로 받고 해설사를 한 명 붙입시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_mus_catalog",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 44,
+          "decision": "소장품 목록은 엑셀로 관리한다.",
+          "context": [
+            "소장품 관리 방식을 정하죠.",
+            "목록은 엑셀 파일로 관리합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "분류 기준을 다시 정리해서 엑셀로 관리한다.",
+        "context": [
+          "분류가 제각각이라 찾기가 어려워요.",
+          "분류 기준을 다시 정리하고 엑셀로 계속 관리하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_mus_free",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 36,
+          "decision": "박물관 입장은 무료로 한다.",
+          "context": [
+            "입장료를 받을지 정하죠.",
+            "입장은 무료로 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "입장료는 지금처럼 안 받는다.",
+        "context": [
+          "입장료를 받자는 의견이 나왔는데요.",
+          "입장료는 지금처럼 받지 맙시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_mus_humidity",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 31,
+          "decision": "어린이 체험실을 새로 꾸민다.",
+          "context": [
+            "어린이 체험실이 오래됐어요.",
+            "체험실을 새로 꾸밉시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "수장고 습도계를 바꾼다.",
+        "context": [
+          "수장고 습도계 수치가 들쭉날쭉해요.",
+          "수장고 습도계는 새 걸로 바꿉시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_mus_shop",
+      "category": "reversed_cued",
+      "past_meetings": [
+        {
+          "days_ago": 42,
+          "decision": "기념품점을 외부 업체에 임대한다.",
+          "context": [
+            "기념품점 운영을 정하죠.",
+            "기념품점은 업체에 임대합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "기념품점 임대를 중단한다.",
+        "context": [
+          "업체가 임대료를 석 달째 안 냈어요.",
+          "기념품점 임대는 중단합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_orch_stream",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 33,
+          "decision": "정기 연주회 실황을 유튜브로 중계한다.",
+          "context": [
+            "연주회를 온라인으로도 보여 주죠.",
+            "유튜브로 실황 중계를 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "끊기로 했다.",
+        "context": [
+          "저작권 문의가 계속 들어와요.",
+          "유튜브 중계는 이번부터 끊읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_orch_scores",
+      "category": "reversed_uncued_replace",
+      "past_meetings": [
+        {
+          "days_ago": 38,
+          "decision": "악보는 협회 도서관에서 빌려 쓴다.",
+          "context": [
+            "악보 구하는 방법을 정하죠.",
+            "악보는 협회 도서관에서 빌립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "악보는 직접 사기로 했다.",
+        "context": [
+          "빌린 악보에는 표시를 못 해서 불편해요.",
+          "악보는 이번부터 사서 씁시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_orch_dues",
+      "category": "reversed_uncued_return",
+      "past_meetings": [
+        {
+          "days_ago": 29,
+          "decision": "단원 회비는 계좌 자동이체로 받는다.",
+          "context": [
+            "회비 걷는 방법을 정하죠.",
+            "회비는 자동이체로 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "회비는 다시 연습 날 현금으로 걷는다.",
+        "context": [
+          "자동이체 신청을 안 한 단원이 절반이에요.",
+          "회비는 다시 연습 날 현금으로 걷죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    },
+    {
+      "id": "w_orch_concerts",
+      "category": "modified_trap",
+      "past_meetings": [
+        {
+          "days_ago": 40,
+          "decision": "연주회는 봄 가을 두 번 한다.",
+          "context": [
+            "연주회 횟수를 정하죠.",
+            "봄과 가을에 한 번씩 합시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "가을 연주회는 빼고 봄에 한 번만 한다.",
+        "context": [
+          "가을에는 대관이 안 잡혀요.",
+          "올해는 가을 연주회는 빼고 봄에만 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_orch_audition",
+      "category": "unchanged",
+      "past_meetings": [
+        {
+          "days_ago": 35,
+          "decision": "신입 단원은 오디션 없이 받는다.",
+          "context": [
+            "신입 단원 받는 기준을 정하죠.",
+            "오디션 없이 받읍시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "오디션은 계속 안 본다.",
+        "context": [
+          "오디션을 보자는 말이 있었는데요.",
+          "오디션은 계속 안 보는 걸로 하죠."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "unchanged"
+    },
+    {
+      "id": "w_orch_shirts",
+      "category": "new",
+      "past_meetings": [
+        {
+          "days_ago": 26,
+          "decision": "지휘자 사례비를 올린다.",
+          "context": [
+            "지휘자 사례비를 다시 보죠.",
+            "사례비를 조금 올립시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "단원 단체 티셔츠를 맞춘다.",
+        "context": [
+          "야외 공연 때 입을 옷이 없어요.",
+          "단체 티셔츠를 맞춥시다."
+        ]
+      },
+      "expected_thread_source": null,
+      "expected_change_type": "new"
+    },
+    {
+      "id": "w_orch_time",
+      "category": "modified",
+      "past_meetings": [
+        {
+          "days_ago": 23,
+          "decision": "연습은 매주 토요일 오후 2시에 한다.",
+          "context": [
+            "연습 시간을 정하죠.",
+            "토요일 오후 2시에 모입시다."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "3시로 늦춘다.",
+        "context": [
+          "2시는 점심 먹고 오기 빠듯해요.",
+          "연습은 토요일 3시에 합시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "modified"
+    },
+    {
+      "id": "w_orch_youth",
+      "category": "reversed_uncued_exit",
+      "past_meetings": [
+        {
+          "days_ago": 45,
+          "decision": "청소년 오케스트라 교실을 운영한다.",
+          "context": [
+            "지역 아이들을 위한 사업을 하죠.",
+            "청소년 오케스트라 교실을 엽시다."
+          ]
+        },
+        {
+          "days_ago": 20,
+          "decision": "연주회 포스터는 단원이 만든다.",
+          "context": [
+            "포스터 제작을 정하죠.",
+            "포스터는 디자인하는 단원이 만들어 주세요."
+          ]
+        }
+      ],
+      "current_meeting": {
+        "days_ago": 0,
+        "decision": "청소년 교실 운영을 내려놓는다.",
+        "context": [
+          "가르칠 단원이 부족합니다.",
+          "청소년 교실 운영은 내려놓읍시다."
+        ]
+      },
+      "expected_thread_source": 0,
+      "expected_change_type": "reversed"
+    }
+  ]
+}

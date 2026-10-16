@@ -12,6 +12,8 @@ from .auth import (
     current_user,
     issue_token,
     require_self,
+    session_cookie_name,
+    session_cookie_value,
     set_session_cookie,
     user_for_token,
 )
@@ -105,6 +107,8 @@ __all__ = [
     "user_for_token",
     "require_self",
     "SESSION_COOKIE",
+    "session_cookie_name",
+    "session_cookie_value",
     "set_session_cookie",
     "clear_session_cookie",
     "upsert_user_from_google",

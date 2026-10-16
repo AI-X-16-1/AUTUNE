@@ -59,7 +59,7 @@ from autune_context.pipeline.retrieval import HybridRetriever, visible_meeting_c
 from autune_context.pipeline.topics import TopicSegment
 from autune_contracts import AGENDA_STALE_AFTER, AgendaIssue, ChangeType, TeamAgenda
 from autune_core import Meeting, Participant, Team, TeamMember, User, Utterance, get_logger
-from autune_core.errors import NotFoundError
+from autune_core.errors import NotFoundError, PrivacyViolationError
 
 log = get_logger(__name__)
 
@@ -328,7 +328,8 @@ def choose_previous_meeting(
     A failure in the topic step (a model endpoint down) falls through to
     ``latest`` rather than failing the brief: the recap is still useful from
     the most recent meeting, and a brief retried until the meeting starts is
-    one that never arrives.
+    one that never arrives. A ``PrivacyViolationError`` is no such failure: the
+    embedder's outbound guard refused unmasked text, and that is raised.
     """
     analyzed = _analyzed_before(session, meeting, now)
     if not analyzed:
@@ -346,6 +347,8 @@ def choose_previous_meeting(
 
     try:
         matched = _topic_match(session, meeting, agenda, {meeting_id for meeting_id, _ in analyzed})
+    except PrivacyViolationError:
+        raise  # unmasked text got this far: that stops the brief, it is no model failure
     except Exception as exc:  # noqa: BLE001 -- any model failure degrades to ``latest``
         # The type only: an HTTP error's message can carry the request, and
         # the request is this meeting's title.

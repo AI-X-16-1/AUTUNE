@@ -13,10 +13,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
-from autune_context.pipeline._serving import probe
+from autune_context.pipeline._serving import ModelServerClient, batches, clip, probe
 from autune_context.pipeline.base import NliScores
+from autune_integrations.privacy import MAX_OUTBOUND_CHARS
 
 if TYPE_CHECKING:
     from autune_context.config import ContextSettings
@@ -32,10 +31,16 @@ class KlueKorNliHttp:
     """Expects ``POST {endpoint}/nli {"pairs": [[premise, hypothesis]]}`` ->
     ``{"results": [{"entailment": f, "contradiction": f, "neutral": f}]}``;
     ``GET {endpoint}/info`` -> ``{"model_version"}``.
+
+    On ``ModelServerClient``, so ``check_outbound`` reads every request: pairs
+    go in batches of at most ``MAX_OUTBOUND_CHARS`` characters, and a side
+    longer than half of that is cut to it first (``_serving.clip``).
     """
 
     def __init__(self, settings: ContextSettings) -> None:
-        self._client = httpx.Client(base_url=settings.nli_endpoint, timeout=settings.nli_timeout_s)
+        self._client = ModelServerClient(
+            settings.nli_endpoint, service="nli", timeout_s=settings.nli_timeout_s
+        )
         info = probe(self._client, service="nli")
         self._model_version = str(info.get("model_version", "klue-roberta-kornli"))
 
@@ -46,10 +51,19 @@ class KlueKorNliHttp:
     def classify(self, pairs: list[tuple[str, str]]) -> list[NliScores]:
         if not pairs:
             return []
-        resp = self._client.post("/nli", json={"pairs": [list(p) for p in pairs]})
-        resp.raise_for_status()
+        half = MAX_OUTBOUND_CHARS // 2
+        fitted = [
+            [clip(premise, half, destination="nli"), clip(hypothesis, half, destination="nli")]
+            for premise, hypothesis in pairs
+        ]
+        rows: list[dict[str, Any]] = []
+        for batch in batches(fitted, lambda pair: len(pair[0]) + len(pair[1])):
+            results = self._client.request("POST", "/nli", json={"pairs": batch})["results"]
+            if len(results) != len(batch):
+                raise ValueError(f"asked for {len(batch)} NLI results, got {len(results)}")
+            rows += results
         out: list[NliScores] = []
-        for row in resp.json()["results"]:
+        for row in rows:
             partial = NliScores(
                 label="",
                 entailment=float(row["entailment"]),

@@ -111,8 +111,8 @@ export default function ConsentPage() {
               lineHeight: "var(--text-body-leading)",
             }}
           >
-            아래 문서를 각각 열어 보고 동의해 주세요. 모두 동의하면 Autune으로
-            넘어갑니다.
+            아래 문서를 각각 열어 끝까지 내려 본 뒤 동의해 주세요. 모두 동의하면
+            Autune으로 넘어갑니다.
           </p>
           <p
             className="text-ink-muted"

@@ -24,6 +24,11 @@ import type { DashboardRead, GapTitlesByPattern, PredictionsRead } from "../type
  * another tab sees the new rate without F5, which would also clear the agent
  * chat on the same page. Only the newest load is applied, so one that started
  * earlier and lands later does not put old figures back.
+ *
+ * Because a reload runs on every return to the tab, a failed one keeps what is
+ * on screen: each piece that did not arrive stays as it was, and the error
+ * line appears only when nothing of this team has loaded yet. "Of this team":
+ * after a team switch the previous team's figures are never kept.
  */
 export function useDashboard(teamId: string) {
   const [dashboard, setDashboard] = useState<DashboardRead | null>(null);
@@ -32,6 +37,7 @@ export function useDashboard(teamId: string) {
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(true);
   const latest = useRef(0);
+  const shownFor = useRef<string | null>(null);
 
   const reload = useCallback(async () => {
     const load = ++latest.current;
@@ -44,16 +50,26 @@ export function useDashboard(teamId: string) {
     if (load !== latest.current) {
       return;
     }
+    const shown = shownFor.current === teamId;
 
     if (dashboardResult.status === "fulfilled") {
       setDashboard(dashboardResult.value);
       setError(null);
-    } else {
+      shownFor.current = teamId;
+    } else if (!shown) {
       const { reason } = dashboardResult;
       setError(reason instanceof Error ? reason : new Error(String(reason)));
     }
-    setGapTitles(gapTitlesResult.status === "fulfilled" ? gapTitlesResult.value : {});
-    setPredictions(predictionsResult.status === "fulfilled" ? predictionsResult.value : null);
+    if (gapTitlesResult.status === "fulfilled") {
+      setGapTitles(gapTitlesResult.value);
+    } else if (!shown) {
+      setGapTitles({});
+    }
+    if (predictionsResult.status === "fulfilled") {
+      setPredictions(predictionsResult.value);
+    } else if (!shown) {
+      setPredictions(null);
+    }
     setLoading(false);
   }, [teamId]);
 
