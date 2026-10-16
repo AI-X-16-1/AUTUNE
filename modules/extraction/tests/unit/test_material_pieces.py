@@ -80,6 +80,10 @@ def test_a_markdown_line_or_a_short_numbered_line_is_a_heading(
         "#태그는 제목이 아니다",
         "2024 매출 100",
         "100 명이 참석했다",
+        "10 명이 참석했다",
+        "3 홍길동",
+        "1\t홍길동\t개발팀\t010-****",
+        "2.\t홍길동",
         "1.2.3.4 네 단계는 제목이 아니다",
         "1. " + "아주 긴 목록의 문장 " * 6,
         "평범한 문장이다.",
@@ -174,6 +178,15 @@ def test_the_boundaries_are_the_same_with_the_path_on_or_off_and_in_cut() -> Non
     off = [piece.text for piece in pieces_of(text, 60, with_path=False)]
 
     assert on == off == materials.cut(text, 60)
+
+
+def test_the_rows_of_a_sheet_that_open_with_a_serial_number_are_not_headings() -> None:
+    text = "팀원 명단\n1\t홍길동\t개발팀\n2\t김철수\t기획팀\n3\t이영희\t디자인팀\n"
+
+    pieces = pieces_of(text, 200, overlap=20)
+
+    assert [piece.text for piece in pieces] == [text]
+    assert pieces[0].path == ""
 
 
 def test_the_path_can_be_turned_off() -> None:

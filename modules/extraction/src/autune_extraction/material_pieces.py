@@ -39,10 +39,12 @@ MAX_PATH_CHARS = 120
 outermost headings first, so the nearest heading is the one that stays."""
 
 _MARKDOWN = re.compile(r"^(#{1,6})[ \t]+(\S.*)$")
-_NUMBERED = re.compile(r"^(\d{1,2}(?:\.\d{1,2}){0,2})\.?[ \t]+\S")
+_NUMBERED = re.compile(r"^(\d{1,2}(?:\.\d{1,2}){0,2})(\.?) +\S")
 """``2.``, ``2.1``, ``2.1.1`` and a space and a word. Numbers of one or two
 digits: a year or an amount at the start of a line ("2024 매출 100") is not a
-heading."""
+heading. The first level needs its dot (``2.``, not ``2``), and what follows
+the number is a space, not a tab: a table row that opens with a serial number
+("1<tab>name<tab>team", a row of a sheet) is not a heading."""
 
 MAX_NUMBERED_HEADING_CHARS = 40
 """A numbered line longer than this is a sentence of a list, not a heading."""
@@ -77,7 +79,10 @@ def heading_of(line: str) -> tuple[int, str] | None:
         return len(found.group(1)), found.group(2).strip()
     found = _NUMBERED.match(stripped)
     if found and len(stripped) <= MAX_NUMBERED_HEADING_CHARS:
-        return found.group(1).count(".") + 1, stripped
+        number, dot = found.group(1), found.group(2)
+        if "." not in number and not dot:
+            return None
+        return number.count(".") + 1, stripped
     return None
 
 
