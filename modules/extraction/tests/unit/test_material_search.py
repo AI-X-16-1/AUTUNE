@@ -143,8 +143,15 @@ def test_each_piece_gets_a_vector_of_the_columns_width_made_from_masked_text(
     assert len(chunks) > 1
     assert all(len(chunk.embedding) == MATERIAL_EMBEDDING_DIM for chunk in chunks)  # type: ignore[arg-type]
     assert row.embedding_model == "fake"
-    # The embedder was handed the stored pieces, which are masked -- and nothing else.
-    assert embedder.seen == [chunk.text for chunk in chunks]
+    # The embedder was handed the stored pieces, which are masked -- and nothing
+    # else but the masked tail of the piece before it (``material_pieces.Piece.lead``).
+    assert len(embedder.seen) == len(chunks)
+    overlap = get_settings().material_embed_overlap_chars
+    for index, (seen, chunk) in enumerate(zip(embedder.seen, chunks, strict=True)):
+        assert seen.endswith(chunk.text)
+        lead = seen.removesuffix(chunk.text)
+        assert len(lead) <= overlap
+        assert lead == "" or chunks[index - 1].text.endswith(lead)
     assert not any(PHONE in text for text in embedder.seen)
 
 

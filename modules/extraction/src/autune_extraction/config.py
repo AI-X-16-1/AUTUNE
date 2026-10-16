@@ -487,6 +487,20 @@ class ExtractionSettings(BaseSettings):
     it changed nothing (212 against 213 answers of 220). ``false`` embeds the
     piece alone, as before; rows already stored are not changed either way."""
 
+    material_embed_overlap_chars: int = Field(default=20, ge=0, le=100)
+    """How many characters of the piece before it are put in front of a piece
+    in the text that is embedded (#817, ADR 0011), within one section. Like the
+    path it moves the vector only: the stored piece, every excerpt and
+    ``_kept_already`` are the piece alone, and the pieces joined are still the
+    masked text.
+
+    On ten invented reports (70 questions) with no heading path, 20 characters
+    took the excerpt holding the answer from 30 to 59; with the path it made
+    50 into 49: the path carries what the overlap carries. On a shelf of unlike
+    documents it changed nothing (top five 214 of 220 either way). 40 was no
+    better than 20 (2026-10-16). ``0`` embeds the piece as before; rows
+    already stored are not changed either way."""
+
     material_search_excerpts: int = Field(default=1, ge=1, le=3)
     """How many excerpts one hit carries: its nearest piece's, and up to this
     many less one of the material's other pieces among the nearest the search

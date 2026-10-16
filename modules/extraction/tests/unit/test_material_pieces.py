@@ -10,6 +10,9 @@ The rules under test:
   above a piece, outermost first;
 - the path is in the text that is embedded and in no stored column: what is
   stored and shown is the piece alone;
+- the tail of the piece before it, within a section, is in the embedded text
+  too, and in no stored column; pieces and boundaries are the same with it
+  on or off;
 - the embedded string passes the outbound guard like the piece does.
 
 Every value here is invented.
@@ -177,6 +180,60 @@ def test_the_path_can_be_turned_off() -> None:
     assert all(piece.path == "" for piece in pieces_of(REPORT, 200, with_path=False))
 
 
+def test_a_piece_carries_the_tail_of_the_piece_before_it_in_its_section() -> None:
+    pieces = pieces_of(REPORT, 30, overlap=8)
+
+    assert any(piece.lead for piece in pieces)
+    for before, piece in zip(pieces, pieces[1:], strict=False):
+        if piece.lead:
+            assert piece.lead == before.text[-8:]
+            assert piece.embedded.endswith(piece.lead + piece.text)
+            assert piece.path == before.path
+
+
+def test_the_lead_never_crosses_a_heading_line() -> None:
+    pieces = pieces_of(REPORT, 30, overlap=8)
+    opens_a_section = [
+        piece for piece in pieces[1:] if heading_of(piece.text.split("\n")[0]) is not None
+    ]
+
+    assert opens_a_section
+    assert all(piece.lead == "" for piece in opens_a_section)
+    assert pieces[0].lead == ""
+
+
+def test_the_overlap_moves_nothing_that_is_stored_or_compared() -> None:
+    text = REPORT * 4 + "x" * 130
+
+    plain = pieces_of(text, 60)
+    over = pieces_of(text, 60, overlap=20)
+
+    assert [piece.text for piece in over] == [piece.text for piece in plain]
+    assert [piece.path for piece in over] == [piece.path for piece in plain]
+    assert "".join(piece.text for piece in over) == text
+    assert all(piece.lead == "" for piece in plain)
+    assert [piece.text for piece in over] == materials.cut(text, 60)
+
+
+def test_a_lead_is_only_ever_a_slice_of_the_text_that_runs_into_the_piece() -> None:
+    text = REPORT * 3
+    pieces = pieces_of(text, 45, overlap=15)
+    start = 0
+
+    for piece in pieces:
+        assert text[start : start + len(piece.text)] == piece.text
+        if piece.lead:
+            assert text[start - len(piece.lead) : start] == piece.lead
+        start += len(piece.text)
+
+
+def test_a_blank_tail_is_not_a_lead() -> None:
+    pieces = pieces_of("가" * 20 + "\n\n" + "나" * 20, 22, overlap=2)
+
+    assert [piece.text for piece in pieces] == ["가" * 20 + "\n\n", "나" * 20]
+    assert pieces[1].lead == ""
+
+
 # --- the upload -------------------------------------------------------------------
 
 
@@ -250,6 +307,7 @@ def test_without_the_path_what_is_embedded_is_the_piece(
 ) -> None:
     monkeypatch.setattr(get_settings(), "material_chunk_chars", 80)
     monkeypatch.setattr(get_settings(), "material_heading_path", False)
+    monkeypatch.setattr(get_settings(), "material_embed_overlap_chars", 0)
     row = store(session, REPORT)
 
     stored = list(
@@ -261,6 +319,74 @@ def test_without_the_path_what_is_embedded_is_the_piece(
     )
 
     assert embedder.seen == stored
+
+
+def test_the_tail_of_the_piece_before_is_embedded_and_never_stored(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "material_chunk_chars", 30)
+    monkeypatch.setattr(get_settings(), "material_embed_overlap_chars", 20)
+    row = store(session, REPORT)
+
+    stored = list(
+        session.scalars(
+            select(ExtMaterialChunk.text)
+            .where(ExtMaterialChunk.material_id == row.id)
+            .order_by(ExtMaterialChunk.position)
+        )
+    )
+
+    assert "".join(stored) == REPORT
+    assert stored == [piece.text for piece in pieces_of(REPORT, 30)]
+    # Exactly what the cutter says is embedded -- the path, the tail, the piece --
+    # and not what the path alone would give: a heading line at the end of the
+    # piece before is also the end of the next piece's path.
+    with_tail = [piece.embedded for piece in pieces_of(REPORT, 30, overlap=20)]
+    without = [piece.embedded for piece in pieces_of(REPORT, 30)]
+    assert embedder.seen == with_tail
+    assert with_tail != without
+    assert [piece.text for piece in pieces_of(REPORT, 30, overlap=20)] == stored
+
+
+def test_the_same_text_is_one_material_with_the_overlap_on(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(get_settings(), "material_chunk_chars", 80)
+    monkeypatch.setattr(get_settings(), "material_embed_overlap_chars", 20)
+    first = materials.store_upload(
+        session, TEAM, title="보고서", file_name="a.md", data=REPORT.encode()
+    )
+    second = materials.store_upload(
+        session, TEAM, title="다시", file_name="b.md", data=REPORT.encode()
+    )
+
+    assert second.already_kept is True
+    assert second.row.id == first.row.id
+
+
+def test_a_lead_the_guard_refuses_writes_nothing(
+    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autune_core.errors import PrivacyViolationError
+
+    monkeypatch.setattr(get_settings(), "material_chunk_chars", 80)
+    monkeypatch.setattr(get_settings(), "material_embed_overlap_chars", 20)
+    real = materials.assert_masked
+
+    def refuse_embedded(text: str, *, destination: str) -> None:
+        if destination == "material_embedder":
+            raise PrivacyViolationError("refused")
+        real(text, destination=destination)
+
+    monkeypatch.setattr(materials, "assert_masked", refuse_embedded)
+
+    with pytest.raises(PrivacyViolationError):
+        materials.store_upload(
+            session, TEAM, title="보고서", file_name="a.md", data=REPORT.encode()
+        )
+
+    assert session.scalars(select(ExtMaterialChunk)).all() == []
+    assert embedder.seen == []
 
 
 def test_the_same_text_is_one_material_with_the_path_on(

@@ -54,11 +54,19 @@ class Piece:
     """What is stored and shown: a slice of the masked text."""
     path: str
     """The headings above it, ``" > "`` between, or empty."""
+    lead: str = ""
+    """The last characters of the piece before it in the same section, or
+    empty. **Embedded only**: it is never stored, shown or compared, so the
+    pieces joined stay the masked text and ``materials._kept_already`` sees the
+    same text as without it. It is a slice of the masked text that runs
+    straight into ``text``, so it holds nothing the masked text does not."""
 
     @property
     def embedded(self) -> str:
-        """What the embedder is given: the path, a line break, the piece."""
-        return f"{self.path}\n{self.text}" if self.path else self.text
+        """What the embedder is given: the path, a line break, the lead, the
+        piece."""
+        body = f"{self.lead}{self.text}"
+        return f"{self.path}\n{body}" if self.path else body
 
 
 def heading_of(line: str) -> tuple[int, str] | None:
@@ -134,10 +142,17 @@ def split_recursive(text: str, size: int, level: int = 0) -> list[str]:
     return pieces
 
 
-def pieces_of(masked: str, size: int, *, with_path: bool = True) -> list[Piece]:
+def pieces_of(
+    masked: str, size: int, *, with_path: bool = True, overlap: int = 0
+) -> list[Piece]:
     """``masked`` in pieces of at most ``size`` characters, each with the path
     of the headings above it (empty when ``with_path`` is off, or when the text
     has none). Joined, the pieces' ``text`` is ``masked``.
+
+    **``overlap`` characters of the piece before it are put in front of a
+    piece's embedded text** (``Piece.lead``), within one section and never
+    across a heading line. Nothing that is stored or compared changes with it:
+    like the path, it moves a vector and nothing else.
 
     **The boundaries do not depend on ``with_path``**: a piece never runs over
     a heading line, with the path or without it, so turning the path off
@@ -149,16 +164,27 @@ def pieces_of(masked: str, size: int, *, with_path: bool = True) -> list[Piece]:
     blank, and the join stays exact. Such a piece is longer than ``size`` by
     white space only."""
     out: list[Piece] = []
-    for found, body in sections(masked):
+    section_of: list[int] = []
+    for number, (found, body) in enumerate(sections(masked)):
         path = found if with_path else ""
         for text in split_recursive(body, size):
             if text.strip():
                 out.append(Piece(text, path))
+                section_of.append(number)
             elif out:
                 out[-1] = Piece(out[-1].text + text, out[-1].path)
             else:
                 out.append(Piece(text, path))
+                section_of.append(number)
     if out and not out[0].text.strip() and len(out) > 1:
         head = out.pop(0)
+        section_of.pop(0)
         out[0] = Piece(head.text + out[0].text, out[0].path)
+    if overlap > 0:
+        for index in range(1, len(out)):
+            if section_of[index] != section_of[index - 1]:
+                continue
+            tail = out[index - 1].text[-overlap:]
+            if tail.strip():
+                out[index] = Piece(out[index].text, out[index].path, tail)
     return out

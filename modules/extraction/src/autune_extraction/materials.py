@@ -417,11 +417,16 @@ def cut(masked: str, size: int = CHUNK_CHARS) -> list[str]:
 
 def cut_with_paths(masked: str) -> list[Piece]:
     """The pieces of ``masked`` as ``store_upload`` stores them, each with the
-    heading path that is embedded before it, at the size and with the path
-    switch of the settings (``material_chunk_chars``, ``material_heading_path``)."""
+    heading path and the tail of the piece before it that are embedded before
+    it, at the size and with the switches of the settings
+    (``material_chunk_chars``, ``material_heading_path``,
+    ``material_embed_overlap_chars``)."""
     settings = get_settings()
     return pieces_of(
-        masked, settings.material_chunk_chars, with_path=settings.material_heading_path
+        masked,
+        settings.material_chunk_chars,
+        with_path=settings.material_heading_path,
+        overlap=settings.material_embed_overlap_chars,
     )
 
 
