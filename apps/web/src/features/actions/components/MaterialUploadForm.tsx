@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "@/shared/ui";
 
 import { driveRefusal } from "../drivePicker";
-import { fileRefusal, mayHaveStored, megabytes, uploadRefusal } from "../materialUpload";
+import {
+  fileRefusal,
+  mayHaveStored,
+  megabytes,
+  titleFromFileName,
+  uploadRefusal,
+} from "../materialUpload";
 import type { MaterialUploadRules } from "../types";
 
 /**
@@ -31,8 +37,15 @@ export function MaterialUploadForm({
   onUpload,
   onUnanswered,
   pickDrive,
+  showNotes = true,
 }: {
   rules: MaterialUploadRules;
+  /**
+   * Whether the notes under the form are shown. The page lets a person fold
+   * them; they are open on every visit and the choice is not kept, so nothing
+   * new is stored in the browser.
+   */
+  showNotes?: boolean;
   /**
    * Choose a file from Google Drive (#1369): the browser fetches it and the
    * chosen file goes through the same upload as one from disk. Absent where
@@ -59,9 +72,21 @@ export function MaterialUploadForm({
   const [picking, setPicking] = useState(false);
   // Set when `file` came from Drive: the file input then shows nothing.
   const [fromDrive, setFromDrive] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  // The title the form filled in from a file's name, so that the next file may
+  // replace it and a title the person typed never is.
+  const filled = useRef("");
   const meta = { fontSize: "var(--text-metaSmall)" } as const;
   const input = { ...meta, borderRadius: "var(--radius)", padding: "4px 8px" } as const;
   const refusedHere = file ? fileRefusal(file, rules) : null;
+
+  const suggestTitle = (chosen: File | null) => {
+    if (!chosen) return;
+    if (title.trim() !== "" && title !== filled.current) return;
+    const suggestion = titleFromFileName(chosen.name, rules.max_title_chars);
+    filled.current = suggestion;
+    setTitle(suggestion);
+  };
 
   const chooseFromDrive = async () => {
     if (!pickDrive || busy || picking) return;
@@ -73,6 +98,7 @@ export function MaterialUploadForm({
       if (picked) {
         setFile(picked);
         setFromDrive(true);
+        suggestTitle(picked);
         setRound((n) => n + 1);
       }
     } catch (cause) {
@@ -90,6 +116,7 @@ export function MaterialUploadForm({
     try {
       await onUpload({ title: title.trim(), file });
       setTitle("");
+      filled.current = "";
       setFile(null);
       setFromDrive(false);
       setRound((n) => n + 1);
@@ -122,18 +149,30 @@ export function MaterialUploadForm({
         />
         <input
           key={round}
+          ref={fileInput}
           type="file"
           aria-label="올릴 파일"
           accept={rules.suffixes.join(",")}
           disabled={busy || picking}
+          tabIndex={-1}
           onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
+            const chosen = event.target.files?.[0] ?? null;
+            setFile(chosen);
             setFromDrive(false);
             setError(null);
+            suggestTitle(chosen);
           }}
-          className="min-w-0 flex-1"
-          style={meta}
+          className="sr-only"
         />
+        <Button
+          type="button"
+          tone="secondary"
+          size="compact"
+          disabled={busy || picking}
+          onClick={() => fileInput.current?.click()}
+        >
+          파일 선택
+        </Button>
         {pickDrive ? (
           <Button
             type="button"
@@ -156,19 +195,19 @@ export function MaterialUploadForm({
           파일 올리기
         </Button>
       </div>
-      {fromDrive && file ? (
+      {file ? (
         <span role="status" className="text-[var(--color-ink-muted)]" style={meta}>
-          Drive에서 고른 파일: {file.name}
+          {fromDrive ? "Drive에서 고른 파일:" : "고른 파일:"} {file.name}
         </span>
       ) : null}
       {pickDrive ? (
-        <p className="text-[var(--color-ink-muted)]" style={meta}>
+        <p hidden={!showNotes} className="text-[var(--color-ink-muted)]" style={meta}>
           Drive에서 고른 파일은 이 브라우저가 Google에서 받아 올립니다. Autune 서버는
           Drive에 접속하지 않으며, Autune이 접근할 수 있는 것은 이번에 고른 파일뿐입니다.
           이후는 위와 같습니다.
         </p>
       ) : null}
-      <p className="text-[var(--color-ink-muted)]" style={meta}>
+      <p hidden={!showNotes} className="text-[var(--color-ink-muted)]" style={meta}>
         올린 파일의 원본은 보관하지 않으며 Autune에서 다시 열 수 없습니다. 보관하는
         것은 전화번호처럼 형식이 정해진 개인정보를 가린 글이고,{" "}
         {keepUntilDeleted === true
