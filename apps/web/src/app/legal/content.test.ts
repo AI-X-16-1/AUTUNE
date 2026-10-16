@@ -197,4 +197,15 @@ describe("legal documents", () => {
     expect(version).not.toBe("2026-10-12.7");
   });
 
+  // The pixel's `_fbp` cookie is set on `.autune.cloud` and so reaches the
+  // service's requests too (#1358's reviews). The policy says it does, and
+  // that the service does not read it; whoever agreed to `.8` is asked again.
+  it("say the landing page's _fbp cookie also reaches the service, which does not read it", () => {
+    const privacy = JSON.stringify(LEGAL_DOCUMENTS.find((d) => d.id === "privacy"));
+    expect(privacy).toContain("웹브라우저는 이 쿠키를 서비스(app.autune.cloud)로 보내는 요청에도 함께 전송합니다");
+    expect(privacy).toContain("회사는 서비스에서 이 쿠키를 읽거나 저장하지 않으며");
+    const version = REQUIRED_CONSENTS.find((c) => c.document === "privacy")?.version;
+    expect(version).not.toBe("2026-10-12.8");
+  });
+
 });

@@ -85,6 +85,14 @@
  * date stays 2026-10-15, the same day as `.7`, so the version counts after
  * the dot. The terms did not change, so theirs stays.
  *
+ * `2026-10-12.9`, the privacy policy alone (the privacy owner, 2026-10-16):
+ * the pixel's `_fbp` cookie is set on `.autune.cloud`, so the browser also
+ * sends it with every request to the service at app.autune.cloud. 제12조 ⑦
+ * now says so, and that the service neither reads nor keeps it nor passes it
+ * on. Nothing new is collected, but a person who agreed to `.8` read a text
+ * that implied the cookie stayed on the landing page. The effective date
+ * stays 2026-10-15. The terms did not change, so theirs stays.
+ *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
  * transfer abroad -- and they were taken out again the same day (the user's
@@ -104,7 +112,7 @@ export interface RequiredConsent {
 
 export const REQUIRED_CONSENTS: readonly RequiredConsent[] = [
   { document: "terms", version: "2026-10-12.4" },
-  { document: "privacy", version: "2026-10-12.8" },
+  { document: "privacy", version: "2026-10-12.9" },
 ];
 
 /** The required consents this person has not given, in the page's order. */

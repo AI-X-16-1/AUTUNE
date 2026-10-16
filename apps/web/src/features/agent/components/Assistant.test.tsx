@@ -32,7 +32,7 @@ function open(pathname: string): void {
       pathname={pathname}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /Autune 비서 열기/ }));
+  // The panel is open from the start.
 }
 
 describe("Assistant header", () => {
@@ -176,7 +176,7 @@ describe("Assistant launcher shortcut", () => {
     expect(launcher.textContent).toMatch(/Ctrl J.*⌘J/);
   });
 
-  it("opens on Ctrl+J as well as ⌘J", () => {
+  it("toggles on Ctrl+J as well as ⌘J", () => {
     vi.spyOn(api, "listPending").mockResolvedValue([]);
     render(
       <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
@@ -184,10 +184,31 @@ describe("Assistant launcher shortcut", () => {
     const launcher = screen.getByRole("button", { name: /Autune 비서 열기/ });
 
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
-    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+    expect(launcher.getAttribute("aria-expanded")).toBe("false");
 
     fireEvent.keyDown(window, { key: "j", metaKey: true });
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  // The panel is open when the app loads (2026-10-16), but the page keeps the
+  // focus until the person opens the panel themselves.
+  it("is open from the start and takes the focus only when the person opens it", () => {
+    vi.spyOn(api, "listPending").mockResolvedValue([]);
+    render(
+      <Assistant teamId="team_1" teamName="A팀" userName="민경" pathname="/" />,
+    );
+    const launcher = screen.getByRole("button", { name: /Autune 비서 열기/ });
+    const composer = screen.getByRole("textbox", { name: "비서에게 물어보기" });
+
+    expect(launcher.getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).not.toBe(composer);
+
+    fireEvent.click(launcher);
     expect(launcher.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(launcher);
+    expect(document.activeElement).toBe(
+      screen.getByRole("textbox", { name: "비서에게 물어보기" }),
+    );
   });
 });
 
