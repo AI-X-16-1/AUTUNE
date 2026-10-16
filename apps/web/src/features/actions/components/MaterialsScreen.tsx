@@ -19,6 +19,7 @@ import {
   uploadMaterial,
 } from "../api";
 import { localToday } from "../dates";
+import { drivePickerConfig, pickDriveFile } from "../drivePicker";
 import { questionLimit } from "../materialSearch";
 import {
   alreadyKeptNote,
@@ -80,6 +81,9 @@ export function MaterialsScreen({
 } = {}) {
   const [teams, setTeams] = useState<Team[] | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
+  // The notes on this page can be folded away. Open on every visit; the choice
+  // is not kept, so the page stores nothing in the browser for it.
+  const [notesOpen, setNotesOpen] = useState(true);
   const mine = teams ?? [];
   const known = (id: string | null) =>
     id !== null && mine.some((t) => t.id === id) ? id : null;
@@ -104,17 +108,34 @@ export function MaterialsScreen({
       className="flex max-w-[860px] flex-col gap-6"
       style={{ padding: "20px var(--space-page) var(--space-page)" }}
     >
-      <h1
-        className="text-[var(--color-ink-strong)]"
-        style={{
-          fontSize: "var(--text-title)",
-          fontWeight: "var(--text-title-weight)",
-          letterSpacing: "var(--text-title-tracking)",
-        }}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1
+          className="text-[var(--color-ink-strong)]"
+          style={{
+            fontSize: "var(--text-title)",
+            fontWeight: "var(--text-title-weight)",
+            letterSpacing: "var(--text-title-tracking)",
+          }}
+        >
+          자료
+        </h1>
+        <Button
+          type="button"
+          tone="quiet"
+          size="compact"
+          aria-expanded={notesOpen}
+          aria-controls="materials-notes"
+          onClick={() => setNotesOpen((open) => !open)}
+        >
+          {notesOpen ? "주의사항 접기" : "주의사항 펼치기"}
+        </Button>
+      </div>
+      <p
+        id="materials-notes"
+        hidden={!notesOpen}
+        className="text-[var(--color-ink-muted)]"
+        style={meta}
       >
-        자료
-      </h1>
-      <p className="text-[var(--color-ink-muted)]" style={meta}>
         팀이 함께 보는 자료를 모아 둡니다. 링크로 등록한 Google Drive 파일은
         제목과 링크만 두며, Autune은 그 파일의 내용을 읽거나 저장하지 않습니다.
         미리보기는 보는 사람 본인의 Google 로그인으로 Google이 보여 주므로, 파일을
@@ -148,7 +169,7 @@ export function MaterialsScreen({
               </select>
             </label>
           ) : null}
-          <TeamMaterials key={teamId} teamId={teamId} />
+          <TeamMaterials key={teamId} teamId={teamId} showNotes={notesOpen} />
         </>
       )}
     </main>
@@ -156,7 +177,7 @@ export function MaterialsScreen({
 }
 
 /** One team's shelf: the form that adds to it, and the list. */
-function TeamMaterials({ teamId }: { teamId: string }) {
+function TeamMaterials({ teamId, showNotes }: { teamId: string; showNotes: boolean }) {
   const [materials, setMaterials] = useState<Material[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -170,6 +191,8 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   // cannot -- then no toggle is drawn and the rows still say their days.
   const [settings, setSettings] = useState<MaterialSettings | null>(null);
   const uploadsOn = rules?.enabled === true;
+  // Null without the build-time Picker values; then no button (#1369).
+  const drivePicker = drivePickerConfig();
   // The choice is over the uploads a team has as much as over those to come.
   // Where uploads were switched off again, the server still takes the choice
   // and still deletes by it every hour, so a team with an upload left has to
@@ -248,6 +271,8 @@ function TeamMaterials({ teamId }: { teamId: string }) {
       {rules?.enabled ? (
         <MaterialUploadForm
           rules={rules}
+          showNotes={showNotes}
+          pickDrive={drivePicker ? () => pickDriveFile(drivePicker, rules.max_bytes) : undefined}
           keepUntilDeleted={settings?.keep_until_deleted ?? null}
           onUpload={async (draft) => {
             // "자료를 올렸습니다" under a refusal would read as this file's.
