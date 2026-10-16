@@ -135,6 +135,7 @@ design names module D's retrieval as the filter; see section 9.
 
 | State | Shown as |
 |---|---|
+| On load | Open, without taking the focus: the page keeps it until the person opens the panel themselves (2026-10-16). Closing is not remembered; a reload opens it again |
 | Closed | Launcher only |
 | Closed, proposals waiting | Launcher unchanged. The sidebar's 승인 대기 entry carries the chosen team's count (18px `signal.critical` pill, 600 11px, `99+` above 99), the count of what 승인 대기 lists, which is that team's proposals only. Every team in the team menu with any waiting has a 7px `signal.critical` dot after its name; a marked team behind "더보기" puts the dot on "더보기" |
 | Open, empty conversation | One greeting line in the message area ("{name}님, 무엇을 확인할까요?", 600 14) and three larger suggested-question chips (height 32) |
