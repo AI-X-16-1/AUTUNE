@@ -1010,29 +1010,39 @@ deployment, and that must be met before an ad script goes on the landing
 page: the session cookie takes the `__Host-` prefix, a state-changing request
 and the live WebSocket handshake are refused when their `Origin` is not the
 app's own (the Slack events route, which Slack posts without an `Origin`, is
-left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. The
-two names share a site, so until then the team trial must not carry an ad
-script; none is on the landing page today.
+left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. Both
+are in the code (#1346) and have been deployed here since 2026-10-15. The two
+names share a site, so no third-party script goes on the app's own origin. The
+Meta Pixel is in the landing page's source (#1358); whether it is live depends
+on the landing build being uploaded, which is outside this repository.
 
-**Anyone with a verified Google account can sign in here** (decided on
-#1349). There is no allow list: `upsert_user_from_google` creates a user for
-any Google identity that comes back, the OAuth client in `autune/app` is the
-main project's and its consent screen is published (#1320), so Google refuses
-nobody. What decides who reaches the sign-in page at all is the load
-balancer's security group (`autune-alb-sg`): ports 80 and 443. That setting
-lives outside this repository and nothing here checks it; whoever changes it
-changes who can sign in.
+**Anyone with a verified Google account can sign in here.** There is no allow
+list: `upsert_user_from_google` creates a user for any Google identity that
+comes back, the OAuth client in `autune/app` is the main project's and its
+consent screen is published (#1320), so Google refuses nobody. What decides who
+reaches the sign-in page at all is the load balancer's security group
+(`autune-alb-sg`): ports 80 and 443. That setting lives outside this
+repository and nothing here checks it; whoever changes it changes who can sign
+in.
 
-It is opened to `0.0.0.0/0` only when all of these hold, and each one is a
-thing that can be looked up:
+**The door was opened on 2026-10-15 at 13:24 KST**, at the project owner's
+word, by adding `0.0.0.0/0` on ports 80 and 443 to `autune-alb-sg`. The
+decision issue, #1349, was still open then: of the four module owners only one
+had answered, with conditions. This section records what stood where, so that
+a reader does not take the door for something the owners agreed to in full.
 
-- the `__Host-` session and OAuth state cookies and the `Origin` check are on
-  this branch (#1346) and deployed;
-- the privacy policy names AWS as the processor (article 6), the privacy
-  consent version is the one that says so, and the notice period of article 15
-  (2) has run or has been decided on the policy's pull request;
-- sign-in and the live WebSocket have been exercised on this host after that
-  deploy.
+| Condition | State when the door was opened |
+| --- | --- |
+| `__Host-` cookies and the `Origin` check (#1346), with the nginx `Host` fix (#1351) | on this branch and deployed (run on `2bc4b189`) |
+| Privacy policy names AWS as the processor, the consent version says so | deployed (#1347 reached this branch through #1352 and #1359) |
+| Notice period of article 15 (2) | not waited for; skipped by agreement of the four owners on #1347 |
+| EC2 instance security group takes port 80 only from `autune-alb-sg` | read and true |
+| Sign-in and the live WebSocket exercised on the host | the WebSocket handshake was exercised (101 with the app's `Origin`, 403 with another); a signed-in POST was **not** |
+| A usage limit or alert on the LLM key (asked for on #1349) | **not met**: none is configured, and the decision is on hold |
+| #890 reopened, and a separate Testing client or an allow list in code (#1342) | **not settled**: neither was done, and #1349 does not say they are dropped |
+
+Until #1349 is answered by the other owners, treat the last two rows as open
+debts, not as decided.
 
 While the door is open, two things follow that were not true of the team
 trial. Slack's servers can reach `/api/slack/events`, so connecting Slack
@@ -1070,7 +1080,11 @@ seven days. Everything in the `autune-app` project comes back with the host
 The workflow deploys the commit that was pushed to `infra/release-1014`
 (`github.sha`), and the deploy role's trust policy accepts only that branch,
 so an older commit cannot be deployed from anywhere else. To go back, merge a
-revert of the change into the branch; the push deploys it.
+revert of the change into the branch; the push deploys it. The workflow also
+has `workflow_dispatch` and deploys `github.sha`; re-running an earlier run
+from the Actions tab should deploy that run's commit again, faster than a
+revert pull request, but it leaves the branch tip unchanged, so the next push
+deploys the tip again. That route has not been tried here.
 
 - **Time.** `deploy.sh` rebuilds the images every time and prunes the one it
   replaced, so a rollback is a rebuild: a few minutes when the build cache is
@@ -1081,7 +1095,9 @@ revert of the change into the branch; the push deploys it.
   migration that is not additive is not safe to roll back past.
 - **Closing the door.** Without a deploy, in minutes, replace the
   `0.0.0.0/0` rules on ports 80 and 443 of `autune-alb-sg` with the team's
-  addresses:
+  addresses. This closes the door only while the instance itself takes port 80
+  from `autune-alb-sg` alone (or has no public address); check that first, or
+  narrowing the load balancer's rules does not stop anyone:
 
   ```bash
   sg=$(aws ec2 describe-security-groups --filters Name=group-name,Values=autune-alb-sg \
@@ -1094,8 +1110,9 @@ revert of the change into the branch; the push deploys it.
   done
   ```
 
-  New connections from other addresses are refused at once; one that is
-  already established keeps working until it closes. The stack keeps running.
+  If a `::/0` rule was added too, revoke it the same way. New connections
+  from other addresses are refused at once; one that is already established
+  keeps working until it closes. The stack keeps running.
 - **After a rollback or a start**, look at the same things as after a
   deploy: `/` answers 200, `/api/auth/google/start` redirects to Google and sets a `__Host-`
   state cookie, a POST naming another host in `Origin` is refused with 403,
