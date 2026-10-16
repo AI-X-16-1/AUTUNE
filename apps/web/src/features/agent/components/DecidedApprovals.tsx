@@ -58,28 +58,31 @@ export function decidedWhen(iso: string): string {
  * days, newest first: the card as it waited, then who decided, when, and how
  * it went. The server applies the waiting list's rule, so only proposals the
  * person may decide are here. Read only; nothing is decided again from here.
+ *
+ * One team's, asked of the server (`?team_id=`). The list is capped at 50
+ * across whatever it covers, so filtering every team's 50 here let another
+ * team's decisions crowd this team's out, and the tab said none were made
+ * (#1322 review).
  */
-export function DecidedApprovals({ teamId }: { teamId: string | null }) {
+export function DecidedApprovals({ teamId }: { teamId: string }) {
   const [items, setItems] = useState<DecidedAction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let current = true;
-    listDecided()
+    // Another team's list is not left on screen while this one is read.
+    setItems(null);
+    setError(null);
+    listDecided(teamId)
       .then((list) => current && setItems(list))
       // Never the API's own message: it is English and meant for a developer.
       .catch(() => current && setError(LOAD_FAILED));
     return () => {
       current = false;
     };
-  }, []);
+  }, [teamId]);
 
-  // The team being looked at, and only it (the user, 2026-10-13). Nothing is
-  // listed until the team is known, so another team's cards never flash by.
-  const shown: DecidedAction[] | null =
-    teamId === null || items === null
-      ? null
-      : items.filter((item) => item.team_id === teamId);
+  const shown = items;
 
   return (
     <>

@@ -70,9 +70,17 @@ const TABS: ReadonlyArray<{ id: Tab; label: string }> = [
 
 /**
  * 승인 — two tabs: what still waits (below) and what was decided
- * (`DecidedApprovals`, #1215).
+ * (`DecidedApprovals`, #1215), for the team being looked at.
+ *
+ * `teamId` is `undefined` while the team is not yet known and `null` when
+ * the person is on no team. Each says so: a screen that waited on a team that
+ * never came stayed on "불러오는 중…" with no word of why (#1322 review).
  */
-export function ApprovalsScreen({ teamId }: { teamId: string | null }) {
+export function ApprovalsScreen({
+  teamId,
+}: {
+  teamId: string | null | undefined;
+}) {
   const [tab, setTab] = useState<Tab>("waiting");
   return (
     <main className="mx-auto max-w-[800px] p-[var(--space-page)]">
@@ -88,11 +96,22 @@ export function ApprovalsScreen({ teamId }: { teamId: string | null }) {
       <div className="mt-4">
         <Tabs tabs={TABS} active={tab} onChange={setTab} />
       </div>
-      {/* Both stay mounted, so a card settled here keeps its result on a tab switch. */}
-      <div hidden={tab !== "waiting"}>
-        <WaitingApprovals teamId={teamId} />
-      </div>
-      {tab === "decided" ? <DecidedApprovals teamId={teamId} /> : null}
+      {teamId === undefined ? (
+        <p className="mt-4 text-[var(--color-ink-muted)]">불러오는 중…</p>
+      ) : teamId === null ? (
+        <p className="mt-4 text-[var(--color-ink-muted)]">
+          속한 팀이 없습니다. 팀에 들어가면 그 팀의 승인할 제안이 여기에
+          보입니다.
+        </p>
+      ) : (
+        <>
+          {/* Both stay mounted, so a card settled here keeps its result on a tab switch. */}
+          <div hidden={tab !== "waiting"}>
+            <WaitingApprovals teamId={teamId} />
+          </div>
+          {tab === "decided" ? <DecidedApprovals teamId={teamId} /> : null}
+        </>
+      )}
     </main>
   );
 }
@@ -103,7 +122,7 @@ export function ApprovalsScreen({ teamId }: { teamId: string | null }) {
  * some. Approving runs it at once; the card then shows the result and leaves.
  * What a card shows is built by the server at read time; nothing here is stored.
  */
-function WaitingApprovals({ teamId }: { teamId: string | null }) {
+function WaitingApprovals({ teamId }: { teamId: string }) {
   const [items, setItems] = useState<PendingAction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Cards that are settled (decided, or found already decided) and what to say.
@@ -203,12 +222,11 @@ function WaitingApprovals({ teamId }: { teamId: string | null }) {
     }
   }
 
-  // The team being looked at, and only it (the user, 2026-10-13). Nothing is
-  // listed until the team is known, so another team's cards never flash by.
+  // The team being looked at, and only it (the user, 2026-10-13). The queue
+  // has no cap, so every team's is read and this one's kept: the list stays
+  // put when the team changes, and a decision's re-read covers them all.
   const shown: PendingAction[] | null =
-    teamId === null || items === null
-      ? null
-      : items.filter((item) => item.team_id === teamId);
+    items === null ? null : items.filter((item) => item.team_id === teamId);
 
   return (
     <>
