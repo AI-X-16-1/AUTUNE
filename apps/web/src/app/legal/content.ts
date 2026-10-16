@@ -229,9 +229,10 @@
  *   through the upload route: the server does not reach Drive and takes no
  *   Drive token or file id (`drivePicker.ts`; `uploadMaterial` sends the title,
  *   the file and `team_id`). 제2조 and 제2조 ⑤ say how the file arrives. Google's
- *   two scripts load when the button is pressed, on the 자료 screen only, which
- *   is the one place a third-party script runs on the app's origin (question 1
- *   of #1369); 제12조 ⑨ says so. The feature is off unless the operator built in
+ *   two scripts load when the button is pressed. The 자료 screen's button is the
+ *   only trigger, but a script once loaded stays until the page is reloaded --
+ *   a client-side move to another screen does not remove it (mminjae97 on
+ *   #1369) -- so 제12조 ⑨ says the trigger, not where the script then is. The feature is off unless the operator built in
  *   its three values, and each sentence says "only where the company turned it
  *   on", as the upload sentences do.
  * A sentence here is a promise to the person who signs in.
@@ -904,7 +905,7 @@ const PRIVACY: LegalDocument = {
           "⑧ 이용자는 소개 페이지 하단의 '광고 측정 거부' 버튼을 눌러 해당 웹브라우저에서 제6항의 수집을 거부할 수 있습니다. 거부하면 그 웹브라우저에서는 Meta 픽셀을 불러오지 않으며, Meta 픽셀이 저장한 웹브라우저 식별자를 삭제합니다. 거부 표시는 해당 웹브라우저에만 저장되므로, 다른 웹브라우저나 기기에서는 따로 거부하여야 하고 웹브라우저의 저장 공간을 지우면 다시 거부하여야 합니다. 웹브라우저의 설정에서 제3자 쿠키나 추적을 차단하는 방법으로도 거부할 수 있습니다. 거부하더라도 서비스 이용에는 제한이 없습니다.",
         ),
         p(
-          "⑨ 자료 화면에서 구성원이 'Drive에서 선택' 버튼을 누르면, 그 화면에서 Google LLC가 제공하는 스크립트를 apis.google.com과 accounts.google.com에서 불러옵니다(회사가 해당 기능을 활성화한 경우에 한함). 버튼을 누르기 전에는 불러오지 않으며, 로그인 화면, 이 문서의 화면 및 자료 화면 밖의 다른 화면에서도 불러오지 않습니다. 이 스크립트는 Google이 운영하므로, Google은 자신의 개인정보 처리방침에 따라 이용자의 접속 정보를 수집하거나 쿠키를 저장할 수 있으며, 회사는 그 정보를 받거나 읽지 않습니다. 이용자는 웹브라우저의 설정을 통하여 Google의 쿠키 저장을 거부할 수 있으나, 이 경우 'Drive에서 선택' 기능을 이용하지 못할 수 있습니다.",
+          "⑨ 자료 화면에서 구성원이 'Drive에서 선택' 버튼을 누르면, 그 화면에서 Google LLC가 제공하는 스크립트를 apis.google.com과 accounts.google.com에서 불러옵니다(회사가 해당 기능을 활성화한 경우에 한함). 스크립트를 불러오는 계기는 이 버튼뿐이며, 버튼을 누르기 전에는 불러오지 않고 로그인 화면, 이 문서의 화면 등 다른 화면을 여는 것만으로는 불러오지 않습니다. 다만 한 번 불러온 스크립트는 화면을 옮겨도 웹브라우저를 새로고침하거나 탭을 닫기 전까지는 남아 있습니다. 이 스크립트는 Google이 운영하므로, Google은 자신의 개인정보 처리방침에 따라 이용자의 접속 정보를 수집하거나 쿠키를 저장할 수 있으며, 회사는 그 정보를 받거나 읽지 않습니다. 이용자는 웹브라우저의 설정을 통하여 Google의 쿠키 저장을 거부할 수 있으나, 이 경우 'Drive에서 선택' 기능을 이용하지 못할 수 있습니다.",
         ),
       ],
     },
