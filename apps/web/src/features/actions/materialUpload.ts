@@ -246,3 +246,13 @@ export function alreadyKeptNote(
     .filter(Boolean)
     .join(" ");
 }
+
+/**
+ * The title a chosen file starts with: its name without the ending, cut to the
+ * server's limit. Only a suggestion -- the title box stays editable, and a
+ * title the person typed is never replaced by it (`MaterialUploadForm`).
+ */
+export function titleFromFileName(name: string, maxChars: number): string {
+  const bare = name.replace(/\.[A-Za-z0-9]{1,5}$/, "").trim();
+  return Array.from(bare || name.trim()).slice(0, maxChars).join("");
+}
