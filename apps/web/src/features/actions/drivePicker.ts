@@ -12,9 +12,11 @@
  *   here (non-sensitive in Google's scope list). No file id is sent to Autune.
  * - **The token is never stored.** It lives in the closure of one call; not in
  *   storage, not in state, not in a request to our API.
- * - **Google's scripts load on a click, not with the page** (#1369, answer 1:
- *   only on the 자료 screen). `loadScript` is called from `pickDriveFile`
- *   alone, so a signed-in tab on any other screen has no Google script.
+ * - **Google's scripts load on a click, not with the page** (#1369, answer 1).
+ *   `loadScript` is called from `pickDriveFile` alone, so no screen brings a
+ *   Google script in by itself. The 자료 screen's button is the only trigger,
+ *   but a script once loaded stays until the page is reloaded: a client-side
+ *   move to another screen does not remove it (mminjae97 on #1369).
  * - **Off unless configured.** `drivePickerConfig` is null without the three
  *   build-time values, and the screen then draws no button.
  *
