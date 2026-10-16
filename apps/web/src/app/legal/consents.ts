@@ -106,7 +106,13 @@
  * the member changes the title (mkkim68's review of #1370). The effective
  * date stays 2026-10-15; whether
  * 제15조 (2)'s 7 days apply to this is the owners' call, on the pull request.
- * The terms did not change, so theirs stays.
+ * The same `.10` also carries the landing page's `Lead` (the privacy owner,
+ * 2026-10-16): the pixel tells Meta when a "시작하기" link is pressed, so an
+ * ad can be measured by who went on to the app with no script on the app's
+ * origin, and 제12조 ⑥'s table adds that fact to what is collected, when it
+ * is sent and why. Both came in before `.10` reached the release host, so
+ * nobody had agreed to a `.10` without either, and one rise asks everyone
+ * once. The terms did not change, so theirs stays.
  *
  * **Two documents, and it stays two until something else changes first.** The
  * page briefly listed two more -- a consent to voice feature data and one to
