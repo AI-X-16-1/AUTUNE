@@ -1075,6 +1075,35 @@ the site is idle for more than a day or two). RDS starts itself again after
 seven days. Everything in the `autune-app` project comes back with the host
 (`restart: unless-stopped`).
 
+### Opening hours
+
+The host is planned to be open on weekdays from 09:00 to 18:00 KST and not
+at all on weekends (the owner of module B, 2026-10-16). It is started and
+stopped by hand, as in the paragraph above; nothing schedules it.
+
+- **Start about 08:40.** The EC2 instance and the RDS instance are started
+  together and the stack comes back with the host, but RDS takes about five
+  minutes to be available. Check `/` and the five `/api/*/health` paths after
+  that, as after a deploy.
+- **A weekend is within the seven days.** RDS starts itself again after seven
+  days stopped; from Friday 18:00 to Monday morning is about 62 hours.
+- **Land release merges inside the hours.** A push to `infra/release-1014`
+  runs `release-aws.yml`, which deploys through SSM, and SSM cannot run a
+  command on a stopped instance, so a push while the host is stopped leaves a
+  red run (not tried here). Do not merge to the branch on a Friday after 18:00
+  or on a weekend; start the host first, or wait for Monday.
+- **Outside the hours the app does not answer.** The load balancer has no
+  healthy target (a 503 is what to expect; not checked here). The sign-in
+  page and the live transcripts are unavailable until the next start. Stored
+  data stays in the stopped database, but a recording still being transcribed
+  at the stop is gone: its temp file lives in memory.
+- **What it costs.** The two stopped resources are the large part of the
+  bill; the load balancer, the broker, the public addresses and the disks stay
+  at about $2 a day. At 45 hours a week that is about $180 a month, against
+  about $500 left on. Both numbers are estimates from public unit prices: the
+  account's billing could not be read with the deploy user (Cost Explorer is
+  denied to it), and the language-model calls are not in them.
+
 ### Rolling back
 
 The workflow deploys the commit that was pushed to `infra/release-1014`
