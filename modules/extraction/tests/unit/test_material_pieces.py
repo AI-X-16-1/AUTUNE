@@ -364,13 +364,21 @@ def test_the_same_text_is_one_material_with_the_overlap_on(
     assert second.row.id == first.row.id
 
 
+@pytest.mark.parametrize("heading_path", [True, False])
 def test_a_lead_the_guard_refuses_writes_nothing(
-    session: Session, embedder: Recording, monkeypatch: pytest.MonkeyPatch
+    session: Session,
+    embedder: Recording,
+    monkeypatch: pytest.MonkeyPatch,
+    heading_path: bool,
 ) -> None:
+    """With the path off a piece has a lead and no path: the string it makes
+    with the lead is still looked at, since a pattern across the cut between
+    two pieces is only seen in that string."""
     from autune_core.errors import PrivacyViolationError
 
-    monkeypatch.setattr(get_settings(), "material_chunk_chars", 80)
+    monkeypatch.setattr(get_settings(), "material_chunk_chars", 30)
     monkeypatch.setattr(get_settings(), "material_embed_overlap_chars", 20)
+    monkeypatch.setattr(get_settings(), "material_heading_path", heading_path)
     real = materials.assert_masked
 
     def refuse_embedded(text: str, *, destination: str) -> None:

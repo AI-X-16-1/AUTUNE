@@ -546,10 +546,12 @@ def store_upload(
     pieces = [piece.text for piece in cut_pieces]
     for piece in cut_pieces:
         assert_masked(piece.text, destination="ext_material_chunks")
-        if piece.path:
-            # What the embedder is given is the path and the piece. The path
-            # is made of the masked text's own lines, and is looked at again as
-            # the one string it is with the piece.
+        if piece.embedded != piece.text:
+            # What the embedder is given is the path, the tail of the piece
+            # before it and the piece. Both are slices of the masked text, and
+            # a pattern across the cut between two pieces is only seen in the
+            # one string they make: so it is looked at again as that string,
+            # whichever of the two the piece has.
             assert_masked(piece.embedded, destination="material_embedder")
     embedder = get_material_embedder()
     now = datetime.now(UTC)

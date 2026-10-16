@@ -142,9 +142,7 @@ def split_recursive(text: str, size: int, level: int = 0) -> list[str]:
     return pieces
 
 
-def pieces_of(
-    masked: str, size: int, *, with_path: bool = True, overlap: int = 0
-) -> list[Piece]:
+def pieces_of(masked: str, size: int, *, with_path: bool = True, overlap: int = 0) -> list[Piece]:
     """``masked`` in pieces of at most ``size`` characters, each with the path
     of the headings above it (empty when ``with_path`` is off, or when the text
     has none). Joined, the pieces' ``text`` is ``masked``.
