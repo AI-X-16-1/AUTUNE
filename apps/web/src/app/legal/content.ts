@@ -228,6 +228,17 @@
  *   is pressed (apps/landing/src/pixel.js, `data-pixel-lead`), so an ad can
  *   be measured by who went on to the app without any script on the app's
  *   origin. 제12조 ⑥'s table names it among what is collected, when, and why.
+ * - choosing a file from Google Drive for the 자료 upload (#1369). The member's
+ *   own browser fetches the one file they pick in Google's Picker and sends it
+ *   through the upload route: the server does not reach Drive and takes no
+ *   Drive token or file id (`drivePicker.ts`; `uploadMaterial` sends the title,
+ *   the file and `team_id`). 제2조 and 제2조 ⑤ say how the file arrives. Google's
+ *   two scripts load when the button is pressed. The 자료 screen's button is the
+ *   only trigger, but a script once loaded stays until the page is reloaded --
+ *   a client-side move to another screen does not remove it (mminjae97 on
+ *   #1369) -- so 제12조 ⑨ says the trigger, not where the script then is. The feature is off unless the operator built in
+ *   its three values, and each sentence says "only where the company turned it
+ *   on", as the upload sentences do.
  * A sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
@@ -399,8 +410,8 @@ const PRIVACY: LegalDocument = {
           ],
           [
             "팀이 올린 문서 자료",
-            "팀 구성원이 팀의 자료에 올린 문서 파일에서 읽은 글(가림 처리된 것), 그 글을 찾는 데 쓰기 위하여 가림 처리된 글로부터 계산한 수치(벡터)와 계산에 쓴 모델의 이름, 구성원이 입력한 자료의 제목, 올린 일시. 파일의 원본, 파일의 이름 및 올린 사람은 저장하지 않습니다(회사가 해당 기능을 활성화한 경우에 한함)",
-            "팀 구성원의 업로드",
+            "팀 구성원이 팀의 자료에 올린 문서 파일에서 읽은 글(가림 처리된 것), 그 글을 찾는 데 쓰기 위하여 가림 처리된 글로부터 계산한 수치(벡터)와 계산에 쓴 모델의 이름, 구성원이 입력한 자료의 제목, 올린 일시. 파일의 원본과 올린 사람은 저장하지 않으며, 파일의 이름도 따로 저장하지 않습니다. 다만 파일을 고르면 그 이름(끝의 확장자를 뺀 것)이 제목 칸에 먼저 채워지므로, 구성원이 제목을 고치지 않으면 그 이름이 제목으로 저장됩니다(회사가 해당 기능을 활성화한 경우에 한함)",
+            "팀 구성원의 업로드(컴퓨터에서 고른 파일, 또는 구성원 본인의 Google Drive에서 고른 파일)",
           ],
           [
             "받지 않은 문서 파일의 기록",
@@ -469,7 +480,7 @@ const PRIVACY: LegalDocument = {
           "④ 회사는 음성 녹음 및 전사문을 인공지능 모델의 학습 목적으로 보관하거나 이용하지 않습니다.",
         ),
         p(
-          "⑤ 회사는 팀 구성원이 팀의 자료에 올린 문서 파일을 그 요청을 처리하는 동안에만 읽으며, 파일의 원본은 저장하지 않습니다. 파일에서 읽은 글은 전화번호, 전자우편 주소, 주민등록번호, 계좌번호 및 신용카드번호를 가림 처리한 뒤에 저장하며, 가림 처리 전의 글은 저장하지 않습니다. 가림 처리는 자동화된 방법으로 이루어지므로, 줄이나 쪽이 바뀌는 곳에서 나뉘어 적힌 번호나 전자우편 주소는 가려지지 않은 채 보관될 수 있습니다. 문서 자료에는 가려지지 않은 부분만 골라 가리는 기능이 없으며, 팀 구성원은 그 자료를 삭제할 수 있습니다. 성명과 그 밖에 문장으로 적힌 내용은 가림 처리 대상에 포함되지 않으므로, 보관되는 글에 남을 수 있습니다. 자료에는 올린 사람을 기록하지 않습니다. 회사는 이 글을 외부 서비스에 전송하지 않으며, 인공지능 모델의 학습 목적으로 이용하지 않습니다. 팀 구성원이 자료를 찾기 위하여 입력한 질문은 같은 방법으로 가림 처리한 뒤 자료를 찾는 데에만 이용하며, 저장하거나 로그에 기록하지 않습니다.",
+          "⑤ 회사는 팀 구성원이 팀의 자료에 올린 문서 파일을 그 요청을 처리하는 동안에만 읽으며, 파일의 원본은 저장하지 않습니다. 구성원이 본인의 Google Drive에서 파일을 고르는 경우(회사가 해당 기능을 활성화한 경우에 한함)에는 구성원의 웹브라우저가 Google의 파일 선택 창에서 구성원이 고른 그 파일 하나를 Google로부터 받아 회사에 전송합니다. 회사의 서버는 Google Drive에 접속하지 않으며, Google Drive의 접근 토큰과 파일 식별자를 받거나 저장하지 않습니다. 구성원이 Google에서 허용하는 권한은 선택 창에서 고른 파일에만 미치는 것(drive.file)입니다. 파일이 회사에 전송된 뒤의 처리는 컴퓨터에서 올린 파일과 같습니다. 파일에서 읽은 글은 전화번호, 전자우편 주소, 주민등록번호, 계좌번호 및 신용카드번호를 가림 처리한 뒤에 저장하며, 가림 처리 전의 글은 저장하지 않습니다. 가림 처리는 자동화된 방법으로 이루어지므로, 줄이나 쪽이 바뀌는 곳에서 나뉘어 적힌 번호나 전자우편 주소는 가려지지 않은 채 보관될 수 있습니다. 문서 자료에는 가려지지 않은 부분만 골라 가리는 기능이 없으며, 팀 구성원은 그 자료를 삭제할 수 있습니다. 성명과 그 밖에 문장으로 적힌 내용은 가림 처리 대상에 포함되지 않으므로, 보관되는 글에 남을 수 있습니다. 자료에는 올린 사람을 기록하지 않습니다. 회사는 이 글을 외부 서비스에 전송하지 않으며, 인공지능 모델의 학습 목적으로 이용하지 않습니다. 팀 구성원이 자료를 찾기 위하여 입력한 질문은 같은 방법으로 가림 처리한 뒤 자료를 찾는 데에만 이용하며, 저장하거나 로그에 기록하지 않습니다.",
         ),
       ],
     },
@@ -896,6 +907,9 @@ const PRIVACY: LegalDocument = {
         ),
         p(
           "⑧ 이용자는 소개 페이지 하단의 '광고 측정 거부' 버튼을 눌러 해당 웹브라우저에서 제6항의 수집을 거부할 수 있습니다. 거부하면 그 웹브라우저에서는 Meta 픽셀을 불러오지 않으며, Meta 픽셀이 저장한 웹브라우저 식별자를 삭제합니다. 거부 표시는 해당 웹브라우저에만 저장되므로, 다른 웹브라우저나 기기에서는 따로 거부하여야 하고 웹브라우저의 저장 공간을 지우면 다시 거부하여야 합니다. 웹브라우저의 설정에서 제3자 쿠키나 추적을 차단하는 방법으로도 거부할 수 있습니다. 거부하더라도 서비스 이용에는 제한이 없습니다.",
+        ),
+        p(
+          "⑨ 자료 화면에서 구성원이 'Drive에서 선택' 버튼을 누르면, 그 화면에서 Google LLC가 제공하는 스크립트를 apis.google.com과 accounts.google.com에서 불러옵니다(회사가 해당 기능을 활성화한 경우에 한함). 스크립트를 불러오는 계기는 이 버튼뿐이며, 버튼을 누르기 전에는 불러오지 않고 로그인 화면, 이 문서의 화면 등 다른 화면을 여는 것만으로는 불러오지 않습니다. 다만 한 번 불러온 스크립트는 화면을 옮겨도 웹브라우저를 새로고침하거나 탭을 닫기 전까지는 남아 있습니다. 이 스크립트는 Google이 운영하므로, Google은 자신의 개인정보 처리방침에 따라 이용자의 접속 정보를 수집하거나 쿠키를 저장할 수 있으며, 회사는 그 정보를 받거나 읽지 않습니다. 이용자는 웹브라우저의 설정을 통하여 Google의 쿠키 저장을 거부할 수 있으나, 이 경우 'Drive에서 선택' 기능을 이용하지 못할 수 있습니다.",
         ),
       ],
     },
