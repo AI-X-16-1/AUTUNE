@@ -19,6 +19,7 @@ import {
   uploadMaterial,
 } from "../api";
 import { localToday } from "../dates";
+import { drivePickerConfig, pickDriveFile } from "../drivePicker";
 import { questionLimit } from "../materialSearch";
 import {
   alreadyKeptNote,
@@ -170,6 +171,8 @@ function TeamMaterials({ teamId }: { teamId: string }) {
   // cannot -- then no toggle is drawn and the rows still say their days.
   const [settings, setSettings] = useState<MaterialSettings | null>(null);
   const uploadsOn = rules?.enabled === true;
+  // Null without the build-time Picker values; then no button (#1369).
+  const drivePicker = drivePickerConfig();
   // The choice is over the uploads a team has as much as over those to come.
   // Where uploads were switched off again, the server still takes the choice
   // and still deletes by it every hour, so a team with an upload left has to
@@ -248,6 +251,7 @@ function TeamMaterials({ teamId }: { teamId: string }) {
       {rules?.enabled ? (
         <MaterialUploadForm
           rules={rules}
+          pickDrive={drivePicker ? () => pickDriveFile(drivePicker, rules.max_bytes) : undefined}
           keepUntilDeleted={settings?.keep_until_deleted ?? null}
           onUpload={async (draft) => {
             // "자료를 올렸습니다" under a refusal would read as this file's.
