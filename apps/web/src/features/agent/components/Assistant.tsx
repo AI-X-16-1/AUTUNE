@@ -42,6 +42,13 @@ import { ChatProposal } from "./ChatProposal";
  *   team's name goes above the first question about another team, and the
  *   composer says which team the next one goes to. Turns are not sent back to
  *   the server, so two teams' answers never meet in a model's context.
+ * - The panel is open when the app loads (the agent layer's owner,
+ *   2026-10-16), so a person finds the assistant without looking for the
+ *   launcher. It does not take the focus then -- the page keeps it until the
+ *   person opens the panel themselves. Closing is not remembered: the layout
+ *   keeps this component across in-app navigation, and a reload opens it
+ *   again rather than keep one more value in the browser (privacy policy
+ *   제12조 ④ lists what is kept there).
  */
 
 type Turn =
@@ -102,7 +109,9 @@ export function Assistant({
    * shows that team's reports (#1055 follow-up). */
   onChooseTeam?: (teamId: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  // The panel opened with the app, not by the person: leave the focus where it is.
+  const openedByApp = useRef(true);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [waiting, setWaiting] = useState(false);
@@ -139,7 +148,12 @@ export function Assistant({
   }, [open, close]);
 
   useEffect(() => {
-    if (open) input.current?.focus();
+    if (!open) return;
+    if (openedByApp.current) {
+      openedByApp.current = false;
+      return;
+    }
+    input.current?.focus();
   }, [open]);
 
   useEffect(() => {
@@ -170,6 +184,8 @@ export function Assistant({
   const switched = !meetingId && lastTeam !== null && lastTeam !== teamId;
 
   useEffect(() => {
+    // Nothing to follow yet; the panel opening with the app must not move the page.
+    if (turns.length === 0 && !waiting) return;
     bottom.current?.scrollIntoView({ block: "end" });
   }, [turns, waiting]);
 
