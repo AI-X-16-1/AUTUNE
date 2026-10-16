@@ -496,7 +496,12 @@ class ExtractionSettings(BaseSettings):
     **1 by default: one excerpt per material is what #817 10(b) answered.**
     More than one is a product decision this setting does not make. Measured
     on made-up text, the excerpt held the answer 79% of the time with one
-    piece and 95% to 100% with the two or three nearest."""
+    piece and 95% to 100% with the two or three nearest.
+
+    **Do not raise it above 1 before ADR 0011's open decision 8 is answered**
+    (what #817 10(b) rests on once a piece is the whole excerpt). Nothing but
+    this setting stands between a deployment and up to 600 characters of one
+    material per hit, and 3,000 over five hits."""
 
     material_search_min_similarity: float = Field(default=0.52, ge=-1, le=1)
     """Below this cosine similarity to the masked question, an uploaded

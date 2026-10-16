@@ -118,9 +118,12 @@ screen's."""
 EXCERPT_CHARS = 200
 """The longest excerpt, of one stored piece: with pieces of 200 characters
 (``materials.CHUNK_CHARS``) the piece itself, and the first 200 of an older,
-longer one. Five hits are at most a thousand characters of a team's
-documents -- never a whole one. #817 set no number; this is the conservative
-one until the team does."""
+longer one. With ``material_search_excerpts`` at 1, five hits are at most a
+thousand characters of a team's documents; at 3 they are at most three
+thousand. A material of 200 characters or less is shown whole at 1, and one of
+600 or less at 3: "never a whole document" holds only for a longer one. What
+#817 10(b) allows once a piece is the excerpt is open decision 8 of ADR 0011.
+#817 set no number; this is the conservative one until the team does."""
 
 CANDIDATES = 50
 """Nearest pieces read before they are grouped by material. Five materials
