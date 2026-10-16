@@ -257,6 +257,9 @@ nothing secret goes here.
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Where the browser reaches `apps/api` |
 | `NEXT_PUBLIC_LIVE_URL` | `wss://api.example.com` | Where the live transcript socket opens. Empty: the page's own origin. Set it where a proxy in front of the site drops the WebSocket `Upgrade` header; the page then fetches a ticket over its own origin for the socket's `hello`, because the session cookie does not reach another host. The ticket opens that meeting's socket once, within 60 s, and no other route (`modules/audio/src/autune_audio/live/tickets.py`). Tickets, like live sessions, are held in the API process's memory, so the API runs as one process |
 | `NEXT_PUBLIC_AUTUNE_DEV_TOKEN` | | Bearer token for every call, until sign-in (S01) exists. Build-time fallback for the value below |
+| `NEXT_PUBLIC_GOOGLE_PICKER_CLIENT_ID` | | OAuth web client for "Drive에서 선택" on the 자료 upload (#1369). Not a secret. Its authorised JavaScript origins must include the page's origin. With the next two, all three or the button is not drawn |
+| `NEXT_PUBLIC_GOOGLE_PICKER_API_KEY` | | Google API key for the Picker. Restrict it to the page's origin and to the Picker API in the Cloud console |
+| `NEXT_PUBLIC_GOOGLE_PICKER_APP_ID` | | The project number of the Google Cloud project that holds the client and the key (Picker `setAppId`). All three must belong to the same project |
 
 The web app proxies `/api/*` to the API (`next.config.ts`) so the browser sees
 one origin and the `autune_session` cookie stays first-party. `NEXT_PUBLIC_API_URL`
