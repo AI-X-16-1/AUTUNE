@@ -219,6 +219,11 @@
  *   pixel.js AND automatic advanced matching off in Meta's Events Manager --
  *   the second is outside this repository. The refusal of 제12조 ⑧ is the
  *   landing page's footer button.
+ * - the pixel's `_fbp` cookie is set on `.autune.cloud`, so the browser also
+ *   sends it with requests to app.autune.cloud (#1358's reviews). 제12조 ⑦
+ *   says so, and that the service neither reads nor keeps it: the API reads
+ *   only its own session and OAuth-state cookies (`autune_core.auth`,
+ *   `auth_router`) and logs no request headers.
  * A sentence here is a promise to the person who signs in.
  *
  * Source of the facts: docs/architecture/privacy.md and the code it names.
@@ -883,7 +888,7 @@ const PRIVACY: LegalDocument = {
           ["보유 및 이용 기간", "Meta Platforms, Inc.가 정한 기간"],
         ),
         p(
-          "⑦ 회사는 Meta 픽셀이 화면의 글이나 입력란의 내용을 스스로 읽지 않도록 설정합니다. 소개 페이지에는 입력란이 없으며, 회원 정보, 회의 정보, 전사문 및 분석 결과는 Meta Platforms, Inc.에 전송하지 않습니다.",
+          "⑦ 회사는 Meta 픽셀이 화면의 글이나 입력란의 내용을 스스로 읽지 않도록 설정합니다. 소개 페이지에는 입력란이 없으며, 회원 정보, 회의 정보, 전사문 및 분석 결과는 Meta Platforms, Inc.에 전송하지 않습니다. Meta 픽셀이 저장하는 웹브라우저 식별자(_fbp 쿠키)는 autune.cloud 아래의 모든 주소에 대하여 저장되므로, 웹브라우저는 이 쿠키를 서비스(app.autune.cloud)로 보내는 요청에도 함께 전송합니다. 회사는 서비스에서 이 쿠키를 읽거나 저장하지 않으며, 이를 Meta Platforms, Inc.나 다른 제3자에게 전달하지 않습니다.",
         ),
         p(
           "⑧ 이용자는 소개 페이지 하단의 '광고 측정 거부' 버튼을 눌러 해당 웹브라우저에서 제6항의 수집을 거부할 수 있습니다. 거부하면 그 웹브라우저에서는 Meta 픽셀을 불러오지 않으며, Meta 픽셀이 저장한 웹브라우저 식별자를 삭제합니다. 거부 표시는 해당 웹브라우저에만 저장되므로, 다른 웹브라우저나 기기에서는 따로 거부하여야 하고 웹브라우저의 저장 공간을 지우면 다시 거부하여야 합니다. 웹브라우저의 설정에서 제3자 쿠키나 추적을 차단하는 방법으로도 거부할 수 있습니다. 거부하더라도 서비스 이용에는 제한이 없습니다.",

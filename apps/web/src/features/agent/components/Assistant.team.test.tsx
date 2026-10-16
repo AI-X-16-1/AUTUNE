@@ -64,7 +64,7 @@ function mount(
       onChooseTeam={onChooseTeam}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: /Autune 비서 열기/ }));
+  // The panel is open from the start.
   return {
     switchTo: (next: Team) =>
       view.rerender(
