@@ -19,10 +19,10 @@ const box = (document: string) =>
 const rowButton = (document: string) =>
   (box(document).closest("li") as HTMLElement).querySelector("button") as HTMLButtonElement;
 const open = (document: string) => fireEvent.click(rowButton(document));
-/** Open a document and press its "동의" button. */
+/** Open a document, then tick its box. */
 const agree = (document: string) => {
   open(document);
-  fireEvent.click(rowButton(document));
+  fireEvent.click(box(document));
 };
 const submit = () => screen.getByRole("button", { name: "동의하고 계속" }) as HTMLButtonElement;
 
@@ -50,7 +50,7 @@ describe("ConsentForm", () => {
 
     expect(screen.getByRole("region", { name: title("terms") }).textContent).toContain("제1조");
     expect(box("terms").disabled).toBe(false);
-    expect(rowButton("terms").textContent).toBe("동의");
+    expect(rowButton("terms").textContent).toBe("접기");
   });
 
   it("lets the open text be reached and scrolled from the keyboard", () => {
@@ -61,22 +61,46 @@ describe("ConsentForm", () => {
     expect(screen.getByRole("region", { name: title("terms") }).tabIndex).toBe(0);
   });
 
-  it("turns the button into 동의 once the text is open, and unlocks only that document's box", () => {
+  it("unlocks only the box of the document that was opened", () => {
     form();
 
     open("terms");
 
-    expect(rowButton("terms").textContent).toBe("동의");
     expect(box("terms").disabled).toBe(false);
     expect(box("privacy").disabled).toBe(true);
   });
 
-  it("ticks the box when 동의 is pressed, and lets it be unticked and ticked again", () => {
+  it("never agrees from the row's button: opening and closing leaves the box unticked", () => {
+    form();
+
+    open("terms");
+    expect(box("terms").checked).toBe(false);
+    expect(rowButton("terms").textContent).toBe("접기");
+
+    open("terms");
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(rowButton("terms").textContent).toBe("내용 보기");
+    expect(box("terms").checked).toBe(false);
+    expect(submit().disabled).toBe(true);
+  });
+
+  it("does not agree on a double click of the row's button", () => {
+    form();
+
+    open("terms");
+    open("terms");
+    open("terms");
+
+    expect(box("terms").checked).toBe(false);
+    expect(submit().disabled).toBe(true);
+  });
+
+  it("ticks the box on its own click, and lets it be unticked and ticked again", () => {
     form();
 
     agree("terms");
     expect(box("terms").checked).toBe(true);
-    expect(rowButton("terms").textContent).toBe("내용 보기");
+    expect(rowButton("terms").textContent).toBe("접기");
 
     fireEvent.click(box("terms"));
     expect(box("terms").checked).toBe(false);

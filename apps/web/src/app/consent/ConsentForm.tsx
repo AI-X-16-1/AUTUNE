@@ -15,11 +15,12 @@ import { DocumentBody } from "../legal/LegalDocumentView";
  * be ticked** (the user, 2026-10-02: "유저가 클릭해서 한번 열려야 동의가 되도록").
  * Scrolling it to its end is not asked for: the user, 2026-10-15, took back the
  * stricter rule of the same day ("스크롤을 끝까지 이동하면 동의") with "이용약관
- * 다 안 읽어도 동의 가능하게". The person opens it with "내용 보기"; once it is
- * open the row's button becomes "동의", and pressing it ticks the box. The box
- * itself unlocks at the same moment and can be ticked and unticked freely
- * after that. Opening is not proof of reading, which no page can know. The text
- * is the same data, drawn the same way, as `/legal`.
+ * 다 안 읽어도 동의 가능하게". The person opens it with "내용 보기"; the box
+ * unlocks at that moment and can be ticked and unticked freely after that. The
+ * row's button only opens and closes the text ("내용 보기" / "접기"); it never
+ * agrees, so a click meant to close a document cannot record an agreement.
+ * Opening is not proof of reading, which no page can know. The text is the
+ * same data, drawn the same way, as `/legal`.
  *
  * Nothing is sent until every box is ticked, and then all of them go in one
  * request: a person is either through the page or still on it, never half.
@@ -104,9 +105,6 @@ export function ConsentForm({
           const wasReached = reached.has(document);
           const isAgreed = agreed.has(document);
           const isShown = shown === document;
-          // Open and not yet agreed: the button is the way to agree.
-          // Otherwise it only opens and closes the text.
-          const agreeNow = isShown && wasReached && !isAgreed;
           const panel = `consent-${document}`;
           return (
             <li
@@ -132,16 +130,9 @@ export function ConsentForm({
                   aria-expanded={isShown}
                   aria-controls={panel}
                   disabled={sending}
-                  onClick={() => {
-                    if (agreeNow) {
-                      tick(document, true);
-                      setShown(null);
-                    } else {
-                      toggle(document);
-                    }
-                  }}
+                  onClick={() => toggle(document)}
                 >
-                  {agreeNow ? "동의" : isShown ? "접기" : "내용 보기"}
+                  {isShown ? "접기" : "내용 보기"}
                 </Button>
               </div>
               {wasReached ? null : (
