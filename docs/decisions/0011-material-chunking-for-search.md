@@ -247,7 +247,9 @@ On the 18 long-file questions alone the excerpt shown holds the answer 44%
   out.
 - **Showing more than one piece of the same material closes most of it
   without a model**: 2 or 3 pieces of 200 characters are 400 to 600
-  characters, still never the document.
+  characters. A material longer than that is never shown whole; one of 600
+  characters or less can be, and one under 200 already is (a slide), as it is
+  today.
 - **Limits.** 38 questions, 8 files, text written by the proposer; the 20
   two-section keys were chosen after reading the files. The Docling variant
   makes 410 pieces against 305, because a Markdown table is padded to column
@@ -485,7 +487,9 @@ release host's memory limit.
 - **`cut` is replaced** by the splitter of 5; `CHUNK_CHARS` goes from 500 to
   200. The docstrings that call the excerpt cap "under half of a stored
   piece" and the tests that assert it change: with pieces of at most 200
-  characters, `excerpt_of` returns the whole piece.
+  characters, `excerpt_of` returns the whole piece. That sentence was the
+  stated reason for the cap under #817 10(b); what takes its place is the cap
+  of 200 characters alone, and whether that is enough is open decision 8.
 - **The `.docx` reader** marks heading lines. Its text for the marking check
   (`edges()`) is not changed, and a test shows that the same files are stopped.
 - **A piece and its path are masked text.** The headings are found after the
@@ -533,6 +537,15 @@ release host's memory limit.
 7. **A model that reads a material** is not proposed and not needed by this
    evidence; it would change #817 10(b) and `privacy.md` and would need a
    local model, since material text goes to no outside API.
+8. **What #817 10(b) rests on once a piece is the excerpt.** The rule says an
+   excerpt is short; the design that kept it so was "under half of a stored
+   piece", which pieces of 200 characters make impossible, and stage 3 shows
+   up to 600 characters of one material, so a short material is shown whole.
+   Either the cap of 200 characters per excerpt and 600 per hit is accepted as
+   what 10(b) means, or a lower cap is set for the hit (for example two
+   excerpts), or the rule is restated with this reading. The proposer's
+   reading is the first; it is the owners' to confirm, and `privacy.md` is
+   unchanged either way until they do.
 
 ## Evaluation
 
@@ -576,8 +589,9 @@ To do before stage 2 is merged:
 - Stage 2 adds text to what is embedded but not to what is stored or shown;
   the path comes from the masked text, so it carries nothing that was not
   already cleared.
-- Stage 3 shows up to three excerpts of one material, 600 characters at most,
-  never the document.
+- Stage 3 shows up to three excerpts of one material, 600 characters at most.
+  A material longer than 600 characters is never shown whole; a shorter one
+  can be (open decision 8).
 - Stored rows of two generations live side by side until the old ones expire.
 - "Readers are pure Python, no converter, no OCR" (`material_reading.py`,
   `pyproject.toml`) stays true.
