@@ -1010,38 +1010,46 @@ deployment, and that must be met before an ad script goes on the landing
 page: the session cookie takes the `__Host-` prefix, a state-changing request
 and the live WebSocket handshake are refused when their `Origin` is not the
 app's own (the Slack events route, which Slack posts without an `Origin`, is
-left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. The
-two names share a site, so until then the team trial must not carry an ad
-script; none is on the landing page today.
+left out), and the OAuth state cookie takes `__Host-` too, with `Path=/`. Both
+are in the code (#1346) and have been deployed here since 2026-10-15. The two
+names share a site, so no third-party script goes on the app's own origin. The
+Meta Pixel is in the landing page's source (#1358); whether it is live depends
+on the landing build being uploaded, which is outside this repository.
 
-**This host is a trial for the team's own accounts. Google does not keep
-anyone else out of it; the load balancer does.**
+**Anyone with a verified Google account can sign in here.** There is no allow
+list: `upsert_user_from_google` creates a user for any Google identity that
+comes back, the OAuth client in `autune/app` is the main project's and its
+consent screen is published (#1320), so Google refuses nobody. What decides who
+reaches the sign-in page at all is the load balancer's security group
+(`autune-alb-sg`): ports 80 and 443. That setting lives outside this
+repository and nothing here checks it; whoever changes it changes who can sign
+in.
 
-- The Google OAuth client in `autune/app` is the main project's, whose consent
-  screen is open to anyone (#1320), and `upsert_user_from_google` creates a user
-  for any Google identity that comes back, with no list of allowed accounts.
-  So on this host Google refuses nobody. What keeps an outside account out is
-  the load balancer's security group (`autune-alb-sg`): ports 80 and 443 allow
-  only the team's public IP addresses, and nothing else reaches the sign-in
-  page. That setting lives outside this repository and nothing here checks it;
-  whoever changes it changes who can sign in. A side effect: Slack's servers
-  cannot reach `/api/slack/events` either, so do not connect Slack here.
-- The privacy policy names AWS as a processor. Article 6 of
-  `apps/web/src/app/legal/content.ts` says that what the service stores is kept
-  on servers the company runs itself and that the keeping is not entrusted, and
-  article 5 (3) says audio is given to no outside service. A database on RDS, a
-  queue on ElastiCache and a tmpfs on EC2 are an entrusted processing. So
-  article 6 lists AWS (server and database operation; all data the service
-  stores and the audio being processed; Seoul), the Cloudflare line is
-  corrected, the consent version goes up, and the notice period of article 15
-  (2) is kept.
-- #890 is reopened.
+**The door was opened on 2026-10-15 at 13:24 KST**, at the project owner's
+word, by adding `0.0.0.0/0` on ports 80 and 443 to `autune-alb-sg`. The
+decision issue, #1349, was still open then: of the four module owners only one
+had answered, with conditions. This section records what stood where, so that
+a reader does not take the door for something the owners agreed to in full.
 
-The allow list comes off only after all of these: the privacy policy change
-above has run its notice period, #890 is reopened, the three cookie and
-`Origin` conditions above are in the code, and the Google client is either a
-separate project in Testing with the team as test users or the code has its
-own list of allowed accounts. Until then the host is the team's.
+| Condition | State when the door was opened |
+| --- | --- |
+| `__Host-` cookies and the `Origin` check (#1346), with the nginx `Host` fix (#1351) | on this branch and deployed (run on `2bc4b189`) |
+| Privacy policy names AWS as the processor, the consent version says so | deployed (#1347 reached this branch through #1352 and #1359) |
+| Notice period of article 15 (2) | not waited for; skipped by agreement of the four owners on #1347 |
+| EC2 instance security group takes port 80 only from `autune-alb-sg` | read and true |
+| Sign-in and the live WebSocket exercised on the host | the WebSocket handshake was exercised (101 with the app's `Origin`, 403 with another); a signed-in POST was **not** |
+| A usage limit or alert on the LLM key (asked for on #1349) | **not met**: none is configured, and the decision is on hold |
+| #890 reopened, and a separate Testing client or an allow list in code (#1342) | **not settled**: neither was done, and #1349 does not say they are dropped |
+
+Until #1349 is answered by the other owners, treat the last two rows as open
+debts, not as decided.
+
+While the door is open, two things follow that were not true of the team
+trial. Slack's servers can reach `/api/slack/events`, so connecting Slack
+works. And there is **no per-user or per-team quota** on transcription or on
+the LLM: the limits in code are a 500 MB cap per file and the 429s of a few
+single features. Anyone who signs up can use the CPU and the paid LLM key. The
+only way to refuse someone is to narrow the security group again.
 
 The broker connection is encrypted: `deploy.sh` builds `rediss://` with
 `ssl_cert_reqs=required`, because Celery payloads carry masked transcript
@@ -1066,6 +1074,51 @@ instance (the broker and the load balancer cannot be stopped; delete them if
 the site is idle for more than a day or two). RDS starts itself again after
 seven days. Everything in the `autune-app` project comes back with the host
 (`restart: unless-stopped`).
+
+### Rolling back
+
+The workflow deploys the commit that was pushed to `infra/release-1014`
+(`github.sha`), and the deploy role's trust policy accepts only that branch,
+so an older commit cannot be deployed from anywhere else. To go back, merge a
+revert of the change into the branch; the push deploys it. The workflow also
+has `workflow_dispatch` and deploys `github.sha`; re-running an earlier run
+from the Actions tab should deploy that run's commit again, faster than a
+revert pull request, but it leaves the branch tip unchanged, so the next push
+deploys the tip again. That route has not been tried here.
+
+- **Time.** `deploy.sh` rebuilds the images every time and prunes the one it
+  replaced, so a rollback is a rebuild: a few minutes when the build cache is
+  warm, then `up --wait` (at most 900 seconds). A failed `up` leaves the job
+  red and prints `ps -a` in the log; the previous containers are already gone.
+- **Schema.** Migrations run before the containers start and the script never
+  runs a downgrade. A revert of code does not revert the schema, so a
+  migration that is not additive is not safe to roll back past.
+- **Closing the door.** Without a deploy, in minutes, replace the
+  `0.0.0.0/0` rules on ports 80 and 443 of `autune-alb-sg` with the team's
+  addresses. This closes the door only while the instance itself takes port 80
+  from `autune-alb-sg` alone (or has no public address); check that first, or
+  narrowing the load balancer's rules does not stop anyone:
+
+  ```bash
+  sg=$(aws ec2 describe-security-groups --filters Name=group-name,Values=autune-alb-sg \
+    --query 'SecurityGroups[0].GroupId' --output text)
+  for port in 80 443; do
+    aws ec2 revoke-security-group-ingress --group-id "$sg" --protocol tcp \
+      --port "$port" --cidr 0.0.0.0/0
+    aws ec2 authorize-security-group-ingress --group-id "$sg" --protocol tcp \
+      --port "$port" --cidr <team address>/32
+  done
+  ```
+
+  If a `::/0` rule was added too, revoke it the same way. New connections
+  from other addresses are refused at once; one that is already established
+  keeps working until it closes. The stack keeps running.
+- **After a rollback or a start**, look at the same things as after a
+  deploy: `/` answers 200, `/api/auth/google/start` redirects to Google and sets a `__Host-`
+  state cookie, a POST naming another host in `Origin` is refused with 403,
+  and one member can sign in, open a live transcript and upload a file.
+
+To stop the host, see the paragraph above.
 
 ## Environments
 
