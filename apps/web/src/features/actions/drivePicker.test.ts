@@ -115,7 +115,7 @@ describe("downloadPicked", () => {
   it("stops a file the rules would refuse before its body is read", async () => {
     const body = vi.fn();
     const response = new Response("x", { status: 200, headers: { "content-length": "999" } });
-    response.blob = body as unknown as () => Promise<Blob>;
+    response.arrayBuffer = body as unknown as () => Promise<ArrayBuffer>;
     const fetcher = vi.fn(async () => response);
     await expect(
       downloadPicked(doc, "tok", 100, fetcher as unknown as typeof fetch),

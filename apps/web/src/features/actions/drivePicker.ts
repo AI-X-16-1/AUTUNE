@@ -141,8 +141,11 @@ export async function downloadPicked(
   if (Number.isFinite(length) && length > maxBytes) {
     throw new DrivePickError("파일이 너무 큽니다.");
   }
-  const blob = await response.blob();
-  return new File([blob], fileName, { type: blob.type });
+  // The bytes, not response.blob(): a File built from another realm's Blob
+  // (a test runtime's Response under jsdom) is read as the string "[object Blob]".
+  const bytes = await response.arrayBuffer();
+  const type = (response.headers.get("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+  return new File([bytes], fileName, { type });
 }
 
 // ---- Google's page-level objects, as far as this file uses them ----
