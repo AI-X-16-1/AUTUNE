@@ -94,11 +94,12 @@ and E on invented reports on 2026-10-16; see "Evidence".
 
 ## Evidence
 
-One local run on 2026-10-15, on invented text only: Docling 2.139.0 with
+Local runs on 2026-10-15 and 2026-10-16 (the overlap and the release host's
+embedder are of the 16th), on invented text only: Docling 2.139.0 with
 CPU-only PyTorch and OCR off, KURE-v1 on CPU, and the 200-file shelf and 290
 questions of the floor measurement of 2026-10-13 (labels fixed by hash). It is
 not in the repository; the numbers are the proposer's to be re-run by anyone
-who wants them. It is one run on a small shelf and is read as such.
+who wants them. Each is one run on a small shelf and is read as such.
 
 ### The marking check, run first
 
@@ -521,7 +522,11 @@ In the order the upload runs:
 3. **The whole text is masked** as one string, as now.
 4. **The headings are found in the masked text**: a `#` line of `.md`, a
    heading style of `.docx` (the reader learns to mark them), and in every
-   other format a short line that starts `2.`, `2.1` or `2.1.1`. A heading
+   other format a short line that starts `2.`, `2.1` or `2.1.1`: a number of
+   one or two digits a level, the first level with its dot, then a space, and
+   at most 40 characters. A row of a sheet that opens with a serial number and
+   a tab (`1<tab>name<tab>team`) and a line such as `10 명이 참석했다` are not
+   headings. A heading
    path is its ancestors' lines, by level. A file with none has an empty path
    and is cut as in B.
 5. **Each section is split recursively**, coarsest separator first (a blank
@@ -672,8 +677,17 @@ To do before stage 1 is merged:
   the release host. The embedder alone is measured there (about 1,300
   characters per second, so about 230 s for 300,000 characters by a linear
   estimate, 14% more with the tail); reading, masking and the database are
-  not. An upload request may not survive that; it is true of today's cut too
-  and is not changed by this ADR.
+  not.
+- **The request carries the embedding** (`store_upload`, in this request: no
+  text goes to a task, #817). An AWS load balancer's idle timeout is 60 s by
+  default and nothing in this repository sets it, so at about 1,300
+  characters per second a material of more than about 78,000 characters may
+  have its connection closed before the answer arrives, whether or not the
+  server finishes storing it. That is the same at 200 and at 500 characters
+  and is not changed by this ADR, but it was not a number until now. Ways
+  out, none taken here: raise the load balancer's idle timeout (`infra/`,
+  shared); lower the 300,000-character cap; or embed in a task, which meets
+  "no text goes to a task" and is a decision of its own.
 
 To do before stage 2 is merged:
 
@@ -698,6 +712,9 @@ To do before stage 2 is merged:
   A material longer than 600 characters is never shown whole; a shorter one
   can be (open decision 8).
 - Stored rows of two generations live side by side until the old ones expire.
+- A material of more than about 78,000 characters may be closed on at the
+  load balancer's 60 s idle timeout while its embedding runs in the upload
+  request ("Evaluation"). Not new, and not changed by the cut.
 - "Readers are pure Python, no converter, no OCR" (`material_reading.py`,
   `pyproject.toml`) stays true.
 - A converter is not closed off: the evidence says what it would have to beat
