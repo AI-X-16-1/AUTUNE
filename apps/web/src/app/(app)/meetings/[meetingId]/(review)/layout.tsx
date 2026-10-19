@@ -51,7 +51,7 @@ export default async function MeetingReviewLayout({
             { href: tab(""), label: "전사" },
             { href: tab("/actions"), label: "할 일" },
             { href: tab("/gap"), label: "분석" },
-            { href: tab("/context"), label: "컨텍스트" },
+            { href: tab("/context"), label: "이전 회의" },
           ]}
         />
       </div>
